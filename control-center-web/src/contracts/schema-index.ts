@@ -7071,6 +7071,13 @@ export const contractSchemas = {
     "required": [
       "schemaVersion",
       "id",
+      "nodeId",
+      "attemptId",
+      "attemptNumber",
+      "predecessorAttemptId",
+      "ownerRunId",
+      "parentRunId",
+      "depth",
       "batchId",
       "childSessionId",
       "todoTask",
@@ -7081,6 +7088,8 @@ export const contractSchemas = {
       "task",
       "expectedOutput",
       "acceptanceCriteria",
+      "launchDigest",
+      "contract",
       "state",
       "budget",
       "usage",
@@ -7100,6 +7109,33 @@ export const contractSchemas = {
       "id": {
         "type": "string",
         "minLength": 1
+      },
+      "nodeId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "attemptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "attemptNumber": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "predecessorAttemptId": {
+        "type": "string"
+      },
+      "ownerRunId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentRunId": {
+        "type": "string"
+      },
+      "depth": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2
       },
       "batchId": {
         "type": "string",
@@ -7158,6 +7194,147 @@ export const contractSchemas = {
       "outputSchema": {
         "type": "object"
       },
+      "launchDigest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "contextMode",
+          "templateId",
+          "templateVersion",
+          "modelProfile",
+          "thinkingLevel",
+          "toolProfileVersion",
+          "toolAllowlistMode",
+          "tools",
+          "piSkillsEnabled",
+          "codexSkillsEnabled",
+          "workspaceAccess",
+          "workspaceRootCount",
+          "outputContract",
+          "extensionRuntime"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-subagent-launch-digest.v1"
+          },
+          "contextMode": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "fork"
+            ]
+          },
+          "templateId": {
+            "type": "string"
+          },
+          "templateVersion": {
+            "type": "string"
+          },
+          "modelProfile": {
+            "type": "string"
+          },
+          "thinkingLevel": {
+            "type": "string"
+          },
+          "toolProfileVersion": {
+            "type": "string"
+          },
+          "toolAllowlistMode": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "explicit"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "piSkillsEnabled": {
+            "type": "boolean"
+          },
+          "codexSkillsEnabled": {
+            "type": "boolean"
+          },
+          "workspaceAccess": {
+            "type": "string",
+            "enum": [
+              "none",
+              "read_only",
+              "write"
+            ]
+          },
+          "workspaceRootCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "outputContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "required",
+              "schemaSha256"
+            ],
+            "properties": {
+              "required": {
+                "type": "boolean"
+              },
+              "schemaSha256": {
+                "type": "string",
+                "pattern": "^$|^[a-f0-9]{64}$"
+              }
+            }
+          },
+          "extensionRuntime": {
+            "type": "string",
+            "const": "pi_host_managed"
+          }
+        }
+      },
+      "contract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "error",
+          "toolCallId",
+          "validatedAtMs"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "not_requested",
+              "pending",
+              "valid",
+              "invalid"
+            ]
+          },
+          "error": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "validatedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "structuredOutput": {},
       "state": {
         "type": "string",
         "enum": [
@@ -7354,6 +7531,8 @@ export const contractSchemas = {
       "summary",
       "contextModes",
       "toolProfileVersion",
+      "defaultAccess",
+      "allowedAccess",
       "budget",
       "capabilities"
     ],
@@ -7405,6 +7584,26 @@ export const contractSchemas = {
           "subagent-readonly-v1",
           "subagent-worker-v1"
         ]
+      },
+      "defaultAccess": {
+        "type": "string",
+        "enum": [
+          "read_only",
+          "write"
+        ]
+      },
+      "allowedAccess": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "read_only",
+            "write"
+          ]
+        }
       },
       "budget": {
         "type": "object",
@@ -7549,7 +7748,9 @@ export const contractSchemas = {
           "runtime",
           "configuration",
           "agents",
+          "session_search",
           "room_partner",
+          "structured_output",
           "browser",
           "todo",
           "agent_goal",
@@ -7681,6 +7882,7 @@ export const contractSchemas = {
           "runtime",
           "configuration",
           "agents",
+          "session_search",
           "browser",
           "todo",
           "agent_goal",

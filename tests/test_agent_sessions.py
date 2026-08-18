@@ -157,6 +157,71 @@ class AgentSessionStoreTests(unittest.TestCase):
         with self.assertRaises(AgentSessionNotFound):
             self.store.get(session_id)
 
+    def test_search_history_returns_bounded_navigation_anchors_only(self) -> None:
+        current = self.store.create(title="当前 Session", created_at_ms=100)
+        historical = self.store.create(title="Agent TUI 架构", created_at_ms=200)
+        archived = self.store.create(title="归档的 Launch Digest", created_at_ms=300)
+        internal = self.store.create(
+            title="不应出现的子 Agent",
+            session_kind="subagent_runtime",
+            created_at_ms=400,
+        )
+        self.store.set_status(
+            str(historical["id"]),
+            "idle",
+            message_count=7,
+            last_message_preview="已经讨论 Session flow",
+            updated_at_ms=500,
+        )
+        self.store.record_runtime_event(
+            event_id="event:launch-digest",
+            session_id=str(historical["id"]),
+            turn_id="turn:contract",
+            sequence=1,
+            event_type="message_completed",
+            created_at_ms=510,
+            redacted_summary="Launch Digest 与结构化终止合同已确定",
+        )
+        self.store.archive(str(archived["id"]), updated_at_ms=600)
+
+        anchors = self.store.search_history(
+            query="Launch Digest",
+            requester_session_id=str(current["id"]),
+            limit=10,
+        )
+        self.assertEqual([item["sessionId"] for item in anchors], [historical["id"]])
+        anchor = anchors[0]
+        self.assertEqual(anchor["matchKind"], "runtime_event")
+        self.assertEqual(anchor["eventId"], "event:launch-digest")
+        self.assertEqual(anchor["turnId"], "turn:contract")
+        self.assertEqual(
+            anchor["evidenceRef"],
+            f"{historical['id']}#event:event:launch-digest",
+        )
+        self.assertIn("#/agent?session=", anchor["href"])
+        self.assertNotIn("sessionFile", anchor)
+        self.assertNotIn("transcript", str(anchor).lower())
+
+        recent = self.store.search_history(
+            requester_session_id=str(current["id"]),
+            limit=10,
+        )
+        self.assertEqual(recent[0]["sessionId"], current["id"])
+        self.assertTrue(recent[0]["isCurrentSession"])
+        visible_ids = {item["sessionId"] for item in recent}
+        self.assertNotIn(archived["id"], visible_ids)
+        self.assertNotIn(internal["id"], visible_ids)
+
+        with_archived = self.store.search_history(
+            query="Launch Digest",
+            include_archived=True,
+            limit=10,
+        )
+        self.assertEqual(
+            {item["sessionId"] for item in with_archived},
+            {historical["id"], archived["id"]},
+        )
+
     def test_workspace_execution_grant_is_invalidated_and_can_be_regranted(self) -> None:
         first_root = self.tmp.name
         second_root = str(Path(self.tmp.name) / "second")
@@ -1092,6 +1157,37 @@ class AgentSessionStoreTests(unittest.TestCase):
             self.store.set_status(str(session["id"]), "executing_without_approval")
         with self.assertRaisesRegex(ValueError, "provider/model"):
             self.store.set_model_profile(str(session["id"]), "missing-provider")
+
+    def test_global_approval_list_spans_sessions_without_losing_session_filter(self) -> None:
+        first = self.store.create(title="first", created_at_ms=100)
+        second = self.store.create(title="second", created_at_ms=200)
+        first_approval = self.store.create_approval(
+            session_id=str(first["id"]),
+            tool_name="input",
+            operation="apply_settings",
+            payload_sha256="1" * 64,
+            preview={"summary": "first"},
+            risk_level="R1",
+            requested_at_ms=1_000,
+        )
+        second_approval = self.store.create_approval(
+            session_id=str(second["id"]),
+            tool_name="runtime",
+            operation="restart",
+            payload_sha256="2" * 64,
+            preview={"summary": "second"},
+            risk_level="R2",
+            requested_at_ms=2_000,
+        )
+
+        self.assertEqual(
+            [item["approvalId"] for item in self.store.list_approvals(now_ms=2_500)],
+            [second_approval["approvalId"], first_approval["approvalId"]],
+        )
+        self.assertEqual(
+            [item["approvalId"] for item in self.store.list_approvals(session_id=str(first["id"]), now_ms=2_500)],
+            [first_approval["approvalId"]],
+        )
 
     def test_approval_is_hash_bound_expiring_and_receipted(self) -> None:
         session = self.store.create(title="approval", created_at_ms=100)

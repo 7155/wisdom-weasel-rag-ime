@@ -59,6 +59,125 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         self.assertEqual(typescript_ids, expected)
         self.assertEqual(swift_ids, expected)
 
+    def test_subagent_launch_contract_matches_frontend_python_and_native_bridge(self) -> None:
+        from rag_ime.control_api import (
+            ControlAccessContext,
+            ControlPathId,
+            ControlRequest,
+            ControlScope,
+            default_route_policy,
+        )
+
+        expected = {
+            "sessionId",
+            "tasks",
+            "agent",
+            "version",
+            "task",
+            "expectedOutput",
+            "acceptanceCriteria",
+            "outputSchema",
+            "modelProfile",
+            "thinkingLevel",
+            "access",
+            "allowedTools",
+            "piSkillsEnabled",
+            "codexSkillsEnabled",
+            "workspaceRoots",
+            "todoTask",
+            "contextMode",
+            "forkEntryId",
+            "wait",
+        }
+        typescript_route = _required_match(
+            r"'agent\.subagents\.create':\s*\{(.*?)\n\s{2}\},",
+            self.routes,
+        )
+        typescript_body = _required_match(r"body:\s*\[(.*?)\]", typescript_route)
+        swift_route = _required_match(
+            r'"agent\.subagents\.create":\s*route\((.*?)\),\n',
+            self.native_routes,
+        )
+        swift_body = _required_match(r"bodyKeys:\s*\[(.*?)\]", swift_route)
+        policy = default_route_policy()
+        python_route = policy.resolve(
+            ControlPathId.AGENT_SUBAGENTS_CREATE,
+        )
+
+        self.assertEqual(set(re.findall(r"'([^']+)'", typescript_body)), expected)
+        self.assertEqual(set(re.findall(r'"([^"]+)"', swift_body)), expected)
+        self.assertEqual(set(python_route.body), expected)
+        self.assertEqual(set(python_route.remote_body), expected)
+        self.assertNotIn("contextMode", python_route.remote_body_values)
+
+        request = ControlRequest(
+            request_id="subagent-launch-contract",
+            path_id=ControlPathId.AGENT_SUBAGENTS_CREATE.value,
+            body={
+                "sessionId": "agent:parent",
+                "agent": "reviewer",
+                "version": "1",
+                "task": "核对实现",
+                "expectedOutput": "证据与风险",
+                "acceptanceCriteria": ["不得修改文件"],
+                "outputSchema": {"type": "object"},
+                "modelProfile": "pi/default",
+                "thinkingLevel": "high",
+                "access": "read_only",
+                "allowedTools": ["workspace_read"],
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": False,
+                "workspaceRoots": ["/workspace"],
+                "todoTask": "核对实现",
+                "contextMode": "fork",
+                "forkEntryId": "latest",
+                "wait": False,
+            },
+        )
+        policy.authorize(request, ControlAccessContext.native())
+        policy.authorize(
+            request,
+            ControlAccessContext.remote(
+                device_id="paired-device",
+                scopes={ControlScope.AGENT_DELEGATE.value},
+            ),
+        )
+
+    def test_approval_list_supports_cross_session_inbox_without_required_session_id(self) -> None:
+        from rag_ime.control_api import (
+            ControlAccessContext,
+            ControlPathId,
+            ControlRequest,
+            ControlScope,
+            default_route_policy,
+        )
+
+        typescript_route = _required_match(
+            r"'agent\.approvals\.list':\s*\{(.*?)\n\s{2}\},",
+            self.routes,
+        )
+        swift_route = _required_match(
+            r'"agent\.approvals\.list":\s*route\((.*?)\),\n',
+            self.native_routes,
+        )
+        python_route = default_route_policy().resolve(ControlPathId.AGENT_APPROVALS_LIST)
+
+        self.assertNotIn("requiredQuery", typescript_route)
+        self.assertNotIn("requiredQuery", swift_route)
+        self.assertEqual(python_route.required_query, frozenset())
+
+        default_route_policy().authorize(
+            ControlRequest(
+                request_id="approval-inbox-contract",
+                path_id=ControlPathId.AGENT_APPROVALS_LIST.value,
+                query={"limit": "500"},
+            ),
+            ControlAccessContext.remote(
+                device_id="paired-device",
+                scopes={ControlScope.AGENT_APPROVE.value},
+            ),
+        )
+
     def test_bridge_method_and_response_envelopes_are_locked(self) -> None:
         type_block = _required_match(
             r"export type NativeBridgeMethod\s*=\s*(.*?);", self.native_types

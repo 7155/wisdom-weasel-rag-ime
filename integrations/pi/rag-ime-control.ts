@@ -29,6 +29,37 @@ const maxInlineToolResultBytes = 24 * 1024;
 const maxTurnToolResultBytes = 48 * 1024;
 const maxStoredToolOutputs = 32;
 const maxStoredToolOutputBytes = 4 * 1024 * 1024;
+const delegatedProductToolIds = [
+  "overview",
+  "input",
+  "voice",
+  "planning",
+  "agent_schedule",
+  "memory",
+  "agent_role_book",
+  "knowledge",
+  "models",
+  "runtime",
+  "configuration",
+  "agents",
+  "session_search",
+  "room_partner",
+  "browser",
+  "todo",
+  "agent_goal",
+  "plugins",
+  "work_documents",
+  "desktop_semantic",
+  "workspace_list",
+  "workspace_lsp",
+  "workspace_read",
+  "workspace_search",
+  "workspace_patch",
+  "workspace_edit",
+  "workspace_write",
+  "workspace_job",
+  "workspace_shell",
+] as const;
 const toolOutputPrefix = "tool-output://";
 const toolOutputDirectory = join(
   tmpdir(),
@@ -241,7 +272,6 @@ type ToolParams = {
     workspaceRoots?: string[];
   }>;
   todoTask?: string;
-  todoPhase?: string;
   phase?: string;
   list?: Array<{ phase: string; items: string[] }>;
   items?: string[];
@@ -251,7 +281,6 @@ type ToolParams = {
   targetRunId?: string;
   message?: string;
   itemId?: string;
-  title?: string;
   status?: string;
 };
 
@@ -1234,7 +1263,9 @@ const toolSpecs: ToolSpec[] = [
       "只能使用 catalog 返回的固定 Agent；每项任务必须写明有界 expectedOutput 和一到八条 acceptanceCriteria，可选 outputSchema；单批最多两个任务、最大深度 2，不得请求加载市场自定义代码。",
       "fresh 只携带任务，fork 继承当前会话上下文；涉及当前讨论的复核或规划时才使用 fork。",
       "用户明确要求先规划再执行时，优先委派只读 planner：它只返回带依赖、风险、产物和验收证据的方案；用户确认后再把可执行步骤写入 todo，不能把规划结果当作已经执行。",
-      "当前 Session 已有 Todo 时，delegate 必须携带当前 in_progress 的 todoTask 和 todoPhase；先更新 Todo，再让一个或两个子 Agent 共同处理该项。",
+      "Todo 只作为可选导航；未显式传入 todoTask 时，delegate 必须独立启动，不得因 Todo 存在而拒绝或自动绑定。",
+      "allowedTools 只接受产品 Tool ID；不要把 tool_search、read、grep、find 或 bash 填入 allowedTools，这些 Pi 原生工具由子 Session 运行时按访问模式投影。",
+      "默认省略 modelProfile 并继承父 Session；只有用户明确选择，或已从 Pi 确认的模型目录取得完全一致的 provider/model 时才覆盖，禁止猜测 Provider、模型名或旧版本别名。",
       "子 Agent 是临时执行单元；status 返回同一委派树的 peers。需要即时协作时，使用 call 和目标 runId 直接把消息投递到对方 Pi Session；对方也可用 call 回调。",
       "call 只负责点对点投递，不创建第二套消息总线，不改变目标状态，也不替代最终结果回传和主持 Session 验收。",
       "Room 中通过 room_partner 查看正式伙伴、委派有界子任务并接收其普通 Pi Session 结果；临时微型子 Agent 仍使用 agents。不要通过本地重复检索模拟正式 Room 分工。",
@@ -2335,6 +2366,7 @@ function parametersFor(spec: ToolSpec) {
         minLength: 3,
         maxLength: 240,
         pattern: "^[^\\s/]+/[^\\s/]+$",
+        description: "默认省略并继承父 Session；仅接受用户明确选择或 Pi 目录确认的精确 provider/model，禁止猜测。",
       },
       thinkingLevel: {
         type: "string",
@@ -2346,7 +2378,7 @@ function parametersFor(spec: ToolSpec) {
         minItems: 1,
         maxItems: 64,
         uniqueItems: true,
-        items: { type: "string", minLength: 1, maxLength: 120 },
+        items: { type: "string", enum: [...delegatedProductToolIds] },
       },
       piSkillsEnabled: { type: "boolean" },
       codexSkillsEnabled: { type: "boolean" },
@@ -2390,6 +2422,7 @@ function parametersFor(spec: ToolSpec) {
               minLength: 3,
               maxLength: 240,
               pattern: "^[^\\s/]+/[^\\s/]+$",
+              description: "默认省略并继承父 Session；仅接受用户明确选择或 Pi 目录确认的精确值。",
             },
             thinkingLevel: {
               type: "string",
@@ -2401,7 +2434,7 @@ function parametersFor(spec: ToolSpec) {
               minItems: 1,
               maxItems: 64,
               uniqueItems: true,
-              items: { type: "string", minLength: 1, maxLength: 120 },
+              items: { type: "string", enum: [...delegatedProductToolIds] },
             },
             piSkillsEnabled: { type: "boolean" },
             codexSkillsEnabled: { type: "boolean" },
@@ -2415,8 +2448,12 @@ function parametersFor(spec: ToolSpec) {
           },
         },
       },
-      todoTask: { type: "string", minLength: 1, maxLength: 240 },
-      todoPhase: { type: "string", minLength: 1, maxLength: 80 },
+      todoTask: {
+        type: "string",
+        minLength: 1,
+        maxLength: 240,
+        description: "可选导航链接；仅在确实需要将子 Agent 工作定位到当前 Todo 时传入。",
+      },
       contextMode: { type: "string", enum: ["fresh", "fork"] },
       wait: { type: "boolean" },
       batchId: { type: "string", maxLength: 240 },
@@ -2448,6 +2485,14 @@ function parametersFor(spec: ToolSpec) {
                   { required: ["expectedOutput"] },
                   { required: ["acceptanceCriteria"] },
                   { required: ["outputSchema"] },
+                  { required: ["version"] },
+                  { required: ["modelProfile"] },
+                  { required: ["thinkingLevel"] },
+                  { required: ["access"] },
+                  { required: ["allowedTools"] },
+                  { required: ["piSkillsEnabled"] },
+                  { required: ["codexSkillsEnabled"] },
+                  { required: ["workspaceRoots"] },
                 ],
               },
             },

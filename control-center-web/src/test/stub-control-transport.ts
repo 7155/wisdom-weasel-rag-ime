@@ -13,6 +13,11 @@ type StubHandler = unknown | ((request: ControlRequest) => unknown | Promise<unk
 
 export class StubControlTransport implements ControlTransport {
   readonly requests: ControlRequest[] = [];
+  private readonly subscriptions = new Map<
+    number,
+    { request: ControlSubscription; observer: ControlEventObserver<unknown> }
+  >();
+  private nextSubscriptionId = 1;
 
   constructor(
     readonly kind: ControlTransportKind,
@@ -55,9 +60,26 @@ export class StubControlTransport implements ControlTransport {
   }
 
   subscribe<Event = unknown>(
-    _request: ControlSubscription,
-    _observer: ControlEventObserver<Event>,
+    request: ControlSubscription,
+    observer: ControlEventObserver<Event>,
   ): () => void {
-    return () => {};
+    const id = this.nextSubscriptionId;
+    this.nextSubscriptionId += 1;
+    this.subscriptions.set(id, {
+      request,
+      observer: observer as ControlEventObserver<unknown>,
+    });
+    observer.open?.(request.lastEventId);
+    return () => this.subscriptions.delete(id);
+  }
+
+  emit(pathId: ControlSubscription['pathId'], event: unknown): number {
+    let delivered = 0;
+    for (const subscription of this.subscriptions.values()) {
+      if (subscription.request.pathId !== pathId) continue;
+      subscription.observer.next(event);
+      delivered += 1;
+    }
+    return delivered;
   }
 }

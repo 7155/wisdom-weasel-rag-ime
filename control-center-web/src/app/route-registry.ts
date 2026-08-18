@@ -6,6 +6,7 @@ export type RouteId =
   | 'rooms'
   | 'roles'
   | 'plugins'
+  | 'approvals'
   | 'browser'
   | 'voice'
   | 'planning'
@@ -43,12 +44,13 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'roles', path: '/roles', label: '伙伴', shortLabel: '伙伴', group: 'work' },
   { id: 'memory', path: '/memory', label: '我的记忆', shortLabel: '记忆', group: 'capability' },
   { id: 'knowledge', path: '/knowledge', label: '知识库', shortLabel: '知识', group: 'capability' },
-  { id: 'plugins', path: '/plugins', label: '技能与工具', shortLabel: '能力', group: 'capability' },
+  { id: 'plugins', path: '/plugins', label: '插件管理', shortLabel: '插件', group: 'capability' },
   { id: 'browser', path: '/browser', label: '浏览器', shortLabel: '浏览器', group: 'capability' },
   { id: 'voice', path: '/voice', label: '语音输入', shortLabel: '语音', group: 'capability' },
   { id: 'input', path: '/input', label: '输入法与词库', shortLabel: '输入', group: 'capability' },
   { id: 'history', path: '/history', label: '输入记录', shortLabel: '记录', group: 'capability' },
   { id: 'governance', path: '/governance', label: '安全与治理', shortLabel: '安全', group: 'operations' },
+  { id: 'approvals', path: '/approvals', label: '审批中心', shortLabel: '审批', group: 'operations' },
   { id: 'context-debug', path: '/context-debug', label: '上下文检查', shortLabel: '上下文', group: 'operations' },
   { id: 'observability', path: '/observability', label: '运行记录', shortLabel: '运行', group: 'operations' },
   { id: 'diagnostics', path: '/diagnostics', label: '问题排查', shortLabel: '排查', group: 'operations' },

@@ -71,6 +71,10 @@ _DELEGATION_TASK_CONTRACT: dict[str, object] = {
             "minLength": 3,
             "maxLength": 240,
             "pattern": r"^[^/\s]+/[^/\s]+$",
+            "description": (
+                "Omit to inherit the parent Session; an override must be an exact "
+                "Pi-confirmed provider/model selected by the user, never a guessed alias."
+            ),
         },
         "thinkingLevel": {
             "type": "string",
@@ -188,6 +192,39 @@ class AgentDelegationStore:
             )
             for ordinal, value in enumerate(values):
                 run_id = f"subagent-run:{uuid.uuid4()}"
+                node_id = _bounded_text(
+                    value.get("nodeId") or f"subagent-node:{uuid.uuid4()}",
+                    maximum=240,
+                    required=True,
+                )
+                attempt_id = _bounded_text(
+                    value.get("attemptId") or f"subagent-attempt:{uuid.uuid4()}",
+                    maximum=240,
+                    required=True,
+                )
+                attempt_number = _bounded_int(
+                    value.get("attemptNumber") or 1,
+                    minimum=1,
+                    maximum=1_000,
+                )
+                predecessor_attempt_id = _bounded_text(
+                    value.get("predecessorAttemptId"),
+                    maximum=240,
+                )
+                owner_run_id = _bounded_text(
+                    value.get("ownerRunId")
+                    or parent_run_id
+                    or f"session:{parent_session_id}",
+                    maximum=240,
+                    required=True,
+                )
+                launch_digest = _delegation_launch_digest(
+                    value.get("launchDigest"),
+                    context_mode=context_mode,
+                    template_id=_required_text(value, "templateId"),
+                    template_version=_required_text(value, "templateVersion"),
+                    output_schema=value.get("outputSchema"),
+                )
                 run_ids.append(run_id)
                 child_session_id = _required_text(value, "childSessionId")
                 marked = conn.execute(
@@ -204,11 +241,19 @@ class AgentDelegationStore:
                     """
                     INSERT INTO agent_subagent_runs(
                         id, batch_id, child_session_id, template_id, template_version,
+                        logical_node_id, attempt_id, attempt_number,
+                        predecessor_attempt_id, owner_run_id, parent_run_id, depth,
                         ordinal, task_text, expected_output, acceptance_criteria_json,
-                        output_schema_json, todo_task, todo_phase, state,
+                        output_schema_json, launch_digest_json,
+                        todo_task, todo_phase, state,
                         max_turns, max_tool_calls, max_total_tokens, max_duration_ms,
                         max_output_chars, created_at_ms, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?
+                    )
                     """,
                     (
                         run_id,
@@ -216,6 +261,13 @@ class AgentDelegationStore:
                         child_session_id,
                         _required_text(value, "templateId"),
                         _required_text(value, "templateVersion"),
+                        node_id,
+                        attempt_id,
+                        attempt_number,
+                        predecessor_attempt_id,
+                        owner_run_id,
+                        parent_run_id,
+                        depth,
                         ordinal,
                         _bounded_task(value.get("task")),
                         _delegation_expected_output(value.get("expectedOutput")),
@@ -227,6 +279,12 @@ class AgentDelegationStore:
                         ),
                         json.dumps(
                             _delegation_output_schema(value.get("outputSchema")),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        json.dumps(
+                            launch_digest,
                             ensure_ascii=False,
                             sort_keys=True,
                             separators=(",", ":"),
@@ -248,6 +306,9 @@ class AgentDelegationStore:
                     event_type="queued",
                     payload={
                         "batchId": batch_id,
+                        "nodeId": node_id,
+                        "attemptId": attempt_id,
+                        "attemptNumber": attempt_number,
                         "ordinal": ordinal,
                         "todoTask": _bounded_text(value.get("todoTask"), maximum=240),
                         "todoPhase": _bounded_text(
@@ -288,6 +349,143 @@ class AgentDelegationStore:
         if row is None:
             raise KeyError(run_id)
         return self._decorate_run(_run_payload(row))
+
+    def submit_structured_output(
+        self,
+        *,
+        child_session_id: str,
+        value: object,
+        tool_call_id: str,
+        validated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Validate and persist the one terminal contract value for a child run."""
+
+        call_id = _bounded_text(tool_call_id, maximum=240, required=True)
+        try:
+            encoded = json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("structured output must contain only JSON values") from exc
+        if len(encoded.encode("utf-8")) > 256 * 1024:
+            raise ValueError("structured output exceeds 256 KiB")
+        now = _timestamp(validated_at_ms)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, state, output_schema_json, structured_output_json,
+                       structured_output_tool_call_id
+                FROM agent_subagent_runs
+                WHERE child_session_id = ?
+                """,
+                (child_session_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("structured_output is only available to a delegated child")
+            run_id = str(row["id"])
+            schema = _json_mapping(row["output_schema_json"])
+            if not schema:
+                raise ValueError("this delegated task did not request structured output")
+            existing_call_id = str(row["structured_output_tool_call_id"] or "")
+            if existing_call_id:
+                existing = str(row["structured_output_json"] or "{}")
+                if existing_call_id == call_id and existing == encoded:
+                    return self.get_run(run_id)
+                raise ValueError("structured output was already submitted for this attempt")
+            if str(row["state"]) not in _ACTIVE_STATES:
+                raise ValueError("the delegated attempt is no longer accepting output")
+            validation_message = ""
+            try:
+                validate_contract(value, schema)
+            except ValueError as exc:
+                validation_message = _bounded_text(
+                    f"delivery contract validation failed: {exc}",
+                    maximum=500,
+                )
+                conn.execute(
+                    """
+                    UPDATE agent_subagent_runs
+                    SET structured_output_error = ?, updated_at_ms = ?
+                    WHERE id = ? AND structured_output_tool_call_id = ''
+                    """,
+                    (validation_message, now, run_id),
+                )
+                self._append_event_conn(
+                    conn,
+                    run_id=run_id,
+                    event_type="progress",
+                    payload={
+                        "contractStatus": "invalid",
+                        "error": validation_message,
+                    },
+                    created_at_ms=now,
+                )
+            if not validation_message:
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_subagent_runs
+                    SET structured_output_json = ?, structured_output_tool_call_id = ?,
+                        structured_output_error = '', structured_output_validated_at_ms = ?,
+                        updated_at_ms = ?
+                    WHERE id = ? AND structured_output_tool_call_id = ''
+                    """,
+                    (encoded, call_id, now, now, run_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("structured output was already submitted for this attempt")
+                self._append_event_conn(
+                    conn,
+                    run_id=run_id,
+                    event_type="progress",
+                    payload={"contractStatus": "valid", "toolCallId": call_id},
+                    created_at_ms=now,
+                )
+        self._sync_run_artifact(run_id)
+        if validation_message:
+            raise ValueError(validation_message)
+        return self.get_run(run_id)
+
+    def finalize_structured_output_contract(
+        self,
+        run_id: str,
+        *,
+        completed_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Turn a missing terminal tool call into a local delivery-contract failure."""
+
+        now = _timestamp(completed_at_ms)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT output_schema_json, structured_output_tool_call_id,
+                       structured_output_error
+                FROM agent_subagent_runs WHERE id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            schema = _json_mapping(row["output_schema_json"])
+            if schema and not str(row["structured_output_tool_call_id"] or ""):
+                message = str(row["structured_output_error"] or "").strip()
+                if not message:
+                    message = (
+                        "delivery contract validation failed: structured_output "
+                        "was not submitted before the turn completed"
+                    )
+                conn.execute(
+                    """
+                    UPDATE agent_subagent_runs
+                    SET structured_output_error = ?, updated_at_ms = ?
+                    WHERE id = ? AND structured_output_tool_call_id = ''
+                    """,
+                    (_bounded_text(message, maximum=500), now, run_id),
+                )
+        self._sync_run_artifact(run_id)
+        return self.get_run(run_id)
 
     def run_for_child_session(self, session_id: str) -> dict[str, object] | None:
         with self._connect() as conn:
@@ -1029,12 +1227,25 @@ class AgentDelegationStore:
         now = _timestamp(updated_at_ms)
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT batch_id, state FROM agent_subagent_runs WHERE id = ?",
+                """
+                SELECT batch_id, state, output_schema_json,
+                       structured_output_tool_call_id, structured_output_error
+                FROM agent_subagent_runs WHERE id = ?
+                """,
                 (run_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(run_id)
-            if str(row["state"]) not in {"failed", "aborted", "timed_out"}:
+            contract_invalid = (
+                str(row["state"]) == "completed"
+                and bool(_json_mapping(row["output_schema_json"]))
+                and not str(row["structured_output_tool_call_id"] or "")
+                and bool(str(row["structured_output_error"] or "").strip())
+            )
+            if (
+                str(row["state"]) not in {"failed", "aborted", "timed_out"}
+                and not contract_invalid
+            ):
                 raise ValueError("only a stopped delegated run can resume")
             conn.execute(
                 """
@@ -1079,7 +1290,12 @@ class AgentDelegationStore:
             return ""
         payload = _json_mapping(row["payload_json"])
         return _bounded_text(
-            payload.get("message") or "继续之前中断的任务。先核对已有进度，再完成剩余工作。",
+            payload.get("message")
+            or (
+                "继续之前中断的任务。已完成节点不可重跑；先核对已有进度与原 Tool "
+                "回执。只读操作可以继续；写文件、命令或外部操作若回执不能证明结果，"
+                "停止并报告 blocker，不得盲目重放。"
+            ),
             maximum=4_000,
         )
 
@@ -1581,6 +1797,13 @@ class AgentDelegationCoordinator:
             raise ValueError("archived sessions cannot delegate tasks")
         wait = payload.get("wait") is not False
         tasks = _delegation_tasks(payload)
+        retry_lineage = (
+            dict(payload.get("_retryLineage"))
+            if isinstance(payload.get("_retryLineage"), Mapping)
+            else {}
+        )
+        if retry_lineage and len(tasks) != 1:
+            raise ValueError("a retry lineage may contain exactly one delegated task")
         todo_task, todo_phase = self._todo_task_link(
             parent_session_id,
             payload,
@@ -1590,17 +1813,30 @@ class AgentDelegationCoordinator:
         if context_mode not in {"fresh", "fork"}:
             raise ValueError("contextMode must be fresh or fork")
         parent_runtime_binding = self.sessions.runtime_binding(parent_session_id)
-        native_forks = (
-            _validated_native_fork_sessions(
-                payload.get("_runtimeContext"),
+        runtime_context = payload.get("_runtimeContext")
+        control_fork_entry_id = _bounded_text(
+            payload.get("forkEntryId"),
+            maximum=240,
+        )
+        if context_mode == "fork" and isinstance(runtime_context, Mapping):
+            native_forks = _validated_native_fork_sessions(
+                runtime_context,
                 parent_runtime_binding=parent_runtime_binding,
                 session_dir=self._runtime_driver_factory.session_root,
                 agent_dir=self._runtime_driver_factory.working_root,
                 expected_count=len(tasks),
             )
-            if context_mode == "fork"
-            else []
-        )
+        elif context_mode == "fork" and control_fork_entry_id:
+            if self._runtime_provider is None:
+                raise ValueError("fork context requires the active Pi runtime")
+            native_forks = []
+        elif context_mode == "fork":
+            # Keep Tool-originated forks fail-closed: only Pi may provide the
+            # native transcript receipt. The Control Center instead supplies
+            # an entry anchor and asks the product-owned Runtime to create it.
+            raise ValueError("fork context must be created by the active Pi runtime")
+        else:
+            native_forks = []
         depth = int(parent_run.get("depth") or 0) + 1 if parent_run else 1
         parent_run_id = str(parent_run.get("id") or "") if parent_run else ""
         if parent_run is not None:
@@ -1646,10 +1882,20 @@ class AgentDelegationCoordinator:
                 raise ValueError(
                     f"agent template {template.template_id} does not support {context_mode} context"
                 )
+            requested_access = str(task.get("access") or "inherit")
+            if (
+                requested_access != "inherit"
+                and requested_access not in template.allowed_access
+            ):
+                raise ValueError(
+                    f"agent template {template.template_id} does not allow {requested_access} access"
+                )
             templates.append(template)
 
         created_sessions: list[dict[str, object]] = []
         prepared_files: list[Path] = []
+        control_fork_runtime: AgentRuntimeDriver | None = None
+        resolved_control_fork_entry_id = control_fork_entry_id
         with self._lock:
             if self._closed:
                 raise ValueError("delegation runtime is closed")
@@ -1663,9 +1909,19 @@ class AgentDelegationCoordinator:
                     writable = access == "write"
                     if writable and str(parent.get("mode") or "") != "coordinator":
                         raise ValueError("writable delegated tasks require a coordinator parent")
+                    if writable and (
+                        parent_profile == "subagent-readonly-v1"
+                        or parent_execution_mode == "read_only"
+                    ):
+                        raise ValueError("the parent Session cannot grant write access")
                     parent_roots = [str(value) for value in parent.get("workspaceRoots") or []]
                     requested_roots = [str(value) for value in task.get("workspaceRoots") or []]
-                    child_roots = (requested_roots or parent_roots) if writable else []
+                    # Workspace roots describe where a delegated Session may
+                    # resolve paths, not whether it may mutate them. Read-only
+                    # templates still need the parent's roots for browse,
+                    # search and read tools; their assistant mode, read-only
+                    # execution policy and tool profile remain the write gate.
+                    child_roots = requested_roots or parent_roots
                     if writable and not child_roots:
                         raise ValueError("writable delegated tasks require an authorized workspace")
                     if requested_roots:
@@ -1725,6 +1981,9 @@ class AgentDelegationCoordinator:
                         workspace_roots=child_roots,
                         session_kind="subagent_runtime",
                     )
+                    # Register immediately so a later policy/fork failure can
+                    # always remove the half-prepared internal Session.
+                    created_sessions.append(child)
                     requested_tools = (
                         list(
                             dict.fromkeys(
@@ -1763,22 +2022,87 @@ class AgentDelegationCoordinator:
                             workspace_roots=child_roots,
                         )
                     if context_mode == "fork":
-                        branch = native_forks[ordinal]
-                        prepared_files.append(branch["path"])
-                        child = self.sessions.bind_runtime_session(
-                            str(child["id"]),
-                            driver_id="managed-pi",
-                            runtime_kind="pi_rpc",
-                            external_session_id=str(branch["sessionId"]),
-                            transcript_ref=str(branch["path"]),
-                            branch_anchor=str(branch["parentLeafId"]),
-                            binding_state="prepared",
-                        )
-                    created_sessions.append(child)
+                        if native_forks:
+                            branch = native_forks[ordinal]
+                            prepared_files.append(branch["path"])
+                            child = self.sessions.bind_runtime_session(
+                                str(child["id"]),
+                                driver_id="managed-pi",
+                                runtime_kind="pi_rpc",
+                                external_session_id=str(branch["sessionId"]),
+                                transcript_ref=str(branch["path"]),
+                                branch_anchor=str(branch["parentLeafId"]),
+                                binding_state="prepared",
+                            )
+                        else:
+                            control_fork_runtime = control_fork_runtime or self._runtime_provider()  # type: ignore[misc]
+                            if resolved_control_fork_entry_id == "latest":
+                                candidates = control_fork_runtime.fork_candidates(
+                                    parent_session_id
+                                )
+                                if not candidates:
+                                    raise ValueError(
+                                        "the parent Session has no Pi context that can be forked"
+                                    )
+                                resolved_control_fork_entry_id = str(
+                                    candidates[-1].get("entryId") or ""
+                                ).strip()
+                            if not resolved_control_fork_entry_id:
+                                raise ValueError("forkEntryId does not resolve to a Pi anchor")
+                            control_fork_runtime.fork_session(
+                                parent_session_id,
+                                str(child["id"]),
+                                entry_id=resolved_control_fork_entry_id,
+                            )
+                            child = self.sessions.get(str(child["id"]))
+                            branch_file = str(child.get("sessionFile") or "").strip()
+                            if branch_file:
+                                prepared_files.append(
+                                    Path(branch_file).expanduser().resolve(strict=False)
+                                )
+                    created_sessions[-1] = child
 
                 run_specs = []
                 for child, task, template in zip(created_sessions, tasks, templates, strict=True):
                     budget = template.budget
+                    try:
+                        runtime_manifests = (
+                            list(self._tool_manifest_provider(child))
+                            if self._tool_manifest_provider is not None
+                            else []
+                        )
+                    except Exception:
+                        runtime_manifests = []
+                    tool_names = [
+                        str(item.get("name") or "").strip()
+                        for item in runtime_manifests
+                        if isinstance(item, Mapping)
+                        and str(item.get("name") or "").strip()
+                    ]
+                    if task.get("outputSchema") and "structured_output" not in tool_names:
+                        tool_names.append("structured_output")
+                    workspace_access = (
+                        "write"
+                        if str(task.get("access") or "inherit") == "write"
+                        else "read_only"
+                    )
+                    launch_digest = {
+                        "modelProfile": str(child.get("modelProfile") or "pi/default"),
+                        "thinkingLevel": str(child.get("thinkingLevel") or ""),
+                        "toolProfileVersion": str(
+                            child.get("toolProfileVersion") or "subagent-readonly-v1"
+                        ),
+                        "toolAllowlistMode": str(
+                            child.get("toolAllowlistMode") or "profile"
+                        ),
+                        "tools": tool_names,
+                        "piSkillsEnabled": bool(child.get("piSkillsEnabled", False)),
+                        "codexSkillsEnabled": bool(
+                            child.get("codexSkillsEnabled", False)
+                        ),
+                        "workspaceAccess": workspace_access,
+                        "workspaceRootCount": len(child.get("workspaceRoots") or []),
+                    }
                     run_specs.append(
                         {
                             "childSessionId": child["id"],
@@ -1790,6 +2114,17 @@ class AgentDelegationCoordinator:
                             "task": task["task"],
                             "todoTask": todo_task,
                             "todoPhase": todo_phase,
+                            "nodeId": retry_lineage.get("nodeId"),
+                            "attemptId": f"subagent-attempt:{uuid.uuid4()}",
+                            "attemptNumber": retry_lineage.get("attemptNumber", 1),
+                            "predecessorAttemptId": retry_lineage.get(
+                                "predecessorAttemptId",
+                                "",
+                            ),
+                            "ownerRunId": retry_lineage.get("ownerRunId")
+                            or parent_run_id
+                            or f"session:{parent_session_id}",
+                            "launchDigest": launch_digest,
                             "maxTurns": budget.max_turns,
                             "maxToolCalls": budget.max_tool_calls,
                             "maxTotalTokens": budget.max_total_tokens,
@@ -1809,6 +2144,13 @@ class AgentDelegationCoordinator:
                 )
             except Exception:
                 for child in reversed(created_sessions):
+                    if control_fork_runtime is not None:
+                        close_session = getattr(control_fork_runtime, "close_session", None)
+                        if callable(close_session):
+                            try:
+                                close_session(str(child["id"]))
+                            except Exception:
+                                pass
                     try:
                         self.sessions.delete(str(child["id"]))
                     except Exception:
@@ -1847,6 +2189,7 @@ class AgentDelegationCoordinator:
                     limit=_bounded_int(payload.get("limit") or 20, minimum=1, maximum=100),
                 ),
                 "peers": self._peer_runs(parent_session_id),
+                "tree": self._run_tree(parent_session_id),
             }
         try:
             batch = self.store.get_batch(identifier)
@@ -1859,6 +2202,65 @@ class AgentDelegationCoordinator:
             "ok": True,
             "batch": batch,
             "peers": self._peer_runs(parent_session_id),
+            "tree": self._run_tree(parent_session_id),
+        }
+
+    def structured_output_manifest(
+        self,
+        child_session_id: str,
+    ) -> dict[str, object] | None:
+        """Expose a terminal, schema-bound tool only to its delegated child."""
+
+        run = self.store.run_for_child_session(child_session_id)
+        if run is None or str(run.get("state") or "") not in _ACTIVE_STATES:
+            return None
+        output_schema = run.get("outputSchema")
+        if not isinstance(output_schema, Mapping) or not output_schema:
+            return None
+        return {
+            "name": "structured_output",
+            "description": (
+                "Submit the delegated task's final value. The value must match the "
+                "assigned JSON Schema; a valid submission ends this child turn."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["value"],
+                "properties": {"value": dict(output_schema)},
+            },
+            "when": ["The delegated task is complete and its final value is ready."],
+            "notFor": ["Progress updates", "prose-only final answers"],
+            "input": "One value matching the delegated output contract.",
+            "output": "A durable contract receipt that terminates this child turn.",
+            "does": "Validates and stores exactly one final value for this attempt.",
+            "risk": "R0",
+            "alwaysAvailable": True,
+        }
+
+    def submit_structured_output(
+        self,
+        child_session_id: str,
+        args: Mapping[str, object],
+        *,
+        tool_call_id: str,
+    ) -> dict[str, object]:
+        if set(args) != {"value"}:
+            raise ValueError("structured_output requires exactly one value field")
+        run = self.store.submit_structured_output(
+            child_session_id=child_session_id,
+            value=args["value"],
+            tool_call_id=tool_call_id,
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-subagent-structured-output.v1",
+            "summary": "结构化交付合同有效；本次子 Agent 已结束。",
+            "runId": run["id"],
+            "nodeId": run["nodeId"],
+            "attemptId": run["attemptId"],
+            "contractStatus": "valid",
+            "structuredOutput": run.get("structuredOutput"),
+            "terminate": True,
         }
 
     def call(self, caller_session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
@@ -1941,6 +2343,49 @@ class AgentDelegationCoordinator:
                 )
         return peers
 
+    def _run_tree(self, session_id: str) -> dict[str, object]:
+        root_session_id = self._delegation_root_session_id(session_id)
+        runs: list[dict[str, object]] = []
+        for batch in self.store.list_batches(limit=200):
+            if (
+                self._delegation_root_session_id(str(batch["parentSessionId"]))
+                != root_session_id
+            ):
+                continue
+            runs.extend(dict(run) for run in batch["runs"])
+        runs.sort(
+            key=lambda run: (
+                int(run.get("createdAtMs") or 0),
+                int(run.get("ordinal") or 0),
+                str(run.get("id") or ""),
+            )
+        )
+        node_by_run_id = {
+            str(run["id"]): {"run": run, "children": []}
+            for run in runs
+        }
+        roots: list[dict[str, object]] = []
+        for run in runs:
+            node = node_by_run_id[str(run["id"])]
+            parent_run_id = str(run.get("parentRunId") or "")
+            parent = node_by_run_id.get(parent_run_id)
+            if parent is None:
+                roots.append(node)
+            else:
+                children = parent["children"]
+                if isinstance(children, list):
+                    children.append(node)
+        return {
+            "schemaVersion": "rag-ime.agent-subagent-tree.v1",
+            "rootSessionId": root_session_id,
+            "nodeCount": len(runs),
+            "maxDepth": max(
+                (int(run.get("depth") or 1) for run in runs),
+                default=0,
+            ),
+            "roots": roots,
+        }
+
     def _assert_delegation_tree_access(
         self,
         session_id: str,
@@ -1968,7 +2413,7 @@ class AgentDelegationCoordinator:
     def console(self, parent_session_id: str, run_id: str) -> dict[str, object]:
         run = self.store.get_run(run_id)
         batch = self.store.get_batch(str(run["batchId"]))
-        _assert_batch_owner(batch, parent_session_id)
+        self._assert_delegation_tree_access(parent_session_id, batch)
         with self._lock:
             active = self._active_runs.get(run_id)
 
@@ -2017,6 +2462,8 @@ class AgentDelegationCoordinator:
         except KeyError:
             child_available = False
         state = str(run["state"])
+        retry_available, retry_reason = self._retry_capability(run)
+        contract_invalid = _run_contract_invalid(run)
         capabilities = {
             "steer": {
                 "available": active is not None and state == "running",
@@ -2027,15 +2474,19 @@ class AgentDelegationCoordinator:
                 "reason": "" if state in _ACTIVE_STATES else "任务已结束",
             },
             "retry": {
-                "available": state in _TERMINAL_STATES,
-                "reason": "" if state in _TERMINAL_STATES else "等待当前任务结束",
+                "available": retry_available,
+                "reason": retry_reason,
             },
             "resume": {
-                "available": state in {"failed", "aborted", "timed_out"} and child_available,
+                "available": (
+                    state in {"failed", "aborted", "timed_out"} or contract_invalid
+                ) and child_available,
                 "reason": (
                     ""
-                    if state in {"failed", "aborted", "timed_out"} and child_available
-                    else "仅保留了会话的中断任务可继续"
+                    if (
+                        state in {"failed", "aborted", "timed_out"} or contract_invalid
+                    ) and child_available
+                    else "仅保留会话的中断任务或合同无效交付可继续"
                 ),
             },
             "reply": {
@@ -2091,6 +2542,17 @@ class AgentDelegationCoordinator:
         )
         message = _bounded_text(payload.get("message"), maximum=4_000)
         inbox_id = _bounded_text(payload.get("inboxId"), maximum=180)
+        if action == "resume" and not message:
+            message = (
+                "修复上一次结构化交付，使 value 严格满足原 JSON Schema；"
+                "不要重做已经完成的工作。完成后重新调用 structured_output。"
+                if _run_contract_invalid(self.store.get_run(run_id))
+                else (
+                    "继续之前中断的任务。已完成节点不可重跑；先核对已有进度与"
+                    "原 Tool 回执。只读操作可以继续；写文件、命令或外部操作若"
+                    "回执不能证明结果，停止并报告 blocker，不得盲目重放。"
+                )
+            )
         command_payload = {
             "action": action,
             "message": message,
@@ -2162,23 +2624,14 @@ class AgentDelegationCoordinator:
                 result = self.abort(parent_session_id, {"runId": run_id})
             elif action == "retry":
                 current = self.store.get_run(run_id)
+                retry_available, retry_reason = self._retry_capability(current)
+                if not retry_available:
+                    raise ValueError(retry_reason)
                 result = self.delegate(
                     parent_session_id,
-                    {
-                        "agent": current["templateId"],
-                        "version": current["templateVersion"],
-                        "expectedOutput": current["expectedOutput"],
-                        "acceptanceCriteria": current["acceptanceCriteria"],
-                        "outputSchema": current.get("outputSchema", {}),
-                        "task": current["task"],
-                        "todoTask": current["todoTask"],
-                        "contextMode": "fresh",
-                        "wait": False,
-                    },
+                    self._retry_payload(current),
                 )
             elif action == "resume":
-                if not message:
-                    message = "继续之前中断的任务。先核对已有进度，再完成剩余工作。"
                 with self._lock:
                     previous_thread = self._threads.get(run_id)
                 if (
@@ -2207,6 +2660,79 @@ class AgentDelegationCoordinator:
                 error=_bounded_text(exc, maximum=500),
             )
             raise
+
+    def _retry_payload(self, run: Mapping[str, object]) -> dict[str, object]:
+        launch = (
+            dict(run.get("launchDigest"))
+            if isinstance(run.get("launchDigest"), Mapping)
+            else {}
+        )
+        tools = [
+            str(item)
+            for item in launch.get("tools", [])
+            if isinstance(item, str) and item != "structured_output"
+        ]
+        workspace_access = str(launch.get("workspaceAccess") or "none")
+        payload: dict[str, object] = {
+            "agent": run["templateId"],
+            "version": run["templateVersion"],
+            "expectedOutput": run["expectedOutput"],
+            "acceptanceCriteria": run["acceptanceCriteria"],
+            "outputSchema": run.get("outputSchema", {}),
+            "task": run["task"],
+            "todoTask": run["todoTask"],
+            "contextMode": "fresh",
+            "wait": False,
+            "piSkillsEnabled": bool(launch.get("piSkillsEnabled", False)),
+            "codexSkillsEnabled": bool(launch.get("codexSkillsEnabled", False)),
+            "access": (
+                workspace_access
+                if workspace_access in {"read_only", "write"}
+                else "inherit"
+            ),
+            "_retryLineage": {
+                "nodeId": run["nodeId"],
+                "attemptNumber": int(run["attemptNumber"]) + 1,
+                "predecessorAttemptId": run["attemptId"],
+                "ownerRunId": run["ownerRunId"],
+            },
+        }
+        model_profile = str(launch.get("modelProfile") or "").strip()
+        if model_profile:
+            payload["modelProfile"] = model_profile
+        thinking_level = str(launch.get("thinkingLevel") or "").strip()
+        if thinking_level:
+            payload["thinkingLevel"] = thinking_level
+        if tools:
+            payload["allowedTools"] = tools
+        return payload
+
+    def _retry_capability(
+        self,
+        run: Mapping[str, object],
+    ) -> tuple[bool, str]:
+        state = str(run.get("state") or "")
+        if state not in _TERMINAL_STATES:
+            return False, "等待当前任务结束"
+        result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
+        failure_class = str(result.get("failureClass") or "")
+        usage = run.get("usage") if isinstance(run.get("usage"), Mapping) else {}
+        if failure_class != "transient_runtime":
+            return False, "工具、逻辑、合同或验收错误必须显式修复或改派"
+        if int(usage.get("toolCount") or 0) > 0:
+            return False, "已有 Tool 调用；必须先核对原回执，不能盲目重试"
+        if int(run.get("attemptNumber") or 1) >= 2:
+            return False, "此节点已用完唯一一次有界重试"
+        predecessor_attempt_id = str(run.get("attemptId") or "")
+        for batch in self.store.list_batches(limit=200):
+            for candidate in batch.get("runs", []):
+                if (
+                    isinstance(candidate, Mapping)
+                    and str(candidate.get("predecessorAttemptId") or "")
+                    == predecessor_attempt_id
+                ):
+                    return False, "唯一一次有界重试已经排队"
+        return True, ""
 
     def _active_run(self, run_id: str) -> _ActiveDelegatedRun:
         with self._lock:
@@ -2832,11 +3358,30 @@ class AgentDelegationCoordinator:
                     state = "failed"
                     error = terminal_error
                 elif completed:
+                    run = self.store.finalize_structured_output_contract(run_id)
+                    contract = (
+                        dict(run.get("contract"))
+                        if isinstance(run.get("contract"), Mapping)
+                        else {}
+                    )
+                    contract_status = str(
+                        contract.get("status") or "not_requested"
+                    )
                     state = "completed"
                     summary = _message_summary(
                         last_message,
                         int(run["budget"]["maxOutputChars"]),
                     )
+                    if not summary and contract_status == "valid":
+                        summary = _bounded_text(
+                            json.dumps(
+                                run.get("structuredOutput"),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            maximum=int(run["budget"]["maxOutputChars"]),
+                        )
                     try:
                         conversation = runtime.messages(child_session_id)
                     except Exception:
@@ -2851,8 +3396,21 @@ class AgentDelegationCoordinator:
                         # normally.  Only the parent/Room quality gate can
                         # decide whether its claims satisfy the parent task.
                         "deliveryStatus": "returned",
-                        "verificationStatus": "unverified",
+                        "contractStatus": contract_status,
+                        "contractError": str(contract.get("error") or ""),
+                        "verificationStatus": (
+                            "contract_valid"
+                            if contract_status == "valid"
+                            else "contract_invalid"
+                            if contract_status == "invalid"
+                            else "unverified"
+                        ),
                         "authority": "evidence_only",
+                        **(
+                            {"structuredOutput": run.get("structuredOutput")}
+                            if contract_status == "valid"
+                            else {}
+                        ),
                     }
                 else:
                     error = "delegated Pi turn ended without a terminal event"
@@ -2874,6 +3432,27 @@ class AgentDelegationCoordinator:
                 pass
             with self._lock:
                 self._active_runs.pop(run_id, None)
+        failure_class = _subagent_failure_class(error) if state == "failed" else ""
+        observed_tool_count = base_tool_count + len(tool_ids)
+        retry_safe = failure_class == "transient_runtime" and observed_tool_count == 0
+        auto_retry = (
+            state == "failed"
+            and retry_safe
+            and int(run.get("attemptNumber") or 1) < 2
+        )
+        if state == "failed":
+            result = {
+                **result,
+                "deliveryStatus": "not_returned",
+                "verificationStatus": "not_applicable",
+                "failureClass": failure_class,
+                "retryPolicy": {
+                    "automaticEligible": retry_safe,
+                    "automaticLimit": 1,
+                    "automaticScheduled": auto_retry,
+                    "requiresReceiptReview": observed_tool_count > 0,
+                },
+            }
         try:
             final = self.store.finish_run(
                 run_id,
@@ -2895,12 +3474,31 @@ class AgentDelegationCoordinator:
                 self.store.get_batch(str(batch["id"])),
                 final,
                 (
-                    "子 Agent 已返回结果，待主持会话核验"
+                    "子 Agent 已返回，但交付合同无效；等待修复或改派"
+                    if state == "completed"
+                    and str(
+                        dict(final.get("result") or {}).get("contractStatus")
+                    )
+                    == "invalid"
+                    else "子 Agent 已返回结果，待主持会话核验"
                     if state == "completed"
                     else "子 Agent 已停止"
                 ),
             )
             self._record_retained_child_session(run_id, child_session_id)
+            if auto_retry:
+                try:
+                    self.delegate(
+                        parent_session_id,
+                        self._retry_payload(final),
+                    )
+                except Exception:
+                    self._publish_parent_progress(
+                        parent_session_id,
+                        terminal_batch,
+                        final,
+                        "瞬时错误的一次自动重试未能排队；请检查运行环境后手动重试或改派",
+                    )
             self.collect_expired_sessions(force=False)
         finally:
             with self._lock:
@@ -3161,9 +3759,9 @@ class AgentDelegationCoordinator:
                 raise ValueError("todoTask does not belong to the parent Session Todo")
             return "", ""
         if not requested:
-            raise ValueError(
-                "todoTask is required when delegating from a Session with Todo tasks"
-            )
+            # Todo is optional navigation metadata, never delegation authority.
+            # Only an explicit todoTask may link a child run into that document.
+            return "", ""
         linked = next(
             (
                 (phase_name, item)
@@ -3483,6 +4081,10 @@ def _subagent_prompt(run: Mapping[str, object], batch: Mapping[str, object]) -> 
             sort_keys=True,
             separators=(",", ":"),
         )
+        + (
+            "\n完成后必须调用 structured_output 工具，并把最终值放在 value 字段；"
+            "不要用普通文本代替。Schema 校验失败时修正 value 后再次调用。"
+        )
         if isinstance(output_schema, Mapping) and output_schema
         else ""
     )
@@ -3546,6 +4148,58 @@ def _message_summary(message: Mapping[str, object], maximum: int) -> str:
     return "\n\n".join(parts)[:maximum]
 
 
+def _subagent_failure_class(error: object) -> str:
+    message = str(error or "").strip().lower()
+    if not message:
+        return "logic_error"
+    if any(marker in message for marker in ("budget exceeded", "acceptance", "schema", "contract")):
+        return "logic_error"
+    if any(
+        marker in message
+        for marker in (
+            "tool call",
+            "tool failed",
+            "tool error",
+            "outside the authorized workspace",
+            "path is outside",
+            "permission denied",
+        )
+    ):
+        return "tool_error"
+    if any(
+        marker in message
+        for marker in (
+            "connection refused",
+            "connection reset",
+            "network is unreachable",
+            "econnrefused",
+            "econnreset",
+            "socket hang up",
+            "broken pipe",
+            "failed to start",
+            "failed to spawn",
+            "process exited",
+            "runtime process",
+            "runtime unavailable",
+            "transport closed",
+        )
+    ):
+        return "transient_runtime"
+    return "logic_error"
+
+
+def _run_contract_invalid(run: Mapping[str, object]) -> bool:
+    contract = run.get("contract")
+    result = run.get("result")
+    return (
+        isinstance(contract, Mapping)
+        and str(contract.get("status") or "") == "invalid"
+    ) or (
+        isinstance(result, Mapping)
+        and str(result.get("contractStatus") or "") == "invalid"
+    )
+
+
 def _safe_runtime_artifact_payload(event: AgentEventEnvelope) -> dict[str, object]:
     if event.event_type == "text_delta":
         return {"characterCount": len(str(event.payload.get("delta") or ""))}
@@ -3600,6 +4254,13 @@ def _json_mapping(value: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return dict(payload) if isinstance(payload, Mapping) else {}
+
+
+def _json_value(value: object) -> object:
+    try:
+        return json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
 
 
 def _control_payload(row: sqlite3.Row) -> dict[str, object]:
@@ -3694,9 +4355,43 @@ def _batch_payload(row: sqlite3.Row, runs: Sequence[sqlite3.Row]) -> dict[str, o
 
 def _run_payload(row: sqlite3.Row) -> dict[str, object]:
     result = json.loads(str(row["result_json"] or "{}"))
+    output_schema = _json_mapping(row["output_schema_json"])
+    launch_digest = _json_mapping(row["launch_digest_json"])
+    if not launch_digest:
+        launch_digest = _delegation_launch_digest(
+            {},
+            context_mode="fresh",
+            template_id=str(row["template_id"]),
+            template_version=str(row["template_version"]),
+            output_schema=output_schema,
+        )
+    structured_output = _json_value(row["structured_output_json"])
+    contract_call_id = str(row["structured_output_tool_call_id"] or "")
+    contract_error = str(row["structured_output_error"] or "")
+    if not output_schema:
+        contract_status = "not_requested"
+    elif contract_call_id:
+        contract_status = "valid"
+    elif contract_error:
+        contract_status = "invalid"
+    else:
+        contract_status = "pending"
+    run_id = str(row["id"])
+    parent_run_id = str(row["parent_run_id"] or "")
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-subagent-run.v1",
-        "id": str(row["id"]),
+        "id": run_id,
+        "nodeId": str(row["logical_node_id"] or run_id),
+        "attemptId": str(row["attempt_id"] or f"{run_id}:attempt:1"),
+        "attemptNumber": max(1, int(row["attempt_number"] or 1)),
+        "predecessorAttemptId": str(row["predecessor_attempt_id"] or ""),
+        "ownerRunId": str(
+            row["owner_run_id"]
+            or parent_run_id
+            or f"batch:{row['batch_id']}"
+        ),
+        "parentRunId": parent_run_id,
+        "depth": max(1, min(2, int(row["depth"] or 1))),
         "batchId": str(row["batch_id"]),
         "childSessionId": str(row["child_session_id"]),
         "todoTask": str(row["todo_task"] or ""),
@@ -3711,6 +4406,17 @@ def _run_payload(row: sqlite3.Row) -> dict[str, object]:
             for item in json.loads(str(row["acceptance_criteria_json"] or "[]"))
             if isinstance(item, str)
         ],
+        "launchDigest": launch_digest,
+        "contract": {
+            "status": contract_status,
+            "error": contract_error,
+            "toolCallId": contract_call_id,
+            "validatedAtMs": (
+                int(row["structured_output_validated_at_ms"])
+                if row["structured_output_validated_at_ms"] is not None
+                else None
+            ),
+        },
         "state": str(row["state"]),
         "budget": {
             "maxTurns": int(row["max_turns"]),
@@ -3744,9 +4450,10 @@ def _run_payload(row: sqlite3.Row) -> dict[str, object]:
             else None
         ),
     }
-    output_schema = _json_mapping(row["output_schema_json"])
     if output_schema:
         payload["outputSchema"] = output_schema
+    if contract_call_id:
+        payload["structuredOutput"] = structured_output
     validate_contract(payload, "agent-subagent-run.v1.json")
     return payload
 
@@ -3816,7 +4523,159 @@ def _delegation_output_schema(value: object) -> dict[str, object]:
         raise ValueError("delegated outputSchema must contain only JSON values") from exc
     if len(encoded.encode("utf-8")) > 16 * 1024:
         raise ValueError("delegated outputSchema exceeds 16 KiB")
+    _validate_delegation_json_schema(schema, path="outputSchema", depth=0, nodes=[0])
     return schema
+
+
+def _validate_delegation_json_schema(
+    value: object,
+    *,
+    path: str,
+    depth: int,
+    nodes: list[int],
+) -> None:
+    """Validate provider-facing schema nodes before a child Session is launched."""
+
+    if depth > 32:
+        raise ValueError(f"delegated {path} exceeds the maximum schema depth")
+    nodes[0] += 1
+    if nodes[0] > 512:
+        raise ValueError("delegated outputSchema contains too many schema nodes")
+    if isinstance(value, bool):
+        return
+    if not isinstance(value, Mapping):
+        raise ValueError(f"delegated {path} must be a JSON Schema object or boolean")
+
+    schema_types = {"null", "boolean", "object", "array", "number", "integer", "string"}
+    declared_type = value.get("type")
+    if declared_type is not None:
+        if isinstance(declared_type, str):
+            declared_types = [declared_type]
+        elif isinstance(declared_type, list) and declared_type and all(
+            isinstance(item, str) for item in declared_type
+        ):
+            declared_types = declared_type
+        else:
+            raise ValueError(f"delegated {path}.type must be a string or string array")
+        if any(item not in schema_types for item in declared_types):
+            raise ValueError(f"delegated {path}.type contains an unsupported JSON type")
+
+    for keyword in ("properties", "patternProperties", "$defs", "dependentSchemas"):
+        children = value.get(keyword)
+        if children is None:
+            continue
+        if not isinstance(children, Mapping):
+            raise ValueError(f"delegated {path}.{keyword} must be an object")
+        for key, child in children.items():
+            _validate_delegation_json_schema(
+                child,
+                path=f"{path}.{keyword}.{key}",
+                depth=depth + 1,
+                nodes=nodes,
+            )
+
+    for keyword in (
+        "items",
+        "additionalProperties",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+    ):
+        child = value.get(keyword)
+        if child is None:
+            continue
+        _validate_delegation_json_schema(
+            child,
+            path=f"{path}.{keyword}",
+            depth=depth + 1,
+            nodes=nodes,
+        )
+
+    for keyword in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        children = value.get(keyword)
+        if children is None:
+            continue
+        if not isinstance(children, list) or not children:
+            raise ValueError(f"delegated {path}.{keyword} must be a non-empty schema array")
+        for index, child in enumerate(children):
+            _validate_delegation_json_schema(
+                child,
+                path=f"{path}.{keyword}[{index}]",
+                depth=depth + 1,
+                nodes=nodes,
+            )
+
+
+def _delegation_launch_digest(
+    value: object,
+    *,
+    context_mode: str,
+    template_id: str,
+    template_version: str,
+    output_schema: object,
+) -> dict[str, object]:
+    source = dict(value) if isinstance(value, Mapping) else {}
+    schema = _delegation_output_schema(output_schema)
+    encoded_schema = json.dumps(
+        schema,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    tools = list(
+        dict.fromkeys(
+            _bounded_text(item, maximum=128, required=True)
+            for item in source.get("tools", [])
+            if isinstance(item, str) and item.strip()
+        )
+    )[:256]
+    access = str(source.get("workspaceAccess") or "none")
+    if access not in {"none", "read_only", "write"}:
+        access = "none"
+    allowlist_mode = str(source.get("toolAllowlistMode") or "profile")
+    if allowlist_mode not in {"profile", "explicit"}:
+        allowlist_mode = "profile"
+    digest = {
+        "schemaVersion": "rag-ime.agent-subagent-launch-digest.v1",
+        "contextMode": context_mode,
+        "templateId": template_id,
+        "templateVersion": template_version,
+        "modelProfile": _bounded_text(
+            source.get("modelProfile") or "pi/default",
+            maximum=240,
+            required=True,
+        ),
+        "thinkingLevel": _bounded_text(
+            source.get("thinkingLevel"),
+            maximum=24,
+        ),
+        "toolProfileVersion": _bounded_text(
+            source.get("toolProfileVersion") or "subagent-readonly-v1",
+            maximum=120,
+            required=True,
+        ),
+        "toolAllowlistMode": allowlist_mode,
+        "tools": tools,
+        "piSkillsEnabled": bool(source.get("piSkillsEnabled", False)),
+        "codexSkillsEnabled": bool(source.get("codexSkillsEnabled", False)),
+        "workspaceAccess": access,
+        "workspaceRootCount": _bounded_int(
+            source.get("workspaceRootCount") or 0,
+            minimum=0,
+            maximum=4,
+        ),
+        "outputContract": {
+            "required": bool(schema),
+            "schemaSha256": hashlib.sha256(encoded_schema).hexdigest() if schema else "",
+        },
+        "extensionRuntime": "pi_host_managed",
+    }
+    return digest
 
 
 def _bounded_int(value: object, *, minimum: int, maximum: int) -> int:

@@ -46,7 +46,7 @@ class AgentApprovalApplicationService:
         self,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        session_id = _required_text(payload, "sessionId")
+        session_id = str(payload.get("sessionId") or "").strip()
         requested_state = str(payload.get("state") or "").strip()
         requested_limit = _integer(
             payload.get("limit"),

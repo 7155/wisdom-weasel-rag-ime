@@ -48,7 +48,7 @@ describe('AgentComposer macOS input methods', () => {
     expect(composer).toHaveAttribute('autocomplete', 'off');
     expect(composer).toHaveAttribute('autocorrect', 'off');
     expect(composer).toHaveAttribute('spellcheck', 'false');
-    expect(composer).not.toHaveAttribute('aria-expanded');
+    expect(composer).toHaveAttribute('aria-expanded', 'false');
 
     fireEvent.compositionStart(composer);
     fireEvent.change(composer, { target: { value: 'jinr' } });

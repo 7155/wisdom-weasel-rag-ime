@@ -85,6 +85,8 @@ export const previewTemplates: AgentTemplateV1[] = [
     summary: '读取资料、对照证据并产出带来源的研究摘要。',
     contextModes: ['fresh', 'fork'],
     toolProfileVersion: 'subagent-readonly-v1',
+    defaultAccess: 'read_only',
+    allowedAccess: ['read_only'],
     budget: {
       maxDepth: 1,
       maxTurns: 0,
@@ -101,8 +103,10 @@ export const previewTemplates: AgentTemplateV1[] = [
     version: '1',
     displayName: '执行者',
     summary: '在受控工作区内执行明确任务，交付产物和可审计回执。',
-    contextModes: ['fork'],
+    contextModes: ['fresh', 'fork'],
     toolProfileVersion: 'subagent-worker-v1',
+    defaultAccess: 'write',
+    allowedAccess: ['read_only', 'write'],
     budget: {
       maxDepth: 2,
       maxTurns: 0,
@@ -119,8 +123,10 @@ export const previewTemplates: AgentTemplateV1[] = [
     version: '1',
     displayName: '审阅者',
     summary: '检查风险、遗漏和验收证据，不修改产品实现。',
-    contextModes: ['fresh'],
+    contextModes: ['fresh', 'fork'],
     toolProfileVersion: 'subagent-readonly-v1',
+    defaultAccess: 'read_only',
+    allowedAccess: ['read_only'],
     budget: {
       maxDepth: 1,
       maxTurns: 0,

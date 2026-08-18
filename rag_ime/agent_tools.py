@@ -337,20 +337,43 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "session_search",
+        "domain": "agents",
+        "displayName": "Session 历史锚点",
+        "description": "搜索持久化 Session 的受控摘要并返回可导航锚点，不读取或复制原始 transcript",
+        "when": (
+            "任务需要定位以前在哪个 Session 或 turn 讨论过某个主题",
+            "需要恢复历史上下文，但不应把整段旧对话灌入当前上下文",
+        ),
+        "notFor": (
+            "用户偏好和长期事实应使用 memory",
+            "项目文档和来源证据应使用 knowledge 或 work_documents",
+            "读取原始工具输出、私密思维或机器本地 transcript 路径",
+        ),
+        "input": "可选查询、返回条数，以及是否包含已归档 Session",
+        "output": "Session/turn 的受控摘要、证据引用与控制中心跳转锚点",
+        "does": "在持久化 Session 索引中做只读检索，不创建 Todo 或过程文档。",
+        "operations": ("search",),
+        "alwaysAvailable": True,
+        "resultPresentation": "citation",
+    },
+    {
         "id": "room_partner",
         "domain": "agents",
         "displayName": "Room 伙伴协作",
-        "description": "查看当前 Room 伙伴、委派一个有界子任务并接收其 Session 结果，或发布公开进展与最终结果",
+        "description": "查看当前 Room 伙伴、委派一个有界子任务、在同一阶段并行委派 2–3 个独立任务，或发布公开进展与最终结果",
         "when": (
             "当前 Session 正在 Room 中主持任务，且需要另一位正式伙伴独立处理有界子任务",
+            "同一阶段有 2–3 个无依赖、不重叠的工作轨道，需要真实并行启动",
         ),
         "notFor": (
             "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
+            "存在前后依赖、写入范围重叠，或需要上一阶段交付才能开始的任务",
         ),
-        "input": "list；或目标伙伴、任务、预期输出与验收条件；或带 kind 的公开进展/最终结果",
-        "output": "伙伴模型/状态、子 Session 终态结果或类型明确的公开回执",
-        "does": "把正式 Room Partner 作为普通 Pi Session 调用，并将子事件归入当前 Room turn。",
-        "operations": ("list", "delegate", "post"),
+        "input": "list；单个目标伙伴及交付合同；或阶段名称与 2–3 个独立任务；或带 kind 的公开进展/最终结果",
+        "output": "伙伴模型/状态、单子 Session 终态结果、带 waveId 的有序并行回执，或类型明确的公开回执",
+        "does": "把正式 Room Partner 作为普通 Pi Session 调用；delegate_batch 会一次保留并并发启动同阶段伙伴，子事件共用同一 waveId 并归入当前 Room turn。",
+        "operations": ("list", "delegate", "delegate_batch", "post"),
         # Availability is still Room-bound below. Once available, this is the
         # only formal Partner primitive and must be callable directly.
         "alwaysAvailable": True,
@@ -736,7 +759,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
         "properties": {
             "op": {
                 "type": "string",
-                "enum": ["list", "delegate", "post"],
+                "enum": ["list", "delegate", "delegate_batch", "post"],
             },
             "targetParticipantId": {
                 "type": "string",
@@ -767,6 +790,56 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "minimum": 5,
                 "maximum": 300,
             },
+            "phase": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "description": "同一并行波次的可读阶段名称。",
+            },
+            "tasks": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 3,
+                "description": "必须互不依赖且目标伙伴不重复的同阶段任务。",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "targetParticipantId",
+                        "task",
+                        "expectedOutput",
+                        "acceptanceCriteria",
+                    ],
+                    "properties": {
+                        "targetParticipantId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240,
+                            "description": "必须原样使用 list 返回的 participantId。",
+                        },
+                        "task": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8_000,
+                        },
+                        "expectedOutput": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1_200,
+                        },
+                        "acceptanceCriteria": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 320,
+                            },
+                        },
+                    },
+                },
+            },
             "content": {
                 "type": "string",
                 "minLength": 1,
@@ -794,6 +867,10 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             {
                 "required": ["op", "targetParticipantId", "task"],
                 "properties": {"op": {"const": "delegate"}},
+            },
+            {
+                "required": ["op", "phase", "tasks"],
+                "properties": {"op": {"const": "delegate_batch"}},
             },
             {
                 "required": ["op", "content"],
@@ -1380,6 +1457,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
 _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "query": {"type": "string", "maxLength": 500},
     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+    "includeArchived": {"type": "boolean"},
     "workDocument": {
         "type": "object",
         "additionalProperties": False,
@@ -1558,7 +1636,15 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "targetRoleId": {"type": "string", "maxLength": 120},
     "targetRoleVersion": {"type": "string", "maxLength": 40},
     "planningTaskId": {"type": "string", "maxLength": 240},
-    "todoTask": {"type": "string", "minLength": 1, "maxLength": 240},
+    "todoTask": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "description": (
+            "可选 Todo 导航链接；未传入时子 Agent 仍必须独立启动，"
+            "不得因 Session 存在 Todo 而拒绝或自动绑定。"
+        ),
+    },
     "wakeAtMs": {"type": "integer", "minimum": 1},
     "timezone": {"type": "string", "maxLength": 80},
     "recurrenceKind": {"type": "string", "enum": ["once", "daily", "weekly"]},
@@ -1585,6 +1671,10 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "minLength": 3,
         "maxLength": 240,
         "pattern": r"^[^\s/]+/[^\s/]+$",
+        "description": (
+            "默认省略并继承父 Session；只有用户明确选择，或已从 Pi 确认的模型目录"
+            "取得完全一致的 provider/model 时才传入，禁止猜测 Provider 或模型名。"
+        ),
     },
     "thinkingLevel": {
         "type": "string",
@@ -1599,7 +1689,11 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "minItems": 1,
         "maxItems": 64,
         "uniqueItems": True,
-        "items": {"type": "string", "minLength": 1, "maxLength": 120},
+        "items": {"type": "string", "enum": list(CONTROL_TOOL_IDS)},
+        "description": (
+            "只接受 PAW 产品工具 ID；Pi 原生 tool_search/read/grep/find/bash "
+            "由子 Session 运行时按能力投影提供，不写入这里。"
+        ),
     },
     "piSkillsEnabled": {"type": "boolean"},
     "codexSkillsEnabled": {"type": "boolean"},
@@ -1648,6 +1742,9 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
                     "minLength": 3,
                     "maxLength": 240,
                     "pattern": r"^[^\s/]+/[^\s/]+$",
+                    "description": (
+                        "默认省略并继承父 Session；仅接受用户明确选择或 Pi 目录确认的精确值。"
+                    ),
                 },
                 "thinkingLevel": {
                     "type": "string",
@@ -1662,7 +1759,10 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
                     "minItems": 1,
                     "maxItems": 64,
                     "uniqueItems": True,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "items": {"type": "string", "enum": list(CONTROL_TOOL_IDS)},
+                    "description": (
+                        "只接受 PAW 产品工具 ID；Pi 原生工具由运行时能力投影提供。"
+                    ),
                 },
                 "piSkillsEnabled": {"type": "boolean"},
                 "codexSkillsEnabled": {"type": "boolean"},
@@ -1677,6 +1777,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         },
     },
     "contextMode": {"type": "string", "enum": ["fresh", "fork"]},
+    "forkEntryId": {"type": "string", "minLength": 1, "maxLength": 240},
     "wait": {"type": "boolean"},
     "batchId": {"type": "string", "minLength": 1, "maxLength": 240},
     "artifactId": {"type": "string", "minLength": 1, "maxLength": 240},
@@ -1778,6 +1879,16 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]
         "enum": ["current", "historical", "change"],
         "description": "默认 current；只有显式选择 historical/change 才读取历史或变更。",
     },
+    ("session_search", "query"): {
+        "type": "string",
+        "maxLength": 240,
+        "description": "可省略；空查询返回最近的持久化 Session 锚点。",
+    },
+    ("session_search", "limit"): {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+    },
     ("workspace_search", "query"): {
         "type": "string",
         "minLength": 1,
@@ -1823,9 +1934,12 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "configuration": ("query", "limit", "action", "sourceApprovalId"),
     "agents": (
         "agent", "version", "task", "tasks", "expectedOutput",
-        "acceptanceCriteria", "outputSchema", "todoTask", "contextMode", "wait",
+        "acceptanceCriteria", "outputSchema", "modelProfile", "thinkingLevel",
+        "access", "allowedTools", "piSkillsEnabled", "codexSkillsEnabled",
+        "workspaceRoots", "todoTask", "contextMode", "forkEntryId", "wait",
         "runId", "batchId", "targetRunId", "message", "artifactId", "limit",
     ),
+    "session_search": ("query", "limit", "includeArchived"),
     "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
     "browser": (
         "deviceId", "tabId", "refId", "url", "text", "clear", "direction",
@@ -2498,6 +2612,15 @@ class ControlToolGateway:
                     for projection in projections
                 ]
             manifests.append(item)
+        structured_manifest_provider = getattr(
+            self.delegation,
+            "structured_output_manifest",
+            None,
+        )
+        if callable(structured_manifest_provider) and session_id:
+            structured_manifest = structured_manifest_provider(session_id)
+            if isinstance(structured_manifest, Mapping):
+                manifests.append(dict(structured_manifest))
         return manifests
 
     def _manifest_items(
@@ -2652,6 +2775,16 @@ class ControlToolGateway:
         tool = str(request["tool"])
         raw_args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
         tool, args = _normalize_runtime_tool_call(tool, raw_args)
+        if tool == "structured_output":
+            submit = getattr(self.delegation, "submit_structured_output", None)
+            if not callable(submit):
+                raise ValueError("structured output is unavailable")
+            result = submit(
+                session_id,
+                args,
+                tool_call_id=str(request["toolCallId"]),
+            )
+            return {"ok": True, "result": dict(result)}
         if tool == "room_partner":
             if self.collaboration is None:
                 raise ValueError("managed room collaboration is unavailable")
@@ -2747,6 +2880,7 @@ class ControlToolGateway:
             "runtime": self._runtime,
             "configuration": self._configuration,
             "agents": self._agents,
+            "session_search": self._session_search,
             "browser": self._browser,
             "todo": self._todo,
             "agent_goal": self._agent_goal,
@@ -3142,6 +3276,36 @@ class ControlToolGateway:
         if operation == "abort":
             return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
         raise ValueError("unsupported agents operation")
+
+    def _session_search(
+        self,
+        operation: str,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        if operation != "search":
+            raise ValueError("unsupported session_search operation")
+        requester_session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        anchors = self.sessions.search_history(
+            query=_bounded_text(args.get("query"), maximum=240),
+            requester_session_id=requester_session_id,
+            include_archived=args.get("includeArchived") is True,
+            limit=_bounded_int(args.get("limit"), default=12, minimum=1, maximum=50),
+        )
+        query = _bounded_text(args.get("query"), maximum=240)
+        return {
+            "summary": (
+                f"找到 {len(anchors)} 个 Session 历史锚点"
+                if query
+                else f"返回最近 {len(anchors)} 个 Session 历史锚点"
+            ),
+            "presentationKind": "session_history",
+            "query": query,
+            "anchors": anchors,
+            "privacyBoundary": (
+                "仅包含标题、已脱敏摘要与导航引用；不返回原始 transcript、"
+                "工具输出、绝对路径或私密思维。"
+            ),
+        }
 
     def _todo(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
@@ -9311,11 +9475,14 @@ def _tool_profile_allows(
                 "abort",
             }
         ),
+        "session_search": frozenset({"search"}),
         # Formal Room delegation does not widen the workspace policy: the
         # target remains an ordinary participant Session carrying the same
         # read-only execution mode. Public progress/result posts are Room
         # projection receipts, not source mutations.
-        "room_partner": frozenset({"list", "delegate", "post"}),
+        "room_partner": frozenset(
+            {"list", "delegate", "delegate_batch", "post"}
+        ),
         "agent_schedule": frozenset({"list", "runs"}),
         "todo": frozenset(
             {"init", "start", "done", "drop", "append", "view", "rm"}
@@ -9593,7 +9760,30 @@ def _runtime_tool_parameter_schema(
             "properties": {"op": {"const": operation}},
         }
         alternatives = _RUNTIME_TOOL_REQUIRED_ALTERNATIVES.get((tool_id, operation), ())
-        if alternatives:
+        if tool_id == "agents" and operation == "delegate":
+            single_task_fields = (
+                "agent", "version", "task", "expectedOutput",
+                "acceptanceCriteria", "outputSchema", "modelProfile",
+                "thinkingLevel", "access", "allowedTools", "piSkillsEnabled",
+                "codexSkillsEnabled", "workspaceRoots",
+            )
+            branch["oneOf"] = [
+                {
+                    "required": [
+                        "agent", "task", "expectedOutput", "acceptanceCriteria",
+                    ],
+                    "not": {"required": ["tasks"]},
+                },
+                {
+                    "required": ["tasks"],
+                    "not": {
+                        "anyOf": [
+                            {"required": [field]} for field in single_task_fields
+                        ]
+                    },
+                },
+            ]
+        elif alternatives:
             branch["anyOf"] = [
                 {"required": list(alternative)} for alternative in alternatives
             ]

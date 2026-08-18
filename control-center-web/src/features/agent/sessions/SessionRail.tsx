@@ -68,11 +68,15 @@ export const SessionRail = forwardRef<HTMLElement, {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [collapsedRoots, setCollapsedRoots] = useState<ReadonlySet<string>>(new Set());
-  const groups = useMemo(() => projectGroups(sessions, query), [query, sessions]);
-  const projectCount = new Set(sessions.map((session) => primaryRoot(session)).filter(Boolean)).size;
+  const visibleSessions = useMemo(
+    () => sessions.filter((session) => !session.roomParticipant),
+    [sessions],
+  );
+  const groups = useMemo(() => projectGroups(visibleSessions, query), [query, visibleSessions]);
+  const projectCount = new Set(visibleSessions.map((session) => primaryRoot(session)).filter(Boolean)).size;
   const selectedRoot = useMemo(
-    () => primaryRoot(sessions.find((session) => session.id === selectedId)),
-    [selectedId, sessions],
+    () => primaryRoot(visibleSessions.find((session) => session.id === selectedId)),
+    [selectedId, visibleSessions],
   );
   useEffect(() => {
     setCollapsedRoots((current) => {
@@ -104,7 +108,7 @@ export const SessionRail = forwardRef<HTMLElement, {
       tabIndex={-1}
     >
       <header>
-        <div><strong>对话</strong><small>{sessions.length} 段对话 · {projectCount} 个项目</small></div>
+        <div><strong>对话</strong><small>{visibleSessions.length} 段对话 · {projectCount} 个项目</small></div>
         <span className="agent-session-rail__actions">
           <IconButton label="新建对话" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
           <Menu>
@@ -125,7 +129,7 @@ export const SessionRail = forwardRef<HTMLElement, {
         <input aria-label="搜索对话或项目" data-drawer-autofocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话或项目" />
       </label>
       <div className="agent-session-list" aria-busy={loading || undefined}>
-        {loading && sessions.length === 0 ? (
+        {loading && visibleSessions.length === 0 ? (
           <SessionRailState
             icon={<LoaderCircle className="ui-spin" size={18} />}
             message="正在读取这台设备上的对话"
@@ -141,14 +145,14 @@ export const SessionRail = forwardRef<HTMLElement, {
             title="对话列表暂时不可用"
           />
         ) : null}
-        {!loading && !error && sessions.length === 0 ? (
+        {!loading && !error && visibleSessions.length === 0 ? (
           <SessionRailState
             action={<Button size="small" onClick={onCreate}>新建第一段对话</Button>}
             message={showArchived ? '当前没有可显示的对话。' : '新建一段对话开始工作；历史归档不会混入当前列表。'}
             title="还没有对话"
           />
         ) : null}
-        {!loading && !error && sessions.length > 0 && groups.length === 0 ? (
+        {!loading && !error && visibleSessions.length > 0 && groups.length === 0 ? (
           <SessionRailState
             action={<Button size="small" variant="quiet" onClick={() => setQuery('')}>清除搜索</Button>}
             message="换一个关键词，或清除搜索查看全部对话。"

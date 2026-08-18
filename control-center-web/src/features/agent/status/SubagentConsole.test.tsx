@@ -31,7 +31,9 @@ describe('SubagentConsoleDialog', () => {
 
     await user.click(screen.getByRole('button', { name: '打开控制台' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('执行 Agent控制台')).toBeVisible();
+    expect(
+      within(dialog).getByRole('heading', { name: '执行 Agent控制台 · 尝试 1' }),
+    ).toBeVisible();
     expect(within(dialog).getByText('1.2K')).toBeVisible();
     for (const label of ['概览', '对话', '活动', '收件箱']) {
       expect(within(dialog).getByRole('tab', { name: label })).toHaveAttribute('aria-label', label);
@@ -187,6 +189,13 @@ function sampleRun(): AgentSubagentRunV1 {
   return {
     schemaVersion: 'rag-ime.agent-subagent-run.v1',
     id: 'subagent-run:test',
+    nodeId: 'subagent-node:test',
+    attemptId: 'subagent-attempt:test:1',
+    attemptNumber: 1,
+    predecessorAttemptId: '',
+    ownerRunId: 'session:parent',
+    parentRunId: '',
+    depth: 1,
     batchId: 'subagent-batch:test',
     childSessionId: 'session-child',
     todoTask: '核对子 Agent 证据',
@@ -197,6 +206,29 @@ function sampleRun(): AgentSubagentRunV1 {
     task: '实现子 Agent 控制台',
     expectedOutput: '可核对的控制台实现结果',
     acceptanceCriteria: ['控制状态与回执可见'],
+    launchDigest: {
+      schemaVersion: 'rag-ime.agent-subagent-launch-digest.v1',
+      contextMode: 'fresh',
+      templateId: 'worker',
+      templateVersion: '1',
+      modelProfile: 'openai-codex/gpt-5.6-sol',
+      thinkingLevel: 'high',
+      toolProfileVersion: 'subagent-readonly-v1',
+      toolAllowlistMode: 'profile',
+      tools: ['knowledge', 'structured_output'],
+      piSkillsEnabled: false,
+      codexSkillsEnabled: false,
+      workspaceAccess: 'read_only',
+      workspaceRootCount: 1,
+      outputContract: { required: true, schemaSha256: 'a'.repeat(64) },
+      extensionRuntime: 'pi_host_managed',
+    },
+    contract: {
+      status: 'pending',
+      error: '',
+      toolCallId: '',
+      validatedAtMs: null,
+    },
     state: 'running',
     budget: {
       maxTurns: 0,

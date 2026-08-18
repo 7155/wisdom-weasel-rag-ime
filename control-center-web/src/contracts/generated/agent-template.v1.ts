@@ -16,6 +16,12 @@ export interface AgentTemplateV1 {
    */
   contextModes: ['fresh' | 'fork'] | ['fresh' | 'fork', 'fresh' | 'fork'];
   toolProfileVersion: 'subagent-readonly-v1' | 'subagent-worker-v1';
+  defaultAccess: 'read_only' | 'write';
+  /**
+   * @minItems 1
+   * @maxItems 2
+   */
+  allowedAccess: ['read_only' | 'write'] | ['read_only' | 'write', 'read_only' | 'write'];
   budget: {
     maxDepth: number;
     maxTurns: number;

@@ -28,6 +28,8 @@ import {
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import './SubagentConsole.css';
 import {
+  INVALID_SUBAGENT_CONTRACT_NOTICE,
+  isContractInvalid,
   isUnverifiedReturn,
   subagentPresentationState,
   subagentStateLabel,
@@ -153,7 +155,9 @@ export function SubagentConsoleDialog({
         <DialogHeader className="subagent-console__header">
           <span className="subagent-console__agent"><Bot size={18} /></span>
           <span>
-            <DialogTitle>{templateLabel(current.templateId)}控制台</DialogTitle>
+            <DialogTitle>
+              {templateLabel(current.templateId)}控制台 · 尝试 {current.attemptNumber}
+            </DialogTitle>
             <DialogDescription>{current.task}</DialogDescription>
           </span>
           <RunState run={current} />
@@ -221,6 +225,12 @@ function Overview({
   onControl: (action: ControlAction, options?: { message?: string }) => Promise<void>;
 }) {
   const { run, capabilities } = snapshot;
+  const launch = record(run.launchDigest);
+  const outputContract = record(launch.outputContract);
+  const contract = record(run.contract);
+  const tools = Array.isArray(launch.tools)
+    ? launch.tools.filter((item): item is string => typeof item === 'string')
+    : [];
   return (
     <div className="subagent-console__overview">
       <section>
@@ -229,6 +239,12 @@ function Overview({
         {isUnverifiedReturn(run) ? (
           <p className="subagent-console__verification" role="note">
             {UNVERIFIED_SUBAGENT_NOTICE}
+          </p>
+        ) : null}
+        {isContractInvalid(run) ? (
+          <p className="subagent-console__verification" data-contract-invalid role="alert">
+            {INVALID_SUBAGENT_CONTRACT_NOTICE}
+            {text(contract.error) ? <small>{text(contract.error)}</small> : null}
           </p>
         ) : null}
         {run.error ? <small className="subagent-console__failure">{run.error}</small> : null}
@@ -283,6 +299,25 @@ function Overview({
           </Button>
         </div>
         {!capabilities.steer.available ? <small>{capabilities.steer.reason}</small> : null}
+      </section>
+      <section className="subagent-console__launch-digest">
+        <header>
+          <strong>Launch Digest</strong>
+          <small>本次尝试的实际启动合同</small>
+        </header>
+        <dl>
+          <div><dt>节点 / 尝试</dt><dd>{shortIdentity(run.nodeId)} · #{run.attemptNumber}</dd></div>
+          <div><dt>上下文</dt><dd>{text(launch.contextMode) === 'fork' ? 'Fork' : 'Fresh'}</dd></div>
+          <div><dt>模型 / 思考</dt><dd>{text(launch.modelProfile) || '默认'} · {text(launch.thinkingLevel) || '默认'}</dd></div>
+          <div><dt>工具策略</dt><dd>{text(launch.toolProfileVersion) || '未记录'} · {tools.length} 项</dd></div>
+          <div><dt>工作区</dt><dd>{workspaceAccessLabel(text(launch.workspaceAccess))} · {Number(launch.workspaceRootCount) || 0} 个根目录</dd></div>
+          <div><dt>输出合同</dt><dd>{outputContract.required === true ? contractStatusLabel(text(contract.status)) : '未要求'}</dd></div>
+        </dl>
+        {tools.length ? (
+          <div className="subagent-console__tool-chips" aria-label="本次尝试可用工具">
+            {tools.map((tool) => <code key={tool}>{tool}</code>)}
+          </div>
+        ) : <small>本次启动没有披露产品工具。</small>}
       </section>
     </div>
   );
@@ -428,6 +463,19 @@ function RunState({ run }: { run: AgentSubagentRunV1 }) {
         ? <CircleDashed size={13} />
         : <TriangleAlert size={13} />;
   return <span className="subagent-console__state" data-state={state}>{icon}{subagentStateLabel(run, 'console')}</span>;
+}
+
+function shortIdentity(value: string): string {
+  const suffix = value.split(':').at(-1) || value;
+  return suffix.length > 10 ? suffix.slice(0, 8) : suffix;
+}
+
+function workspaceAccessLabel(value: string): string {
+  return ({ none: '无工作区', read_only: '只读', write: '可写' } as Record<string, string>)[value] ?? '无工作区';
+}
+
+function contractStatusLabel(value: string): string {
+  return ({ pending: '等待结构化交付', valid: 'Schema 已通过', invalid: '合同无效' } as Record<string, string>)[value] ?? '未提交';
 }
 
 function Metric({ label, value, emphasis = false }: { label: string; value: string | number; emphasis?: boolean }) {

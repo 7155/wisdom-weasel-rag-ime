@@ -77,6 +77,7 @@ export type AgentProductCommandName =
   | 'tools'
   | 'session'
   | 'status'
+  | 'subagents'
   | 'settings'
   | 'hotkeys'
   | 'stop'

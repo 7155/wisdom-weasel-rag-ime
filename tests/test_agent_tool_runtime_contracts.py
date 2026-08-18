@@ -286,10 +286,11 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         # targets. Only the compact cards enter the prompt, so keep their
         # tighter Provider-facing budget independent from this transport
         # envelope.
-        # Goal lifecycle, fixed Todo policy, and explicit Knowledge rerank
-        # controls add full internal schemas; their compact public cards remain
-        # covered by the independent Provider-facing limit.
-        self.assertLess(len(encoded), 52_000)
+        # Goal lifecycle, fixed Todo policy, explicit Knowledge rerank,
+        # Session navigation, and delegated-runtime capability fences add full
+        # internal schemas. Their compact public cards remain covered by the
+        # independent Provider-facing limit.
+        self.assertLess(len(encoded), 56_000)
         self.assertLess(len(public_encoded), 12_000)
         self.assertTrue(all("profile" not in manifest for manifest in manifests))
         self.assertTrue(
@@ -382,20 +383,44 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
 
         delegate = self._branch(tools["agents"], "delegate")
         self.assertEqual(
-            delegate["anyOf"],
+            delegate["oneOf"],
             [
-                {"required": ["tasks"]},
                 {
                     "required": [
                         "agent",
                         "task",
                         "expectedOutput",
                         "acceptanceCriteria",
-                    ]
+                    ],
+                    "not": {"required": ["tasks"]},
+                },
+                {
+                    "required": ["tasks"],
+                    "not": {
+                        "anyOf": [
+                            {"required": [field]}
+                            for field in (
+                                "agent",
+                                "version",
+                                "task",
+                                "expectedOutput",
+                                "acceptanceCriteria",
+                                "outputSchema",
+                                "modelProfile",
+                                "thinkingLevel",
+                                "access",
+                                "allowedTools",
+                                "piSkillsEnabled",
+                                "codexSkillsEnabled",
+                                "workspaceRoots",
+                            )
+                        ]
+                    },
                 },
             ],
         )
         self.assertEqual(delegate["properties"]["todoTask"]["maxLength"], 240)
+        self.assertIn("可选 Todo 导航链接", delegate["properties"]["todoTask"]["description"])
         todo_branches = {
             branch["properties"]["op"]["const"]: branch
             for branch in tools["todo"]["parameters"]["oneOf"]

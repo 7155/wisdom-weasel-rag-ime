@@ -14,6 +14,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "runtime",
     "configuration",
     "agents",
+    "session_search",
     "room_partner",
     "browser",
     "todo",

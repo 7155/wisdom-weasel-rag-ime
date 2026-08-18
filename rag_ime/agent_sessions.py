@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Iterable, Mapping
+from urllib.parse import quote
 
 from .agent_approval_model import pending_model_arbitration
 from .agent_role_identity import (
@@ -92,8 +93,6 @@ class AgentSessionStore:
         if not normalized_model_profile:
             raise ValueError("agent session model profile must not be empty")
         roots = _workspace_roots(workspace_roots)
-        if mode == "assistant" and roots:
-            raise ValueError("assistant sessions cannot carry workspace roots")
         normalized_kind = str(session_kind or "").strip()
         if normalized_kind not in {"conversation", "subagent_runtime"}:
             raise ValueError("agent session kind must be conversation or subagent_runtime")
@@ -119,6 +118,13 @@ class AgentSessionStore:
         )
         if normalized_tool_profile not in SUPPORTED_AGENT_TOOL_PROFILES:
             raise ValueError("unsupported Agent tool profile")
+        read_only_subagent = (
+            normalized_kind == "subagent_runtime"
+            and mode == "assistant"
+            and normalized_tool_profile == "subagent-readonly-v1"
+        )
+        if mode == "assistant" and roots and not read_only_subagent:
+            raise ValueError("assistant conversation sessions cannot carry workspace roots")
         if normalized_execution_mode in {
             WORKSPACE_MANAGED_EXECUTION_MODE,
             FULL_TRUST_EXECUTION_MODE,
@@ -268,6 +274,145 @@ class AgentSessionStore:
                 (bounded_limit,),
             ).fetchall()
         return [_session_payload(row, _joined_runtime_binding(row)) for row in rows]
+
+    def search_history(
+        self,
+        *,
+        query: str = "",
+        requester_session_id: str = "",
+        include_archived: bool = False,
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        """Return bounded, content-minimized navigation anchors for Sessions.
+
+        This is deliberately not a transcript reader. It searches only the
+        Session title, the already-redacted last-message preview, and durable
+        runtime-event summaries. The result is enough to navigate to a
+        historical Session/turn without copying raw prompts, Tool output, or
+        machine-local transcript paths into the current model context.
+        """
+
+        normalized_query = " ".join(str(query or "").split())[:240]
+        bounded_limit = max(1, min(int(limit), 50))
+        where = [
+            "s.session_kind = 'conversation'",
+            "s.id NOT IN (SELECT child_session_id FROM agent_subagent_runs)",
+        ]
+        params: list[object] = []
+        if not include_archived:
+            where.append("s.status <> 'archived'")
+        event_match = "1 = 1"
+        if normalized_query:
+            escaped = _like_pattern(normalized_query)
+            like_value = f"%{escaped}%"
+            where.append(
+                """
+                (
+                    s.title LIKE ? ESCAPE '\\'
+                    OR s.last_message_preview LIKE ? ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM agent_runtime_events AS matched
+                        WHERE matched.session_id = s.id
+                          AND matched.redacted_summary LIKE ? ESCAPE '\\'
+                    )
+                )
+                """
+            )
+            params.extend((like_value, like_value, like_value))
+            event_match = "e.redacted_summary LIKE ? ESCAPE '\\'"
+            params.extend((like_value, like_value, like_value))
+        params.append(bounded_limit)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    s.id,
+                    s.title,
+                    s.status,
+                    s.session_mode,
+                    s.created_at_ms,
+                    s.updated_at_ms,
+                    s.message_count,
+                    s.last_message_preview,
+                    COALESCE((
+                        SELECT e.event_id
+                        FROM agent_runtime_events AS e
+                        WHERE e.session_id = s.id AND {event_match}
+                        ORDER BY e.sequence DESC
+                        LIMIT 1
+                    ), '') AS anchor_event_id,
+                    COALESCE((
+                        SELECT e.turn_id
+                        FROM agent_runtime_events AS e
+                        WHERE e.session_id = s.id AND {event_match}
+                        ORDER BY e.sequence DESC
+                        LIMIT 1
+                    ), '') AS anchor_turn_id,
+                    COALESCE((
+                        SELECT e.redacted_summary
+                        FROM agent_runtime_events AS e
+                        WHERE e.session_id = s.id AND {event_match}
+                        ORDER BY e.sequence DESC
+                        LIMIT 1
+                    ), '') AS anchor_summary
+                FROM agent_sessions AS s
+                WHERE {' AND '.join(where)}
+                ORDER BY
+                    CASE WHEN s.id = ? THEN 0 ELSE 1 END,
+                    s.updated_at_ms DESC,
+                    s.id ASC
+                LIMIT ?
+                """,  # noqa: S608 -- clauses are static; values remain bound.
+                (
+                    *params[:-1],
+                    str(requester_session_id or ""),
+                    params[-1],
+                ),
+            ).fetchall()
+
+        anchors: list[dict[str, object]] = []
+        for row in rows:
+            session_id = str(row["id"])
+            event_id = str(row["anchor_event_id"] or "")
+            turn_id = str(row["anchor_turn_id"] or "")
+            event_summary = " ".join(str(row["anchor_summary"] or "").split())[:240]
+            last_preview = " ".join(
+                str(row["last_message_preview"] or "").split()
+            )[:240]
+            preview = event_summary or last_preview
+            if normalized_query and event_summary:
+                match_kind = "runtime_event"
+            elif normalized_query and normalized_query.casefold() in str(row["title"]).casefold():
+                match_kind = "title"
+            elif normalized_query:
+                match_kind = "last_message"
+            else:
+                match_kind = "recent"
+            anchors.append(
+                {
+                    "schemaVersion": "rag-ime.agent-session-anchor.v1",
+                    "sessionId": session_id,
+                    "title": str(row["title"]),
+                    "mode": str(row["session_mode"]),
+                    "status": str(row["status"]),
+                    "messageCount": int(row["message_count"]),
+                    "createdAtMs": int(row["created_at_ms"]),
+                    "updatedAtMs": int(row["updated_at_ms"]),
+                    "matchKind": match_kind,
+                    "preview": preview,
+                    "eventId": event_id,
+                    "turnId": turn_id,
+                    "isCurrentSession": session_id == str(requester_session_id or ""),
+                    "href": f"#/agent?session={_url_query_value(session_id)}",
+                    "evidenceRef": (
+                        f"{session_id}#event:{event_id}"
+                        if event_id
+                        else session_id
+                    ),
+                }
+            )
+        return anchors
 
     def runtime_binding(self, session_id: str) -> dict[str, object] | None:
         self.get(session_id)
@@ -486,7 +631,12 @@ class AgentSessionStore:
         roots = _workspace_roots(
             current.get("workspaceRoots", []) if workspace_roots is None else workspace_roots
         )
-        if normalized_mode == "assistant":
+        read_only_subagent = (
+            str(current.get("sessionKind") or "conversation") == "subagent_runtime"
+            and normalized_mode == "assistant"
+            and str(current.get("toolProfileVersion") or "") == "subagent-readonly-v1"
+        )
+        if normalized_mode == "assistant" and not read_only_subagent:
             roots = []
         shell_policy = (
             "coordinator-per-command-v1"
@@ -644,7 +794,12 @@ class AgentSessionStore:
         roots = _workspace_roots(
             current.get("workspaceRoots", []) if workspace_roots is None else workspace_roots
         )
-        if normalized_mode == "assistant":
+        read_only_subagent = (
+            str(current.get("sessionKind") or "conversation") == "subagent_runtime"
+            and normalized_mode == "assistant"
+            and profile == "subagent-readonly-v1"
+        )
+        if normalized_mode == "assistant" and not read_only_subagent:
             roots = []
         if normalized_execution_mode in {
             WORKSPACE_MANAGED_EXECUTION_MODE,
@@ -2345,12 +2500,14 @@ class AgentSessionStore:
     def list_approvals(
         self,
         *,
-        session_id: str,
+        session_id: str = "",
         state: str = "",
         limit: int = 100,
         now_ms: int | None = None,
     ) -> list[dict[str, object]]:
-        self.get(session_id)
+        normalized_session_id = str(session_id or "").strip()
+        if normalized_session_id:
+            self.get(normalized_session_id)
         allowed_states = {
             "pending",
             "approved",
@@ -2366,24 +2523,41 @@ class AgentSessionStore:
         bounded_limit = max(1, min(int(limit), 500))
         timestamp = _timestamp(now_ms)
         with self._connect() as conn:
-            self._expire_approvals(conn, timestamp, session_id=session_id)
-            if state:
+            self._expire_approvals(conn, timestamp, session_id=normalized_session_id)
+            if normalized_session_id and state:
                 rows = conn.execute(
                     """
                     SELECT * FROM agent_approvals
                     WHERE session_id = ? AND state = ?
                     ORDER BY requested_at_ms DESC LIMIT ?
                     """,
-                    (session_id, state, bounded_limit),
+                    (normalized_session_id, state, bounded_limit),
                 ).fetchall()
-            else:
+            elif normalized_session_id:
                 rows = conn.execute(
                     """
                     SELECT * FROM agent_approvals
                     WHERE session_id = ?
                     ORDER BY requested_at_ms DESC LIMIT ?
                     """,
-                    (session_id, bounded_limit),
+                    (normalized_session_id, bounded_limit),
+                ).fetchall()
+            elif state:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM agent_approvals
+                    WHERE state = ?
+                    ORDER BY requested_at_ms DESC LIMIT ?
+                    """,
+                    (state, bounded_limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM agent_approvals
+                    ORDER BY requested_at_ms DESC LIMIT ?
+                    """,
+                    (bounded_limit,),
                 ).fetchall()
         return [_approval_payload(row) for row in rows]
 
@@ -3486,6 +3660,14 @@ def _runtime_binding_text(
     if len(text) > maximum or "\x00" in text:
         raise ValueError(f"runtime binding {field} is invalid")
     return text
+
+
+def _like_pattern(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _url_query_value(value: str) -> str:
+    return quote(str(value), safe="")
 
 
 def _approval_causal_metadata(

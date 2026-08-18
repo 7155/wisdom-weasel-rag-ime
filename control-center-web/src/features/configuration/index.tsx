@@ -17,7 +17,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
 import {
   configurationMutationPathIds,
@@ -51,12 +51,14 @@ import {
   type PiModelOption,
 } from '@/features/agent/model-catalog-options';
 import { useProductIdentity } from '@/features/identity/product-identity';
+import { SubagentSettingsPanel } from './SubagentSettingsPanel';
 import './configuration.css';
 
 type DraftValue = string | number | boolean;
 
 export function ConfigurationFeature() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const identity = useProductIdentity();
   const queries = useConfigurationQueries();
   const mutationBoundary = useConfigurationMutationBoundary();
@@ -170,6 +172,7 @@ export function ConfigurationFeature() {
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <PiProviderCredentials />
+        <SubagentSettingsPanel highlighted={searchParams.get('section') === 'subagents'} />
         <ManagementSection title="功能设置">
           <nav aria-label="功能设置入口" className="configuration-destinations">
             {settingDestinations.map((destination) => {
@@ -618,7 +621,8 @@ const settingDestinations = [
   { path: '/voice', label: '语音输入', detail: '识别方式、快捷键与热词', icon: Mic2 },
   { path: '/memory', label: '我的记忆', detail: '事实、关系和待确认内容', icon: Database },
   { path: '/knowledge', label: '知识库', detail: '材料、检索与图谱', icon: Library },
-  { path: '/plugins', label: '技能与工具', detail: '伙伴会什么、何时使用和权限边界', icon: PlugZap },
+  { path: '/plugins', label: '插件管理', detail: '技能、工具、扩展与安装状态', icon: PlugZap },
+  { path: '/configuration?section=subagents', label: '子 Agent', detail: '模板、上下文、工具与权限边界', icon: UsersRound },
   { path: '/roles', label: '伙伴', detail: '身份、表达方式和默认模型', icon: Bot },
   { path: '/rooms', label: '多人协作', detail: '伙伴、任务和交接', icon: UsersRound },
 ] as const;

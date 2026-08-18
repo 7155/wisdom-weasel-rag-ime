@@ -85,6 +85,9 @@ for line in sys.stdin:
                                  "manualCompaction": True, "autoCompaction": True,
                                  "branchSummary": True, "bashProcess": True,
                                  "continuationTimer": True}}}})
+    elif method == "health":
+        result(request, {"ok": True, "protocolVersion": "2",
+                         "openSessions": len(sessions), "maxSessions": 4, "modelError": ""})
     elif method == "completion.once":
         sequence += 1
         write({
@@ -3094,7 +3097,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(len(failed), 1)
         self.assertEqual(self.store.get(session_id)["status"], "faulted")
 
-    def test_abort_ack_without_agent_settled_escalates_to_durable_host_tree_kill(self) -> None:
+    def test_abort_timeout_on_responsive_shared_host_is_isolated_to_session(self) -> None:
         session_id = str(self.first["id"])
         accepted = self.runtime.prompt(session_id, "hang-without-settled")
         turn_id = str(accepted["turnId"])
@@ -3111,11 +3114,14 @@ class PiRuntimeV2Tests(unittest.TestCase):
         completed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]
         self.assertEqual(completed[-1].turn_id, turn_id)
         self.assertEqual(completed[-1].payload["status"], "aborted")
-        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout_kill")
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "abort_timeout_isolated",
+        )
         _wait_until(
             lambda: any(
                 item.event_type == "status_changed"
-                and item.payload.get("escalated") is True
+                and item.payload.get("cancellationPending") is True
                 for item in self.events.replay(session_id)[0]
             ),
             timeout=2.5,
@@ -3124,17 +3130,22 @@ class PiRuntimeV2Tests(unittest.TestCase):
             item
             for item in self.events.replay(session_id)[0]
             if item.event_type == "status_changed"
-            and item.payload.get("escalated") is True
+            and item.payload.get("cancellationPending") is True
         ]
         self.assertEqual(escalations[-1].payload["status"], "idle")
-        self.assertEqual(escalations[-1].payload["runtimeStatus"], "stopping")
-        _wait_until(
-            lambda: self.runtime.runtime_status()["status"] == "faulted"
-            and self.runtime.runtime_status()["runtimeHostKillGate"]["lastKillReceipt"] is not None
+        self.assertEqual(escalations[-1].payload["runtimeStatus"], "ready")
+        self.assertFalse(escalations[-1].payload["escalated"])
+        runtime_status = self.runtime.runtime_status()
+        self.assertEqual(runtime_status["status"], "ready")
+        self.assertIsNone(
+            runtime_status["runtimeHostKillGate"]["lastKillReceipt"]
         )
-        kill_gate = self.runtime.runtime_status()["runtimeHostKillGate"]
-        self.assertEqual(kill_gate["lastKillReceipt"]["requestKind"], "cancel_timeout")
-        self.assertEqual(kill_gate["lastKillReceipt"]["state"], "terminated")
+        client = self.runtime._require_client()
+        self.assertTrue(client.running)
+
+        other_session_id = str(self.second["id"])
+        self.runtime.prompt(other_session_id, "other-session-survives")
+        _wait_until(lambda: self.store.get(other_session_id)["status"] == "idle")
 
         completed_count = len(completed)
         self.runtime._handle_host_event({
@@ -3148,7 +3159,41 @@ class PiRuntimeV2Tests(unittest.TestCase):
             len([item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]),
             completed_count,
         )
-        self.assertNotIn(session_id, self.runtime._states)
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
+
+    def test_abort_timeout_kills_host_only_when_health_lane_is_unresponsive(self) -> None:
+        session_id = str(self.first["id"])
+        accepted = self.runtime.prompt(session_id, "hang-without-settled")
+        turn_id = str(accepted["turnId"])
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def fail_health(method, params=None, *, timeout=None, before_write=None):
+            if method == "health":
+                raise PiRuntimeError("Pi Runtime Host command timed out: health")
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=fail_health):
+            self.runtime.abort(session_id)
+            _wait_until(
+                lambda: self.runtime.runtime_status()["runtimeHostKillGate"]["lastKillReceipt"]
+                is not None,
+                timeout=2.5,
+            )
+
+        completed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_completed" and item.turn_id == turn_id
+        ]
+        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout_kill")
+        kill_gate = self.runtime.runtime_status()["runtimeHostKillGate"]
+        self.assertEqual(kill_gate["lastKillReceipt"]["requestKind"], "cancel_timeout")
 
     def test_abort_accepts_host_idle_receipt_after_turn_already_settled(self) -> None:
         session_id = str(self.first["id"])

@@ -6,8 +6,9 @@ import type {
   PickedFile,
 } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
-import { previewBackgroundJobs, previewModelCatalog, previewPersonas, PREVIEW_REPORT_HTML } from '@/features/agent/preview-data';
+import { previewBackgroundJobs, previewModelCatalog, previewPersonas, previewTemplates, PREVIEW_REPORT_HTML } from '@/features/agent/preview-data';
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
+import type { AgentApprovalV1 } from '@/contracts/generated/agent-approval.v1';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 import { createPreviewHistoryRoutes } from './preview-history-routes';
@@ -53,6 +54,7 @@ export function createPreviewTransport(): MockControlTransport {
   let previewValidatedExtension: Record<string, unknown> = {};
   let previewExtensionChange: Record<string, unknown> = {};
   let previewLifecyclePolicies = previewLifecyclePolicyItems();
+  let previewApprovals = previewApprovalItems();
   const previewTimelineStatuses = new Map<string, string>([
     [new Date().toISOString().slice(0, 10), 'draft'],
   ]);
@@ -278,6 +280,45 @@ export function createPreviewTransport(): MockControlTransport {
         receiptId: `plugin:${stringValue(previewExtensionChange.action) || 'apply'}:preview`,
       },
     };
+  };
+  routes['agent.approvals.list'] = (request: ControlRequest) => {
+    const query = record(request.query);
+    const sessionId = stringValue(query.sessionId);
+    const state = stringValue(query.state);
+    const limit = Math.max(1, Math.min(500, Number(query.limit) || 100));
+    return {
+      ok: true,
+      items: previewApprovals
+        .filter((item) => !sessionId || item.sessionId === sessionId)
+        .filter((item) => !state || item.state === state)
+        .slice(0, limit),
+    };
+  };
+  routes['agent.approval.get'] = (request: ControlRequest) => {
+    const approvalId = stringValue(record(request.params).approvalId);
+    const approval = previewApprovals.find((item) => item.approvalId === approvalId);
+    if (!approval) throw new Error('审批请求不存在或已经释放。');
+    return { ok: true, approval };
+  };
+  routes['agent.approval.decide'] = (request: ControlRequest) => {
+    const approvalId = stringValue(record(request.params).approvalId);
+    const body = record(request.body);
+    const decision = stringValue(body.decision);
+    const index = previewApprovals.findIndex((item) => item.approvalId === approvalId);
+    const approval = previewApprovals[index];
+    if (!approval) throw new Error('审批请求不存在或已经释放。');
+    if (approval.state !== 'pending') throw new Error('审批请求已经处理，当前状态不能再次修改。');
+    if (stringValue(body.payloadSha256) !== approval.payloadSha256) {
+      throw new Error('审批内容已经变化，请刷新后重新核对。');
+    }
+    const updated: AgentApprovalV1 = {
+      ...approval,
+      state: decision === 'approve' ? 'approved' : 'rejected',
+      decidedBy: 'preview-user',
+      decidedAtMs: Date.now(),
+    };
+    previewApprovals = previewApprovals.map((item, itemIndex) => itemIndex === index ? updated : item);
+    return { ok: true, approval: updated };
   };
   routes['agent.lifecycleHooks.get'] = () => ({
     ok: true,
@@ -1309,12 +1350,34 @@ function previewResponse(pathId: ControlPathId): unknown {
       return (request: ControlRequest) => previewCapabilityCatalog(
         stringValue(record(request.query).sessionId),
       );
+    case 'agent.subagents.templates':
+      return {
+        schemaVersion: 'rag-ime.agent-template-list.v1',
+        ok: true,
+        maxParallel: 2,
+        maxDepth: 2,
+        items: previewTemplates,
+      };
+    case 'agent.subagents.create':
+      return (request: ControlRequest) => {
+        const sessionId = stringValue(record(request.body).sessionId) || 'session-preview';
+        return {
+          schemaVersion: 'rag-ime.agent-delegation.v1',
+          ok: true,
+          accepted: true,
+          acceptanceScope: 'delegation_request',
+          waited: false,
+          batch: previewSubagentBatch(sessionId),
+        };
+      };
     case 'agent.subagents.list':
       return (request: ControlRequest) => {
         const sessionId = stringValue(record(request.query).sessionId) || 'session-preview';
+        const batch = previewSubagentBatch(sessionId);
         return {
           ok: true,
-          items: [previewSubagentBatch(sessionId)],
+          items: [batch],
+          tree: previewSubagentTree(batch),
         };
       };
     case 'agent.subagent.get':
@@ -2216,9 +2279,17 @@ function previewSubagentBatch(sessionId = 'session-preview'): Record<string, unk
     task: string,
     state: 'queued' | 'running' | 'completed',
     ordinal: number,
+    lineage: { parentRunId?: string; depth?: 1 | 2 } = {},
   ) => ({
     schemaVersion: 'rag-ime.agent-subagent-run.v1',
     id,
+    nodeId: `node:${id}`,
+    attemptId: `attempt:${id}:1`,
+    attemptNumber: 1,
+    predecessorAttemptId: '',
+    ownerRunId: lineage.parentRunId || (roomTask ? `room-parent:${sessionId}` : `session:${sessionId}`),
+    parentRunId: lineage.parentRunId || (roomTask ? `room-parent:${sessionId}` : ''),
+    depth: lineage.depth ?? 1,
     batchId,
     childSessionId: `subagent-runtime:${id}`,
     todoTask: roomTask ? '完成当前协作任务' : '核对研究证据',
@@ -2232,6 +2303,34 @@ function previewSubagentBatch(sessionId = 'session-preview'): Record<string, unk
       ? ['结果归入当前 Room 任务', '公开投影不包含私有会话内容']
       : ['状态与工具生命周期边界清晰'],
     outputSchema: {},
+    launchDigest: {
+      schemaVersion: 'rag-ime.agent-subagent-launch-digest.v1',
+      contextMode: lineage.parentRunId || roomTask ? 'fork' : 'fresh',
+      templateId,
+      templateVersion: '1',
+      modelProfile: 'gpt-5.4',
+      thinkingLevel: 'medium',
+      toolProfileVersion: templateId === 'worker' ? 'control-center-v1' : 'subagent-readonly-v1',
+      toolAllowlistMode: 'profile',
+      tools: templateId === 'worker'
+        ? ['workspace_read', 'workspace_shell']
+        : ['workspace_read', 'knowledge_search'],
+      piSkillsEnabled: true,
+      codexSkillsEnabled: true,
+      workspaceAccess: templateId === 'worker' ? 'write' : 'read_only',
+      workspaceRootCount: 1,
+      outputContract: { required: true, schemaSha256: 'd'.repeat(64) },
+      extensionRuntime: 'pi_host_managed',
+    },
+    contract: {
+      status: state === 'completed' ? 'valid' : 'pending',
+      error: '',
+      toolCallId: state === 'completed' ? `tool:${id}:structured-output` : '',
+      validatedAtMs: state === 'completed' ? now - 92_000 : null,
+    },
+    structuredOutput: state === 'completed'
+      ? { summary: '状态、来源与交付边界已经通过结构化校验。' }
+      : undefined,
     state,
     budget,
     usage: state === 'completed'
@@ -2266,7 +2365,14 @@ function previewSubagentBatch(sessionId = 'session-preview'): Record<string, unk
       )]
     : [
         run('subagent-run:research', 'researcher', '检索 Agent 状态投影和知识来源证据', 'running', 0),
-        run('subagent-run:review', 'reviewer', '审阅前端交互与工具生命周期边界', 'completed', 1),
+        run(
+          'subagent-run:review',
+          'reviewer',
+          '审阅前端交互与工具生命周期边界',
+          'completed',
+          0,
+          { parentRunId: 'subagent-run:research', depth: 2 },
+        ),
       ];
   const state = runs.some((item) => item.state === 'running')
     ? 'running'
@@ -2298,6 +2404,36 @@ function previewSubagentBatch(sessionId = 'session-preview'): Record<string, unk
     updatedAtMs: now - 2_000,
     completedAtMs: state === 'completed' ? now - 90_000 : null,
     runs,
+  };
+}
+
+type PreviewSubagentTreeNode = {
+  run: Record<string, unknown>;
+  children: PreviewSubagentTreeNode[];
+};
+
+function previewSubagentTree(batch: Record<string, unknown>): Record<string, unknown> {
+  const runs = Array.isArray(batch.runs)
+    ? batch.runs.filter((item): item is Record<string, unknown> => (
+      typeof item === 'object' && item !== null && !Array.isArray(item)
+    ))
+    : [];
+  const nodes = new Map<string, PreviewSubagentTreeNode>();
+  runs.forEach((run) => nodes.set(stringValue(run.id), { run, children: [] }));
+  const roots: PreviewSubagentTreeNode[] = [];
+  runs.forEach((run) => {
+    const node = nodes.get(stringValue(run.id));
+    if (!node) return;
+    const parent = nodes.get(stringValue(run.parentRunId));
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  });
+  return {
+    schemaVersion: 'rag-ime.agent-subagent-tree.v1',
+    rootSessionId: stringValue(batch.parentSessionId),
+    nodeCount: runs.length,
+    maxDepth: runs.reduce((maximum, run) => Math.max(maximum, Number(run.depth) || 1), 0),
+    roots,
   };
 }
 
@@ -2706,6 +2842,80 @@ function previewSession(
     messageCount: summary.messageCount ?? 0,
     lastMessagePreview: summary.lastMessagePreview ?? '',
   };
+}
+
+function previewApprovalItems(now = Date.now()): AgentApprovalV1[] {
+  const causalMetadata: AgentApprovalV1['causalMetadata'] = {
+    todoId: '',
+    todoRevision: 0,
+    goalId: 'goal:control-center',
+    goalRevision: 4,
+    turnId: 'turn:preview-approval',
+    roomBound: false,
+  };
+  return [
+    {
+      schemaVersion: 'rag-ime.agent-approval.v1',
+      approvalId: 'approval:preview-release',
+      sessionId: 'session-preview',
+      toolCallId: 'tool-call:preview-release',
+      toolId: 'workspace_shell',
+      operation: 'run',
+      payloadSha256: 'a'.repeat(64),
+      preview: {
+        summary: '构建并安装 Control Center 开发版本',
+        command: 'scripts/install_product_stack.sh --include-pi --skip-mlx',
+        path: '/Volumes/undo 4t/git/personal-agent-workbench',
+      },
+      riskLevel: 'R3',
+      state: 'pending',
+      requestedAtMs: now - 82_000,
+      expiresAtMs: now + 168_000,
+      decidedBy: '',
+      causalMetadata,
+    },
+    {
+      schemaVersion: 'rag-ime.agent-approval.v1',
+      approvalId: 'approval:preview-config',
+      sessionId: 'session-input',
+      toolCallId: 'tool-call:preview-config',
+      toolId: 'configuration',
+      operation: 'apply_settings',
+      payloadSha256: 'b'.repeat(64),
+      preview: {
+        summary: '允许 Room 伙伴使用 Session 子 Agent 模板',
+        scope: '当前项目',
+        changes: ['启用 reviewer 模板', '保持只读工作区'],
+      },
+      riskLevel: 'R2',
+      state: 'pending',
+      requestedAtMs: now - 34_000,
+      expiresAtMs: now + 526_000,
+      decidedBy: '',
+      causalMetadata: { ...causalMetadata, turnId: 'turn:preview-config' },
+    },
+    {
+      schemaVersion: 'rag-ime.agent-approval.v1',
+      approvalId: 'approval:preview-applied',
+      sessionId: 'session-states',
+      toolCallId: 'tool-call:preview-applied',
+      toolId: 'workspace_patch',
+      operation: 'apply',
+      payloadSha256: 'c'.repeat(64),
+      preview: {
+        summary: '更新 Session 子 Agent 可视化样式',
+        files: ['SessionSubagentPanel.tsx', 'session-subagent.css'],
+      },
+      riskLevel: 'R1',
+      state: 'applied',
+      requestedAtMs: now - 18 * 60_000,
+      expiresAtMs: now - 8 * 60_000,
+      decidedBy: 'preview-user',
+      decidedAtMs: now - 17 * 60_000,
+      receipt: { receiptId: 'receipt:preview-applied', status: 'applied' },
+      causalMetadata: { ...causalMetadata, turnId: 'turn:preview-applied' },
+    },
+  ];
 }
 
 function previewRoomSession(

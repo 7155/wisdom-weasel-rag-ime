@@ -15,7 +15,7 @@ from rag_ime.agent_media import AgentMediaStore
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tool_artifacts import AgentToolArtifactProjector
-from rag_ime.agent_tools import ControlToolGateway
+from rag_ime.agent_tools import ControlToolGateway, _runtime_tool_parameter_schema
 from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
 from rag_ime.contracts.json_schema import validate_contract
 from rag_ime.work_documents import WorkDocumentService
@@ -961,6 +961,126 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn("查看输入法、模型", overview["does"])
         self.assertIn("Agent、模型、记忆、输入", overview["output"])
 
+    def test_session_search_exposes_navigation_anchors_without_transcripts(self) -> None:
+        historical = self.store.create(title="Room Launch Digest", created_at_ms=20)
+        self.store.set_status(
+            str(historical["id"]),
+            "idle",
+            message_count=4,
+            last_message_preview="已确认结构化终止合同",
+            updated_at_ms=30,
+        )
+        self.store.record_runtime_event(
+            event_id="event:room-contract",
+            session_id=str(historical["id"]),
+            turn_id="turn:room-contract",
+            sequence=1,
+            event_type="message_completed",
+            created_at_ms=31,
+            redacted_summary="Launch Digest 交付已确认",
+        )
+
+        manifests = self.gateway.runtime_manifests(self.session)
+        manifest = next(item for item in manifests if item["name"] == "session_search")
+        self.assertTrue(manifest["alwaysAvailable"])
+        self.assertEqual(
+            {
+                branch["properties"]["op"]["const"]
+                for branch in manifest["parameters"]["oneOf"]
+            },
+            {"search"},
+        )
+
+        response = self.gateway.execute(
+            self._tool_call(
+                "session_search",
+                "search",
+                query="Launch Digest",
+                limit=5,
+            )
+        )
+        result = response["result"]
+        self.assertEqual(result["presentationKind"], "session_history")
+        self.assertEqual(len(result["anchors"]), 1)
+        self.assertEqual(result["anchors"][0]["sessionId"], historical["id"])
+        self.assertEqual(result["anchors"][0]["turnId"], "turn:room-contract")
+        self.assertIn("不返回原始 transcript", result["privacyBoundary"])
+        self.assertNotIn("sessionFile", str(result))
+        self.assertNotIn(str(Path(self.tmp.name)), str(result))
+
+    def test_dynamic_structured_output_manifest_terminates_the_child_turn(self) -> None:
+        class _Delegation:
+            submitted: tuple[str, dict[str, object], str] | None = None
+
+            def structured_output_manifest(self, session_id):
+                return {
+                    "name": "structured_output",
+                    "description": "提交结构化交付",
+                    "parameters": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["value"],
+                        "properties": {
+                            "value": {
+                                "type": "object",
+                                "required": ["summary"],
+                                "properties": {"summary": {"type": "string"}},
+                            }
+                        },
+                    },
+                    "alwaysAvailable": True,
+                }
+
+            def submit_structured_output(self, session_id, args, *, tool_call_id):
+                self.submitted = (session_id, dict(args), tool_call_id)
+                return {
+                    "schemaVersion": "rag-ime.agent-subagent-structured-output.v1",
+                    "summary": "交付合同有效",
+                    "runId": "subagent-run:1",
+                    "nodeId": "subagent-node:1",
+                    "attemptId": "subagent-attempt:1",
+                    "contractStatus": "valid",
+                    "structuredOutput": dict(args["value"]),
+                    "terminate": True,
+                }
+
+        delegation = _Delegation()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            knowledge_client=self.knowledge,
+            delegation=delegation,
+        )
+        manifests = gateway.runtime_manifests(self.session)
+        structured = next(item for item in manifests if item["name"] == "structured_output")
+        self.assertTrue(structured["alwaysAvailable"])
+        self.assertEqual(
+            structured["parameters"]["properties"]["value"]["required"],
+            ["summary"],
+        )
+
+        response = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session["id"],
+                "tool": "structured_output",
+                "toolCallId": "tool:structured-final",
+                "args": {"value": {"summary": "done"}},
+            }
+        )
+        self.assertTrue(response["result"]["terminate"])
+        self.assertEqual(
+            delegation.submitted,
+            (
+                self.session["id"],
+                {"value": {"summary": "done"}},
+                "tool:structured-final",
+            ),
+        )
+
     def test_native_bash_guidance_routes_edits_and_room_waits_to_their_owners(
         self,
     ) -> None:
@@ -1193,7 +1313,28 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertEqual(
             read_only_room_partner["parameters"]["properties"]["op"]["enum"],
-            ["list", "delegate", "post"],
+            ["list", "delegate", "delegate_batch", "post"],
+        )
+        batch_schema = next(
+            option
+            for option in read_only_room_partner["parameters"]["oneOf"]
+            if option["properties"]["op"].get("const") == "delegate_batch"
+        )
+        self.assertEqual(
+            batch_schema["required"],
+            ["op", "phase", "tasks"],
+        )
+        tasks_schema = read_only_room_partner["parameters"]["properties"]["tasks"]
+        self.assertEqual(tasks_schema["minItems"], 2)
+        self.assertEqual(tasks_schema["maxItems"], 3)
+        self.assertEqual(
+            tasks_schema["items"]["required"],
+            [
+                "targetParticipantId",
+                "task",
+                "expectedOutput",
+                "acceptanceCriteria",
+            ],
         )
 
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
@@ -1442,6 +1583,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "runtime",
                 "configuration",
                 "agents",
+                "session_search",
                 "room_partner",
                 "browser",
                 "todo",
@@ -1740,6 +1882,53 @@ class ControlToolGatewayTests(unittest.TestCase):
             workflow["actGate"]["todoRevision"],
             completed["todo"]["revision"],
         )
+
+    def test_agents_runtime_schema_exposes_single_task_controls_and_rejects_mixed_delegation(self) -> None:
+        schema = _runtime_tool_parameter_schema("agents", ["list", "delegate"])
+        properties = schema["properties"]
+        for field in (
+            "modelProfile",
+            "thinkingLevel",
+            "access",
+            "allowedTools",
+            "piSkillsEnabled",
+            "codexSkillsEnabled",
+            "workspaceRoots",
+        ):
+            self.assertIn(field, properties)
+
+        self.assertIn("继承父 Session", properties["modelProfile"]["description"])
+
+        validate_contract(
+            {
+                "op": "delegate",
+                "agent": "researcher",
+                "task": "核对联网搜索能力",
+                "expectedOutput": "一份可复核结论",
+                "acceptanceCriteria": ["列出证据路径"],
+                "allowedTools": ["plugins", "workspace_read", "workspace_search"],
+            },
+            schema,
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one allowed schema|forbidden"):
+            validate_contract(
+                {
+                    "op": "delegate",
+                    "tasks": [
+                        {
+                            "agent": "researcher",
+                            "task": "批量调查",
+                            "expectedOutput": "调查结果",
+                            "acceptanceCriteria": ["给出证据"],
+                        }
+                    ],
+                    "agent": "researcher",
+                    "task": "不应混入的单任务",
+                    "expectedOutput": "调查结果",
+                    "acceptanceCriteria": ["给出证据"],
+                },
+                schema,
+            )
 
     def test_read_only_session_may_delegate_only_to_coordinator_fenced_children(self) -> None:
         class Delegation:
@@ -3894,6 +4083,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             'operations: ["init", "start", "done", "drop", "block", "unblock", "append", "view", "rm"]',
             extension,
         )
+        self.assertIn("默认省略 modelProfile 并继承父 Session", extension)
         self.assertIn('operations: ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"]', extension)
         self.assertIn('error.errorCode === "workflow_gate_closed"', extension)
         self.assertIn('requiredAction: "review_workflow_state"', extension)
@@ -3932,7 +4122,20 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn('required: ["path", "resourceRevision", "edits"]', extension)
         self.assertIn('required: ["path", "resourceRevision", "content"]', extension)
         self.assertIn("resourceRevision: params.resourceRevision", extension)
-        self.assertIn('todoTask: { type: "string", minLength: 1, maxLength: 240 }', extension)
+        self.assertIn('todoTask: {', extension)
+        self.assertIn('可选导航链接；仅在确实需要将子 Agent 工作定位到当前 Todo 时传入。', extension)
+        self.assertNotIn('todoPhase?: string;', extension)
+        self.assertNotIn('todoPhase: { type: "string", minLength: 1, maxLength: 80 }', extension)
+        self.assertIn(
+            "Todo 只作为可选导航；未显式传入 todoTask 时，delegate 必须独立启动",
+            extension,
+        )
+        self.assertIn("const delegatedProductToolIds = [", extension)
+        self.assertEqual(extension.count("enum: [...delegatedProductToolIds]"), 2)
+        self.assertIn(
+            "不要把 tool_search、read、grep、find 或 bash 填入 allowedTools",
+            extension,
+        )
         self.assertIn("主持伙伴必须按验收条件核对结果", extension)
 
     def test_retired_room_operations_cannot_reenter_through_ime_agents(self) -> None:

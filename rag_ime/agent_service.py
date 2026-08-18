@@ -159,7 +159,16 @@ class AgentService:
             role_resolver=self.personas.resolve,
             role_book_resolver=self.role_books.prompt_block,
         )
-        self.runtime_factory = runtime_factory or PiRuntimeDriverFactory(configured)
+        if runtime_factory is None:
+            self.runtime_factory = PiRuntimeDriverFactory(configured)
+        else:
+            # Product-owned per-process capabilities (tool gateway and plugin
+            # approval tokens) are minted above.  A caller-supplied factory
+            # must receive that completed configuration before it creates the
+            # long-lived Runtime Host; otherwise validation can work while the
+            # guarded install step is permanently disabled.
+            runtime_factory.reconfigure(configured)
+            self.runtime_factory = runtime_factory
         self.sessions = AgentSessionStore(db_path)
         self.sessions.initialize()
         self.context_runtime = AgentContextRuntime(db_path)

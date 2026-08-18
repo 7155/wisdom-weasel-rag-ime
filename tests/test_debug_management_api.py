@@ -207,6 +207,12 @@ class DebugManagementApiTests(unittest.TestCase):
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             apply_memory_book_plan(conn, plan)
 
+    def test_plugin_inbox_defaults_to_the_managed_pi_runtime_boundary(self) -> None:
+        self.assertEqual(
+            self.service.agent_extensions.inbox_root,
+            (self.db_path.parent / "Agent" / "plugin-inbox").resolve(),
+        )
+
     def test_candidate_explain_returns_ranking_reasons(self) -> None:
         event_ref = self.core.record_event(
             InputEvent(
@@ -2013,6 +2019,32 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.management-history.v1")
         self.assertFalse(payload["rawTextVisible"])
         self.assertNotIn("text", payload["items"][0])
+
+    def test_plugin_inventory_http_route_stays_structured_when_pi_is_unavailable(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/agent/extensions",
+                timeout=5,
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["schemaVersion"], "rag-ime.plugin-inventory.v1")
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["runtimeAvailable"])
+        self.assertEqual(payload["items"], [])
 
     def test_agent_session_http_routes_are_operational(self) -> None:
         class Handler(DebugRequestHandler):

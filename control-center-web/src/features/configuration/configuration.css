@@ -124,6 +124,94 @@ main[data-route-id='configuration'] .configuration-destinations small {
   overflow-wrap: anywhere;
 }
 
+main[data-route-id='configuration'] .configuration-subagents[data-highlighted] > .mgmt-section {
+  border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent-soft) 24%, var(--color-surface));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+main[data-route-id='configuration'] .configuration-subagents__summary {
+  display: grid;
+  min-height: 62px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 2px;
+  border-block: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-subagents__summary > div,
+main[data-route-id='configuration'] .configuration-subagents__templates article {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+main[data-route-id='configuration'] .configuration-subagents__summary > div > span,
+main[data-route-id='configuration'] .configuration-subagents__templates article > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+main[data-route-id='configuration'] .configuration-subagents__summary p,
+main[data-route-id='configuration'] .configuration-subagents__templates p {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  margin: 0;
+}
+
+main[data-route-id='configuration'] .configuration-subagents__summary strong,
+main[data-route-id='configuration'] .configuration-subagents__templates strong { font-size: 13px; }
+main[data-route-id='configuration'] .configuration-subagents__summary small,
+main[data-route-id='configuration'] .configuration-subagents__templates small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; }
+
+main[data-route-id='configuration'] .configuration-subagents__rules {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-subagents__rules article {
+  display: grid;
+  min-width: 0;
+  min-height: 78px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-subagents__rules article:nth-child(2n) { border-right: 0; }
+main[data-route-id='configuration'] .configuration-subagents__rules article:nth-last-child(-n + 2) { border-bottom: 0; }
+main[data-route-id='configuration'] .configuration-subagents__rules svg { color: var(--color-accent); }
+main[data-route-id='configuration'] .configuration-subagents__rules span { display: grid; gap: 3px; }
+main[data-route-id='configuration'] .configuration-subagents__rules strong { font-size: 13px; }
+main[data-route-id='configuration'] .configuration-subagents__rules small { color: var(--color-text-secondary); font-size: 12px; line-height: 1.45; }
+
+main[data-route-id='configuration'] .configuration-subagents__templates { display: grid; }
+main[data-route-id='configuration'] .configuration-subagents__templates article { min-height: 58px; padding: 8px 2px; border-bottom: 1px solid var(--color-border); }
+main[data-route-id='configuration'] .configuration-subagents__templates em { color: var(--color-text-tertiary); font-size: 11px; font-style: normal; font-weight: 650; }
+main[data-route-id='configuration'] .configuration-subagents__error { margin: 0; padding: 9px; border-left: 3px solid var(--color-danger); background: var(--color-danger-soft); color: var(--color-danger); font-size: 12px; }
+
+@media (max-width: 760px) {
+  main[data-route-id='configuration'] .configuration-subagents__summary { grid-template-columns: minmax(0, 1fr) auto; }
+  main[data-route-id='configuration'] .configuration-subagents__summary > .ui-button { grid-column: 1 / -1; }
+  main[data-route-id='configuration'] .configuration-subagents__rules { grid-template-columns: 1fr; }
+  main[data-route-id='configuration'] .configuration-subagents__rules article,
+  main[data-route-id='configuration'] .configuration-subagents__rules article:nth-child(2n),
+  main[data-route-id='configuration'] .configuration-subagents__rules article:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--color-border); }
+}
+
 main[data-route-id='configuration'] .configuration-destinations strong {
   color: var(--color-text-primary);
   font-size: 13px;

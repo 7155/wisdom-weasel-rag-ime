@@ -318,6 +318,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "orchestrate-session",
                 "organize-work-documents",
                 "plugin-creator",
+                "project-maintainer",
                 "systematic-debugging",
                 "test-driven-implementation",
             }),
@@ -373,7 +374,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             },
         )
         cards = routing_catalog["cards"]
-        self.assertEqual(len(cards), 39)
+        self.assertEqual(len(cards), 40)
         self.assertEqual(len({card["name"] for card in cards}), len(cards))
         self.assertNotIn("structured-result-presentation", {card["name"] for card in cards})
         for card in cards:
@@ -600,9 +601,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("does not define another event bus", orchestration)
         self.assertIn("Partners remain ordinary Sessions", facilitation)
         self.assertIn(
-            "A Partner is assigned only after `room_partner delegate`",
+            "A Partner is assigned only after `room_partner delegate` or `room_partner delegate_batch`",
             facilitation,
         )
+        self.assertIn("one `delegate_batch` call", facilitation)
+        self.assertIn("never describe consecutive `delegate` calls as parallel", facilitation)
         self.assertIn("emit the best evidence-backed partial or blocked final", facilitation)
         self.assertIn("document gardener", organization)
         self.assertIn("$orchestrate-session", orchestration_prompt)

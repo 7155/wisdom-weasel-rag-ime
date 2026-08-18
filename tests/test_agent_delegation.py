@@ -17,6 +17,7 @@ from rag_ime.agent_context_runtime import AgentContextRuntime
 from rag_ime.agent_delegation import (
     AgentDelegationCoordinator,
     AgentDelegationStore,
+    _subagent_failure_class,
     _subagent_prompt,
 )
 from rag_ime.agent_events import AgentEventHub
@@ -227,6 +228,55 @@ class _ForkInspectingRuntime(_CompletingRuntime):
         return super().prompt(session_id, message)
 
 
+class _ControlForkRuntime(_CompletingRuntime):
+    def __init__(self, sessions: AgentSessionStore, events: AgentEventHub, root: Path):
+        super().__init__(sessions=sessions, events=events)
+        self.root = root
+        self.fork_calls: list[tuple[str, str, str]] = []
+
+    def fork_candidates(self, session_id: str) -> list[dict[str, object]]:
+        return [
+            {"entryId": "entry:older", "text": "旧锚点", "role": "user", "createdAtMs": 1},
+            {"entryId": "entry:latest", "text": "最新锚点", "role": "user", "createdAtMs": 2},
+        ]
+
+    def fork_session(
+        self,
+        source_session_id: str,
+        target_session_id: str,
+        *,
+        entry_id: str,
+    ) -> dict[str, object]:
+        self.fork_calls.append((source_session_id, target_session_id, entry_id))
+        self.root.mkdir(parents=True, exist_ok=True)
+        transcript = self.root / f"{target_session_id.replace(':', '-')}.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "session",
+                    "id": f"pi:{target_session_id}",
+                    "parentSession": "control-parent.jsonl",
+                    "cwd": str(self.root),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.sessions.bind_runtime_session(
+            target_session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id=f"pi:{target_session_id}",
+            transcript_ref=str(transcript),
+            branch_anchor=entry_id,
+            binding_state="active",
+        )
+        return {"targetSessionId": target_session_id, "entryId": entry_id}
+
+    def close_session(self, _session_id: str) -> bool:
+        return True
+
+
 class _SoftBudgetRuntime(_CompletingRuntime):
     def prompt(self, session_id, message):
         self.events.publish(session_id, "text_delta", {"delta": "软" * 205})
@@ -425,6 +475,7 @@ class AgentDelegationTests(unittest.TestCase):
         subagent_session_retention_ms: int | None = None,
         subagent_session_gc_interval_ms: int | None = None,
         room_context_provider=None,
+        runtime_provider=None,
     ) -> AgentDelegationCoordinator:
         return AgentDelegationCoordinator(
             db_path=self.db_path,
@@ -433,6 +484,7 @@ class AgentDelegationTests(unittest.TestCase):
             events=self.events,
             context_runtime=self.context_runtime,
             runtime_factory=runtime_factory,
+            runtime_provider=runtime_provider,
             cancellation_grace_ms=cancellation_grace_ms,
             subagent_session_retention_ms=subagent_session_retention_ms,
             subagent_session_gc_interval_ms=subagent_session_gc_interval_ms,
@@ -448,6 +500,12 @@ class AgentDelegationTests(unittest.TestCase):
         )
         self.assertTrue(all(item["budget"]["maxTurns"] == 0 for item in catalog["items"]))
         self.assertTrue(all(item["budget"]["maxToolCalls"] == 0 for item in catalog["items"]))
+        reviewer = next(item for item in catalog["items"] if item["templateId"] == "reviewer")
+        worker = next(item for item in catalog["items"] if item["templateId"] == "worker")
+        self.assertEqual(reviewer["defaultAccess"], "read_only")
+        self.assertEqual(reviewer["allowedAccess"], ["read_only"])
+        self.assertEqual(worker["defaultAccess"], "write")
+        self.assertEqual(worker["allowedAccess"], ["read_only", "write"])
 
         response = coordinator.delegate(
             str(self.parent["id"]),
@@ -488,11 +546,9 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertTrue(
             all(run["result"]["deliveryStatus"] == "returned" for run in batch["runs"])
         )
-        self.assertTrue(
-            all(
-                run["result"]["verificationStatus"] == "unverified"
-                for run in batch["runs"]
-            )
+        self.assertEqual(
+            {run["result"]["verificationStatus"] for run in batch["runs"]},
+            {"contract_invalid", "unverified"},
         )
         self.assertTrue(
             all(run["result"]["authority"] == "evidence_only" for run in batch["runs"])
@@ -540,6 +596,86 @@ class AgentDelegationTests(unittest.TestCase):
                 str(self.parent["id"]),
                 {"agent": "market-shell-agent", "task": "执行任意命令", **_TASK_CONTRACT},
             )
+        coordinator.close()
+
+    def test_read_only_child_inherits_parent_workspace_roots_without_write_authority(
+        self,
+    ) -> None:
+        parent_id = str(self.parent["id"])
+        self.parent = self.sessions.set_runtime_policy(
+            parent_id,
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            pi_skills_enabled=False,
+            codex_skills_enabled=False,
+            workspace_roots=[str(self.root)],
+        )
+        coordinator = self.coordinator()
+        try:
+            batch = coordinator.delegate(
+                parent_id,
+                {
+                    "agent": "researcher",
+                    "task": "只读核对父 Session 工作区里的源码",
+                    "access": "read_only",
+                    **_TASK_CONTRACT,
+                },
+            )["batch"]
+            run = batch["runs"][0]
+            child = self.sessions.get(str(run["childSessionId"]))
+
+            self.assertEqual(child["workspaceRoots"], [str(self.root.resolve())])
+            self.assertEqual(child["mode"], "assistant")
+            self.assertEqual(child["toolProfileVersion"], "subagent-readonly-v1")
+            self.assertEqual(child["executionMode"], "read_only")
+            self.assertFalse(child["workspaceScopeGranted"])
+            self.assertEqual(run["launchDigest"]["workspaceAccess"], "read_only")
+            self.assertEqual(run["launchDigest"]["workspaceRootCount"], 1)
+        finally:
+            coordinator.close()
+
+    def test_control_launch_can_fork_latest_pi_anchor_and_review_stays_read_only(self) -> None:
+        fork_runtime = _ControlForkRuntime(
+            self.sessions,
+            self.events,
+            self.config.session_dir,
+        )
+        coordinator = self.coordinator(runtime_provider=lambda: fork_runtime)
+        with self.assertRaisesRegex(ValueError, "reviewer does not allow write"):
+            coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "reviewer",
+                    "task": "只读审查",
+                    "access": "write",
+                    **_TASK_CONTRACT,
+                },
+            )
+
+        response = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "agent": "reviewer",
+                "task": "沿用当前讨论做独立审查",
+                "access": "read_only",
+                "contextMode": "fork",
+                "forkEntryId": "latest",
+                **_TASK_CONTRACT,
+            },
+        )
+
+        run = response["batch"]["runs"][0]
+        self.assertEqual(fork_runtime.fork_calls[0][0], self.parent["id"])
+        self.assertEqual(fork_runtime.fork_calls[0][2], "entry:latest")
+        self.assertEqual(run["launchDigest"]["contextMode"], "fork")
+        self.assertEqual(run["launchDigest"]["workspaceAccess"], "read_only")
+        self.assertEqual(
+            self.sessions.runtime_binding(str(run["childSessionId"]))["branchAnchor"],
+            "entry:latest",
+        )
         coordinator.close()
 
     def test_read_only_execution_mode_fences_stale_parent_profile(self) -> None:
@@ -806,6 +942,152 @@ class AgentDelegationTests(unittest.TestCase):
         ]
         self.assertEqual(terminal_events, ["completed"])
 
+    def test_store_tracks_stable_attempt_identity_and_structured_contract(self) -> None:
+        artifacts = AgentArtifactStore(self.db_path)
+        store = AgentDelegationStore(self.db_path, artifacts=artifacts)
+        store.initialize()
+        child = self.sessions.create(title="structured child")
+        spec = {
+            **_run_spec(str(child["id"]), task="返回结构化结论"),
+            "outputSchema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["claims"],
+                "properties": {
+                    "claims": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    }
+                },
+            },
+        }
+        batch = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[spec],
+        )
+        run = batch["runs"][0]
+        self.assertTrue(str(run["nodeId"]).startswith("subagent-node:"))
+        self.assertTrue(str(run["attemptId"]).startswith("subagent-attempt:"))
+        self.assertEqual(run["attemptNumber"], 1)
+        self.assertEqual(run["predecessorAttemptId"], "")
+        self.assertEqual(run["parentRunId"], "")
+        self.assertEqual(run["depth"], 1)
+        self.assertEqual(run["contract"]["status"], "pending")
+        self.assertTrue(run["launchDigest"]["outputContract"]["required"])
+        self.assertEqual(len(run["launchDigest"]["outputContract"]["schemaSha256"]), 64)
+
+        run_id = str(run["id"])
+        store.start_run(run_id)
+        with self.assertRaisesRegex(ValueError, "delivery contract validation failed"):
+            store.submit_structured_output(
+                child_session_id=str(child["id"]),
+                value={"claims": "not-an-array"},
+                tool_call_id="tool:invalid",
+                validated_at_ms=100,
+            )
+        invalid = store.get_run(run_id)
+        self.assertEqual(invalid["contract"]["status"], "invalid")
+        self.assertNotIn("structuredOutput", invalid)
+
+        valid = store.submit_structured_output(
+            child_session_id=str(child["id"]),
+            value={"claims": ["bounded"]},
+            tool_call_id="tool:valid",
+            validated_at_ms=200,
+        )
+        self.assertEqual(valid["contract"]["status"], "valid")
+        self.assertEqual(valid["contract"]["toolCallId"], "tool:valid")
+        self.assertEqual(valid["structuredOutput"], {"claims": ["bounded"]})
+        replay = store.submit_structured_output(
+            child_session_id=str(child["id"]),
+            value={"claims": ["bounded"]},
+            tool_call_id="tool:valid",
+            validated_at_ms=300,
+        )
+        self.assertEqual(replay["structuredOutput"], {"claims": ["bounded"]})
+        with self.assertRaisesRegex(ValueError, "already submitted"):
+            store.submit_structured_output(
+                child_session_id=str(child["id"]),
+                value={"claims": ["different"]},
+                tool_call_id="tool:different",
+            )
+
+    def test_missing_structured_output_is_a_local_contract_failure(self) -> None:
+        store = AgentDelegationStore(self.db_path)
+        store.initialize()
+        child = self.sessions.create(title="missing structured child")
+        batch = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[
+                {
+                    **_run_spec(str(child["id"]), task="遗漏结构化结论"),
+                    "outputSchema": {
+                        "type": "object",
+                        "required": ["summary"],
+                        "properties": {"summary": {"type": "string"}},
+                    },
+                }
+            ],
+        )
+        run_id = str(batch["runs"][0]["id"])
+        store.start_run(run_id)
+        store.finish_run(
+            run_id,
+            state="completed",
+            result={
+                "summary": "模型已返回，但没有调用终止工具",
+                "deliveryStatus": "returned",
+                "verificationStatus": "unverified",
+                "authority": "evidence_only",
+            },
+        )
+        finalized = store.finalize_structured_output_contract(run_id)
+        self.assertEqual(finalized["state"], "completed")
+        self.assertEqual(finalized["contract"]["status"], "invalid")
+        self.assertIn("was not submitted", finalized["contract"]["error"])
+
+    def test_retry_policy_allows_only_one_receipt_free_runtime_retry(self) -> None:
+        coordinator = self.coordinator()
+        base = {
+            "state": "failed",
+            "result": {"failureClass": "transient_runtime"},
+            "usage": {"toolCount": 0},
+            "attemptNumber": 1,
+            "attemptId": "attempt:one",
+        }
+        self.assertEqual(coordinator._retry_capability(base), (True, ""))
+        allowed, reason = coordinator._retry_capability(
+            {**base, "usage": {"toolCount": 1}}
+        )
+        self.assertFalse(allowed)
+        self.assertIn("Tool", reason)
+        allowed, reason = coordinator._retry_capability(
+            {**base, "result": {"failureClass": "logic_error"}}
+        )
+        self.assertFalse(allowed)
+        self.assertIn("修复或改派", reason)
+        allowed, reason = coordinator._retry_capability({**base, "attemptNumber": 2})
+        self.assertFalse(allowed)
+        self.assertIn("唯一一次", reason)
+        coordinator.close()
+
+    def test_workspace_boundary_failures_are_tool_errors_not_transient_runtime(self) -> None:
+        for message in (
+            "path is outside the authorized workspace or does not exist",
+            "outside the authorized workspace",
+            "permission denied while reading workspace file",
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(_subagent_failure_class(message), "tool_error")
+
     def test_async_terminal_result_is_scheduled_once_without_parent_acceptance(self) -> None:
         coordinator = self.coordinator()
         response = coordinator.delegate(
@@ -833,7 +1115,10 @@ class AgentDelegationTests(unittest.TestCase):
         terminal = coordinator.store.get_run(run_id)
         self.assertEqual(terminal["state"], "completed")
         self.assertEqual(terminal["result"]["deliveryStatus"], "returned")
-        self.assertEqual(terminal["result"]["verificationStatus"], "unverified")
+        self.assertEqual(
+            terminal["result"]["verificationStatus"],
+            "contract_invalid",
+        )
         self.assertEqual(terminal["result"]["authority"], "evidence_only")
         context_items = [
             item
@@ -856,6 +1141,10 @@ class AgentDelegationTests(unittest.TestCase):
         payload = materialized["items"][0]["payload"]
         self.assertEqual(payload["deliveryStatus"], "returned")
         self.assertEqual(payload["verificationStatus"], "unverified")
+        self.assertEqual(
+            payload["outputSchema"]["required"],
+            ["summary"],
+        )
         self.assertEqual(payload["authority"], "evidence_only")
         self.assertEqual(payload["acceptanceCriteria"], ["结论带有证据边界"])
         self.assertEqual(
@@ -971,7 +1260,21 @@ class AgentDelegationTests(unittest.TestCase):
                 run = coordinator.store.get_run(run_id)
                 self.assertEqual(run["state"], "failed")
                 self.assertEqual(run["error"], "output budget exceeded")
-                self.assertEqual(run["result"], {})
+                self.assertEqual(
+                    run["result"]["deliveryStatus"],
+                    "not_returned",
+                )
+                self.assertEqual(
+                    run["result"]["verificationStatus"],
+                    "not_applicable",
+                )
+                self.assertEqual(
+                    run["result"]["failureClass"],
+                    "logic_error",
+                )
+                self.assertFalse(
+                    run["result"]["retryPolicy"]["automaticEligible"]
+                )
                 self.assertEqual(run["usage"]["turnCount"], 0)
                 self.assertEqual(run["usage"]["totalTokens"], 0)
                 terminal_events = [
@@ -1012,7 +1315,7 @@ class AgentDelegationTests(unittest.TestCase):
             finally:
                 coordinator.close()
 
-    def test_todo_backed_delegation_requires_and_preserves_explicit_task_link(self) -> None:
+    def test_todo_backed_delegation_stays_independent_until_explicitly_linked(self) -> None:
         session_id = str(self.parent["id"])
         todo_task = "核对子 Agent 证据"
         self.sessions.mutate_agent_todo(
@@ -1028,11 +1331,12 @@ class AgentDelegationTests(unittest.TestCase):
         )
         coordinator = self.coordinator()
         try:
-            with self.assertRaisesRegex(ValueError, "todoTask is required"):
-                coordinator.delegate(
-                    session_id,
-                    {"agent": "researcher", "task": "缺少明确 Todo 关联", **_TASK_CONTRACT},
-                )
+            independent = coordinator.delegate(
+                session_id,
+                {"agent": "researcher", "task": "不依赖当前 Todo", **_TASK_CONTRACT},
+            )["batch"]["runs"][0]
+            self.assertEqual(independent["todoTask"], "")
+            self.assertEqual(independent["todoPhase"], "")
             with self.assertRaisesRegex(ValueError, "does not belong"):
                 coordinator.delegate(
                     session_id,
@@ -1078,6 +1382,26 @@ class AgentDelegationTests(unittest.TestCase):
             self.assertEqual(terminal_progress[-1]["todoTask"], todo_task)
             self.assertEqual(terminal_progress[-1]["todoPhase"], "验证")
             self.assertTrue(terminal_progress[-1]["requiresParentTodoUpdate"])
+        finally:
+            coordinator.close()
+
+    def test_delegation_rejects_provider_invalid_nested_output_schema_before_launch(self) -> None:
+        coordinator = self.coordinator()
+        try:
+            with self.assertRaisesRegex(ValueError, r"outputSchema.*items"):
+                coordinator.delegate(
+                    str(self.parent["id"]),
+                    {
+                        "agent": "researcher",
+                        "task": "返回数组结果",
+                        **_TASK_CONTRACT,
+                        "outputSchema": {"type": "array", "items": []},
+                    },
+                )
+            self.assertEqual(
+                coordinator.store.list_batches(parent_session_id=str(self.parent["id"])),
+                [],
+            )
         finally:
             coordinator.close()
 
@@ -1350,6 +1674,14 @@ class AgentDelegationTests(unittest.TestCase):
             {"agent": "reviewer", "task": "第二层", **_TASK_CONTRACT},
         )["batch"]
         self.assertEqual(second["depth"], 2)
+        tree = coordinator.status(str(self.parent["id"]), {})["tree"]
+        self.assertEqual(tree["nodeCount"], 2)
+        self.assertEqual(tree["maxDepth"], 2)
+        self.assertEqual(tree["roots"][0]["run"]["id"], first["runs"][0]["id"])
+        self.assertEqual(
+            tree["roots"][0]["children"][0]["run"]["id"],
+            second["runs"][0]["id"],
+        )
         second_child = second["runs"][0]["childSessionId"]
         with self.assertRaisesRegex(ValueError, "maximum depth is 2"):
             coordinator.delegate(

@@ -39,14 +39,38 @@ describe('subagent presentation semantics', () => {
     expect(subagentPresentationState(run)).toBe('running');
     expect(subagentStateLabel(run)).toBe('进行中');
   });
+
+  it('keeps an invalid structured delivery local to its node', () => {
+    const run = sampleRun({
+      state: 'completed',
+      contract: {
+        status: 'invalid',
+        error: 'claims must be an array',
+        toolCallId: '',
+        validatedAtMs: null,
+      },
+    });
+
+    expect(isUnverifiedReturn(run)).toBe(false);
+    expect(subagentPresentationState(run)).toBe('contract_invalid');
+    expect(subagentStateLabel(run)).toBe('合同无效');
+    expect(subagentStateLabel(run, 'result')).toBe('已返回，合同无效');
+  });
 });
 
 function sampleRun(
   overrides: Partial<AgentSubagentRunV1>,
 ): AgentSubagentRunV1 {
-  return {
+  const base: AgentSubagentRunV1 = {
     schemaVersion: 'rag-ime.agent-subagent-run.v1',
     id: 'subagent-run:test',
+    nodeId: 'subagent-node:test',
+    attemptId: 'subagent-attempt:test:1',
+    attemptNumber: 1,
+    predecessorAttemptId: '',
+    ownerRunId: 'session:parent',
+    parentRunId: '',
+    depth: 1,
     batchId: 'subagent-batch:test',
     childSessionId: 'session-child',
     todoTask: '核对子 Agent 证据',
@@ -57,6 +81,13 @@ function sampleRun(
     task: '返回实现结果',
     expectedOutput: '可核对的实现结果',
     acceptanceCriteria: ['结果包含验证证据'],
+    launchDigest: sampleLaunchDigest(),
+    contract: {
+      status: 'not_requested',
+      error: '',
+      toolCallId: '',
+      validatedAtMs: null,
+    },
     state: 'running',
     budget: {
       maxTurns: 1,
@@ -73,6 +104,26 @@ function sampleRun(
     startedAtMs: 2,
     updatedAtMs: 3,
     completedAtMs: null,
-    ...overrides,
+  };
+  return { ...base, ...overrides };
+}
+
+function sampleLaunchDigest(): AgentSubagentRunV1['launchDigest'] {
+  return {
+    schemaVersion: 'rag-ime.agent-subagent-launch-digest.v1',
+    contextMode: 'fresh',
+    templateId: 'worker',
+    templateVersion: '1',
+    modelProfile: 'openai-codex/gpt-5.6-sol',
+    thinkingLevel: 'high',
+    toolProfileVersion: 'subagent-readonly-v1',
+    toolAllowlistMode: 'profile',
+    tools: ['knowledge'],
+    piSkillsEnabled: false,
+    codexSkillsEnabled: false,
+    workspaceAccess: 'read_only',
+    workspaceRootCount: 1,
+    outputContract: { required: false, schemaSha256: '' },
+    extensionRuntime: 'pi_host_managed',
   };
 }

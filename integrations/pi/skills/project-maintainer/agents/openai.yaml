@@ -1,0 +1,4 @@
+interface:
+  display_name: "维护 Personal Agent Workbench"
+  short_description: "安全地设计并执行 PAW 安装、升级、卸载与恢复"
+  default_prompt: "使用 $project-maintainer 先核对真实安装层、授权边界和恢复点，再通过项目现有脚本实施并验证维护变更。"

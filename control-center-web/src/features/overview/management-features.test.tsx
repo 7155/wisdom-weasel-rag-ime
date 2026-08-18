@@ -14,6 +14,7 @@ import { KnowledgeFeature } from '@/features/knowledge';
 import { MemoryFeature } from '@/features/memory';
 import { PlanningFeature } from '@/features/planning';
 import { PluginsFeature } from '@/features/plugins';
+import { ApprovalsFeature } from '@/features/approvals';
 import { VoiceFeature } from '@/features/voice';
 import type { ControlPathId } from '@/platform/routes';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
@@ -88,6 +89,8 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
       availability: 'online',
     }],
   },
+  'agent.approvals.list': { ok: true, items: [] },
+  'agent.sessions.list': { ok: true, items: [] },
   'input.source.get': {
     ok: true,
     inputSourceId: 'im.rime.inputmethod.Squirrel.Rime',
@@ -180,7 +183,8 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
 const pages: readonly [string, ComponentType, string, ControlPathId][] = [
   ['overview', OverviewFeature, '概览', 'overview.get'],
   ['input', InputMethodFeature, '输入体验与个人词库', 'input.source.get'],
-  ['plugins', PluginsFeature, '技能与工具', 'agent.tools.list'],
+  ['plugins', PluginsFeature, '插件管理', 'agent.tools.list'],
+  ['approvals', ApprovalsFeature, '审批中心', 'agent.approvals.list'],
   ['voice', VoiceFeature, '语音输入', 'configuration.settings'],
   ['planning', PlanningFeature, '任务', 'planning.dashboard'],
   ['memory', MemoryFeature, '我的记忆', 'memory.pages'],

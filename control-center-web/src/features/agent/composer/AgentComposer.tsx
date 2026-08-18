@@ -1,12 +1,30 @@
 import {
+  Archive,
   ArrowDown,
+  Bot,
+  BrainCircuit,
+  ChartNoAxesCombined,
+  CircleHelp,
+  Cpu,
+  FileText,
+  GitBranch,
+  History,
+  Keyboard,
   LoaderCircle,
+  MessageSquarePlus,
+  PanelRight,
   Paperclip,
   PencilLine,
+  Plug,
   Plus,
   Send,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
   StopCircle,
+  Wrench,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   startTransition,
@@ -55,6 +73,31 @@ export interface AgentComposerEditState {
   messageId: string;
   resolving?: boolean;
 }
+
+const productCommandIcons: Record<AgentProductCommandName, LucideIcon> = {
+  new: MessageSquarePlus,
+  resume: History,
+  name: PencilLine,
+  branch: GitBranch,
+  compact: Archive,
+  model: Cpu,
+  thinking: BrainCircuit,
+  permissions: ShieldCheck,
+  tools: Wrench,
+  session: ChartNoAxesCombined,
+  status: PanelRight,
+  subagents: Bot,
+  settings: Settings2,
+  hotkeys: Keyboard,
+  stop: StopCircle,
+  help: CircleHelp,
+};
+
+const piCommandIcons: Record<Exclude<ComposerCommand['source'], 'product'>, LucideIcon> = {
+  extension: Plug,
+  prompt: FileText,
+  skill: Sparkles,
+};
 
 export function AgentComposer({
   assistantName = '澄',
@@ -136,6 +179,7 @@ export function AgentComposer({
   onJumpLatest?: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const commandPanelRef = useRef<HTMLDivElement>(null);
   const composingRef = useRef(false);
   const lastEscapeAtRef = useRef(0);
   const escapeResetRef = useRef(0);
@@ -144,23 +188,36 @@ export function AgentComposer({
   const [dismissedDraft, setDismissedDraft] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [commandInputFocused, setCommandInputFocused] = useState(false);
   const [busyDelivery, setBusyDelivery] = useState<Exclude<AgentMessageDelivery, 'prompt'>>('steer');
   const commandCatalog = useMemo(
     () => buildCommandCatalog({ session, catalog, piCommands, tools, toolCatalogStatus, busy, sending }),
     [busy, catalog, piCommands, sending, session, toolCatalogStatus, tools],
   );
   const commands = useMemo(() => commandCatalog.filter((command) => {
-    const value = composerDraft.trim().toLowerCase();
+    const value = composerDraft.toLowerCase();
     if (helpOpen || paletteOpen) return true;
-    return composerDraft !== dismissedDraft && value.startsWith('/') && !value.includes(' ') && (value === '/' || command.invocation.toLowerCase().startsWith(value));
+    return composerDraft !== dismissedDraft
+      && isCommandLookupDraft(value)
+      && (value === '/' || command.invocation.toLowerCase().startsWith(value));
   }), [commandCatalog, composerDraft, dismissedDraft, helpOpen, paletteOpen]);
   const commandPanelVisible = commands.length > 0 && (
     paletteOpen
-    || (composerDraft !== dismissedDraft && composerDraft.trim().startsWith('/') && !composerDraft.trim().includes(' '))
+    || (
+      commandInputFocused
+      && composerDraft !== dismissedDraft
+      && isCommandLookupDraft(composerDraft)
+    )
   );
   useEffect(() => {
     setActiveCommandIndex(Math.max(0, commands.findIndex((command) => command.enabled)));
   }, [commands, composerDraft]);
+  useEffect(() => {
+    if (!commandPanelVisible) return;
+    commandPanelRef.current
+      ?.querySelector<HTMLElement>(`[data-command-index="${activeCommandIndex}"]`)
+      ?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeCommandIndex, commandPanelVisible]);
   useEffect(() => {
     if (helpRequest <= 0) return;
     setHelpOpen(true);
@@ -194,8 +251,15 @@ export function AgentComposer({
     // projection for navigation and recovery. Send receives the local snapshot.
     startTransition(() => onDraftChange(value));
   }
-  function selectCommand(command: ComposerCommand): void {
+  function selectCommand(
+    command: ComposerCommand,
+    intent: 'activate' | 'complete' = 'activate',
+  ): void {
     if (!command.enabled) return;
+    if (intent === 'complete') {
+      completeCommand(command);
+      return;
+    }
     if (command.source === 'product' && command.name === 'help') {
       clearTypedCommandDraft(command.invocation);
       setHelpOpen(true);
@@ -209,9 +273,13 @@ export function AgentComposer({
       onProductCommand(command.name);
       return;
     }
+    completeCommand(command);
+  }
+  function completeCommand(command: ComposerCommand): void {
     const nextDraft = `${command.invocation} `;
     setPaletteOpen(false);
     setHelpOpen(false);
+    setDismissedDraft(nextDraft);
     setComposerDraft(nextDraft);
     publishDraft(nextDraft);
     textareaRef.current?.focus();
@@ -255,7 +323,7 @@ export function AgentComposer({
     // WebKit can report isComposing=false on the Enter that commits an IME
     // candidate. The ref and legacy 229 keyCode keep that key inside the IME.
     if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-    if (commands.length) {
+    if (commandPanelVisible && commands.length) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         const delta = event.key === 'ArrowDown' ? 1 : -1;
@@ -269,10 +337,16 @@ export function AgentComposer({
         setDismissedDraft(composerDraft);
         return;
       }
+      if (event.key === 'Tab' && !event.shiftKey) {
+        event.preventDefault();
+        const command = commands[activeCommandIndex] ?? commands[0];
+        if (command) selectCommand(command, 'complete');
+        return;
+      }
       if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
         event.preventDefault();
         const command = commands[activeCommandIndex] ?? commands[0];
-        if (command) selectCommand(command);
+        if (command) selectCommand(command, 'activate');
         return;
       }
     }
@@ -334,18 +408,30 @@ export function AgentComposer({
   return (
     <div className="agent-composer-wrap">
       {commandPanelVisible ? (
-        <div id="agent-command-palette" className="agent-command-palette" role="listbox" aria-label="命令面板">
+        <div ref={commandPanelRef} id="agent-command-palette" className="agent-command-palette" role="listbox" aria-label="命令面板">
           <header>
-            <span><strong>{helpOpen ? '命令帮助' : '当前可用命令'}</strong><small>{session ? `${permissionLabel(session)} · ${commands.length} 项` : '未选择对话'}</small></span>
-            {helpOpen ? <p>控制中心命令直接操作界面或 API；Pi 命令只来自当前对话的 RPC 目录。</p> : null}
+            <span className="agent-command-palette__heading">
+              <Keyboard aria-hidden="true" size={14} />
+              <strong>{helpOpen ? '命令帮助' : '命令'}</strong>
+              <small>{session ? `${permissionLabel(session)} · ${commands.length}` : '未选择对话'}</small>
+            </span>
+            {helpOpen
+              ? <p>控制中心命令直接操作界面或 API；Pi 命令只来自当前对话的 RPC 目录。</p>
+              : <p id="agent-command-palette-hint"><kbd>↑↓</kbd> 选择 <kbd>Tab</kbd> 补全 <kbd>Esc</kbd> 关闭</p>}
           </header>
           {commands.map((command, index) => (
-            <button id={`agent-command-option-${index}`} key={`${command.source}:${command.invocation}`} type="button" role="option" data-source={command.source} aria-selected={index === activeCommandIndex} aria-disabled={!command.enabled} disabled={!command.enabled} title={command.disabledReason} onMouseEnter={() => command.enabled && setActiveCommandIndex(index)} onClick={() => selectCommand(command)}>
-              <kbd title={command.invocation}>{command.invocation}</kbd>
+            <button id={`agent-command-option-${index}`} key={`${command.source}:${command.invocation}`} type="button" role="option" tabIndex={-1} data-command-index={index} data-source={command.source} aria-label={`${command.invocation} ${command.description || commandTitle(command.source)} ${commandTitle(command.source)}`} aria-selected={index === activeCommandIndex} aria-disabled={!command.enabled} disabled={!command.enabled} title={command.disabledReason} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => command.enabled && setActiveCommandIndex(index)} onClick={() => selectCommand(command)}>
+              <span className="agent-command-palette__icon" aria-hidden="true">
+                <CommandIcon command={command} />
+              </span>
+              <span className="agent-command-palette__identity">
+                <kbd title={command.invocation}>{command.invocation}</kbd>
+              </span>
               <span className="agent-command-palette__copy">
                 <strong>{command.description || commandTitle(command.source)}</strong>
-                <small>{commandTitle(command.source)}{command.disabledReason ? ` · ${command.disabledReason}` : ''}</small>
+                {command.disabledReason ? <small>{command.disabledReason}</small> : null}
               </span>
+              <span className="agent-command-palette__shortcut" data-visible={index === activeCommandIndex || undefined} aria-hidden="true"><kbd>Tab</kbd></span>
             </button>
           ))}
         </div>
@@ -400,6 +486,13 @@ export function AgentComposer({
           onCompositionEnd={endComposition}
           onKeyDown={keyDown}
           onPaste={paste}
+          onFocus={() => setCommandInputFocused(true)}
+          onBlur={() => {
+            setCommandInputFocused(false);
+            setPaletteOpen(false);
+            setHelpOpen(false);
+            setDismissedDraft(composerDraft);
+          }}
           autoCapitalize="none"
           autoComplete="off"
           autoCorrect="off"
@@ -407,7 +500,9 @@ export function AgentComposer({
           placeholder={composerPlaceholder(persona?.displayName ?? assistantName, imageSupport)}
           aria-label="消息"
           aria-autocomplete="list"
+          aria-expanded={commandPanelVisible}
           aria-controls={commandPanelVisible ? 'agent-command-palette' : undefined}
+          aria-describedby={commandPanelVisible && !helpOpen ? 'agent-command-palette-hint' : undefined}
           aria-activedescendant={commandPanelVisible && commands[activeCommandIndex]
             ? `agent-command-option-${activeCommandIndex}`
             : undefined}
@@ -477,6 +572,17 @@ export function AgentComposer({
       </div>
     </div>
   );
+}
+
+function CommandIcon({ command }: { command: ComposerCommand }) {
+  const Icon = command.source === 'product'
+    ? productCommandIcons[command.name]
+    : piCommandIcons[command.source];
+  return <Icon size={17} strokeWidth={1.8} />;
+}
+
+function isCommandLookupDraft(value: string): boolean {
+  return value.startsWith('/') && !/\s/u.test(value);
 }
 
 function ComposerAttachmentPreview({

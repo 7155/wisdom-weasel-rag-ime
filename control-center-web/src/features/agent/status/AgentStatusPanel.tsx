@@ -14,6 +14,7 @@ import {
   MessagesSquare,
   Paperclip,
   PanelRightClose,
+  Plus,
   Radar,
   Search,
   Sparkles,
@@ -41,6 +42,8 @@ import { usePageVisibility } from '@/platform/use-page-visibility';
 import { useAgentLiveStore } from '../state/live-store';
 import type { AgentCommand, ToolManifest } from '../types';
 import { publicToolResultView } from '../timeline/public-tool-result';
+import { SubagentLaunchPanel } from '../delegation/SubagentLaunchPanel';
+import type { SessionSummary } from '../types';
 import { ContextRuntimeSections } from './ContextRuntimePanel';
 import { AgentBackgroundJobsView } from './AgentBackgroundJobsView';
 import { AgentWorkflowPanel } from './AgentWorkflowPanel';
@@ -51,11 +54,16 @@ import { SubagentConsoleDialog } from './SubagentConsole';
 import {
   hasActiveSubagentRuns,
   subagentRuns,
+  subagentTree,
+  type SubagentTreeNode,
 } from './subagent-data';
 import {
+  INVALID_SUBAGENT_CONTRACT_NOTICE,
+  isContractInvalid,
   isUnverifiedReturn,
   subagentPresentationState,
   subagentStateLabel,
+  subagentTemplateLabel,
   UNVERIFIED_SUBAGENT_NOTICE,
 } from './subagent-presentation';
 
@@ -66,6 +74,7 @@ type IdleWindow = Window & typeof globalThis & {
 
 export const AgentStatusPanel = forwardRef<HTMLElement, {
   sessionId: string;
+  session?: SessionSummary;
   open: boolean;
   modal?: boolean;
   onClose: () => void;
@@ -82,6 +91,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   onCapabilityCatalogRetry: () => void;
 }>(function AgentStatusPanel({
   sessionId,
+  session,
   open,
   modal = false,
   onClose,
@@ -101,6 +111,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   const pageVisible = usePageVisibility();
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
+  const logicalTools = useMemo(() => groupToolActivities(view.tools), [view.tools]);
   const [resolvedWorkflow, setResolvedWorkflow] = useState<AgentWorkflowStateV1>();
   const resolvedTodo = resolvedWorkflow?.sessionId === sessionId
     ? resolvedWorkflow.todo
@@ -136,6 +147,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
     retry: false,
   });
   const runs = useMemo(() => subagentRuns(subagents.data), [subagents.data]);
+  const runTree = useMemo(() => subagentTree(subagents.data), [subagents.data]);
 
   return (
     <aside
@@ -224,10 +236,12 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           />
         </StatusSection>
 
-        <StatusSection icon={Wrench} title="关键步骤" count={view.tools.length}>
-          {view.tools.length ? (
+        <StatusSection icon={Wrench} title="关键步骤" count={logicalTools.length}>
+          {logicalTools.length ? (
             <div className="agent-status-tools">
-              {view.tools.map((tool) => <ToolStep key={tool.id} activity={tool} />)}
+              {logicalTools.map((item) => item.kind === 'attempts'
+                ? <ToolAttemptGroup key={item.activities[0]!.id} activities={item.activities} />
+                : <ToolStep key={item.activities[0]!.id} activity={item.activities[0]!} />)}
             </div>
           ) : <EmptyLine>本轮还没有工具步骤</EmptyLine>}
         </StatusSection>
@@ -245,12 +259,29 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           {view.artifacts.length || runs.some((run) => run.artifact) ? (
             <div className="agent-status-files">
               {view.artifacts.map((artifact) => <StatusRow key={artifact.id} icon={FolderKanban} title={artifact.name} detail={artifact.kind} />)}
-              {runs.filter((run) => run.artifact).map((run) => <StatusRow key={`artifact:${run.id}`} icon={FolderKanban} title={`${templateLabel(run.templateId)}协作产物`} detail={subagentStateLabel(run, 'result')} />)}
+              {runs.filter((run) => run.artifact).map((run) => <StatusRow key={`artifact:${run.id}`} icon={FolderKanban} title={`${subagentTemplateLabel(run.templateId)}协作产物`} detail={subagentStateLabel(run, 'result')} />)}
             </div>
           ) : <EmptyLine>本轮还没有可交付产物</EmptyLine>}
         </StatusSection>
 
-        <StatusSection icon={Bot} title="子智能体" count={runs.length}>
+        <StatusSection icon={Plus} title="启动子 Agent" count={1} defaultOpen={false}>
+          <SubagentLaunchPanel
+            availableTools={tools}
+            parents={[{
+              sessionId,
+              label: session?.title || '当前 Session',
+              detail: session?.mode === 'coordinator' ? '主持 Session' : '助手 Session',
+              canWrite: session?.mode === 'coordinator'
+                && session.executionMode !== 'read_only'
+                && Boolean(session.workspaceRoots?.length),
+              workspaceRoots: session?.workspaceRoots ?? [],
+              piSkillsEnabled: session?.piSkillsEnabled,
+              codexSkillsEnabled: session?.codexSkillsEnabled,
+            }]}
+          />
+        </StatusSection>
+
+        <StatusSection icon={Bot} title="子 Agent 运行树" count={runs.length}>
           {subagents.isPending ? <EmptyLine animated>正在读取协作状态</EmptyLine> : null}
           {subagents.error ? (
             <div className="agent-status-query-error" role="alert">
@@ -270,9 +301,12 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           {!subagents.isPending && !subagents.error && runs.length === 0 ? <EmptyLine>当前会话没有委派任务</EmptyLine> : null}
           {runs.length ? (
             <div className="agent-status-subagents">
-              {runs.map((run) => (
-                <SubagentRow key={run.id} run={run} sessionId={sessionId} />
-              ))}
+              <SubagentTreeRows
+                nodes={runTree.roots.length
+                  ? runTree.roots
+                  : runs.map((run) => ({ run, children: [] }))}
+                sessionId={sessionId}
+              />
             </div>
           ) : null}
         </StatusSection>
@@ -614,16 +648,119 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
   );
 }
 
-function SubagentRow({ run, sessionId }: { run: AgentSubagentRunV1; sessionId: string }) {
+export type LogicalToolActivity = {
+  kind: 'single' | 'attempts';
+  activities: AgentActivityProjection[];
+};
+
+export function groupToolActivities(
+  activities: readonly AgentActivityProjection[],
+): LogicalToolActivity[] {
+  const groups: LogicalToolActivity[] = [];
+  for (const activity of activities) {
+    const previous = groups.at(-1);
+    if (
+      isDelegationContractCorrection(activity)
+      && previous?.kind === 'attempts'
+      && previous.activities.every(isDelegationContractCorrection)
+    ) {
+      previous.activities.push(activity);
+      continue;
+    }
+    if (isDelegationContractCorrection(activity)) {
+      const priorSingle = previous?.kind === 'single'
+        ? previous.activities[0]
+        : undefined;
+      if (priorSingle && isDelegationContractCorrection(priorSingle)) {
+        groups.splice(-1, 1, { kind: 'attempts', activities: [priorSingle, activity] });
+      } else {
+        groups.push({ kind: 'single', activities: [activity] });
+      }
+      continue;
+    }
+    groups.push({ kind: 'single', activities: [activity] });
+  }
+  return groups;
+}
+
+function isDelegationContractCorrection(activity: AgentActivityProjection): boolean {
+  if (activity.status !== 'failed') return false;
+  const toolId = text(activity.payload.toolId ?? activity.payload.toolName);
+  if (toolId !== 'agents') return false;
+  const publicFailure = JSON.stringify(activity.payload).slice(0, 12_000);
+  return /(?:validation failed|additional properties|tasks cannot be combined|todotask|outputschema|schema for function)/iu.test(publicFailure);
+}
+
+function ToolAttemptGroup({ activities }: { activities: AgentActivityProjection[] }) {
+  const latest = publicToolResultView(activities.at(-1)!);
+  return (
+    <details className="agent-status-tool-attempts">
+      <summary>
+        <span className="agent-status-tool__icon"><TriangleAlert size={14} /></span>
+        <span><strong>多人协作 · 参数修正</strong><small>{activities.length} 次无效调用已折叠 · {latest.summary}</small></span>
+        <i>{activities.length} 次</i>
+        <ChevronRight size={14} />
+      </summary>
+      <div>
+        <p>这些回执属于同一次委派的参数纠错，不代表 {activities.length} 个子任务失败。原始回执仍保留在下方。</p>
+        {activities.map((activity, index) => (
+          <ToolStep key={activity.id} activity={activity} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function SubagentTreeRows({
+  nodes,
+  sessionId,
+  level = 0,
+}: {
+  nodes: readonly SubagentTreeNode[];
+  sessionId: string;
+  level?: number;
+}) {
+  return nodes.map((node) => (
+    <div className="agent-status-subagent-branch" key={node.run.id} data-level={level}>
+      <SubagentRow
+        run={node.run}
+        sessionId={sessionId}
+        level={level}
+        childCount={node.children.length}
+      />
+      {node.children.length ? (
+        <div className="agent-status-subagent-children" aria-label={`${node.run.task} 的子调用`}>
+          <SubagentTreeRows nodes={node.children} sessionId={sessionId} level={level + 1} />
+        </div>
+      ) : null}
+    </div>
+  ));
+}
+
+function SubagentRow({
+  run,
+  sessionId,
+  level,
+  childCount,
+}: {
+  run: AgentSubagentRunV1;
+  sessionId: string;
+  level: number;
+  childCount: number;
+}) {
   const active = run.state === 'queued' || run.state === 'running';
   const elapsed = useRunElapsed(run);
   const presentationState = subagentPresentationState(run);
   return (
-    <div className="agent-status-subagent" data-state={presentationState}>
+    <div className="agent-status-subagent" data-state={presentationState} data-depth={run.depth}>
       <span className="agent-status-subagent__state"><SubagentStateIcon state={presentationState} /></span>
       <span>
-        <strong>{templateLabel(run.templateId)}</strong>
+        <strong>
+          {level > 0 ? 'Pattern 子调用 · ' : ''}{subagentTemplateLabel(run.templateId)}
+          {run.attemptNumber > 1 ? ` · 尝试 ${run.attemptNumber}` : ''}
+        </strong>
         <small>{publicText(run.task, '协作任务')}</small>
+        {childCount ? <small className="agent-status-subagent__lineage">派生 {childCount} 个子节点</small> : null}
         {run.todoTask ? (
           <small className="agent-status-subagent__todo">
             关联 Todo：{run.todoPhase ? `${publicText(run.todoPhase, '当前阶段')} · ` : ''}{publicText(run.todoTask, '未知任务')}
@@ -633,6 +770,11 @@ function SubagentRow({ run, sessionId }: { run: AgentSubagentRunV1; sessionId: s
       <i><span>{subagentStateLabel(run)}</span>{elapsed ? <time>{elapsed}</time> : null}</i>
       {isUnverifiedReturn(run) ? (
         <small className="agent-status-subagent__verification">{UNVERIFIED_SUBAGENT_NOTICE}</small>
+      ) : null}
+      {isContractInvalid(run) ? (
+        <small className="agent-status-subagent__verification" data-contract-invalid>
+          {INVALID_SUBAGENT_CONTRACT_NOTICE}
+        </small>
       ) : null}
       <SubagentConsoleDialog run={run} sessionId={sessionId} triggerLabel={active ? '查看进度' : '查看结果'} />
     </div>
@@ -666,6 +808,7 @@ function SubagentStateIcon({ state }: { state: ReturnType<typeof subagentPresent
   if (state === 'queued') return <CircleDashed size={15} />;
   if (state === 'completed') return <Check size={15} />;
   if (state === 'returned') return <CircleDashed size={15} />;
+  if (state === 'contract_invalid') return <TriangleAlert size={15} />;
   return <TriangleAlert size={15} />;
 }
 
@@ -800,10 +943,6 @@ function taskStatus(value: string): string {
 
 function activityStatusLabel(status: AgentActivityProjection['status']): string {
   return ({ running: '进行中', waiting: '待确认', completed: '完成', failed: '失败' })[status];
-}
-
-function templateLabel(value: AgentSubagentRunV1['templateId']): string {
-  return ({ researcher: '研究员', planner: '规划员', worker: '执行者', reviewer: '审阅者', delegate: '协作者' })[value];
 }
 
 function publicText(value: unknown, fallback: string): string {

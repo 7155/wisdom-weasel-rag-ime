@@ -20,6 +20,7 @@ export interface AgentToolResultV1 {
     | 'runtime'
     | 'configuration'
     | 'agents'
+    | 'session_search'
     | 'browser'
     | 'todo'
     | 'agent_goal'

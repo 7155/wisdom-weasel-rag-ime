@@ -54,6 +54,8 @@ class AgentTemplate:
     prompt: str
     tool_profile_version: str
     capabilities: tuple[str, ...]
+    default_access: str = "read_only"
+    allowed_access: tuple[str, ...] = ("read_only",)
     context_modes: tuple[str, ...] = ("fresh", "fork")
     budget: AgentTemplateBudget = AgentTemplateBudget()
 
@@ -76,6 +78,8 @@ class AgentTemplate:
             "summary": self.summary,
             "contextModes": list(self.context_modes),
             "toolProfileVersion": self.tool_profile_version,
+            "defaultAccess": self.default_access,
+            "allowedAccess": list(self.allowed_access),
             "budget": self.budget.to_payload(),
             "capabilities": list(self.capabilities),
         }
@@ -141,6 +145,8 @@ _TEMPLATES = (
 边界：只使用 Session 已连接能力并保留现有工作；Runtime 决定真实权限、审批和取消。以 AgentResult 返回差异、回执和未验证边界。
 </responsibility-profile>""",
         tool_profile_version="subagent-worker-v1",
+        default_access="write",
+        allowed_access=("read_only", "write"),
         capabilities=("control", "rag", "memory", "delegation"),
         budget=_WORKER_BUDGET,
     ),

@@ -35,7 +35,7 @@ SESSION_RUNTIME_CONTRACT = (
 SKILL_ROUTING_CARDS = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
 BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
 PROJECT_ROUTING_SKILLS = frozenset(
-    {"memory-curation", "plugin-creator"}
+    {"memory-curation", "plugin-creator", "project-maintainer"}
 )
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 200

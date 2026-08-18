@@ -3775,10 +3775,12 @@ class PiRuntimeHostManager:
             )
 
     def _abort_fallback_expired(self, session_id: str, turn_id: str) -> None:
-        # session.abort is an ACK, not a terminal event. If a host/extension
-        # never emits agent_settled, retire that exact turn locally after a
-        # short grace period. Late events for it are ignored, so they cannot
-        # close a newer turn in the same hosted Session.
+        # Pi's session.abort receipt is a settled cancellation receipt, not a
+        # quick ACK: it may wait for tools/providers to drain. The Runtime Host
+        # dispatches control-plane requests concurrently, so first distinguish
+        # one slow Session cancellation from an actually unresponsive shared
+        # Host. A responsive Host must never be killed because one child Agent
+        # missed PAW's short UI feedback deadline.
         with self._lock:
             state = self._states.get(session_id)
             if state is None or state.turn_id != turn_id:
@@ -3787,6 +3789,15 @@ class PiRuntimeHostManager:
             client = self._client
         if client is None or not client.running:
             return
+        host_responsive = False
+        try:
+            health = client.send("health", {}, timeout=1.0)
+            host_responsive = health.get("ok") is True
+        except Exception:
+            # The process-level kill gate remains the bounded recovery path
+            # when even the independent health lane does not answer.
+            host_responsive = False
+        runtime_status = "ready"
         with self._lock:
             state = self._states.get(session_id)
             if state is not None and state.turn_id == turn_id:
@@ -3810,6 +3821,17 @@ class PiRuntimeHostManager:
                 state.pending_approvals.clear()
                 state.pending_reviews.clear()
                 state.pending_ui_requests.clear()
+                if host_responsive and self._client is client and client.running:
+                    self._status = (
+                        "busy"
+                        if any(candidate.turn_id for candidate in self._states.values())
+                        else "ready"
+                    )
+                    runtime_status = self._status
+                    self._schedule_idle_locked()
+            else:
+                # The exact turn settled while the health probe was in flight.
+                return
         self.sessions.set_status(
             session_id,
             "idle",
@@ -3818,9 +3840,32 @@ class PiRuntimeHostManager:
         self.events.publish(
             session_id,
             "turn_completed",
-            {"status": "aborted", "aborted": True, "terminalEvent": "abort_timeout_kill"},
+            {
+                "status": "aborted",
+                "aborted": True,
+                "terminalEvent": (
+                    "abort_timeout_isolated"
+                    if host_responsive
+                    else "abort_timeout_kill"
+                ),
+            },
             turn_id=turn_id,
         )
+        if host_responsive:
+            self.events.publish(
+                session_id,
+                "status_changed",
+                {
+                    "status": "idle",
+                    "runtimeStatus": runtime_status,
+                    "escalated": False,
+                    # Pi is still draining the already-requested cancellation;
+                    # late events stay fenced to the retired turn above.
+                    "cancellationPending": True,
+                },
+                turn_id=turn_id,
+            )
+            return
         receipt = self._kill_gate.request_kill(
             client.host_identity,
             request_kind="cancel_timeout",

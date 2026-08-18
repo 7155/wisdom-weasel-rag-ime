@@ -22,7 +22,7 @@ from rag_ime.agent_prompt_delivery import AgentPromptAcceptanceUnknown
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
-from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
+from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeError
 from rag_ime.pi_runtime_values import (
     PiRuntimeCommandRejected,
     PiRuntimeTurnConflict,
@@ -2185,6 +2185,29 @@ class AgentServiceTests(unittest.TestCase):
         finally:
             service.close()
         self.assertTrue(factory.runtime and factory.runtime.stopped)
+
+    def test_supplied_pi_factory_receives_the_product_plugin_approval_token(self) -> None:
+        config = PiRuntimeConfig(
+            enabled=False,
+            executable=None,
+            agent_dir=self.root / "plugin-token-agent",
+            session_dir=self.root / "plugin-token-sessions",
+            logs_dir=self.root / "plugin-token-logs",
+        )
+        factory = PiRuntimeDriverFactory(config)
+        service = AgentService(
+            db_path=self.root / "plugin-token.sqlite",
+            runtime_config=config,
+            runtime_factory=factory,
+        )
+        try:
+            self.assertTrue(service.plugin_approval_token)
+            self.assertEqual(
+                factory.config.plugin_approval_token,
+                service.plugin_approval_token,
+            )
+        finally:
+            service.close()
 
     def test_direct_chat_persona_is_immutable_session_metadata(self) -> None:
         created = self.service.create_session(
@@ -5128,6 +5151,34 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             self.service.sessions.get_approval(str(forged["approvalId"]))["state"],
             "pending",
+        )
+
+    def test_approval_api_lists_pending_work_across_sessions_for_the_center(self) -> None:
+        first = self.service.create_session({"title": "审批一"})["session"]
+        second = self.service.create_session({"title": "审批二"})["session"]
+        first_approval = self.service.sessions.create_approval(
+            session_id=str(first["id"]),
+            tool_name="input",
+            operation="apply_settings",
+            payload_sha256="1" * 64,
+            preview={"summary": "第一项"},
+            risk_level="R1",
+        )
+        second_approval = self.service.sessions.create_approval(
+            session_id=str(second["id"]),
+            tool_name="runtime",
+            operation="restart",
+            payload_sha256="2" * 64,
+            preview={"summary": "第二项"},
+            risk_level="R2",
+        )
+
+        listed = self.service.list_approvals({})
+
+        self.assertEqual(listed["sessionId"], "")
+        self.assertEqual(
+            {item["approvalId"] for item in listed["items"]},
+            {first_approval["approvalId"], second_approval["approvalId"]},
         )
 
     def test_expired_or_stale_approval_closes_the_pending_pi_request(self) -> None:

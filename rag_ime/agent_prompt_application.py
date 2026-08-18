@@ -415,18 +415,34 @@ class AgentPromptApplicationService:
             payload,
             question=question,
         )
-        accepted = dict(self.dispatch_checkpoint(
-            session_id=str(session["id"]),
-            message=prompt_message,
-            checkpoint_text=question,
-            attachment_ids=[],
-            context_source="deep_search",
-        ))
+        session_id = str(session["id"])
+        admission_request = {
+            "delivery": "prompt",
+            "clientMessageId": "",
+        }
+        reserved_runtime = self._reserve_prompt_admission(
+            session_id,
+            admission_request,
+        )
+        try:
+            accepted = dict(self.dispatch_checkpoint(
+                session_id=session_id,
+                message=prompt_message,
+                checkpoint_text=question,
+                attachment_ids=[],
+                context_source="deep_search",
+            ))
+        finally:
+            self._release_prompt_admission(
+                reserved_runtime,
+                session_id,
+                admission_request,
+            )
         return {
             "schemaVersion": "rag-ime.agent-deep-search.v1",
             "ok": True,
             "accepted": True,
-            "sessionId": session["id"],
+            "sessionId": session_id,
             "sessionCreated": created,
             "session": self.sessions.get(
                 str(session["id"])

@@ -196,6 +196,73 @@
   line-height: 1.45;
 }
 
+.subagent-console__overview .subagent-console__verification[data-contract-invalid] {
+  border-left-color: var(--color-warning);
+  color: var(--color-text);
+}
+
+.subagent-console__overview .subagent-console__verification[data-contract-invalid] small {
+  display: block;
+  margin-top: 5px;
+  color: var(--color-text-tertiary);
+  font: 11px/1.45 var(--font-mono);
+}
+
+.subagent-console__launch-digest {
+  grid-column: 1 / -1;
+  background: color-mix(in srgb, var(--color-info-soft) 42%, var(--color-surface));
+}
+
+.subagent-console__launch-digest dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-border);
+}
+
+.subagent-console__launch-digest dl > div {
+  display: grid;
+  min-width: 0;
+  padding: 9px 10px;
+  gap: 3px;
+  background: var(--color-surface);
+}
+
+.subagent-console__launch-digest dt {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.subagent-console__launch-digest dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-console__tool-chips {
+  display: flex;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.subagent-console__tool-chips code {
+  padding: 3px 6px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
 .subagent-console textarea {
   width: 100%;
   min-height: 74px;
@@ -257,6 +324,10 @@
 
 .subagent-console__state[data-state="returned"] {
   color: var(--color-info);
+}
+
+.subagent-console__state[data-state="contract_invalid"] {
+  color: var(--color-warning);
 }
 
 .subagent-console__state[data-state="failed"],
@@ -463,6 +534,10 @@
 
   .subagent-console__overview,
   .subagent-console__inbox {
+    grid-template-columns: 1fr;
+  }
+
+  .subagent-console__launch-digest dl {
     grid-template-columns: 1fr;
   }
 

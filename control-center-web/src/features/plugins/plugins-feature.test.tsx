@@ -21,7 +21,7 @@ describe('PluginsFeature', () => {
     const user = userEvent.setup();
     renderPlugins();
 
-    expect(await screen.findByRole('heading', { name: '技能与工具', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '插件管理', level: 1 })).toBeInTheDocument();
     const list = await screen.findByRole('group', { name: '能力列表' });
     const descriptions = Array.from(list.querySelectorAll<HTMLElement>('.plugins-list__copy > span'));
     expect(descriptions).toHaveLength(4);
@@ -183,7 +183,7 @@ describe('PluginsFeature', () => {
   it('filters capabilities by readable purpose, availability and kind', async () => {
     const user = userEvent.setup();
     renderPlugins();
-    await screen.findByRole('heading', { name: '技能与工具', level: 1 });
+    await screen.findByRole('heading', { name: '插件管理', level: 1 });
 
     const search = await screen.findByRole('textbox', { name: '搜索' });
     await user.type(search, '语音');
@@ -355,6 +355,23 @@ describe('PluginsFeature', () => {
     expect(await screen.findByText('读取失败')).toBeVisible();
     expect(screen.getByText('暂时无法读取这部分内容，请稍后重试。')).toBeVisible();
     expect(screen.queryByText('还没有受管插件')).not.toBeInTheDocument();
+  });
+
+  it('shows a recoverable Pi disconnect instead of an empty installed state', async () => {
+    const user = userEvent.setup();
+    renderPlugins({
+      'agent.extensions.list': {
+        schemaVersion: 'rag-ime.plugin-inventory.v1',
+        ok: true,
+        runtimeAvailable: false,
+        items: [],
+      },
+    });
+
+    await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
+    expect(await screen.findByText('Pi Runtime 暂时未连接')).toBeVisible();
+    expect(screen.getByText('Pi 未连接')).toBeVisible();
+    expect(screen.getByText(/不会再把断连伪装成“0 个已安装”/)).toBeVisible();
   });
 
   it('refreshes catalog, installed versions, proposals and lifecycle together', async () => {

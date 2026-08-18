@@ -1,4 +1,4 @@
-import { AlertCircle, FolderTree, GitBranch, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { AlertCircle, FolderTree, GitBranch, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
@@ -21,6 +21,7 @@ import {
 import { NewSessionDialog, type NewSessionInput } from './sessions/NewSessionDialog';
 import { AgentStatusPanel } from './status/AgentStatusPanel';
 import { AgentFilesPanel } from './workspace/AgentFilesPanel';
+import { SessionSubagentPanel } from './delegation/SessionSubagentPanel';
 import { useMediaQuery, useModalPanel } from './overlay-dialog';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
 import { useModelSelectionController } from './state/use-model-selection-controller';
@@ -74,6 +75,7 @@ function AgentWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const requestedDraft = searchParams.get('draft')?.trim().slice(0, 4_000) ?? '';
+  const requestedSubagentsOpen = searchParams.get('subagents') === 'open';
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [personas, setPersonas] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   // A Room task/owner deep link already carries the exact Session identity.
@@ -112,25 +114,32 @@ function AgentWorkspace() {
   const [timelineJumpRequest, setTimelineJumpRequest] = useState<{ messageId: string; requestId: number }>();
   const [timelineAtBottom, setTimelineAtBottom] = useState(true);
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
+  const [snapshotReadySessionId, setSnapshotReadySessionId] = useState('');
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(shouldOpenTaskCenterByDefault);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [subagentsOpen, setSubagentsOpen] = useState(requestedSubagentsOpen);
   const [error, setVisibleError] = useState('');
   const [sendTimings] = useState(() => new AgentSendTimingTracker());
   const session = sessions.find((item) => item.id === selectedId);
   const isRoomParticipant = Boolean(session?.roomParticipant);
+  const sessionOwnerKind = !session ? 'unknown' : isRoomParticipant ? 'room' : 'user';
+  const isUserConversation = sessionOwnerKind === 'user';
   const railToggleRef = useRef<HTMLButtonElement>(null);
   const railRef = useRef<HTMLElement>(null);
   const statusToggleRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLElement>(null);
   const filesToggleRef = useRef<HTMLButtonElement>(null);
   const filesRef = useRef<HTMLElement>(null);
+  const subagentsToggleRef = useRef<HTMLButtonElement>(null);
+  const subagentsRef = useRef<HTMLElement>(null);
   const conversationRef = useRef<HTMLElement>(null);
   useComposerClearance(conversationRef);
   const selectedIdRef = useRef(selectedId);
   const sessionErrorsRef = useRef(new Map<string, string>());
   const catalogNoticesRef = useRef(new Map<string, Map<string, string>>());
   const sessionSendLocksRef = useRef(new Set<string>());
+  const stopReconcileEscalatedSessionsRef = useRef(new Set<string>());
   const modelCatalogCacheRef = useRef(new Map<string, ModelCatalog>());
   const forkCatalogCacheRef = useRef(new Map<string, Record<string, unknown>>());
   const rewriteResolveGenerationRef = useRef(0);
@@ -281,8 +290,9 @@ function AgentWorkspace() {
   const railModal = mobileViewport && railOpen;
   const statusModal = statusOverlayViewport && statusOpen;
   const filesModal = statusOverlayViewport && filesOpen;
-  const sidePanelOpen = statusOpen || filesOpen;
-  const sidePanelModal = statusModal || filesModal;
+  const subagentsModal = statusOverlayViewport && subagentsOpen;
+  const sidePanelOpen = statusOpen || filesOpen || subagentsOpen;
+  const sidePanelModal = statusModal || filesModal || subagentsModal;
 
   useEffect(() => {
     if (mobileViewport) setRailOpen(false);
@@ -319,6 +329,12 @@ function AgentWorkspace() {
     onClose: closeFilesPanel,
     initialFocusSelector: '[data-drawer-autofocus]',
   });
+  useModalPanel({
+    active: subagentsModal,
+    panelRef: subagentsRef,
+    returnFocusRef: subagentsToggleRef,
+    onClose: closeSubagentsPanel,
+  });
 
   const loadSessions = useCallback(async (preferredId = '') => {
     setLoading(true);
@@ -333,6 +349,7 @@ function AgentWorkspace() {
       });
       const nextSessions = sessionItems(sessionResponse);
       const usableSessions = __CONTROL_PREVIEW__ && transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
+      const railSessions = usableSessions.filter((item) => !item.roomParticipant);
       setSessions(usableSessions);
       setSessionLoadError('');
       void transport.request({ pathId: 'agent.roles.list' }).then(
@@ -344,15 +361,15 @@ function AgentWorkspace() {
       );
       const preferredSessionId = usableSessions.some((item) => item.id === preferredId) ? preferredId : '';
       const backendActiveId = activeSessionId(sessionResponse);
-      const activeId = usableSessions.some((item) => item.id === backendActiveId) ? backendActiveId : '';
+      const activeId = railSessions.some((item) => item.id === backendActiveId) ? backendActiveId : '';
       const meaningful = (item: SessionSummary): boolean => (
         (item.messageCount ?? 0) > 0 || Boolean(item.lastMessagePreview?.trim())
       );
-      const meaningfulId = usableSessions.find(meaningful)?.id ?? '';
-      const activeMeaningfulId = usableSessions.find((item) => item.id === activeId && meaningful(item))?.id ?? '';
+      const meaningfulId = railSessions.find(meaningful)?.id ?? '';
+      const activeMeaningfulId = railSessions.find((item) => item.id === activeId && meaningful(item))?.id ?? '';
       setSelectedId((current) => {
-        const currentId = usableSessions.some((item) => item.id === current) ? current : '';
-        const next = preferredSessionId || currentId || activeMeaningfulId || meaningfulId || activeId || usableSessions[0]?.id || '';
+        const currentId = railSessions.some((item) => item.id === current) ? current : '';
+        const next = preferredSessionId || currentId || activeMeaningfulId || meaningfulId || activeId || railSessions[0]?.id || '';
         selectedIdRef.current = next;
         return next;
       });
@@ -361,8 +378,10 @@ function AgentWorkspace() {
       if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
         setSessions(previewSessions);
         const preferredSessionId = previewSessions.some((item) => item.id === preferredId) ? preferredId : '';
+        const railSessions = previewSessions.filter((item) => !item.roomParticipant);
         setSelectedId((current) => {
-          const next = preferredSessionId || current || previewSessions[0]?.id || '';
+          const currentId = railSessions.some((item) => item.id === current) ? current : '';
+          const next = preferredSessionId || currentId || railSessions[0]?.id || '';
           selectedIdRef.current = next;
           return next;
         });
@@ -421,6 +440,7 @@ function AgentWorkspace() {
     setToolCatalogStatus('loading');
     setConversationForkAvailable(false);
     setConversationRewriteAvailable(false);
+    setSnapshotReadySessionId('');
     if (editTargetSessionIdRef.current !== selectedId) {
       rewriteResolveGenerationRef.current += 1;
       editTargetSessionIdRef.current = '';
@@ -548,6 +568,24 @@ function AgentWorkspace() {
               batcher.push(event);
               if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
                 void refreshSessionRail();
+                if (stopReconcileEscalatedSessionsRef.current.delete(selectedId)) {
+                  // A late Pi terminal event is only a wake-up signal. Rebuild
+                  // the conversation from the authoritative persisted
+                  // transcript so an optimistic/busy Stop projection cannot
+                  // survive beside the terminal turn. Retry catalogs at the
+                  // same boundary because Provider discovery may have been
+                  // temporarily unavailable while Pi was terminating.
+                  void loadSnapshot().then((loaded) => {
+                    if (!active || !loaded) return;
+                    if (
+                      sessionErrorsRef.current.get(selectedId)
+                      === STOP_RECONCILE_ESCALATED_MESSAGE
+                    ) {
+                      setSessionError(selectedId, '');
+                    }
+                    void loadSessionCatalogs();
+                  });
+                }
               }
               if (event.eventType === 'session_configuration_changed') {
                 modelSelection.applyConfigurationEvent(selectedId, event.payload);
@@ -564,21 +602,6 @@ function AgentWorkspace() {
         return false;
       } finally {
         if (requestId === snapshotRequestId) snapshotAbort = undefined;
-      }
-    }
-    async function warmForkCatalog(): Promise<void> {
-      if (isRoomParticipant) return;
-      const sessionStatus = agentProjection(selectedId).status;
-      if (sessionStatus !== 'idle' && sessionStatus !== 'active') return;
-      try {
-        const response = await transport.request<Record<string, unknown>>({
-          pathId: 'agent.session.forks.list',
-          params: { sessionId: selectedId },
-        });
-        if (active) forkCatalogCacheRef.current.set(selectedId, response);
-      } catch {
-        // Fork discovery is an idle optimization. The explicit edit/branch
-        // action still retries and owns any user-visible error.
       }
     }
     async function loadSessionCatalogs(): Promise<void> {
@@ -686,7 +709,7 @@ function AgentWorkspace() {
     // History recovery owns the stream cursor; model, command and tool
     // catalogs are independent and should become interactive immediately.
     void loadSnapshot().then((loaded) => {
-      if (loaded) void warmForkCatalog();
+      if (active && loaded) setSnapshotReadySessionId(selectedId);
     });
     void loadSessionCatalogs();
     return () => {
@@ -696,7 +719,35 @@ function AgentWorkspace() {
       unsubscribe();
       sendTimings.clearSession(selectedId);
     };
-  }, [ensure, isRoomParticipant, refreshSessionRail, selectedId, sendTimings, transport]);
+  }, [ensure, refreshSessionRail, selectedId, sendTimings, transport]);
+
+  useEffect(() => {
+    // A Room task deep link starts snapshot recovery before the Session rail
+    // catalog resolves. Fork discovery is therefore a separate optimization:
+    // it begins only after ownership is confirmed as a user conversation and
+    // never causes the transcript/stream effect to restart.
+    if (
+      !selectedId
+      || !isUserConversation
+      || snapshotReadySessionId !== selectedId
+    ) return;
+    const sessionStatus = agentProjection(selectedId).status;
+    if (sessionStatus !== 'idle' && sessionStatus !== 'active') return;
+    let active = true;
+    void transport.request<Record<string, unknown>>({
+      pathId: 'agent.session.forks.list',
+      params: { sessionId: selectedId },
+    }).then(
+      (response) => {
+        if (active) forkCatalogCacheRef.current.set(selectedId, response);
+      },
+      () => {
+        // Fork discovery is an idle optimization. The explicit edit/branch
+        // action still retries and owns any user-visible error.
+      },
+    );
+    return () => { active = false; };
+  }, [isUserConversation, selectedId, snapshotReadySessionId, transport]);
 
   const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
     ?? personas.find((item) => item.roleId === 'companion-future-v1')
@@ -708,7 +759,7 @@ function AgentWorkspace() {
     branchBlocked
     || rewriteResolving
     || !conversationRewriteAvailable
-    || isRoomParticipant
+    || !isUserConversation
   );
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
   useEffect(() => {
@@ -726,9 +777,14 @@ function AgentWorkspace() {
     setFilesOpen(false);
   }
 
+  function closeSubagentsPanel(): void {
+    setSubagentsOpen(false);
+  }
+
   function closeSidePanel(): void {
     setStatusOpen(false);
     setFilesOpen(false);
+    setSubagentsOpen(false);
   }
 
   function toggleRail(): void {
@@ -744,6 +800,7 @@ function AgentWorkspace() {
       const next = !value;
       if (next) {
         setFilesOpen(false);
+        setSubagentsOpen(false);
         if (mobileViewport) setRailOpen(false);
       }
       return next;
@@ -755,6 +812,19 @@ function AgentWorkspace() {
       const next = !value;
       if (next) {
         setStatusOpen(false);
+        setSubagentsOpen(false);
+        if (mobileViewport) setRailOpen(false);
+      }
+      return next;
+    });
+  }
+
+  function toggleSubagents(): void {
+    setSubagentsOpen((value) => {
+      const next = !value;
+      if (next) {
+        setStatusOpen(false);
+        setFilesOpen(false);
         if (mobileViewport) setRailOpen(false);
       }
       return next;
@@ -953,7 +1023,8 @@ function AgentWorkspace() {
     if (value === '/model' || value === '/thinking') { setSelectedDraft(''); openModelPicker(); return; }
     if (value === '/permissions') { setSelectedDraft(''); setPermissionPickerRequest((current) => current + 1); return; }
     if (value === '/tools') { setSelectedDraft(''); openToolPicker(); return; }
-    if (value === '/status' || value === '/session') { setSelectedDraft(''); setFilesOpen(false); setStatusOpen(true); return; }
+    if (value === '/status' || value === '/session') { setSelectedDraft(''); setFilesOpen(false); setSubagentsOpen(false); setStatusOpen(true); return; }
+    if (value === '/subagents') { setSelectedDraft(''); setFilesOpen(false); setStatusOpen(false); setSubagentsOpen(true); return; }
     if (value === '/settings') { setSelectedDraft(''); window.location.hash = '/configuration'; return; }
     if (value === '/help' || value === '/hotkeys') { setSelectedDraft(''); setHelpRequest((current) => current + 1); return; }
     if (value === '/stop') { setSelectedDraft(''); await stop(); return; }
@@ -1213,7 +1284,7 @@ function AgentWorkspace() {
   }
 
   function runProductCommand(command: AgentProductCommandName): void {
-    if ((busy || sending) && command !== 'resume' && command !== 'session' && command !== 'status' && command !== 'stop') return;
+    if ((busy || sending) && command !== 'resume' && command !== 'session' && command !== 'status' && command !== 'subagents' && command !== 'stop') return;
     switch (command) {
       case 'new':
         setSelectedDraft('');
@@ -1240,7 +1311,13 @@ function AgentWorkspace() {
       case 'session':
       case 'status':
         setFilesOpen(false);
+        setSubagentsOpen(false);
         setStatusOpen(true);
+        break;
+      case 'subagents':
+        setFilesOpen(false);
+        setStatusOpen(false);
+        setSubagentsOpen(true);
         break;
       case 'settings':
         setSelectedDraft('');
@@ -1375,6 +1452,7 @@ function AgentWorkspace() {
     const sessionId = session.id;
     const stopStartedAt = monotonicNow();
     const stopDeadlineAt = stopStartedAt + STOP_RECONCILE_BUDGET_MS;
+    stopReconcileEscalatedSessionsRef.current.delete(sessionId);
     setSessionStopping(sessionId, true);
     try {
       const abortResult = await settleBeforeDeadline(
@@ -1386,6 +1464,7 @@ function AgentWorkspace() {
         stopDeadlineAt,
       );
       if (abortResult.kind === 'timeout') {
+        stopReconcileEscalatedSessionsRef.current.add(sessionId);
         setSessionStopping(sessionId, false);
         setSessionError(sessionId, STOP_RECONCILE_ESCALATED_MESSAGE);
         return;
@@ -1426,13 +1505,16 @@ function AgentWorkspace() {
         startedAt: stopStartedAt,
       });
       if (settled) {
+        stopReconcileEscalatedSessionsRef.current.delete(sessionId);
         setSessionStopping(sessionId, false);
         setSessionError(sessionId, '');
       } else {
+        stopReconcileEscalatedSessionsRef.current.add(sessionId);
         setSessionStopping(sessionId, false);
         setSessionError(sessionId, STOP_RECONCILE_ESCALATED_MESSAGE);
       }
     } catch (requestError) {
+      stopReconcileEscalatedSessionsRef.current.delete(sessionId);
       setSessionStopping(sessionId, false);
       setSessionError(sessionId, errorText(requestError));
     }
@@ -1839,7 +1921,7 @@ function AgentWorkspace() {
   }
 
   return (
-    <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={sidePanelOpen} data-side-panel={filesOpen ? 'files' : statusOpen ? 'status' : 'none'}>
+    <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={sidePanelOpen} data-side-panel={subagentsOpen ? 'subagents' : filesOpen ? 'files' : statusOpen ? 'status' : 'none'}>
       <h1 className="agent-feature__title">Agent 任务中心</h1>
       <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} error={sessionLoadError} open={railOpen} modal={railModal} blocked={sidePanelModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => { if (mobileViewport) setRailOpen(false); setNewSessionOpen(true); }} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onRetry={() => void loadSessions(selectedIdRef.current || requestedSessionId)} onClose={closeMobileRail} />
       <AgentPaneResizer side="rail" />
@@ -1868,11 +1950,12 @@ function AgentWorkspace() {
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
+            <IconButton ref={subagentsToggleRef} className="agent-subagents-toggle" aria-controls="agent-subagent-panel" aria-expanded={subagentsOpen} label={subagentsOpen ? '收起子 Agent 工作台' : '打开子 Agent 工作台'} icon={<Network size={17} />} disabled={!session} onClick={toggleSubagents} tooltip />
             <IconButton ref={filesToggleRef} className="agent-files-toggle" aria-controls="agent-files-panel" aria-expanded={filesOpen} label={filesOpen ? '收起文件目录' : '展开文件目录'} icon={<FolderTree size={17} />} disabled={!session} onClick={toggleFiles} tooltip />
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && !isRoomParticipant} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && isUserConversation} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
           <div className="agent-composer-dock">
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
@@ -1944,9 +2027,19 @@ function AgentWorkspace() {
         onClose={closeFilesPanel}
         onManageRoots={() => void manageWorkspaceRoots()}
       />
+      <SessionSubagentPanel
+        ref={subagentsRef}
+        sessionId={selectedId}
+        session={session}
+        tools={tools}
+        open={subagentsOpen}
+        modal={subagentsModal}
+        onClose={closeSubagentsPanel}
+      />
       <AgentStatusPanel
         ref={statusRef}
         sessionId={selectedId}
+        session={session}
         open={statusOpen}
         capabilityCatalogError={capabilityCatalogError}
         modal={statusModal}
@@ -1983,7 +2076,7 @@ function AgentWorkspace() {
         sessionTitle={session?.title ?? '新对话'}
         nodes={forkDialogNodes}
         initialEntryId={forkDialogInitialEntryId}
-        branchAvailable={conversationForkAvailable && !isRoomParticipant}
+        branchAvailable={conversationForkAvailable && isUserConversation}
         branchBlocked={branchBlocked}
         branchUnavailableReason={isRoomParticipant
           ? '这段对话属于 Room participant，历史分支与修改由 Room 管理。'

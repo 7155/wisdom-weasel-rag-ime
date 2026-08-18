@@ -37,6 +37,7 @@ const productCommandDefinitions: Omit<ProductCommand, keyof CommandAvailability>
   { name: 'tools', invocation: '/tools', description: '查看当前权限可用的工具', source: 'product', behavior: 'execute' },
   { name: 'session', invocation: '/session', description: '查看当前任务、计划与运行统计', source: 'product', behavior: 'execute' },
   { name: 'status', invocation: '/status', description: '打开当前对话任务中心', source: 'product', behavior: 'execute' },
+  { name: 'subagents', invocation: '/subagents', description: '打开子 Agent 运行图与启动配置', source: 'product', behavior: 'execute' },
   { name: 'settings', invocation: '/settings', description: '打开控制中心配置', source: 'product', behavior: 'execute' },
   { name: 'hotkeys', invocation: '/hotkeys', description: '查看 Web Agent 命令和键盘操作', source: 'product', behavior: 'execute' },
   { name: 'stop', invocation: '/stop', description: '停止当前处理', source: 'product', behavior: 'execute' },
@@ -123,6 +124,7 @@ function productCommandAvailability(
     && name !== 'resume'
     && name !== 'session'
     && name !== 'status'
+    && name !== 'subagents'
     && name !== 'stop'
   ) {
     return {

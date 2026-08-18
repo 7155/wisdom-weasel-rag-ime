@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_extensions import AgentExtensionService
+from rag_ime.agent_runtime_driver import AgentRuntimeError
 
 
 class _FakePluginRuntime:
@@ -174,6 +175,28 @@ class AgentExtensionServiceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def test_list_projects_runtime_unavailable_without_dropping_the_http_response(self) -> None:
+        def unavailable_runtime():
+            raise AgentRuntimeError("Pi runtime is disabled")
+
+        service = AgentExtensionService(
+            runtime_provider=unavailable_runtime,
+            inbox_root=self.root / "unavailable-inbox",
+        )
+
+        self.assertEqual(
+            service.list(),
+            {
+                "schemaVersion": "rag-ime.plugin-inventory.v1",
+                "ok": True,
+                "runtimeAvailable": False,
+                "items": [],
+            },
+        )
+        catalog = service.catalog()
+        self.assertTrue(catalog["ok"])
+        self.assertFalse(catalog["runtimeAvailable"])
 
     def test_install_requires_validation_preview_digest_and_explicit_apply(self) -> None:
         validation = self.service.validate(

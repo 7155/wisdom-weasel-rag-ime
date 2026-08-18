@@ -538,15 +538,18 @@ class DebugImeService:
                 worker=self.knowledge_worker,
                 work_contract=self.management.work_contract,
             )
-        plugin_inbox = os.environ.get("RAG_IME_AGENT_PLUGIN_INBOX_DIR", "").strip()
+        plugin_inbox = (
+            os.environ.get("RAG_IME_AGENT_PLUGIN_INBOX_DIR", "").strip()
+            or os.environ.get("RAG_IME_PI_PLUGIN_INBOX", "").strip()
+        )
         self.agent_extensions = AgentExtensionService(
             runtime_provider=lambda: self.agent.runtime,
             inbox_root=(
                 Path(plugin_inbox).expanduser()
                 if plugin_inbox
                 else Path(config.db_path).expanduser().resolve(strict=False).parent
-                / "AgentPlugins"
-                / "inbox"
+                / "Agent"
+                / "plugin-inbox"
             ),
         )
         self.agent_lifecycle_hooks = AgentLifecycleHookService(config.db_path)

@@ -723,7 +723,6 @@ export const CONTROL_ROUTES = {
     method: 'GET',
     path: '/api/agent/approvals',
     query: ['sessionId', 'state', 'limit'],
-    requiredQuery: ['sessionId'],
   },
   'agent.approval.get': {
     method: 'GET',
@@ -760,7 +759,12 @@ export const CONTROL_ROUTES = {
   'agent.subagents.create': {
     method: 'POST',
     path: '/api/agent/subagents/runs',
-    body: ['sessionId', 'tasks', 'agent', 'version', 'task', 'contextMode', 'wait'],
+    body: [
+      'sessionId', 'tasks', 'agent', 'version', 'task', 'expectedOutput',
+      'acceptanceCriteria', 'outputSchema', 'modelProfile', 'thinkingLevel',
+      'access', 'allowedTools', 'piSkillsEnabled', 'codexSkillsEnabled',
+      'workspaceRoots', 'todoTask', 'contextMode', 'forkEntryId', 'wait',
+    ],
     requiredBody: ['sessionId'],
   },
   'agent.subagent.get': {

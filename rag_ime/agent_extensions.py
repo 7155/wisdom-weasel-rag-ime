@@ -41,7 +41,19 @@ class AgentExtensionService:
         self._proposals: dict[str, dict[str, object]] = {}
 
     def list(self) -> dict[str, object]:
-        plugins = self._call("plugin_list")
+        try:
+            plugins = self._call("plugin_list")
+        except AgentRuntimeError:
+            # The Sidecar can serve management routes while the managed Pi
+            # Runtime is owned by the Agent gateway (or is still starting).
+            # Project that state explicitly so the plugin page remains
+            # navigable instead of terminating the HTTP connection.
+            return {
+                "schemaVersion": "rag-ime.plugin-inventory.v1",
+                "ok": True,
+                "runtimeAvailable": False,
+                "items": [],
+            }
         if not isinstance(plugins, list):
             raise AgentRuntimeError("Pi Runtime Host returned an invalid plugin list")
         items: list[dict[str, object]] = []
@@ -91,20 +103,22 @@ class AgentExtensionService:
                     ),
                 }
             )
-        return {"ok": True, "items": items}
+        return {
+            "schemaVersion": "rag-ime.plugin-inventory.v1",
+            "ok": True,
+            "runtimeAvailable": True,
+            "items": items,
+        }
 
     def catalog(self) -> dict[str, object]:
         document = self._catalog_document()
-        runtime_available = True
-        try:
-            installed = {
-                str(item.get("id") or ""): item
-                for item in self.list()["items"]
-                if isinstance(item, Mapping)
-            }
-        except AgentRuntimeError:
-            installed = {}
-            runtime_available = False
+        inventory = self.list()
+        runtime_available = inventory.get("runtimeAvailable") is not False
+        installed = {
+            str(item.get("id") or ""): item
+            for item in inventory["items"]
+            if isinstance(item, Mapping)
+        }
         entries: list[dict[str, object]] = []
         for raw_entry in document.get("entries") or []:
             if not isinstance(raw_entry, Mapping):

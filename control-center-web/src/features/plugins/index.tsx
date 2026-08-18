@@ -14,6 +14,7 @@ import {
   Settings2,
   ShieldCheck,
   ShieldAlert,
+  ShieldQuestion,
   Sparkles,
   Wrench,
 } from 'lucide-react';
@@ -157,7 +158,9 @@ export function PluginsFeature() {
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [selectedId]);
-  const installedItems = arrayRecords(asRecord(installed.data).items);
+  const installedSnapshot = asRecord(installed.data);
+  const installedItems = arrayRecords(installedSnapshot.items);
+  const pluginRuntimeAvailable = installedSnapshot.runtimeAvailable !== false;
   const proposalItems = arrayRecords(asRecord(proposals.data).items);
   const versionItems = arrayRecords(asRecord(versions.data).items);
   const lifecyclePolicies = arrayRecords(asRecord(lifecycle.data).policies);
@@ -391,11 +394,14 @@ export function PluginsFeature() {
 
   return (
     <ManagementPage
-      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>}
-      description="选择伙伴在对话中可以使用的技能与工具，并为所有对话或当前项目设置默认范围。"
+      actions={<>
+        <Button leadingIcon={<ShieldQuestion size={15} />} onClick={() => navigate('/approvals')} size="small" variant="quiet">审批中心</Button>
+        <Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>
+      </>}
+      description="管理技能、工具与 Pi 扩展的发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。"
       eyebrow="伙伴能力"
       routeId="plugins"
-      title="技能与工具"
+      title="插件管理"
     >
       <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection
@@ -403,7 +409,7 @@ export function PluginsFeature() {
           title="能力概览"
         >
           <MetricStrip items={[
-            { label: '可查看', value: items.length, detail: '技能与工具', icon: Wrench },
+            { label: '可查看', value: items.length, detail: '技能、工具与扩展', icon: Wrench },
             { label: '当前可用', value: availableCount, detail: '连接正常', icon: ShieldCheck },
             { label: '伙伴可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
           ]} />
@@ -454,7 +460,7 @@ export function PluginsFeature() {
 
         <ManagementSection
           description="选择一项查看它能做什么、当前是否可用，以及由哪一层设置决定伙伴能否使用。"
-          title="浏览技能与工具"
+          title="浏览插件与能力"
           trailing={<span className="plugins-count">{filtered.length} 项</span>}
         >
           <div className="plugins-filters">
@@ -546,13 +552,19 @@ export function PluginsFeature() {
       {showMaintenance ? <ManagementSection
         description="安装或启用新能力前会先说明来源、权限和影响；停用与恢复上一版本会直接生效。"
         title="扩展管理"
-        trailing={<StatusBadge label={pluginQueryError ? '暂时无法读取' : `${installedItems.length} 个已安装`} tone={pluginQueryError ? 'warning' : 'neutral'} />}
+        trailing={<StatusBadge
+          label={pluginQueryError ? '暂时无法读取' : !pluginRuntimeAvailable ? 'Pi 未连接' : `${installedItems.length} 个已安装`}
+          tone={pluginQueryError || !pluginRuntimeAvailable ? 'warning' : 'neutral'}
+        />}
       >
         <QueryState
           error={pluginQueryError}
           isPending={pluginQueriesPending}
           onRetry={() => void Promise.all([installed.refetch(), versions.refetch(), proposals.refetch()])}
         >
+          {!pluginRuntimeAvailable ? <InlineNotice title="Pi Runtime 暂时未连接" tone="warning">
+            插件清单仍可浏览，但已安装状态和安装操作要等 Pi Runtime 恢复后才能继续；页面不会再把断连伪装成“0 个已安装”。
+          </InlineNotice> : null}
           <div className="plugin-lifecycle">
             <div className="plugin-lifecycle__install">
               <Field htmlFor="pi-package-source" label="Pi Package 来源">

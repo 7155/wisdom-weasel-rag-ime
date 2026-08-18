@@ -18,7 +18,7 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
-POST_0126_MIGRATIONS = tuple(range(127, 153))
+POST_0126_MIGRATIONS = tuple(range(127, 159))
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 152)
+            self.assertEqual(status["currentVersion"], 158)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -945,7 +945,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn)
 
                 self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
-                self.assertEqual(upgraded.current_version, 152)
+                self.assertEqual(upgraded.current_version, 158)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -1050,6 +1050,105 @@ class DatabaseMigrationTests(unittest.TestCase):
             "17769f20b27d770388a59f2978c6e5e8ebc54cb9ada801db7b9141ccc0a3f8a0",
         )
 
+    def test_installed_0153_through_0158_migrations_stay_immutable(self) -> None:
+        expected = {
+            153: "5278d10ce3f1e10804d05e6521e2f17f229c0e29a1e079072a4253c036be60fa",
+            154: "5510001f54820e24d422fa096c3af8dd5bf3b2c8c473e79fca5da2a768d167ec",
+            155: "70760cbbc06e8bf8539836e4839cc0a0c79fd572c3a7a38b0eeedbb2578d297d",
+            156: "9a651dda74a8d037f32738928acd8be11d46297644903f4619e0ad03f45ab84d",
+            157: "ab163c68917620dfc627bc29e138b975c3eb61a949cf4e2ca4c6e242177be752",
+            158: "1ede70dad0b67c783911783d744b5674b87779f9a4ffab4edbd210f38810d79a",
+        }
+        for version, checksum in expected.items():
+            with self.subTest(version=version):
+                source = next(DEFAULT_MIGRATIONS_DIR.glob(f"{version:04d}_*.sql"))
+                self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), checksum)
+
+    def test_0153_through_0158_preserve_legacy_subagent_runs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0158-") as temporary:
+            migrations_0152 = Path(temporary) / "migrations-0152"
+            migrations_0152.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 152:
+                    shutil.copy2(migration.path, migrations_0152 / migration.path.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                conn.execute("PRAGMA foreign_keys = ON")
+                apply_database_migrations(conn, migrations_dir=migrations_0152)
+                conn.executemany(
+                    """
+                    INSERT INTO agent_sessions(
+                        id, title, session_mode, role_id, role_version,
+                        model_profile, tool_profile_version, created_at_ms,
+                        updated_at_ms, last_opened_at_ms, status
+                    ) VALUES (?, ?, 'assistant', 'companion', '1',
+                              'test/model', 'test-tools', 1, 1, 1, 'idle')
+                    """,
+                    (
+                        ("session:legacy-parent", "Legacy parent"),
+                        ("session:legacy-child-1", "Legacy child 1"),
+                        ("session:legacy-child-2", "Legacy child 2"),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_subagent_batches(
+                        id, parent_session_id, context_mode, state, depth,
+                        max_depth, created_at_ms, updated_at_ms
+                    ) VALUES (
+                        'batch:legacy', 'session:legacy-parent', 'fresh',
+                        'completed', 1, 2, 1, 1
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO agent_subagent_runs(
+                        id, batch_id, child_session_id, template_id,
+                        template_version, ordinal, task_text, state,
+                        max_turns, max_tool_calls, max_total_tokens,
+                        max_duration_ms, max_output_chars, created_at_ms,
+                        updated_at_ms
+                    ) VALUES (?, 'batch:legacy', ?, 'researcher', '1', ?, ?,
+                              'completed', 4, 4, 1024, 1000, 1024, 1, 1)
+                    """,
+                    (
+                        ("run:legacy-1", "session:legacy-child-1", 0, "Legacy task 1"),
+                        ("run:legacy-2", "session:legacy-child-2", 1, "Legacy task 2"),
+                    ),
+                )
+
+                upgraded = apply_database_migrations(conn)
+
+                self.assertEqual(upgraded.applied_versions, tuple(range(153, 159)))
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT logical_node_id, attempt_id, attempt_number,
+                               launch_digest_json, structured_output_json
+                        FROM agent_subagent_runs ORDER BY ordinal
+                        """
+                    ).fetchall(),
+                    [("", "", 1, "{}", "{}"), ("", "", 1, "{}", "{}")],
+                )
+                conn.execute(
+                    """
+                    UPDATE agent_subagent_runs
+                    SET logical_node_id = 'node:new', attempt_number = 1
+                    WHERE id = 'run:legacy-1'
+                    """
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        """
+                        UPDATE agent_subagent_runs
+                        SET logical_node_id = 'node:new', attempt_number = 1
+                        WHERE id = 'run:legacy-2'
+                        """
+                    )
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+                self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
+
     def test_production_0062_history_stays_immutable_and_workflow_migrations_append(self) -> None:
         expected_history = {
             61: (
@@ -1089,7 +1188,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 152)
+                self.assertEqual(status["currentVersion"], 158)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -1828,7 +1927,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    tuple(range(135, 153)),
+                    tuple(range(135, 159)),
                 )
                 todo = conn.execute(
                     """
