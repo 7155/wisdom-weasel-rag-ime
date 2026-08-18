@@ -48,11 +48,30 @@ def default_agent_configuration(
     idle_timeout_seconds: int = 900,
     role_id: str = "companion-future-v1",
     role_version: str = "1",
-    model_profile: str = "openai-codex/gpt-5.6-sol",
+    model_profile: str | None = None,
+    session_model_profile: str | None = None,
+    room_partner_model_profile: str | None = None,
+    tool_agent_model_profile: str | None = None,
+    session_thinking_level: str | None = None,
+    room_partner_thinking_level: str | None = None,
+    tool_agent_thinking_level: str | None = None,
     tool_profile_version: str = "control-center-v1",
     resume_last_session: bool = True,
     coordinator_enabled: bool = False,
 ) -> dict[str, object]:
+    inherited_model = str(model_profile or "").strip()
+    session_model = session_model_profile or inherited_model or "openai-codex/gpt-5.6-sol"
+    room_partner_model = (
+        room_partner_model_profile
+        or inherited_model
+        or "openai-codex/gpt-5.6-terra"
+    )
+    tool_agent_model = (
+        tool_agent_model_profile
+        or inherited_model
+        or "openai-codex/gpt-5.6-luna"
+    )
+    inherited_thinking = "off" if inherited_model else ""
     configuration = {
         "runtime": {
             "enabled": bool(enabled),
@@ -76,13 +95,38 @@ def default_agent_configuration(
                 field="sessionDefaults.roleVersion",
                 maximum=32,
             ),
-            "modelProfile": _model_profile(model_profile),
             "toolProfileVersion": _identifier(
                 tool_profile_version,
                 field="sessionDefaults.toolProfileVersion",
                 maximum=80,
             ),
             "capabilityDisclosurePreferences": {},
+        },
+        "modelRouting": {
+            "sessionModelProfile": _model_profile(
+                session_model,
+                field="modelRouting.sessionModelProfile",
+            ),
+            "sessionThinkingLevel": _thinking_level(
+                session_thinking_level or inherited_thinking or "max",
+                field="modelRouting.sessionThinkingLevel",
+            ),
+            "roomPartnerModelProfile": _model_profile(
+                room_partner_model,
+                field="modelRouting.roomPartnerModelProfile",
+            ),
+            "roomPartnerThinkingLevel": _thinking_level(
+                room_partner_thinking_level or inherited_thinking or "max",
+                field="modelRouting.roomPartnerThinkingLevel",
+            ),
+            "toolAgentModelProfile": _model_profile(
+                tool_agent_model,
+                field="modelRouting.toolAgentModelProfile",
+            ),
+            "toolAgentThinkingLevel": _thinking_level(
+                tool_agent_thinking_level or inherited_thinking or "low",
+                field="modelRouting.toolAgentThinkingLevel",
+            ),
         },
         "coordination": {"enabled": bool(coordinator_enabled)},
         "capabilityDisclosure": {"projectPreferences": {}},
@@ -118,14 +162,7 @@ class AgentConfigurationStore:
     def initialize(self, seed: Mapping[str, object]) -> None:
         if self._initialized:
             return
-        configuration = copy.deepcopy(dict(seed))
-        defaults = configuration.get("sessionDefaults")
-        if isinstance(defaults, dict):
-            defaults.setdefault("capabilityDisclosurePreferences", {})
-        configuration.setdefault(
-            "capabilityDisclosure",
-            {"projectPreferences": {}},
-        )
+        configuration = _canonical_configuration(copy.deepcopy(dict(seed)))
         _validate_configuration(configuration)
         with self._initialize_lock:
             if self._initialized:
@@ -149,23 +186,18 @@ class AgentConfigurationStore:
                         (_json(configuration), now),
                     )
                 else:
-                    self._canonicalize_legacy_role_id(conn, row)
+                    self._canonicalize_legacy_configuration(conn, row)
             self._initialized = True
 
-    def _canonicalize_legacy_role_id(
+    def _canonicalize_legacy_configuration(
         self,
         conn: sqlite3.Connection,
         row: sqlite3.Row,
     ) -> None:
-        configuration = _configuration_from_row(row, canonicalize_role_id=False)
-        defaults = configuration["sessionDefaults"]
-        if not isinstance(defaults, dict):
-            raise RuntimeError("agent session defaults are invalid")
-        previous = str(defaults.get("roleId") or "")
-        canonical = canonical_agent_role_id(previous)
-        if canonical == previous:
+        persisted = json.loads(str(row["configuration_json"]))
+        configuration = _configuration_from_row(row)
+        if isinstance(persisted, dict) and _json(configuration) == _json(persisted):
             return
-        defaults["roleId"] = canonical
         _validate_configuration(configuration)
         revision = int(row["revision"]) + 1
         synchronized = str(row["sync_state"]) == "synchronized"
@@ -175,7 +207,7 @@ class AgentConfigurationStore:
             """
             UPDATE agent_configuration_state
             SET revision = ?, configuration_json = ?, applied_revision = ?,
-                updated_at_ms = ?, updated_by = 'legacy-role-id-canonicalizer'
+                updated_at_ms = ?, updated_by = 'legacy-configuration-canonicalizer'
             WHERE singleton_id = 1
             """,
             (revision, _json(configuration), applied_revision, now),
@@ -186,8 +218,8 @@ class AgentConfigurationStore:
             {
                 "revision": revision,
                 "revisionToken": _revision_token(revision),
-                "changedKeys": ["sessionDefaults.roleId"],
-                "updatedBy": "legacy-role-id-canonicalizer",
+                "changedKeys": _legacy_changed_keys(persisted, configuration),
+                "updatedBy": "legacy-configuration-canonicalizer",
                 "syncState": str(row["sync_state"]),
             },
             created_at_ms=now,
@@ -590,20 +622,70 @@ def _configuration_from_row(
     raw = json.loads(str(row["configuration_json"]))
     if not isinstance(raw, dict):
         raise RuntimeError("agent configuration row is invalid")
+    raw = _canonical_configuration(
+        raw,
+        canonicalize_role_id=canonicalize_role_id,
+    )
+    _validate_configuration(raw)
+    return raw
+
+
+def _canonical_configuration(
+    raw: dict[str, object],
+    *,
+    canonicalize_role_id: bool = True,
+) -> dict[str, object]:
     defaults = raw.get("sessionDefaults")
+    legacy_model = ""
     if isinstance(defaults, dict):
+        legacy_model = str(defaults.pop("modelProfile", "") or "").strip()
         defaults["roleId"] = (
             canonical_agent_role_id(defaults.get("roleId"))
             if canonicalize_role_id
             else str(defaults.get("roleId") or "")
         )
         defaults.setdefault("capabilityDisclosurePreferences", {})
+    fallback_model = legacy_model or "openai-codex/gpt-5.6-sol"
+    routing = raw.get("modelRouting")
+    if not isinstance(routing, dict):
+        routing = {}
+        raw["modelRouting"] = routing
+    routing.setdefault("sessionModelProfile", fallback_model)
+    routing.setdefault("sessionThinkingLevel", "off")
+    routing.setdefault("roomPartnerModelProfile", fallback_model)
+    routing.setdefault("roomPartnerThinkingLevel", "off")
+    routing.setdefault("toolAgentModelProfile", fallback_model)
+    routing.setdefault("toolAgentThinkingLevel", "off")
     raw.setdefault(
         "capabilityDisclosure",
         {"projectPreferences": {}},
     )
-    _validate_configuration(raw)
     return raw
+
+
+def _legacy_changed_keys(
+    before: object,
+    after: Mapping[str, object],
+) -> list[str]:
+    changed: list[str] = []
+    previous = before if isinstance(before, Mapping) else {}
+    previous_defaults = previous.get("sessionDefaults")
+    after_defaults = after.get("sessionDefaults")
+    if (
+        isinstance(previous_defaults, Mapping)
+        and isinstance(after_defaults, Mapping)
+        and str(previous_defaults.get("roleId") or "")
+        != str(after_defaults.get("roleId") or "")
+    ):
+        changed.append("sessionDefaults.roleId")
+    if not isinstance(previous.get("modelRouting"), Mapping) or (
+        isinstance(previous_defaults, Mapping)
+        and "modelProfile" in previous_defaults
+    ):
+        changed.append("modelRouting")
+    if "capabilityDisclosure" not in previous:
+        changed.append("capabilityDisclosure")
+    return changed or ["configuration"]
 
 
 def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
@@ -637,7 +719,22 @@ def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
                 maximum=maximum,
             )
         elif key == "sessionDefaults.modelProfile":
-            normalized[key] = _model_profile(value)
+            normalized["modelRouting.sessionModelProfile"] = _model_profile(
+                value,
+                field="modelRouting.sessionModelProfile",
+            )
+        elif key in {
+            "modelRouting.sessionModelProfile",
+            "modelRouting.roomPartnerModelProfile",
+            "modelRouting.toolAgentModelProfile",
+        }:
+            normalized[key] = _model_profile(value, field=key)
+        elif key in {
+            "modelRouting.sessionThinkingLevel",
+            "modelRouting.roomPartnerThinkingLevel",
+            "modelRouting.toolAgentThinkingLevel",
+        }:
+            normalized[key] = _thinking_level(value, field=key)
         elif key == "sessionDefaults.capabilityDisclosurePreferences":
             normalized[key] = _capability_disclosure_preferences(value)
         elif key == "capabilityDisclosure.projectPreferences":
@@ -651,12 +748,17 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
     if set(configuration) != {
         "runtime",
         "sessionDefaults",
+        "modelRouting",
         "coordination",
         "capabilityDisclosure",
     }:
         raise ValueError("agent configuration sections are invalid")
     runtime = _mapping(configuration.get("runtime"), field="runtime")
     defaults = _mapping(configuration.get("sessionDefaults"), field="sessionDefaults")
+    model_routing = _mapping(
+        configuration.get("modelRouting"),
+        field="modelRouting",
+    )
     coordination = _mapping(configuration.get("coordination"), field="coordination")
     disclosure = _mapping(
         configuration.get("capabilityDisclosure"),
@@ -668,11 +770,19 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         "resumeLastSession",
         "roleId",
         "roleVersion",
-        "modelProfile",
         "toolProfileVersion",
         "capabilityDisclosurePreferences",
     }:
         raise ValueError("agent session default fields are invalid")
+    if set(model_routing) != {
+        "sessionModelProfile",
+        "sessionThinkingLevel",
+        "roomPartnerModelProfile",
+        "roomPartnerThinkingLevel",
+        "toolAgentModelProfile",
+        "toolAgentThinkingLevel",
+    }:
+        raise ValueError("agent model routing fields are invalid")
     if set(coordination) != {"enabled"}:
         raise ValueError("agent coordination configuration fields are invalid")
     if set(disclosure) != {"projectPreferences"}:
@@ -681,7 +791,24 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
     _boolean(defaults.get("resumeLastSession"), field="sessionDefaults.resumeLastSession")
     _identifier(defaults.get("roleId"), field="sessionDefaults.roleId", maximum=80)
     _identifier(defaults.get("roleVersion"), field="sessionDefaults.roleVersion", maximum=32)
-    _model_profile(defaults.get("modelProfile"))
+    for model_key in (
+        "sessionModelProfile",
+        "roomPartnerModelProfile",
+        "toolAgentModelProfile",
+    ):
+        _model_profile(
+            model_routing.get(model_key),
+            field=f"modelRouting.{model_key}",
+        )
+    for thinking_key in (
+        "sessionThinkingLevel",
+        "roomPartnerThinkingLevel",
+        "toolAgentThinkingLevel",
+    ):
+        _thinking_level(
+            model_routing.get(thinking_key),
+            field=f"modelRouting.{thinking_key}",
+        )
     _identifier(
         defaults.get("toolProfileVersion"),
         field="sessionDefaults.toolProfileVersion",
@@ -796,11 +923,18 @@ def _identifier(value: object, *, field: str, maximum: int) -> str:
     return text
 
 
-def _model_profile(value: object) -> str:
-    text = _string(value, field="sessionDefaults.modelProfile")
+def _model_profile(value: object, *, field: str) -> str:
+    text = _string(value, field=field)
     if not text or len(text) > 200 or any(character.isspace() for character in text):
-        raise ValueError("sessionDefaults.modelProfile must be a stable model reference")
+        raise ValueError(f"{field} must be a stable model reference")
     return text
+
+
+def _thinking_level(value: object, *, field: str) -> str:
+    level = _string(value, field=field).lower()
+    if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+        raise ValueError(f"{field} must be a supported thinking level")
+    return level
 
 
 def _bounded_actor(value: object) -> str:

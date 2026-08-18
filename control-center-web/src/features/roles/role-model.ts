@@ -60,6 +60,16 @@ export type AgentDefaultCompanion = {
   roleVersion: string;
 };
 
+export type AgentModelRouting = {
+  revision: number;
+  sessionModelProfile: string;
+  sessionThinkingLevel: string;
+  roomPartnerModelProfile: string;
+  roomPartnerThinkingLevel: string;
+  toolAgentModelProfile: string;
+  toolAgentThinkingLevel: string;
+};
+
 export const timelineOptions: ReadonlyArray<{
   value: TimelineModel;
   label: string;
@@ -83,6 +93,28 @@ export function agentDefaultCompanion(value: unknown): AgentDefaultCompanion | n
   const roleId = textValue(defaults.roleId);
   const roleVersion = textValue(defaults.roleVersion);
   return revision > 0 && roleId && roleVersion ? { revision, roleId, roleVersion } : null;
+}
+
+export function agentModelRouting(value: unknown): AgentModelRouting | null {
+  const snapshot = record(record(value).configuration);
+  const configuration = record(snapshot.configuration);
+  const routing = record(configuration.modelRouting);
+  const legacyDefaults = record(configuration.sessionDefaults);
+  const legacyModel = textValue(legacyDefaults.modelProfile);
+  const revision = numberValue(snapshot.revision);
+  const sessionModelProfile = textValue(routing.sessionModelProfile) || legacyModel;
+  const roomPartnerModelProfile = textValue(routing.roomPartnerModelProfile) || legacyModel;
+  const toolAgentModelProfile = textValue(routing.toolAgentModelProfile) || legacyModel;
+  if (!revision || !sessionModelProfile || !roomPartnerModelProfile || !toolAgentModelProfile) return null;
+  return {
+    revision,
+    sessionModelProfile,
+    sessionThinkingLevel: textValue(routing.sessionThinkingLevel) || 'off',
+    roomPartnerModelProfile,
+    roomPartnerThinkingLevel: textValue(routing.roomPartnerThinkingLevel) || 'off',
+    toolAgentModelProfile,
+    toolAgentThinkingLevel: textValue(routing.toolAgentThinkingLevel) || 'off',
+  };
 }
 
 export function record(value: unknown): Record<string, unknown> {

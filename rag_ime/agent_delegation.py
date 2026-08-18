@@ -1719,6 +1719,7 @@ class AgentDelegationCoordinator:
         room_context_provider: Callable[
             [str], Mapping[str, object] | None
         ] | None = None,
+        model_routing_provider: Callable[[], Mapping[str, object]] | None = None,
     ) -> None:
         self.artifacts = AgentArtifactStore(db_path, root=artifact_root)
         self.store = AgentDelegationStore(db_path, artifacts=self.artifacts)
@@ -1743,6 +1744,7 @@ class AgentDelegationCoordinator:
             raise ValueError("delegated Tool gateway URL must not be empty")
         self._tool_manifest_provider = tool_manifest_provider
         self._compaction_observer = compaction_observer
+        self._model_routing_provider = model_routing_provider
         self._room_context_provider = room_context_provider
         self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
         self._subagent_session_retention_ms = max(
@@ -1948,6 +1950,11 @@ class AgentDelegationCoordinator:
                     )
                     child_mode = "coordinator" if writable else "assistant"
                     child_execution_mode = parent_execution_mode if writable else None
+                    model_routing = (
+                        self._model_routing_provider()
+                        if self._model_routing_provider is not None
+                        else {}
+                    )
                     child = self.sessions.create(
                         title=f"{template.display_name} · {_bounded_text(task['task'], maximum=72)}",
                         mode=child_mode,
@@ -1958,13 +1965,16 @@ class AgentDelegationCoordinator:
                         ),
                         model_profile=str(
                             task.get("modelProfile")
+                            or model_routing.get("toolAgentModelProfile")
                             or parent.get("modelProfile")
                             or "pi/default"
                         ),
                         thinking_level=str(
                             task.get("thinkingLevel")
                             if task.get("thinkingLevel") is not None
-                            else parent.get("thinkingLevel") or ""
+                            else model_routing.get("toolAgentThinkingLevel")
+                            or parent.get("thinkingLevel")
+                            or ""
                         ),
                         tool_profile_version=child_profile,
                         execution_mode=child_execution_mode,

@@ -1899,7 +1899,6 @@ class AgentServiceTests(unittest.TestCase):
                 "mode": "assistant",
                 "roleId": "companion-firstlight-v1",
                 "roleVersion": "1",
-                "modelProfile": "openai-codex/gpt-5.6-luna",
                 "toolProfileVersion": "subagent-readonly-v1",
             }
         )["session"]
@@ -2131,14 +2130,15 @@ class AgentServiceTests(unittest.TestCase):
                 "expectedRevision": initial["revision"],
                 "changes": {
                     "sessionDefaults.roleId": "companion-firstlight-v1",
-                    "sessionDefaults.modelProfile": "deepseek/deepseek-chat",
+                    "modelRouting.sessionModelProfile": "deepseek/deepseek-chat",
+                    "modelRouting.sessionThinkingLevel": "off",
                 },
                 "updatedBy": "mac-control",
             }
         )
         session = self.service.create_session({"title": "默认角色"})["session"]
         self.assertEqual(session["roleId"], "companion-firstlight-v1")
-        self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-luna")
+        self.assertEqual(session["modelProfile"], "deepseek/deepseek-chat")
 
         runtime = self.service.update_configuration(
             {
@@ -2180,7 +2180,7 @@ class AgentServiceTests(unittest.TestCase):
 
             self.assertEqual(runtime["runtimeKind"], "gateway_http")
             self.assertEqual(runtime["driverId"], "test-gateway")
-            self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-sol")
+            self.assertEqual(session["modelProfile"], "gateway/default")
             self.assertEqual(factory.created_for, ["interactive"])
         finally:
             service.close()
@@ -2221,7 +2221,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "companion-firstlight-v1")
         self.assertEqual(created["roleVersion"], "1")
-        self.assertEqual(created["modelProfile"], "openai-codex/gpt-5.6-luna")
+        self.assertEqual(created["modelProfile"], "pi/default")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "companion-firstlight-v1")
@@ -2430,8 +2430,8 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "openai-codex/gpt-5.6-luna")
-        self.assertEqual(target_session["modelProfile"], "openai-codex/gpt-5.6-sol")
+        self.assertEqual(source_session["modelProfile"], "pi/default")
+        self.assertEqual(target_session["modelProfile"], "pi/default")
         item = {
             "id": "room-message:test",
             "kind": "ask",
@@ -3741,7 +3741,7 @@ class AgentServiceTests(unittest.TestCase):
             ["model", "thinking"],
         )
 
-    def test_role_runtime_defaults_are_listed_saved_and_inherited_by_new_sessions(self) -> None:
+    def test_role_runtime_defaults_remain_compatible_but_model_route_owns_new_sessions(self) -> None:
         runtime_config = PiRuntimeConfig(
             enabled=False,
             executable=None,
@@ -3828,8 +3828,8 @@ class AgentServiceTests(unittest.TestCase):
             session = service.create_session(
                 {"title": "继承角色默认", "roleId": "companion-present-v1", "roleVersion": "1"}
             )["session"]
-        self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-luna")
-        self.assertEqual(session["thinkingLevel"], "max")
+        self.assertEqual(session["modelProfile"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(session["thinkingLevel"], "off")
         set_thinking.assert_not_called()
 
         with self.assertRaisesRegex(ValueError, "cannot be overridden"):

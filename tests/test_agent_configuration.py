@@ -30,12 +30,28 @@ class AgentConfigurationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_product_default_starts_new_work_with_future_sol_max_profile(self) -> None:
+    def test_product_default_routes_models_by_runtime_responsibility(self) -> None:
         configuration = default_agent_configuration()
         self.assertEqual(configuration["sessionDefaults"]["roleId"], "companion-future-v1")
+        self.assertEqual(configuration["modelRouting"], {
+            "sessionModelProfile": "openai-codex/gpt-5.6-sol",
+            "sessionThinkingLevel": "max",
+            "roomPartnerModelProfile": "openai-codex/gpt-5.6-terra",
+            "roomPartnerThinkingLevel": "max",
+            "toolAgentModelProfile": "openai-codex/gpt-5.6-luna",
+            "toolAgentThinkingLevel": "low",
+        })
+        self.assertNotIn("modelProfile", configuration["sessionDefaults"])
         self.assertEqual(
-            configuration["sessionDefaults"]["modelProfile"],
-            "openai-codex/gpt-5.6-sol",
+            default_agent_configuration(model_profile="gateway/default")["modelRouting"],
+            {
+                "sessionModelProfile": "gateway/default",
+                "sessionThinkingLevel": "off",
+                "roomPartnerModelProfile": "gateway/default",
+                "roomPartnerThinkingLevel": "off",
+                "toolAgentModelProfile": "gateway/default",
+                "toolAgentThinkingLevel": "off",
+            },
         )
         self.assertEqual(
             default_agent_configuration(role_id="vcp-v1")["sessionDefaults"]["roleId"],
@@ -46,6 +62,8 @@ class AgentConfigurationTests(unittest.TestCase):
         path = Path(self.tmp.name) / "legacy-agent.sqlite"
         legacy = default_agent_configuration()
         legacy["sessionDefaults"]["roleId"] = "zhiyou-v1"
+        legacy.pop("modelRouting")
+        legacy["sessionDefaults"]["modelProfile"] = "deepseek/deepseek-chat"
         with sqlite3.connect(path) as conn:
             apply_database_migrations(conn)
             conn.execute(
@@ -63,6 +81,14 @@ class AgentConfigurationTests(unittest.TestCase):
         snapshot = store.snapshot()
 
         self.assertEqual(snapshot["configuration"]["sessionDefaults"]["roleId"], "companion-present-v1")
+        self.assertEqual(snapshot["configuration"]["modelRouting"], {
+            "sessionModelProfile": "deepseek/deepseek-chat",
+            "sessionThinkingLevel": "off",
+            "roomPartnerModelProfile": "deepseek/deepseek-chat",
+            "roomPartnerThinkingLevel": "off",
+            "toolAgentModelProfile": "deepseek/deepseek-chat",
+            "toolAgentThinkingLevel": "off",
+        })
         self.assertEqual(snapshot["revision"], 8)
         self.assertEqual(snapshot["lastEventId"], "agent-control:1")
         with sqlite3.connect(path) as conn:
@@ -70,6 +96,25 @@ class AgentConfigurationTests(unittest.TestCase):
                 "SELECT configuration_json FROM agent_configuration_state WHERE singleton_id = 1"
             ).fetchone()[0]
         self.assertNotIn("zhiyou-v1", stored)
+        self.assertNotIn('"modelProfile"', stored)
+
+    def test_model_routes_update_atomically_without_runtime_restart(self) -> None:
+        update = self.store.update(
+            {
+                "modelRouting.sessionModelProfile": "openai-codex/gpt-5.6-sol",
+                "modelRouting.sessionThinkingLevel": "max",
+                "modelRouting.roomPartnerModelProfile": "openai-codex/gpt-5.6-terra",
+                "modelRouting.roomPartnerThinkingLevel": "high",
+                "modelRouting.toolAgentModelProfile": "openai-codex/gpt-5.6-luna",
+                "modelRouting.toolAgentThinkingLevel": "low",
+            },
+            expected_revision=1,
+            updated_by="model-routing-ui",
+        )
+
+        self.assertFalse(update.runtime_sync_required)
+        self.assertEqual(update.snapshot["configuration"]["modelRouting"]["roomPartnerThinkingLevel"], "high")
+        self.assertEqual(update.snapshot["sync"]["state"], "synchronized")
 
     def test_configuration_is_revisioned_and_rejects_stale_writers(self) -> None:
         initial = self.store.snapshot()

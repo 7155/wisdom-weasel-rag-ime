@@ -37,7 +37,6 @@ class AgentSessionApplicationService:
         media: Any,
         events: Any,
         runtime_status: Callable[[], Mapping[str, object]],
-        initial_role_runtime_defaults: Callable[..., Mapping[str, str]],
         pending_memory_bootstrap: Callable[[Mapping[str, object]], Mapping[str, object]],
         ensure_session_role_book: Callable[[str], Mapping[str, object]],
         probe_memory_maintenance: Callable[..., Mapping[str, object]],
@@ -53,7 +52,6 @@ class AgentSessionApplicationService:
         self.media = media
         self.events = events
         self.runtime_status = runtime_status
-        self.initial_role_runtime_defaults = initial_role_runtime_defaults
         self.pending_memory_bootstrap = pending_memory_bootstrap
         self.ensure_session_role_book = ensure_session_role_book
         self.probe_memory_maintenance = probe_memory_maintenance
@@ -123,6 +121,7 @@ class AgentSessionApplicationService:
         mode = str(payload.get("mode") or "assistant")
         configuration = self.configuration_store.snapshot()["configuration"]
         session_defaults = configuration["sessionDefaults"]
+        model_routing = configuration["modelRouting"]
         role = self.personas.resolve_active(
             payload.get("roleId") or session_defaults["roleId"],
             payload.get("roleVersion") or session_defaults["roleVersion"],
@@ -194,18 +193,10 @@ class AgentSessionApplicationService:
             raise ValueError(
                 "full-trust execution requires an explicit native confirmation"
             )
-        role_runtime_defaults = self.personas.runtime_defaults(
-            role.role_id,
-            role.version,
-        ) or self.initial_role_runtime_defaults(
-            role,
-            default_model_profile=str(session_defaults["modelProfile"]),
-        )
         model_profile, thinking_level = self._session_model_defaults(
             role,
             payload=payload,
-            session_defaults=session_defaults,
-            role_runtime_defaults=role_runtime_defaults,
+            model_routing=model_routing,
         )
         role_book_revision_id, role_book_status = self._seed_role_book(role)
         session = self.sessions.create(
@@ -283,38 +274,30 @@ class AgentSessionApplicationService:
         role: PersonaManifest,
         *,
         payload: Mapping[str, object],
-        session_defaults: Mapping[str, object],
-        role_runtime_defaults: Mapping[str, str] | None,
+        model_routing: Mapping[str, object],
     ) -> tuple[str, str]:
         requested_model_profile = payload.get("modelProfile")
+        routed_model_profile = str(model_routing["sessionModelProfile"])
+        routed_thinking_level = str(model_routing["sessionThinkingLevel"])
         if (
             role.defaults.model_policy == "fixed"
             and payload.get("_internalModelOverride") is not True
         ):
-            effective = role_runtime_defaults or {
-                "modelProfile": role.defaults.model_profile,
-                "thinkingLevel": role.defaults.thinking_level,
-            }
             if (
                 requested_model_profile is not None
                 and str(requested_model_profile)
-                != str(effective["modelProfile"])
+                != routed_model_profile
             ):
                 raise ValueError(
-                    "builtin persona model cannot be overridden"
+                    "the configured Session model cannot be overridden"
                 )
-            return (
-                str(effective["modelProfile"]),
-                str(effective.get("thinkingLevel", "")),
-            )
+            return routed_model_profile, routed_thinking_level
         if requested_model_profile is not None:
-            return str(requested_model_profile), ""
-        if role_runtime_defaults is not None:
             return (
-                str(role_runtime_defaults["modelProfile"]),
-                str(role_runtime_defaults.get("thinkingLevel", "")),
+                str(requested_model_profile),
+                str(payload.get("thinkingLevel") or "off"),
             )
-        return str(session_defaults["modelProfile"]), ""
+        return routed_model_profile, routed_thinking_level
 
     def _seed_role_book(
         self,

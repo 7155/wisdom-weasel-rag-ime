@@ -476,6 +476,7 @@ class AgentDelegationTests(unittest.TestCase):
         subagent_session_gc_interval_ms: int | None = None,
         room_context_provider=None,
         runtime_provider=None,
+        model_routing_provider=None,
     ) -> AgentDelegationCoordinator:
         return AgentDelegationCoordinator(
             db_path=self.db_path,
@@ -489,6 +490,7 @@ class AgentDelegationTests(unittest.TestCase):
             subagent_session_retention_ms=subagent_session_retention_ms,
             subagent_session_gc_interval_ms=subagent_session_gc_interval_ms,
             room_context_provider=room_context_provider,
+            model_routing_provider=model_routing_provider,
         )
 
     def test_fixed_catalog_parallel_results_and_internal_sessions(self) -> None:
@@ -1586,6 +1588,23 @@ class AgentDelegationTests(unittest.TestCase):
             )
             self.assertTrue(child["piSkillsEnabled"])
             self.assertFalse(child["codexSkillsEnabled"])
+        finally:
+            coordinator.close()
+
+    def test_tool_agent_route_is_used_when_task_does_not_override_model(self) -> None:
+        coordinator = self.coordinator(model_routing_provider=lambda: {
+            "toolAgentModelProfile": "openai-codex/gpt-5.6-luna",
+            "toolAgentThinkingLevel": "low",
+        })
+        try:
+            batch = coordinator.delegate(
+                str(self.parent["id"]),
+                {"agent": "researcher", "task": "核对有界证据", **_TASK_CONTRACT},
+            )["batch"]
+            child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
+
+            self.assertEqual(child["modelProfile"], "openai-codex/gpt-5.6-luna")
+            self.assertEqual(child["thinkingLevel"], "low")
         finally:
             coordinator.close()
 

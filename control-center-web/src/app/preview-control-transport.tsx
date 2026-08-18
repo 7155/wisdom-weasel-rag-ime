@@ -113,6 +113,14 @@ export function createPreviewTransport(): MockControlTransport {
   let capabilityProjectPreferences: Record<string, Record<string, string>> = {};
   const capabilitySessionPreferences = new Map<string, Record<string, string>>();
   const previewModelCatalogs = new Map<string, ReturnType<typeof previewModelCatalog>>();
+  let modelRouting = {
+    sessionModelProfile: 'gpt/gpt-5.6-sol',
+    sessionThinkingLevel: 'max',
+    roomPartnerModelProfile: 'gpt/gpt-5.6-terra',
+    roomPartnerThinkingLevel: 'high',
+    toolAgentModelProfile: 'gpt/gpt-5.6-luna',
+    toolAgentThinkingLevel: 'low',
+  };
   let defaultCompanion = {
     roleId: personas.find((persona) => persona.runtimeCharacteristics.isDefault)?.roleId ?? personas[0]?.roleId ?? '',
     roleVersion: '1',
@@ -502,6 +510,7 @@ export function createPreviewTransport(): MockControlTransport {
   routes['agent.configuration.get'] = () => previewCompanionConfiguration(
     companionConfigurationRevision,
     defaultCompanion,
+    modelRouting,
     capabilityGlobalPreferences,
     capabilityProjectPreferences,
   );
@@ -516,6 +525,15 @@ export function createPreviewTransport(): MockControlTransport {
         Object.entries(record(changes['capabilityDisclosure.projectPreferences']))
           .map(([projectId, preferences]) => [projectId, previewCapabilityPreferences(preferences)]),
       );
+    } else if (Object.keys(changes).some((key) => key.startsWith('modelRouting.'))) {
+      modelRouting = {
+        sessionModelProfile: stringValue(changes['modelRouting.sessionModelProfile']) || modelRouting.sessionModelProfile,
+        sessionThinkingLevel: previewThinkingLevel(changes['modelRouting.sessionThinkingLevel'] ?? modelRouting.sessionThinkingLevel),
+        roomPartnerModelProfile: stringValue(changes['modelRouting.roomPartnerModelProfile']) || modelRouting.roomPartnerModelProfile,
+        roomPartnerThinkingLevel: previewThinkingLevel(changes['modelRouting.roomPartnerThinkingLevel'] ?? modelRouting.roomPartnerThinkingLevel),
+        toolAgentModelProfile: stringValue(changes['modelRouting.toolAgentModelProfile']) || modelRouting.toolAgentModelProfile,
+        toolAgentThinkingLevel: previewThinkingLevel(changes['modelRouting.toolAgentThinkingLevel'] ?? modelRouting.toolAgentThinkingLevel),
+      };
     } else {
       const roleId = stringValue(changes['sessionDefaults.roleId']);
       const roleVersion = stringValue(changes['sessionDefaults.roleVersion']) || '1';
@@ -526,6 +544,7 @@ export function createPreviewTransport(): MockControlTransport {
     return previewCompanionConfiguration(
       companionConfigurationRevision,
       defaultCompanion,
+      modelRouting,
       capabilityGlobalPreferences,
       capabilityProjectPreferences,
     );
@@ -3175,6 +3194,7 @@ function previewThinkingLevel(value: unknown): NonNullable<AgentPersonaV1['defau
 function previewCompanionConfiguration(
   revision: number,
   defaults: { roleId: string; roleVersion: string },
+  modelRouting: Record<string, string>,
   capabilityGlobalPreferences: Record<string, string>,
   capabilityProjectPreferences: Record<string, Record<string, string>>,
 ): Record<string, unknown> {
@@ -3188,6 +3208,7 @@ function previewCompanionConfiguration(
           roleVersion: defaults.roleVersion,
           capabilityDisclosurePreferences: capabilityGlobalPreferences,
         },
+        modelRouting,
         capabilityDisclosure: {
           projectPreferences: capabilityProjectPreferences,
         },

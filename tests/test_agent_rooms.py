@@ -809,6 +809,32 @@ class AgentRoomServiceTests(unittest.TestCase):
             )
         self.assertEqual(self.service.list_sessions()["items"], [])
 
+    def test_room_partner_model_route_overrides_persona_model_defaults(self) -> None:
+        configuration = self.service.configuration()["configuration"]
+        self.service.update_configuration({
+            "expectedRevision": configuration["revision"],
+            "changes": {
+                "modelRouting.roomPartnerModelProfile": "openai-codex/gpt-5.6-terra",
+                "modelRouting.roomPartnerThinkingLevel": "high",
+            },
+            "updatedBy": "room-model-route-test",
+        })
+        room = self.service.create_room({
+            "title": "统一 Room 模型",
+            "workspaceRoots": [str(self.root)],
+            "participants": [
+                {"roleId": "companion-present-v1", "roleVersion": "1"},
+                {"roleId": "companion-future-v1", "roleVersion": "1"},
+            ],
+        })["room"]
+
+        sessions = [
+            self.service.sessions.get(str(participant["sessionId"]))
+            for participant in room["participants"]
+        ]
+        self.assertEqual({item["modelProfile"] for item in sessions}, {"openai-codex/gpt-5.6-terra"})
+        self.assertEqual({item["thinkingLevel"] for item in sessions}, {"high"})
+
     def test_existing_room_can_add_future_without_replaying_old_history(self) -> None:
         room = self.service.create_room(
             {
@@ -1488,7 +1514,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         work_events = self.service.room_work.list_events(str(work_item["id"]))
         self.assertEqual(
             [event["eventType"] for event in work_events],
-            ["assigned", "accepted", "assigned"],
+            ["assigned", "accepted", "reassigned"],
         )
         self.assertEqual(
             work_events[-1]["payload"]["previousOwnerParticipantId"],
@@ -1556,8 +1582,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(future_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(future_session["executionMode"], "workspace_managed")
         self.assertTrue(future_session["workspaceScopeGranted"])
-        self.assertEqual(future_session["modelProfile"], "openai-codex/gpt-5.6-sol")
-        self.assertEqual(future_session["thinkingLevel"], "max")
+        self.assertEqual(future_session["modelProfile"], "pi/default")
+        self.assertEqual(future_session["thinkingLevel"], "off")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
 
         with patch.object(self.service, "prompt", return_value={"turnId": "turn:hermes"}) as prompt:

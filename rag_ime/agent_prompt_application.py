@@ -480,16 +480,17 @@ class AgentPromptApplicationService:
                 and session.get("title") == daily_title
             ):
                 return session, False
-        defaults = self.configuration_store.snapshot()[
-            "configuration"
-        ]["sessionDefaults"]
+        configuration = self.configuration_store.snapshot()["configuration"]
+        defaults = configuration["sessionDefaults"]
+        model_routing = configuration["modelRouting"]
         created = self.create_session(
             {
                 "title": daily_title,
                 "mode": "assistant",
                 "roleId": str(defaults["roleId"]),
                 "roleVersion": str(defaults["roleVersion"]),
-                "modelProfile": str(defaults["modelProfile"]),
+                "modelProfile": str(model_routing["sessionModelProfile"]),
+                "thinkingLevel": str(model_routing["sessionThinkingLevel"]),
                 "toolProfileVersion": str(
                     defaults["toolProfileVersion"]
                 ),

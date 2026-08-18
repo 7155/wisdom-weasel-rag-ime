@@ -376,6 +376,28 @@ export function previewModelCatalog(sessionId: string): ModelCatalog {
         models: [
           {
             provider: 'gpt',
+            id: 'gpt-5.6-sol',
+            name: 'GPT-5.6 Sol',
+            api: 'responses',
+            reasoning: true,
+            thinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+            supportsImages: true,
+            contextWindow: 1_050_000,
+            maxTokens: 128_000,
+          },
+          {
+            provider: 'gpt',
+            id: 'gpt-5.6-terra',
+            name: 'GPT-5.6 Terra',
+            api: 'responses',
+            reasoning: true,
+            thinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+            supportsImages: true,
+            contextWindow: 1_050_000,
+            maxTokens: 128_000,
+          },
+          {
+            provider: 'gpt',
             id: 'gpt-5.6-luna',
             name: 'GPT-5.6 Luna',
             api: 'responses',

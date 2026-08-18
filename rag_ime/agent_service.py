@@ -308,6 +308,7 @@ class AgentService:
             tool_manifest_provider=self._runtime_tool_manifest,
             compaction_observer=self._checkpoint_runtime_compaction,
             room_context_provider=self._room_delegation_context,
+            model_routing_provider=self._model_routing_configuration,
         )
         self.session_application = AgentSessionApplicationService(
             sessions=self.sessions,
@@ -321,7 +322,6 @@ class AgentService:
             media=self.media,
             events=self.events,
             runtime_status=lambda: self.runtime_status(),
-            initial_role_runtime_defaults=self._initial_role_runtime_defaults,
             pending_memory_bootstrap=self._pending_memory_bootstrap,
             ensure_session_role_book=lambda session_id: (
                 self._ensure_session_role_book(session_id)
@@ -578,7 +578,7 @@ class AgentService:
             personas=self.personas,
             events=self.room_events,
             create_session=lambda payload: (
-                self.create_session(payload)
+                self._create_room_partner_session(payload)
             ),
             delete_session=lambda session_id: (
                 self.delete_session(session_id)
@@ -1472,6 +1472,25 @@ class AgentService:
 
     def create_session(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self.session_application.create_session(payload)
+
+    def _model_routing_configuration(self) -> Mapping[str, object]:
+        configuration = self.configuration_store.snapshot()["configuration"]
+        routing = configuration.get("modelRouting")
+        return routing if isinstance(routing, Mapping) else {}
+
+    def _create_room_partner_session(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        routing = self._model_routing_configuration()
+        return self.create_session(
+            {
+                **dict(payload),
+                "modelProfile": str(routing["roomPartnerModelProfile"]),
+                "thinkingLevel": str(routing["roomPartnerThinkingLevel"]),
+                "_internalModelOverride": True,
+            }
+        )
 
     def list_roles(self) -> dict[str, object]:
         return self.role_application.list_roles()
