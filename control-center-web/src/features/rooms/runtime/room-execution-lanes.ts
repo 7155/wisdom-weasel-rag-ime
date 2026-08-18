@@ -10,6 +10,10 @@ export interface RoomExecutionLane {
   key: string;
   rootId: string;
   dispatchId: string;
+  waveId: string;
+  phaseName: string;
+  parallelIndex?: number;
+  parallelSize?: number;
   participantId: string | null;
   sourceSessionId: string;
   activities: RoomActivityProjection[];
@@ -112,19 +116,27 @@ export function selectRoomTurnExecution(
 
   for (const activity of activities) {
     const identity = roomActivityLaneIdentity(activity);
-    const participantId = activity.participantId
-      || textValue(activity.payload.targetParticipantId)
+    const participantId = textValue(activity.payload.targetParticipantId)
+      || activity.participantId
       || null;
     const lane = lanes.get(identity.key) ?? {
       key: identity.key,
       rootId: identity.rootId,
       dispatchId: identity.dispatchId,
+      waveId: textValue(activity.payload.waveId),
+      phaseName: textValue(activity.payload.phaseName),
+      parallelIndex: numberValue(activity.payload.parallelIndex),
+      parallelSize: numberValue(activity.payload.parallelSize),
       participantId,
       sourceSessionId: activity.sourceSessionId,
       activities: [],
       messageIds: [],
     };
     lane.activities.push(activity);
+    lane.waveId ||= textValue(activity.payload.waveId);
+    lane.phaseName ||= textValue(activity.payload.phaseName);
+    lane.parallelIndex ??= numberValue(activity.payload.parallelIndex);
+    lane.parallelSize ??= numberValue(activity.payload.parallelSize);
     if (!lane.participantId && participantId) lane.participantId = participantId;
     if (!lane.sourceSessionId && activity.sourceSessionId) {
       lane.sourceSessionId = activity.sourceSessionId;
@@ -166,6 +178,8 @@ export function selectRoomTurnExecution(
       key: laneKey,
       rootId: message.rootId || turn.rootId || turnId,
       dispatchId: message.dispatchId || '',
+      waveId: '',
+      phaseName: '',
       participantId: message.participantId,
       sourceSessionId: message.sourceSessionId,
       activities: [],
@@ -180,6 +194,8 @@ export function selectRoomTurnExecution(
       key: `${turnId}\u001frouter\u001fpending`,
       rootId: turn.rootId || turnId,
       dispatchId: '',
+      waveId: '',
+      phaseName: '',
       participantId: null,
       sourceSessionId: '',
       activities: [],
@@ -223,6 +239,16 @@ function compareExecutionLanes(
   leftIndex: number,
   rightIndex: number,
 ): number {
+  const earliestSequence = (lane: RoomExecutionLane): number => Math.min(
+    ...lane.activities.map((activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
+    ...lane.messageIds.map((messageId) => (
+      projection.messagesById[messageId]?.chronology?.roomEventSequence
+      ?? projection.messagesById[messageId]?.sequence
+      ?? Number.MAX_SAFE_INTEGER
+    )),
+  );
+  const sequenceOrder = earliestSequence(left) - earliestSequence(right);
+  if (Number.isFinite(sequenceOrder) && sequenceOrder !== 0) return sequenceOrder;
   const earliestAtMs = (lane: RoomExecutionLane): number => Math.min(
     ...lane.activities.map((activity) => activity.createdAtMs),
     ...lane.messageIds.map((messageId) => (
@@ -233,15 +259,6 @@ function compareExecutionLanes(
   );
   const timeOrder = earliestAtMs(left) - earliestAtMs(right);
   if (Number.isFinite(timeOrder) && timeOrder !== 0) return timeOrder;
-  const earliestSequence = (lane: RoomExecutionLane): number => Math.min(
-    ...lane.messageIds.map((messageId) => (
-      projection.messagesById[messageId]?.chronology?.roomEventSequence
-      ?? projection.messagesById[messageId]?.sequence
-      ?? Number.MAX_SAFE_INTEGER
-    )),
-  );
-  const sequenceOrder = earliestSequence(left) - earliestSequence(right);
-  if (Number.isFinite(sequenceOrder) && sequenceOrder !== 0) return sequenceOrder;
   return leftIndex - rightIndex || left.key.localeCompare(right.key);
 }
 
@@ -267,7 +284,9 @@ function coalesceInternalAttemptLanes(
     for (let offset = indexes.length - 1; offset >= 0; offset -= 1) {
       const index = indexes[offset]!;
       const lane = source[index]!;
-      const isVisibleStep = lane.messageIds.length > 0 || nextVisibleIndex === undefined;
+      const isVisibleStep = Boolean(lane.waveId)
+        || lane.messageIds.length > 0
+        || nextVisibleIndex === undefined;
       if (isVisibleStep) {
         nextVisibleIndex = index;
         continue;
@@ -363,6 +382,10 @@ function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
   if (activity.kind !== 'participant_activity') return true;
   const sourceEventType = textValue(activity.payload.sourceEventType);
   if (
+    ['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)
+    && textValue(activity.payload.toolName).toLowerCase() === 'todo'
+  ) return false;
+  if (
     activity.status === 'failed'
     || activity.payload.isError === true
     || textValue(activity.payload.status) === 'provider_error'
@@ -373,7 +396,7 @@ function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
   if (['reasoning_summary', 'current_progress', 'progress'].includes(sourceEventType)) {
     return true;
   }
-  if (['intercom', 'work'].includes(textValue(activity.payload.activityKind))) return true;
+  if (['child', 'intercom', 'work'].includes(textValue(activity.payload.activityKind))) return true;
   const requestKind = textValue(activity.payload.requestKind);
   if (
     activity.status === 'waiting'
@@ -389,4 +412,8 @@ function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
 
 function textValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }

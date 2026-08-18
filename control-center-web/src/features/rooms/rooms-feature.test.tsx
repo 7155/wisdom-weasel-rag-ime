@@ -1,4 +1,5 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type Key, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,7 +9,8 @@ import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { createRoomProjection, reduceRoomEvent } from '@/contracts/room-reducer';
 import { parseRoomEvent } from '@/contracts/validators';
-import { previewPersonas } from '@/features/agent/preview-data';
+import type { WorkDocumentV1 } from '@/contracts/work-documents';
+import { previewPersonas, previewTemplates } from '@/features/agent/preview-data';
 import { FilePreviewHost } from '@/features/agent/file-preview/FilePreviewHost';
 import type { ControlRequest, PickedFile } from '@/platform/transport';
 import { RoomTurn, RoomsFeature, type RoomSummary } from './index';
@@ -92,6 +94,7 @@ describe('Rooms experience', () => {
     roomVirtuosoMock.followOutput = undefined;
     roomVirtuosoMock.scroller = undefined;
     useRoomLiveStore.getState().reset();
+    window.localStorage.clear();
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
   });
 
@@ -144,6 +147,25 @@ describe('Rooms experience', () => {
       params: { roomId: 'room-a' },
       lastEventId: 'room-a:1',
     });
+  });
+
+  it('retries the read-only role catalog once before showing a Room warning', async () => {
+    let roleAttempts = 0;
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '角色目录恢复')] },
+      'agent.room.snapshot': roomSnapshot('room-a', []),
+      'agent.roles.list': () => {
+        roleAttempts += 1;
+        if (roleAttempts === 1) throw new Error('gateway is still starting');
+        return { ok: true, items: previewPersonas };
+      },
+    } });
+
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await waitFor(() => expect(roleAttempts).toBe(2));
+    expect(screen.queryByText(/角色目录暂时没有同步/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重新同步角色' })).not.toBeInTheDocument();
   });
 
   it('keeps the normal composer after refresh when only detached subagent progress is unscoped', async () => {
@@ -354,15 +376,437 @@ describe('Rooms experience', () => {
     expect(await screen.findByText('修好伪空的任务界面')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: '任务' }));
 
-    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('修好伪空的任务界面');
-    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('正在执行');
-    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('1 位伙伴');
-    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('1 个工具步骤');
-    const details = screen.getByRole('region', { name: '分工与进度' });
-    expect(await within(details).findByText('Todo 1 / 3')).toBeInTheDocument();
-    expect(details).toHaveTextContent('实现交互结果视图');
-    expect(details).toHaveTextContent('Tool Agent · 进行中');
+    const cockpit = screen.getByRole('region', { name: '任务流转与验收' });
+    expect(cockpit).toHaveTextContent('修好伪空的任务界面');
+    expect(cockpit).toHaveTextContent('进行中');
+    expect(cockpit).toHaveTextContent('1 位伙伴已进入当前执行线');
+    expect(cockpit).toHaveTextContent('1 个工具步骤');
+    expect(cockpit).toHaveTextContent(/计划\s*1\/3/);
+    expect(cockpit).toHaveTextContent('实现交互结果视图');
+    expect(cockpit).toHaveTextContent('验证 HTML 报告');
+    expect(cockpit).toHaveTextContent('子 Agent');
     expect(screen.queryByText(/还没有单独登记的工作项/)).not.toBeInTheDocument();
+  });
+
+  it('mounts and removes Room projection modules without changing Runtime state', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '模块化 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.session.workflow.get': roomWorkflowFixture('room-a:s1'),
+      'agent.subagents.list': roomSubagentListFixture('room-a:s1'),
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '验证模块组合' }, {
+          turnId: 'room-a:turn-1',
+        }),
+        roomEvent('room-a', 2, 'participant_activity', {
+          rootId: 'room-a:turn-1',
+          dispatchId: 'room-a:dispatch-1',
+          sourceEventType: 'tool_started',
+          status: 'running',
+          summary: '正在投影模块',
+        }, {
+          turnId: 'room-a:turn-1',
+          participantId: 'room-a:p1',
+          sourceSessionId: 'room-a:s1',
+        }),
+      ]),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    expect(screen.getByRole('heading', { name: '任务图与流转' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '管理 Room 界面模块' }));
+    expect(screen.getByText('组合投影，而不是复制 Runtime')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '移出阶段与并行流转' }));
+    expect(screen.queryByRole('heading', { name: '任务图与流转' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '验证模块组合' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '装载阶段与并行流转' }));
+    expect(screen.getByRole('heading', { name: '任务图与流转' })).toBeInTheDocument();
+  });
+
+  it('reuses the Session subagent launch policy inside Room with an explicit parent', async () => {
+    const room = roomSummary('room-a', '子 Agent 配置 Room');
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '配置伙伴的子 Agent' }, {
+          turnId: 'room-a:turn-1',
+        }),
+        roomEvent('room-a', 2, 'participant_activity', {
+          rootId: 'room-a:turn-1',
+          dispatchId: 'room-a:dispatch-1',
+          sourceEventType: 'tool_started',
+          status: 'running',
+          summary: '主持伙伴正在分工',
+        }, {
+          turnId: 'room-a:turn-1',
+          participantId: 'room-a:p1',
+          sourceSessionId: 'room-a:s1',
+        }),
+      ]),
+      'agent.subagents.templates': { ok: true, items: previewTemplates },
+      'agent.tools.list': { ok: true, items: [] },
+    } });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider><RoomsFeature /></TooltipProvider>
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(false);
+    await user.click(screen.getByText('配置子 Agent'));
+
+    const parent = await screen.findByRole('combobox', { name: '子 Agent 父 Session' });
+    expect(parent).toHaveValue('room-a:s1');
+    expect(within(parent).getByRole('option', { name: /澄 · Root 主持/ })).toBeInTheDocument();
+    expect(within(parent).getByRole('option', { name: /澄·初/ })).toBeInTheDocument();
+    expect(await screen.findByRole('radio', { name: /^审阅者/ })).toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(true);
+  });
+
+  it('keeps same-depth WorkItems as one assignment stage without inventing parallelism', async () => {
+    const room = roomSummary('room-a', '阶段并行 Room');
+    const first = roomWorkItemFixture(room.id, 'work:research', {
+      objective: '并行调查运行契约',
+      currentOwnerParticipantId: 'room-a:p1',
+      accountableParticipantId: 'room-a:p1',
+      state: 'active',
+    });
+    const second = roomWorkItemFixture(room.id, 'work:prototype', {
+      objective: '并行制作交互原型',
+      currentOwnerParticipantId: 'room-a:p2',
+      accountableParticipantId: 'room-a:p2',
+      state: 'active',
+    });
+    const handoff = roomWorkItemFixture(room.id, 'work:review', {
+      rootWorkId: first.id,
+      parentWorkId: first.id,
+      depth: 2,
+      objective: '接续复核两路交付',
+      currentOwnerParticipantId: 'room-a:p1',
+      accountableParticipantId: 'room-a:p1',
+      state: 'queued',
+    });
+    room.workItems = [first, second, handoff];
+    const snapshot = roomSnapshot(room.id, [
+      roomEvent(room.id, 1, 'user_message', { text: '阶段并行完成 Room 重做' }),
+      roomEvent(room.id, 2, 'participant_activity', {
+        rootId: 'room-a:turn-1',
+        dispatchId: 'dispatch:parent',
+        sourceEventType: 'tool_started',
+        status: 'running',
+        summary: '主持伙伴正在整合',
+      }, {
+        participantId: 'room-a:p1',
+        sourceSessionId: 'room-a:s1',
+      }),
+      roomEvent(room.id, 3, 'participant_activity', {
+        activityKind: 'child',
+        phase: 'started',
+        parentParticipantId: 'room-a:p1',
+        targetParticipantId: 'room-a:p2',
+        parentDispatchId: 'dispatch:parent',
+        childDispatchId: 'dispatch:partner-child',
+        task: '复核并行结果',
+      }, {
+        participantId: 'room-a:p1',
+        sourceSessionId: 'room-a:s1',
+      }),
+      roomEvent(room.id, 4, 'participant_activity', {
+        activityKind: 'child',
+        phase: 'completed',
+        childDispatchId: 'dispatch:partner-child',
+        status: 'completed',
+        summary: '复核已返回',
+      }, {
+        participantId: 'room-a:p2',
+        sourceSessionId: 'room-a:s2',
+      }),
+    ]);
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': {
+        ...snapshot,
+        room: { ...snapshot.room, workItems: room.workItems },
+      },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    const cockpit = screen.getByRole('region', { name: '任务流转与验收' });
+    expect(cockpit).toHaveTextContent('分工');
+    expect(cockpit).toHaveTextContent('2 项分工');
+    expect(cockpit).not.toHaveTextContent('2 路并行');
+    expect(cockpit).toHaveTextContent('接续执行');
+    expect(cockpit).toHaveTextContent('接续复核两路交付');
+    expect(within(cockpit).getByRole('heading', { name: /Partner 调用/ })).toBeInTheDocument();
+    expect(cockpit).toHaveTextContent('@ 澄 → @ 澄·初');
+    expect(cockpit).toHaveTextContent('复核并行结果');
+    expect(cockpit).toHaveTextContent('复核已返回');
+    expect(within(cockpit).getAllByRole('button', { name: /执行节点/ })).toHaveLength(3);
+    await user.click(within(cockpit).getByRole('button', { name: /接续复核两路交付/ }));
+    expect(within(cockpit).getByRole('region', { name: '@ 澄 的节点详情' })).toHaveTextContent('接续复核两路交付');
+  });
+
+  it('marks only a real Room wave as parallel and exposes its delivery contract', async () => {
+    const room = roomSummary('room-a', '真实并行 Room');
+    const waveId = 'room-wave:test-1';
+    const rootId = 'room-a:turn-wave';
+    const snapshot = roomSnapshot(room.id, [
+      roomEvent(room.id, 1, 'user_message', { text: '并行核对运行时与界面' }, { turnId: rootId }),
+      roomEvent(room.id, 2, 'participant_activity', {
+        rootId,
+        activityKind: 'child',
+        phase: 'started',
+        phaseName: '并行调查',
+        waveId,
+        parallelIndex: 0,
+        parallelSize: 2,
+        parentParticipantId: 'room-a:p2',
+        targetParticipantId: 'room-a:p1',
+        dispatchId: 'dispatch:wave:runtime',
+        childDispatchId: 'dispatch:wave:runtime',
+        task: '核对运行时契约',
+        expectedOutput: '契约证据',
+        acceptanceCriteria: ['给出调用链'],
+      }, {
+        turnId: rootId,
+        participantId: 'room-a:p1',
+        sourceSessionId: 'room-a:s1',
+      }),
+      roomEvent(room.id, 3, 'participant_activity', {
+        rootId,
+        activityKind: 'child',
+        phase: 'started',
+        phaseName: '并行调查',
+        waveId,
+        parallelIndex: 1,
+        parallelSize: 2,
+        parentParticipantId: 'room-a:p1',
+        targetParticipantId: 'room-a:p2',
+        dispatchId: 'dispatch:wave:ui',
+        childDispatchId: 'dispatch:wave:ui',
+        task: '核对前端投影',
+        expectedOutput: '投影证据',
+        acceptanceCriteria: ['给出事件字段'],
+      }, {
+        turnId: rootId,
+        participantId: 'room-a:p2',
+        sourceSessionId: 'room-a:s2',
+      }),
+      roomEvent(room.id, 4, 'participant_activity', {
+        rootId,
+        activityKind: 'child',
+        phase: 'completed',
+        phaseName: '并行调查',
+        waveId,
+        parallelIndex: 0,
+        parallelSize: 2,
+        targetParticipantId: 'room-a:p1',
+        dispatchId: 'dispatch:wave:runtime',
+        childDispatchId: 'dispatch:wave:runtime',
+        status: 'completed',
+        summary: '运行时契约已核对',
+      }, {
+        turnId: rootId,
+        participantId: 'room-a:p1',
+        sourceSessionId: 'room-a:s1',
+      }),
+    ]);
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': snapshot,
+    } });
+    const user = userEvent.setup();
+    const { container } = render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider><RoomsFeature /></TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    const cockpit = screen.getByRole('region', { name: '任务流转与验收' });
+    expect(cockpit).toHaveTextContent('并行调查');
+    expect(cockpit).toHaveTextContent('2 路并行');
+    expect(container.querySelector('.room-cockpit__flow-phase')).toHaveAttribute('data-parallel', 'true');
+    await user.click(within(cockpit).getByRole('button', { name: /核对运行时契约/ }));
+    const inspector = within(cockpit).getByRole('region', { name: '@ 澄 的节点详情' });
+    expect(inspector).toHaveTextContent('契约证据');
+    expect(inspector).toHaveTextContent('给出调用链');
+    expect(inspector).toHaveTextContent('运行时契约已核对');
+  });
+
+  it('navigates authoritative WorkItem documents and Knowledge evidence', async () => {
+    const room = roomSummary('room-a', '文档导航 Room');
+    const work = roomWorkItemFixture(room.id, 'work:documented', {
+      objective: '落实文档导航',
+      state: 'active',
+      evidenceRefs: ['knowledge:room-runtime-contract'],
+    });
+    room.workItems = [work];
+    const document = roomWorkDocumentFixture(work.id, 'WorkItem 执行说明');
+    const unrelated = roomWorkDocumentFixture('work:other', '不相关文档');
+    const snapshot = roomSnapshot(room.id, []);
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': {
+        ...snapshot,
+        room: { ...snapshot.room, workItems: room.workItems },
+      },
+      'workDocuments.list': {
+        schemaVersion: 'rag-ime.work-document-list.v1',
+        items: [document, unrelated],
+        total: 2,
+      },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    const documentLink = await screen.findByRole('link', { name: /WorkItem 执行说明/ });
+    expect(documentLink).toHaveAttribute(
+      'href',
+      `#/work-documents?document=${encodeURIComponent(document.documentId)}`,
+    );
+    expect(screen.queryByText('不相关文档')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /room-runtime-contract/ })).toHaveAttribute(
+      'href',
+      '#/knowledge',
+    );
+  });
+
+  it('keeps Knowledge-only evidence visible without a Todo, document, or artifact', async () => {
+    const room = roomSummary('room-a', 'Knowledge 导航 Room');
+    const work = roomWorkItemFixture(room.id, 'work:knowledge-only', {
+      objective: '核对持久化知识来源',
+      state: 'active',
+      evidenceRefs: ['knowledge:knowledge-only'],
+    });
+    room.workItems = [work];
+    const snapshot = roomSnapshot(room.id, []);
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': {
+        ...snapshot,
+        room: { ...snapshot.room, workItems: room.workItems },
+      },
+      'workDocuments.list': {
+        schemaVersion: 'rag-ime.work-document-list.v1',
+        items: [],
+        total: 0,
+      },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    expect(await screen.findByRole('link', { name: /knowledge-only/ })).toHaveAttribute(
+      'href',
+      '#/knowledge',
+    );
+  });
+
+  it('keeps a failed Partner child Agent local instead of failing the whole Room', async () => {
+    const subagents = roomSubagentListFixture('room-a:s1');
+    subagents.items[0]!.runs[0]!.state = 'failed';
+    subagents.items[0]!.runs[0]!.error = '子 Agent 校验没有通过';
+    subagents.items[0]!.state = 'failed';
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '子 Agent Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.session.workflow.get': roomWorkflowFixture('room-a:s1'),
+      'agent.subagents.list': subagents,
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '显示伙伴调用的子 Agent' }, {
+          turnId: 'room-a:turn-1',
+        }),
+        roomEvent('room-a', 2, 'participant_activity', {
+          rootId: 'room-a:turn-1',
+          dispatchId: 'room-a:dispatch-1',
+          sourceEventType: 'tool_started',
+          status: 'running',
+          summary: '父伙伴仍在继续整合',
+        }, {
+          turnId: 'room-a:turn-1',
+          participantId: 'room-a:p1',
+          sourceSessionId: 'room-a:s1',
+        }),
+      ]),
+    } });
+    const user = userEvent.setup();
+    const { container } = render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    expect(await screen.findByText('显示伙伴调用的子 Agent')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: '任务' }));
+
+    expect(await screen.findByText('局部失败：')).toBeInTheDocument();
+    expect(screen.getByText('子 Agent 校验没有通过')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开“验证 HTML 报告”子 Agent 对话' })).toHaveAttribute(
+      'href',
+      '#/agent?session=room-a%3As2%3Achild-1',
+    );
+    expect(container.querySelector('.room-cockpit')).toHaveAttribute('data-state', 'active');
+    expect(container.querySelector('.room-cockpit__subagent')).toHaveAttribute('data-state', 'attention');
+    expect(screen.queryByText('这轮协作没有完成')).not.toBeInTheDocument();
+  });
+
+  it('shows an invalid child delivery contract as a repairable local node', async () => {
+    const subagents = roomSubagentListFixture('room-a:s1');
+    const run = subagents.items[0]!.runs[0]!;
+    run.state = 'completed';
+    run.contract = {
+      status: 'invalid',
+      error: 'claims 必须是数组',
+      toolCallId: '',
+      validatedAtMs: null,
+    };
+    run.result = {
+      deliveryStatus: 'returned',
+      verificationStatus: 'contract_invalid',
+      summary: '模型已返回普通文本',
+    };
+    run.completedAtMs = 4;
+    subagents.items[0]!.state = 'completed';
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '合同修复 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.session.workflow.get': roomWorkflowFixture('room-a:s1'),
+      'agent.subagents.list': subagents,
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '检查结构化交付合同' }),
+        roomEvent('room-a', 2, 'participant_activity', {
+          rootId: 'room-a:turn-1',
+          dispatchId: 'room-a:dispatch-1',
+          sourceEventType: 'tool_started',
+          status: 'running',
+          summary: '父伙伴继续修复交付',
+        }, {
+          participantId: 'room-a:p1',
+          sourceSessionId: 'room-a:s1',
+        }),
+      ]),
+    } });
+    const user = userEvent.setup();
+    const { container } = render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    expect(await screen.findByText('已返回但交付合同无效：')).toBeInTheDocument();
+    expect(screen.getByText('claims 必须是数组')).toBeInTheDocument();
+    expect(container.querySelector('.room-cockpit')).toHaveAttribute('data-state', 'active');
+    expect(container.querySelector('.room-cockpit__subagent')).toHaveAttribute('data-state', 'contract');
+    expect(screen.queryByText('这轮协作没有完成')).not.toBeInTheDocument();
   });
 
   it('does not fabricate a task graph before real work exists', async () => {
@@ -377,9 +821,10 @@ describe('Rooms experience', () => {
     expect(await screen.findByRole('button', { name: '打开协作空间：空任务 Room' })).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: '任务' }));
 
-    expect(screen.queryByRole('region', { name: '任务图' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '任务流转与验收' })).toBeInTheDocument();
     expect(screen.getByText('还没有实际分工')).toBeInTheDocument();
-    expect(screen.getByText('在“对话”里发送目标后，这里才会显示真实的分工和进度。')).toBeInTheDocument();
+    expect(screen.getByText('还没有实际流转')).toBeInTheDocument();
+    expect(screen.getByText('只有产生真实 dispatch / WorkItem 后，Room 才会绘制节点与关系。')).toBeInTheDocument();
     expect(screen.queryByText('共同目标')).not.toBeInTheDocument();
     expect(screen.queryByText('等待任务拆分')).not.toBeInTheDocument();
   });
@@ -430,14 +875,13 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('radio', { name: '任务' }));
 
-    const graph = screen.getByRole('region', { name: '任务图' });
-    expect(graph).toHaveTextContent('0 / 1');
-    const details = screen.getByRole('region', { name: '分工与进度' });
+    const details = screen.getByRole('region', { name: '任务流转与验收' });
+    expect(details).toHaveTextContent('0/1 位伙伴完成当前分工');
     expect(details).toHaveTextContent('恢复任务图的真实详情');
-    expect(details).toHaveTextContent('正在执行');
-    expect(details).toHaveTextContent('负责');
+    expect(details).toHaveTextContent('进行中');
+    expect(details).toHaveTextContent('执行人');
     expect(details).toHaveTextContent('澄·初');
-    expect(details).toHaveTextContent('复核');
+    expect(details).toHaveTextContent('复核人');
     expect(details).toHaveTextContent('澄');
     expect(details).toHaveTextContent('可展开核对的任务详情');
     expect(details).toHaveTextContent('空 Room 不画伪任务图');
@@ -445,13 +889,17 @@ describe('Rooms experience', () => {
     expect(details).toHaveTextContent('第 2 次修订');
     expect(details).toHaveTextContent('已接入真实 WorkItem');
     expect(details).toHaveTextContent('/Volumes/work/learnA');
-    expect(details).toHaveTextContent('Todo 1 / 3');
+    expect(details).toHaveTextContent(/计划\s*1\/3/);
     expect(details).toHaveTextContent('实现交互结果视图');
     expect(details).toHaveTextContent('验证 HTML 报告');
-    expect(details).toHaveTextContent('Tool Agent · 进行中');
+    expect(details).toHaveTextContent('验证 HTML 报告');
     expect(details).toHaveTextContent('evidence:task-view');
     expect(details).toHaveTextContent('artifact:task-view');
     expect(within(details).getByRole('link', { name: '打开澄·初的对话' })).toHaveAttribute(
+      'href',
+      '#/agent?session=room-a%3As2',
+    );
+    expect(within(details).getByRole('link', { name: '打开 @ 澄·初 对话' })).toHaveAttribute(
       'href',
       '#/agent?session=room-a%3As2',
     );
@@ -3094,7 +3542,7 @@ describe('Rooms experience', () => {
     const projection = createRoomProjection(room.id);
     projection.turnOrder.push('turn-a');
     projection.turnsById['turn-a'] = {
-      id: 'turn-a', status: 'running', messageIds: [], activityIds: ['read-a', 'read-b'],
+      id: 'turn-a', status: 'running', messageIds: [], activityIds: ['read-a', 'read-b', 'todo-a'],
       participantIds: ['room-a:p1'], createdAtMs: 1, updatedAtMs: 4,
     };
     for (const [index, id] of ['read-a', 'read-b'].entries()) {
@@ -3116,6 +3564,22 @@ describe('Rooms experience', () => {
         createdAtMs: index + 1,
       };
     }
+    projection.activitiesById['todo-a'] = {
+      id: 'todo-a',
+      turnId: 'turn-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: 'Todo：6/6 已完成，0 进行中，0 待处理',
+      payload: {
+        sourceEventType: 'tool_finished',
+        toolName: 'todo',
+        toolCallId: 'call-todo',
+        result: { outputPreview: 'Todo：6/6 已完成' },
+      },
+      createdAtMs: 3,
+    };
     const { container } = render(
       <RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />,
     );
@@ -3124,6 +3588,7 @@ describe('Rooms experience', () => {
     expect(cards).toHaveLength(2);
     expect(cards[0]).toHaveTextContent('file-1.ts');
     expect(cards[1]).toHaveTextContent('file-2.ts');
+    expect(container).not.toHaveTextContent('Todo：6/6 已完成');
     expect(container.querySelector('.room-agent-activity--tool-group')).not.toBeInTheDocument();
     expect(container.querySelector('.room-agent-lane__activity-feed')).toContainElement(cards[0]);
     expect(container.querySelector('.room-agent-lane__activity-feed')).toContainElement(cards[1]);
@@ -4079,6 +4544,64 @@ function roomSummary(roomId: string, title: string): RoomSummary {
   };
 }
 
+function roomWorkItemFixture(
+  roomId: string,
+  id: string,
+  overrides: Partial<NonNullable<RoomSummary['workItems']>[number]> = {},
+): NonNullable<RoomSummary['workItems']>[number] {
+  return {
+    id,
+    roomId,
+    topicId: '',
+    rootTurnId: `${roomId}:turn-1`,
+    rootWorkId: id,
+    parentWorkId: '',
+    objective: id,
+    expectedOutput: '可核验交付',
+    acceptanceCriteria: ['保留真实阶段与并行关系'],
+    accountableParticipantId: `${roomId}:p1`,
+    currentOwnerParticipantId: `${roomId}:p1`,
+    offeredToParticipantId: '',
+    createdByParticipantId: `${roomId}:p1`,
+    clientMessageId: `client:${id}`,
+    state: 'queued',
+    depth: 1,
+    revision: 1,
+    resultSummary: '',
+    artifactRefs: [],
+    evidenceRefs: [],
+    blocker: {},
+    acceptedTurnId: `${roomId}:turn-1`,
+    createdAtMs: 1,
+    updatedAtMs: 2,
+    completedAtMs: null,
+    ...overrides,
+  };
+}
+
+function roomWorkDocumentFixture(authorityId: string, title: string): WorkDocumentV1 {
+  const documentId = `workdoc_${(authorityId === 'work:other' ? '2' : '1').repeat(32)}`;
+  return {
+    documentId,
+    authorityKind: 'room_work_item',
+    authorityId,
+    authorityRevision: 1,
+    authorityKey: `room_work_item:${authorityId}:1`,
+    documentRevision: 2,
+    contentSha256: 'a'.repeat(64),
+    workspaceRoot: '/workspace',
+    path: `/workspace/docs/active/${documentId}.md`,
+    activePath: `/workspace/docs/active/${documentId}.md`,
+    archivePath: `/workspace/docs/archive/${documentId}.md`,
+    state: 'active',
+    title,
+    terminalReceiptId: '',
+    error: '',
+    createdAtMs: 1,
+    updatedAtMs: 2,
+  };
+}
+
 function roomWorkflowFixture(sessionId: string) {
   return {
     schemaVersion: 'rag-ime.agent-workflow-state.v1',
@@ -4162,6 +4685,13 @@ function roomSubagentListFixture(sessionId: string) {
       runs: [{
         schemaVersion: 'rag-ime.agent-subagent-run.v1',
         id: 'run:html-review',
+        nodeId: 'node:html-review',
+        attemptId: 'attempt:html-review:1',
+        attemptNumber: 1,
+        predecessorAttemptId: '',
+        ownerRunId: 'run:parent',
+        parentRunId: 'run:parent',
+        depth: 1,
         batchId: `batch:${sessionId}`,
         childSessionId: 'room-a:s2:child-1',
         todoTask: '实现交互结果视图',
@@ -4172,6 +4702,29 @@ function roomSubagentListFixture(sessionId: string) {
         task: '验证 HTML 报告',
         expectedOutput: '浏览器验收结果',
         acceptanceCriteria: ['脚本和表单可以运行'],
+        launchDigest: {
+          schemaVersion: 'rag-ime.agent-subagent-launch-digest.v1',
+          contextMode: 'fresh',
+          templateId: 'reviewer',
+          templateVersion: '1',
+          modelProfile: 'openai-codex/gpt-5.6-sol',
+          thinkingLevel: 'high',
+          toolProfileVersion: 'subagent-readonly-v1',
+          toolAllowlistMode: 'profile',
+          tools: ['knowledge'],
+          piSkillsEnabled: false,
+          codexSkillsEnabled: false,
+          workspaceAccess: 'read_only',
+          workspaceRootCount: 1,
+          outputContract: { required: false, schemaSha256: '' },
+          extensionRuntime: 'pi_host_managed',
+        },
+        contract: {
+          status: 'not_requested',
+          error: '',
+          toolCallId: '',
+          validatedAtMs: null,
+        },
         state: 'running',
         budget: { maxTurns: 8, maxToolCalls: 12, maxTotalTokens: 20_000, maxDurationMs: 300_000, maxOutputChars: 16_000 },
         usage: { turnCount: 1, toolCount: 1, totalTokens: 800 },
@@ -4181,7 +4734,7 @@ function roomSubagentListFixture(sessionId: string) {
         createdAtMs: 1,
         startedAtMs: 1,
         updatedAtMs: 2,
-        completedAtMs: null,
+        completedAtMs: null as number | null,
       }],
     }],
   };

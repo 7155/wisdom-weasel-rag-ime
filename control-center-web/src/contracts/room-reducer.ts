@@ -54,6 +54,8 @@ export interface PendingRoomQuestionProjection {
 
 export interface RoomActivityProjection {
   id: string;
+  /** Authoritative Room event sequence used to preserve cross-lane chronology. */
+  sequence?: number;
   turnId: string;
   participantId: string | null;
   sourceSessionId: string;
@@ -451,6 +453,7 @@ export function roomActivityLaneIdentity(
     || 'router';
   const dispatchId =
     text(activity.payload.dispatchId)
+    || text(activity.payload.childDispatchId)
     || activity.sourceSessionId
     || text(activity.payload.sourceEventId)
     || activity.id;
@@ -1457,6 +1460,7 @@ function upsertActivity(
       );
   const activity: RoomActivityProjection = {
     id,
+    sequence: existing?.sequence ?? event.sequence,
     turnId: event.turnId,
     participantId,
     sourceSessionId,

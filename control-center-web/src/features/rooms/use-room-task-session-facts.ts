@@ -5,6 +5,8 @@ import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-ru
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 import {
   hasActiveSubagentRuns,
+  type AgentSubagentBatchWithRuns,
+  subagentBatches,
   subagentRuns,
 } from '@/features/agent/status/subagent-data';
 import { usePageVisibility } from '@/platform/use-page-visibility';
@@ -13,10 +15,11 @@ export interface RoomTaskSessionFact {
   sessionId: string;
   status: 'loading' | 'ready' | 'partial' | 'unavailable';
   workflow?: AgentWorkflowStateV1;
+  subagentBatches: AgentSubagentBatchWithRuns[];
   subagents: AgentSubagentRunV1[];
 }
 
-const MAX_PROJECTED_SESSIONS = 8;
+const MAX_PROJECTED_SESSIONS = 12;
 const ACTIVE_REFRESH_MS = 2_000;
 const IDLE_REFRESH_MS = 10_000;
 
@@ -47,6 +50,7 @@ export function useRoomTaskSessionFacts(
       current[sessionId] ?? {
         sessionId,
         status: 'loading',
+        subagentBatches: [],
         subagents: [],
       },
     ])));
@@ -59,7 +63,7 @@ export function useRoomTaskSessionFacts(
     const controller = new AbortController();
 
     const refresh = async () => {
-      const next = await Promise.all(sessionIds.map(async (sessionId): Promise<RoomTaskSessionFact> => {
+      const loadFact = async (sessionId: string): Promise<RoomTaskSessionFact> => {
         const [workflowResult, subagentResult] = await Promise.allSettled([
           transport.request({
             pathId: 'agent.session.workflow.get',
@@ -78,15 +82,27 @@ export function useRoomTaskSessionFacts(
         const runs = subagentResult.status === 'fulfilled'
           ? subagentRuns(subagentResult.value)
           : [];
+        const batches = subagentResult.status === 'fulfilled'
+          ? subagentBatches(subagentResult.value)
+          : [];
         const successCount = Number(Boolean(workflow))
           + Number(subagentResult.status === 'fulfilled');
         return {
           sessionId,
           status: successCount === 2 ? 'ready' : successCount === 1 ? 'partial' : 'unavailable',
           workflow,
+          subagentBatches: batches,
           subagents: runs,
         };
-      }));
+      };
+      const primary = await Promise.all(sessionIds.map(loadFact));
+      const childSessionIds = [...new Set(primary.flatMap((fact) => (
+        fact.subagents.map((run) => run.childSessionId.trim()).filter(Boolean)
+      )))]
+        .filter((sessionId) => !sessionIds.includes(sessionId))
+        .slice(0, Math.max(0, MAX_PROJECTED_SESSIONS - sessionIds.length));
+      const children = await Promise.all(childSessionIds.map(loadFact));
+      const next = [...primary, ...children];
       if (disposed) return;
       setFacts(Object.fromEntries(next.map((fact) => [fact.sessionId, fact])));
       const hasLiveWork = next.some((fact) => (
@@ -108,9 +124,7 @@ export function useRoomTaskSessionFacts(
   }, [pageVisible, sessionKey, transport]);
 
   return useMemo(
-    () => new Map(sessionIds.flatMap((sessionId) => (
-      facts[sessionId] ? [[sessionId, facts[sessionId]!] as const] : []
-    ))),
+    () => new Map(Object.values(facts).map((fact) => [fact.sessionId, fact] as const)),
     [facts, sessionKey],
   );
 }

@@ -12,7 +12,10 @@ Keep the Room lightweight. Partners remain ordinary Sessions and use the same ta
 1. Read the project, outcome, Room brief, current workboard, and Runtime participant projection.
 2. Clarify material user choices only when necessary. Use planning only when the work truly needs multiple items or owners.
 3. Before editing, identify independently verifiable tracks such as protocol/runtime, implementation, UI, and acceptance. If two or more can progress independently and an eligible Partner is available, delegate at least one bounded track. Otherwise publish one short single-lane reason and keep the coherent responsibility in the Facilitator.
-4. Delegate bounded Partner tasks with objective, scope, acceptance, exact ContextRefs, exact SkillRefs, workspace binding, capabilities, and expected output. A Partner is assigned only after `room_partner delegate` returns an accepted dispatch; a Todo label alone is not a delegation.
+4. Delegate bounded Partner tasks with objective, scope, acceptance, exact ContextRefs, exact SkillRefs, workspace binding, capabilities, and expected output. A Partner is assigned only after `room_partner delegate` or `room_partner delegate_batch` returns an accepted dispatch; a Todo label alone is not a delegation.
+   - Use `delegate` for one lane.
+   - When one stage has 2–3 independent, non-overlapping lanes, make one `delegate_batch` call with a short `phase` and one explicit delivery contract per target. This is the only evidence that those lanes were started as one parallel wave.
+   - If a lane consumes another lane's output, dispatch it in a later stage. Never send dependent or overlapping writes in the same batch and never describe consecutive `delegate` calls as parallel.
 5. Let each Partner choose private Session subagents within its granted capabilities.
 6. Consume Partner progress and result events. Publish only material shared progress and resolve dependencies or conflicts from evidence.
 7. Integrate Partner results into the authoritative workspace and shared workboard.
@@ -24,6 +27,7 @@ For a normal completion, call `room_partner post` exactly once with `kind=result
 ## Failure Recovery and Terminal Rule
 
 - Treat Session Todo as a working plan, not Room authority. Partner assignment exists only after a real delegated dispatch.
+- A batch result may be `partial`: keep every returned Partner result visible, repair or reassign only the failed lane, and do not paint the whole Room as failed.
 - After the same operation family fails twice, change to one smaller supported operation or declare that item blocked; do not create dummy reads or partial writes merely to keep the loop moving.
 - A blocked or optional item must not leave the root running forever. Reconcile remaining Todo items into completed, blocked, abandoned, or unresolved-result entries, then emit the best evidence-backed partial or blocked final.
 - Before finalizing, consume the latest Partner events once. Do not poll an idle inbox or repeat discovery after the evidence needed for the result is already available.

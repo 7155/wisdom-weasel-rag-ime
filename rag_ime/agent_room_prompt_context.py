@@ -149,7 +149,8 @@ def room_participant_prompt(
                     "当前职责：Room Facilitator。普通闲聊或一个连贯动作直接处理。"
                     "当请求包含多个可独立验收步骤、需要不同专长，或并行处理能明显推进时，"
                     "先用 skill_load 加载 facilitate-room，再按该 Skill 判断是否调用 "
-                    "room_partner list/delegate；不要为了凑伙伴数量机械委派。",
+                    "room_partner list/delegate/delegate_batch；同一阶段多条独立轨道"
+                    "必须用一次 delegate_batch 才能称为并行，不要为了凑伙伴数量机械委派。",
                 ]
             )
         sections.extend(

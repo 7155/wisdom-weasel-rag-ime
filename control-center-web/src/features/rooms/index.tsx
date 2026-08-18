@@ -32,7 +32,7 @@ import { roleItems } from '@/features/agent/types';
 import { useMediaQuery, useModalPanel } from '@/features/agent/overlay-dialog';
 import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomStatusPanel } from './RoomStatusPanel';
-import { RoomTaskGraph } from './RoomTaskGraph';
+import { ConnectedRoomTaskGraph } from './RoomTaskGraph';
 import { RoomMemberBoundaryDialog } from './RoomMemberBoundaryDialog';
 import { RoomPaneResizer } from './RoomPaneResizer';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
@@ -259,6 +259,7 @@ export function RoomsFeature() {
   const [roomCatalogError, setRoomCatalogError] = useState('');
   const [roleCatalogError, setRoleCatalogError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogReloadRevision, setCatalogReloadRevision] = useState(0);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -568,10 +569,19 @@ export function RoomsFeature() {
 
   useEffect(() => {
     let active = true;
+    const requestRoleCatalog = async () => {
+      try {
+        return await transport.request({ pathId: 'agent.roles.list' });
+      } catch (firstError) {
+        await new Promise((resolve) => window.setTimeout(resolve, 180));
+        if (!active) throw firstError;
+        return transport.request({ pathId: 'agent.roles.list' });
+      }
+    };
     setCatalogLoading(true);
     void Promise.allSettled([
       transport.request({ pathId: 'agent.rooms.list', query: { limit: 100, ...(includeArchived ? { includeArchived: true } : {}) } }),
-      transport.request({ pathId: 'agent.roles.list' }),
+      requestRoleCatalog(),
       transport.request({ pathId: 'agent.sessions.list', query: { limit: 200 } }),
     ]).then(([roomResult, roleResult, sessionResult]) => {
       if (!active) return;
@@ -594,7 +604,7 @@ export function RoomsFeature() {
         setPersonas(roleItems(roleResult.value));
         setRoleCatalogError('');
       } else {
-        setRoleCatalogError(publicErrorText(roleResult.reason, '角色目录暂时无法读取，请稍后重试。'));
+        setRoleCatalogError(publicErrorText(roleResult.reason, '角色目录暂时没有同步；Room 运行事实仍可阅读。'));
       }
       const loadedSessionRoots = sessionResult.status === 'fulfilled'
         ? sessionWorkspaceRoots(sessionResult.value)
@@ -605,7 +615,7 @@ export function RoomsFeature() {
       ]));
     }).finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
-  }, [includeArchived, transport]);
+  }, [catalogReloadRevision, includeArchived, transport]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -1283,7 +1293,7 @@ export function RoomsFeature() {
             : <p className="room-error" role="alert">{error}</p>
             : null}
           {!error && roomCatalogError ? <p className="room-error" role="alert">{roomCatalogError}</p> : null}
-          {!error && !roomCatalogError && roleCatalogError ? <p className="room-catalog-warning" role="status">{roleCatalogError}</p> : null}
+          {!error && !roomCatalogError && roleCatalogError ? <div className="room-catalog-warning room-catalog-warning--action" role="status"><span>{roleCatalogError}</span><Button disabled={catalogLoading} leadingIcon={<RefreshCw size={14} />} onClick={() => setCatalogReloadRevision((revision) => revision + 1)} size="small" variant="quiet">重新同步角色</Button></div> : null}
         </div>
         {workspaceView === 'posts' ? <><div className="room-timeline" aria-label="协作对话时间线">
           {room ? visibleTurnOrder.length ? <Virtuoso
@@ -1410,8 +1420,8 @@ export function RoomsFeature() {
           <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} /><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
           {!activeParticipants.length ? <p className="room-empty room-session-workspace__empty">还没有伙伴加入这个协作空间。</p> : null}
         </section> : null}
-        <section className="room-execution-workspace" aria-label="任务流转与验收" hidden={workspaceView !== 'execution'}>
-          {workspaceView === 'execution' && room ? <RoomTaskGraph room={room} runtimeWorkItems={runtimeWorkItems} /> : workspaceView === 'execution' ? <p className="room-empty">请选择一个协作空间。</p> : null}
+        <section className="room-execution-workspace room-execution-workspace--cockpit" aria-label="任务流转与验收" hidden={workspaceView !== 'execution'}>
+          {workspaceView === 'execution' && room ? <ConnectedRoomTaskGraph projection={selectedRoomProjection} room={room} runtimeWorkItems={runtimeWorkItems} /> : workspaceView === 'execution' ? <p className="room-empty">请选择一个协作空间。</p> : null}
         </section>
       </section>
       <button className="agent-status-backdrop room-status-backdrop" aria-hidden="true" disabled={!roomStatusModal} tabIndex={-1} onClick={() => setStatusOpen(false)} type="button" />

@@ -26,6 +26,7 @@ function roomPostBlock(
 export function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
   const rootId = `${roomId}:turn-1`;
+  const waveId = `${roomId}:wave-implementation`;
   const participants = [
     previewParticipant(roomId, 'participant-present', 'session-room-present', 'companion-present-v1', '澄·今', 0),
     previewParticipant(roomId, 'participant-firstlight', 'session-room-firstlight', 'companion-firstlight-v1', '澄·初', 1),
@@ -96,6 +97,9 @@ export function previewRoomSnapshot(roomId: string) {
     event(4, 'participant_activity', 'participant-present', {
       rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-start',
       sourceEventType: 'tool_started', toolCallId: 'tool-present', toolName: 'read_file',
+      waveId, phaseName: '并行实现', parallelIndex: 0, parallelSize: 2,
+      task: '实现 Room 任务图交互', expectedOutput: '可复查的任务图交互实现',
+      acceptanceCriteria: ['公开时间线保持事件顺序', '思维与工具默认折叠'],
       summary: '读取 Room 时间线实现',
     }),
     event(5, 'participant_activity', 'participant-present', {
@@ -154,6 +158,9 @@ export function previewRoomSnapshot(roomId: string) {
     event(10, 'participant_activity', 'participant-firstlight', {
       rootId, dispatchId: 'dispatch-firstlight', sourceEventId: 'tool-firstlight-start',
       sourceEventType: 'tool_started', toolCallId: 'tool-firstlight', toolName: 'control_api',
+      waveId, phaseName: '并行实现', parallelIndex: 1, parallelSize: 2,
+      task: '实现 Room 依赖数据投影', expectedOutput: '可核验的路由与权限投影',
+      acceptanceCriteria: ['失败回执不伪装成功', '投影保留来源与边界'],
       summary: '检查路由与权限回执',
     }),
     event(11, 'participant_delta', 'participant-firstlight', {

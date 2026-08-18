@@ -87,6 +87,58 @@ interface RoomTurnProps {
   ) => Promise<boolean>;
 }
 
+type RoomTimelineEntry =
+  | { key: string; kind: 'user'; message: RoomMessageProjection }
+  | { key: string; kind: 'lane'; lane: RoomExecutionLane; includeDetails: boolean };
+
+function compareTimelineEntries(
+  left: RoomTimelineEntry,
+  right: RoomTimelineEntry,
+  projection: RoomProjectionState,
+): number {
+  const position = (entry: RoomTimelineEntry): { sequence?: number; atMs: number } => {
+    if (entry.kind === 'user') {
+      return {
+        sequence: entry.message.chronology?.roomEventSequence ?? entry.message.sequence,
+        atMs: entry.message.chronology?.createdAtMs ?? entry.message.createdAtMs,
+      };
+    }
+    const sequences = [
+      ...entry.lane.activities.flatMap((activity) => (
+        activity.sequence === undefined ? [] : [activity.sequence]
+      )),
+      ...entry.lane.messageIds.flatMap((messageId) => {
+        const message = projection.messagesById[messageId];
+        const sequence = message?.chronology?.roomEventSequence ?? message?.sequence;
+        return sequence === undefined ? [] : [sequence];
+      }),
+    ];
+    const timestamps = [
+      ...entry.lane.activities.map((activity) => activity.createdAtMs),
+      ...entry.lane.messageIds.flatMap((messageId) => {
+        const message = projection.messagesById[messageId];
+        return message
+          ? [message.chronology?.createdAtMs ?? message.createdAtMs]
+          : [];
+      }),
+    ];
+    return {
+      sequence: sequences.length ? Math.min(...sequences) : undefined,
+      atMs: timestamps.length ? Math.min(...timestamps) : Number.MAX_SAFE_INTEGER,
+    };
+  };
+  const leftPosition = position(left);
+  const rightPosition = position(right);
+  if (leftPosition.sequence !== undefined && rightPosition.sequence !== undefined) {
+    const sequenceOrder = leftPosition.sequence - rightPosition.sequence;
+    if (sequenceOrder !== 0) return sequenceOrder;
+  }
+  const timeOrder = leftPosition.atMs - rightPosition.atMs;
+  if (timeOrder !== 0) return timeOrder;
+  if (left.kind !== right.kind) return left.kind === 'user' ? -1 : 1;
+  return left.key.localeCompare(right.key);
+}
+
 const roomTerminalPostLabels: Readonly<Record<string, string>> = {
   alignment: '已确认',
   result: '已完成',
@@ -176,51 +228,25 @@ export function RoomTurn({
       .map((messageId) => projection.messagesById[messageId])
       .filter((message): message is RoomMessageProjection => Boolean(message)),
   );
-  type TimelineEntry =
-    | { key: string; kind: 'user'; message: RoomMessageProjection }
-    | { key: string; kind: 'lane'; lane: RoomExecutionLane; includeDetails: boolean };
-  const timelineEntries: TimelineEntry[] = [];
-  const laneSegmentCounts = new Map<string, number>();
-  for (const message of conversationMessages) {
-    if (message.role === 'user') {
-      timelineEntries.push({ key: `message:${message.id}`, kind: 'user', message });
-      continue;
-    }
-    const sourceLane = lanes.find((lane) => lane.messageIds.includes(message.id));
-    if (!sourceLane) continue;
-    const previous = timelineEntries.at(-1);
-    if (previous?.kind === 'lane' && previous.lane.key === sourceLane.key) {
-      previous.lane = {
-        ...previous.lane,
-        messageIds: [...previous.lane.messageIds, message.id],
-      };
-      continue;
-    }
-    const segment = (laneSegmentCounts.get(sourceLane.key) ?? 0) + 1;
-    laneSegmentCounts.set(sourceLane.key, segment);
-    timelineEntries.push({
-      key: `lane:${sourceLane.key}:${segment}`,
-      kind: 'lane',
-      lane: { ...sourceLane, messageIds: [message.id] },
-      includeDetails: false,
-    });
-  }
-  for (const lane of lanes) {
-    const laneEntries = timelineEntries.filter((entry): entry is Extract<TimelineEntry, { kind: 'lane' }> => (
-      entry.kind === 'lane' && entry.lane.key === lane.key
-    ));
-    const finalEntry = laneEntries.at(-1);
-    if (finalEntry) {
-      finalEntry.includeDetails = true;
-    } else {
-      timelineEntries.push({
-        key: `lane:${lane.key}:activity`,
-        kind: 'lane',
-        lane,
-        includeDetails: true,
-      });
-    }
-  }
+  // One execution lane is one factual timeline unit. Splitting it around each
+  // Post made a single Partner look like several serial tasks and detached the
+  // public result from the tools that produced it.
+  const timelineEntries: RoomTimelineEntry[] = [
+    ...conversationMessages
+      .filter((message) => message.role === 'user')
+      .map((message) => ({
+        key: `message:${message.id}`,
+        kind: 'user' as const,
+        message,
+      })),
+    ...lanes.map((lane) => ({
+      key: `lane:${lane.key}`,
+      kind: 'lane' as const,
+      lane,
+      includeDetails: true,
+    })),
+  ];
+  timelineEntries.sort((left, right) => compareTimelineEntries(left, right, projection));
   const streamingLaneEntryKeys = timelineEntries.flatMap((entry) => (
     entry.kind === 'lane'
     && entry.lane.messageIds.some((messageId) => (
@@ -481,6 +507,13 @@ export function RoomTurn({
             />
           </span>
         </summary>
+        {includeDetails && lane.activities.length ? <ActivityLog
+          activities={lane.activities}
+          active={laneStillActive && !laneAction}
+          motionActive={laneMotionActive}
+          participantName={participant?.displayName}
+          attention={laneState === 'failed'}
+        /> : null}
         {visibleMessages.length ? <div className="room-agent-lane__posts">
           {visibleMessages.map((message) => <Fragment key={message.id}>
             <RoomLanePost
@@ -500,13 +533,6 @@ export function RoomTurn({
             />
           </Fragment>)}
         </div> : null}
-        {includeDetails && lane.activities.length ? <ActivityLog
-          activities={lane.activities}
-          active={laneStillActive && !laneAction}
-          motionActive={laneMotionActive}
-          participantName={participant?.displayName}
-          attention={laneState === 'failed' || laneState === 'aborted'}
-        /> : null}
         {includeDetails && !lane.activities.length && laneStillActive && !messages.length ? <div className="room-agent-lane__waiting">
           {laneMotionActive ? <LoaderCircle size={14} /> : <Clock3 size={14} />}
           <span>{laneMotionActive
@@ -669,6 +695,7 @@ function ActivityLog({
   attention: boolean;
   participantName?: string;
 }) {
+  const [open, setOpen] = useState(active || attention);
   const [arrivingActivityIds, setArrivingActivityIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -680,6 +707,11 @@ function ActivityLog({
   const chronologicalActivities = publicActivities.filter((activity) => (
     textValue(activity.payload.sourceEventType) !== 'reasoning_summary'
   ));
+  const toolCount = new Set(chronologicalActivities.flatMap((activity) => {
+    const sourceEventType = textValue(activity.payload.sourceEventType);
+    if (!['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) return [];
+    return [textValue(activity.payload.toolCallId) || activity.id];
+  })).size;
   const activityIdentityKey = publicActivities.map((activity) => activity.id).join('\u001f');
   useEffect(() => {
     const nextIds = new Set(publicActivities.map((activity) => activity.id));
@@ -692,12 +724,23 @@ function ActivityLog({
     const timer = window.setTimeout(() => setArrivingActivityIds(new Set()), 220);
     return () => window.clearTimeout(timer);
   }, [activityIdentityKey]);
+  useEffect(() => {
+    if (active || attention) setOpen(true);
+  }, [active, attention]);
   if (!publicActivities.length) return null;
-  return <div
+  return <details
     className="room-agent-lane__activity"
     data-motion={motionActive ? 'fresh' : 'paused'}
     data-state={attention ? 'attention' : active ? 'running' : 'settled'}
+    onToggle={(event) => setOpen(event.currentTarget.open)}
+    open={open}
   >
+    <summary>
+      <Sparkles aria-hidden="true" size={14} />
+      <strong>思维与工具</strong>
+      <small>{latestReasoning ? '1 条最新摘要' : '无公开摘要'} · {toolCount} 个工具</small>
+      <ChevronRight aria-hidden="true" size={14} />
+    </summary>
     <div
       aria-label={`工作进展与运行记录：${participantName ?? '协作成员'}`}
       aria-live={motionActive ? 'polite' : 'off'}
@@ -757,7 +800,7 @@ function ActivityLog({
         </span>
       </div>;
     })}</div>
-  </div>;
+  </details>;
 }
 
 function RoomReasoningActivity({
