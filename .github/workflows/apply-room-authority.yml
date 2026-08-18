@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   apply-and-verify:
@@ -29,34 +31,53 @@ jobs:
           node-version: "22"
       - name: Enable pinned pnpm
         run: corepack enable && corepack prepare pnpm@11.9.0 --activate
-      - name: Apply authoritative Room workflow patch
-        run: python scripts/codex_apply_room_workitem_authority.py
-      - name: Compile and run focused backend contracts
+      - name: Apply and verify authoritative Room workflow
+        id: verify
         env:
           PYTHONWARNINGS: "error::ResourceWarning"
         run: |
-          python -m compileall -q rag_ime scripts tests
-          python -m unittest discover -s tests -p 'test_agent_room_partner_workflow.py'
-          python -m unittest discover -s tests -p 'test_agent_room_partner_application.py'
-          python scripts/check_import_boundaries.py
-          python scripts/check_route_ownership.py
-          ruff check \
-            rag_ime/agent_room_partner_workflow.py \
-            rag_ime/agent_room_partner_application.py \
-            rag_ime/agent_room_work.py \
-            rag_ime/agent_service.py \
-            tests/test_agent_room_partner_workflow.py \
-            tests/test_agent_room_partner_application.py
-      - name: Install and verify the Room frontend
-        working-directory: control-center-web
+          set -o pipefail
+          {
+            python scripts/codex_apply_room_workitem_authority.py
+            python -m compileall -q rag_ime scripts tests
+            python -m unittest discover -s tests -p 'test_agent_room_partner_workflow.py'
+            python -m unittest discover -s tests -p 'test_agent_room_partner_application.py'
+            python scripts/check_import_boundaries.py
+            python scripts/check_route_ownership.py
+            ruff check \
+              rag_ime/agent_room_partner_workflow.py \
+              rag_ime/agent_room_partner_application.py \
+              rag_ime/agent_room_work.py \
+              rag_ime/agent_service.py \
+              tests/test_agent_room_partner_workflow.py \
+              tests/test_agent_room_partner_application.py
+            cd control-center-web
+            pnpm install --frozen-lockfile
+            pnpm typecheck
+            pnpm test
+            pnpm build
+            cd ..
+            git diff --check
+          } 2>&1 | tee /tmp/room-authority-verification.log
+      - name: Report verification failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          pnpm install --frozen-lockfile
-          pnpm typecheck
-          pnpm test
-          pnpm build
+          {
+            echo 'Room authority verification failed on commit `${{ github.sha }}`.'
+            echo
+            echo '<details><summary>Last 180 log lines</summary>'
+            echo
+            echo '```text'
+            tail -n 180 /tmp/room-authority-verification.log 2>/dev/null || true
+            echo '```'
+            echo '</details>'
+          } > /tmp/room-authority-comment.md
+          gh pr comment 3 --body-file /tmp/room-authority-comment.md
       - name: Commit only the verified source change
+        if: success()
         run: |
-          git diff --check
           rm .github/workflows/apply-room-authority.yml
           rm scripts/codex_apply_room_workitem_authority.py
           git add -A
@@ -64,3 +85,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix(room): make Partner WorkItems authoritative"
           git push origin HEAD:${GITHUB_REF_NAME}
+      - name: Report verified commit
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment 3 --body "Authoritative Room workflow verified and committed from \`${{ github.sha }}\`."
