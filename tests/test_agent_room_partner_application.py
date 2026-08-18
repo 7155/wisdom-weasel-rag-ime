@@ -18,6 +18,17 @@ class _RoomEvents:
         return dict(values)
 
 
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
 class _AuthorityWork:
     def __init__(
         self,
@@ -136,6 +147,120 @@ class _AuthorityWork:
 
 
 class RoomPartnerApplicationTest(unittest.TestCase):
+    def test_partner_wait_renews_idle_lease_when_dispatch_progress_advances(self) -> None:
+        clock = _FakeClock()
+        events = _RoomEvents()
+        target = {"id": "room-a:p2", "sessionId": "room-a:s2", "displayName": "执行者"}
+        source = {"id": "room-a:p1", "sessionId": "room-a:s1"}
+
+        def list_events(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            items: list[dict[str, object]] = [{
+                "sequence": 1,
+                "createdAtMs": 10,
+                "eventType": "participant_activity",
+                "payload": {"dispatchId": "dispatch-child", "activityKind": "child", "phase": "started"},
+            }]
+            if clock.now >= 0.75:
+                items.append({
+                    "sequence": 2,
+                    "createdAtMs": 750,
+                    "eventType": "tool_progress",
+                    "payload": {"dispatchId": "dispatch-child", "toolName": "edit", "status": "running"},
+                })
+            if clock.now >= 1.5:
+                items.extend([
+                    {
+                        "sequence": 3,
+                        "createdAtMs": 1_500,
+                        "eventType": "participant_message",
+                        "payload": {
+                            "dispatchId": "dispatch-child",
+                            "message": {"blocks": [{"type": "text", "data": {"text": "完成实现"}}]},
+                        },
+                    },
+                    {
+                        "sequence": 4,
+                        "createdAtMs": 1_501,
+                        "eventType": "participant_activity",
+                        "payload": {"dispatchId": "dispatch-child", "activityKind": "child", "phase": "completed"},
+                    },
+                ])
+            return items
+
+        service = RoomPartnerApplicationService(
+            room_work=SimpleNamespace(),
+            publish_room_work_activity=lambda *_args, **_kwargs: None,
+            rooms=SimpleNamespace(list_events=list_events),
+            room_turns=SimpleNamespace(is_cancelled=lambda *_args: False),
+            runtime_status=lambda: {},
+            sessions=SimpleNamespace(),
+            room_events=events,
+            room_target_idle=lambda *_args, **_kwargs: True,
+            begin_room_turn=lambda *_args, **_kwargs: None,
+            room_dispatch=SimpleNamespace(),
+            cancel_room_turn=lambda *_args, **_kwargs: None,
+            abort_session=lambda *_args, **_kwargs: self.fail("active Partner must not be aborted"),
+            room_topic_for_turn=lambda _root_id: "topic-a",
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )
+
+        result = service._wait_for_child(
+            room_id="room-a",
+            root_id="root-a",
+            child_dispatch_id="dispatch-child",
+            target=target,
+            source=source,
+            timeout_seconds=1,
+            idempotent_replay=False,
+            work={"id": "work-a", "revision": 0},
+        )
+
+        self.assertGreaterEqual(clock.now, 1.5)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["result"], "完成实现")
+        self.assertEqual(result["lastProgressSequence"], 4)
+        self.assertEqual(events.published, [])
+
+    def test_partner_wait_reports_actionable_idle_expiry_to_root(self) -> None:
+        clock = _FakeClock()
+        events = _RoomEvents()
+        aborted: list[str] = []
+        service = RoomPartnerApplicationService(
+            room_work=SimpleNamespace(),
+            publish_room_work_activity=lambda *_args, **_kwargs: None,
+            rooms=SimpleNamespace(list_events=lambda *_args, **_kwargs: []),
+            room_turns=SimpleNamespace(is_cancelled=lambda *_args: False),
+            runtime_status=lambda: {},
+            sessions=SimpleNamespace(),
+            room_events=events,
+            room_target_idle=lambda *_args, **_kwargs: True,
+            begin_room_turn=lambda *_args, **_kwargs: None,
+            room_dispatch=SimpleNamespace(),
+            cancel_room_turn=lambda *_args, **_kwargs: None,
+            abort_session=lambda session_id: aborted.append(session_id) or {},
+            room_topic_for_turn=lambda _root_id: "topic-a",
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )
+
+        result = service._wait_for_child(
+            room_id="room-a",
+            root_id="root-a",
+            child_dispatch_id="dispatch-child",
+            target={"id": "room-a:p2", "sessionId": "room-a:s2", "displayName": "执行者"},
+            source={"id": "room-a:p1", "sessionId": "room-a:s1"},
+            timeout_seconds=1,
+            idempotent_replay=False,
+            work={"id": "work-a", "revision": 0},
+        )
+
+        self.assertEqual(result["status"], "timed_out")
+        self.assertIn("Root 可恢复同一任务或改派", str(result["error"]))
+        self.assertIn("resume the same WorkItem", str(result["nextStep"]))
+        self.assertEqual(aborted, ["room-a:s2"])
+        self.assertEqual(events.published[-1]["payload"]["reason"], "idle_lease_expired")  # type: ignore[index]
+
     def test_delegate_batch_starts_independent_partners_before_waiting(self) -> None:
         source = {
             "id": "room-a:p1",

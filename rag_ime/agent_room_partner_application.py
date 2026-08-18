@@ -37,6 +37,8 @@ class RoomPartnerApplicationService:
         room_topic_for_turn: Callable[[str], str],
         room_work: Any,
         publish_room_work_activity: Callable[..., None],
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.rooms = rooms
         self.room_turns = room_turns
@@ -51,6 +53,8 @@ class RoomPartnerApplicationService:
         self.room_topic_for_turn = room_topic_for_turn
         self.room_work = room_work
         self.publish_room_work_activity = publish_room_work_activity
+        self.monotonic = monotonic
+        self.sleep = sleep
 
     def execute(
         self,
@@ -231,7 +235,7 @@ class RoomPartnerApplicationService:
         phase = _required_text(args, "phase", maximum=120)
         timeout_seconds = _integer(
             args.get("timeoutSeconds"),
-            default=180,
+            default=300,
             minimum=5,
             maximum=300,
         )
@@ -472,7 +476,7 @@ class RoomPartnerApplicationService:
         )
         timeout_seconds = _integer(
             args.get("timeoutSeconds"),
-            default=180,
+            default=300,
             minimum=5,
             maximum=300,
         )
@@ -787,15 +791,19 @@ class RoomPartnerApplicationService:
         idempotent_replay: bool,
         work: Mapping[str, object],
     ) -> dict[str, object]:
-        deadline = time.monotonic() + timeout_seconds
+        idle_deadline = self.monotonic() + timeout_seconds
         latest_message: Mapping[str, object] | None = None
-        while time.monotonic() < deadline:
+        last_progress_sequence = 0
+        last_progress_at_ms = 0
+        last_progress_summary = "Partner 已接收任务"
+        while True:
             events = self.rooms.list_events(
                 room_id,
                 after_sequence=0,
                 limit=2_000,
             )
             terminal: Mapping[str, object] | None = None
+            newest_progress_sequence = last_progress_sequence
             for event in events:
                 payload = event.get("payload")
                 if not isinstance(payload, Mapping):
@@ -808,6 +816,11 @@ class RoomPartnerApplicationService:
                 )
                 if event_dispatch_id != child_dispatch_id:
                     continue
+                sequence = int(event.get("sequence") or 0)
+                if sequence > newest_progress_sequence:
+                    newest_progress_sequence = sequence
+                    last_progress_at_ms = int(event.get("createdAtMs") or 0)
+                    last_progress_summary = _room_progress_summary(event, data)
                 if str(event.get("eventType") or "") == "participant_message":
                     message = data.get("message")
                     if isinstance(message, Mapping):
@@ -818,6 +831,9 @@ class RoomPartnerApplicationService:
                     and str(data.get("phase") or "") in {"completed", "failed", "aborted"}
                 ):
                     terminal = data
+            if newest_progress_sequence > last_progress_sequence:
+                last_progress_sequence = newest_progress_sequence
+                idle_deadline = self.monotonic() + timeout_seconds
             if terminal is not None:
                 phase = str(terminal.get("phase") or "failed")
                 text = (
@@ -836,6 +852,9 @@ class RoomPartnerApplicationService:
                     "status": phase,
                     "result": text[:16_000],
                     "idempotentReplay": idempotent_replay,
+                    "lastProgressSequence": last_progress_sequence,
+                    "lastProgressAtMs": last_progress_at_ms,
+                    "lastProgressSummary": last_progress_summary,
                     **_work_identity(work, attempt_id=child_dispatch_id),
                 }
             if self.room_turns.is_cancelled(
@@ -854,7 +873,9 @@ class RoomPartnerApplicationService:
                     "idempotentReplay": idempotent_replay,
                     **_work_identity(work, attempt_id=child_dispatch_id),
                 }
-            time.sleep(0.05)
+            if self.monotonic() >= idle_deadline:
+                break
+            self.sleep(0.05)
         target_session_id = str(target.get("sessionId") or "")
         # The Tool wait is bounded. Do not leave a Partner Session or its Room
         # activity card running after the caller has already received a timeout.
@@ -876,7 +897,11 @@ class RoomPartnerApplicationService:
                 "rootId": root_id,
                 "childDispatchId": child_dispatch_id,
                 "dispatchId": child_dispatch_id,
-                "reason": "bounded_wait_expired",
+                "reason": "idle_lease_expired",
+                "idleSeconds": timeout_seconds,
+                "lastProgressSequence": last_progress_sequence,
+                "lastProgressAtMs": last_progress_at_ms,
+                "lastProgressSummary": last_progress_summary,
                 **_work_identity(work, attempt_id=child_dispatch_id),
                 **({"abortError": abort_error} if abort_error else {}),
             },
@@ -895,6 +920,17 @@ class RoomPartnerApplicationService:
             "displayName": str(target.get("displayName") or ""),
             "status": "timed_out",
             "result": "",
+            "error": (
+                f"Partner 在 {timeout_seconds} 秒内没有新的公开运行进度；"
+                "当前 WorkItem 已暂停，Root 可恢复同一任务或改派。"
+            ),
+            "nextStep": (
+                "resume the same WorkItem, reassign it, or make an explicit "
+                "fail/abandon decision"
+            ),
+            "lastProgressSequence": last_progress_sequence,
+            "lastProgressAtMs": last_progress_at_ms,
+            "lastProgressSummary": last_progress_summary,
             "idempotentReplay": idempotent_replay,
             **_work_identity(work, attempt_id=child_dispatch_id),
         }
@@ -1040,7 +1076,7 @@ class RoomPartnerApplicationService:
                 phase = "abandoned"
                 actor = source
             else:
-                reason = (
+                reason = str(result.get("error") or "").strip() or (
                     "Partner Session returned without a public result"
                     if status == "completed"
                     else f"Partner Session ended with status {status}"
@@ -1051,7 +1087,7 @@ class RoomPartnerApplicationService:
                         {
                             "workId": str(current["id"]),
                             "reason": reason,
-                            "nextStep": (
+                            "nextStep": str(result.get("nextStep") or "").strip() or (
                                 "resume the same WorkItem, reassign it, or make an "
                                 "explicit fail/abandon decision"
                             ),
@@ -1231,7 +1267,7 @@ class RoomPartnerApplicationService:
                 "phase": _required_text(args, "phase", maximum=120),
                 "timeoutSeconds": _integer(
                     args.get("timeoutSeconds"),
-                    default=180,
+                    default=300,
                     minimum=5,
                     maximum=300,
                 ),
@@ -1473,6 +1509,28 @@ def _work_identity(
         "workItemRevision": int(work.get("revision") or 0),
         "attemptId": accepted_turn_id,
     }
+
+
+def _room_progress_summary(
+    event: Mapping[str, object],
+    data: Mapping[str, object],
+) -> str:
+    event_type = str(event.get("eventType") or "运行进度")
+    phase = str(data.get("phase") or data.get("status") or "").strip()
+    label = str(
+        data.get("summary")
+        or data.get("toolName")
+        or data.get("activityKind")
+        or ""
+    ).strip()
+    if event_type == "participant_message":
+        return "Partner 发布了新的公开消息"
+    parts = [event_type]
+    if label:
+        parts.append(label[:120])
+    if phase:
+        parts.append(phase[:80])
+    return " · ".join(parts)[:240]
 
 
 def _assignment_client_message_id(
