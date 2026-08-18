@@ -33,7 +33,8 @@ _TIMEOUT_FAILURE = re.compile(
 )
 _TRANSPORT_FAILURE = re.compile(
     r"(?:fetch failed|network (?:error|failure)|connection (?:reset|closed|refused)|"
-    r"econn(?:reset|refused)|socket hang up|broken pipe|remote end closed|"
+    r"websocket (?:error|failure|closed)|econn(?:reset|refused)|socket hang up|"
+    r"broken pipe|remote end closed|"
     r"^error:\s*terminated$|^terminated$)",
     re.IGNORECASE,
 )

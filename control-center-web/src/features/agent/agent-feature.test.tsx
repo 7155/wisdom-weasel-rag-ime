@@ -2019,6 +2019,42 @@ describe('Agent experience', () => {
     expect(retryBody.retryOfClientMessageId).toBe(firstClientMessageId);
   });
 
+  it('continues from a network interruption without replaying the failed prompt', async () => {
+    let attempt = 0;
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('WebSocket error');
+        return new Promise(() => {});
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '先执行这轮工作');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await user.click(await screen.findByRole('button', { name: '继续' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(2));
+    const prompts = transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt');
+    const continuation = prompts[1]?.request.body as Record<string, unknown>;
+    expect(continuation.message).toBe(
+      '继续完成上一轮。请基于当前 Session 已保留的工具结果和文件生成最终回复，不要重复已经完成的操作。',
+    );
+    expect(continuation.attachments).toEqual([]);
+    expect(continuation).not.toHaveProperty('retryOfClientMessageId');
+    expect(continuation.clientMessageId).not.toBe(
+      (prompts[0]?.request.body as Record<string, unknown>).clientMessageId,
+    );
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+  });
+
   it('waits for an explicit retry before replaying an ambiguous admission', async () => {
     const transport = featureTransport(
       previewModelCatalog('session-preview'),

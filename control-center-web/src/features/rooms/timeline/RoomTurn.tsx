@@ -91,54 +91,6 @@ type RoomTimelineEntry =
   | { key: string; kind: 'user'; message: RoomMessageProjection }
   | { key: string; kind: 'lane'; lane: RoomExecutionLane; includeDetails: boolean };
 
-function compareTimelineEntries(
-  left: RoomTimelineEntry,
-  right: RoomTimelineEntry,
-  projection: RoomProjectionState,
-): number {
-  const position = (entry: RoomTimelineEntry): { sequence?: number; atMs: number } => {
-    if (entry.kind === 'user') {
-      return {
-        sequence: entry.message.chronology?.roomEventSequence ?? entry.message.sequence,
-        atMs: entry.message.chronology?.createdAtMs ?? entry.message.createdAtMs,
-      };
-    }
-    const sequences = [
-      ...entry.lane.activities.flatMap((activity) => (
-        activity.sequence === undefined ? [] : [activity.sequence]
-      )),
-      ...entry.lane.messageIds.flatMap((messageId) => {
-        const message = projection.messagesById[messageId];
-        const sequence = message?.chronology?.roomEventSequence ?? message?.sequence;
-        return sequence === undefined ? [] : [sequence];
-      }),
-    ];
-    const timestamps = [
-      ...entry.lane.activities.map((activity) => activity.createdAtMs),
-      ...entry.lane.messageIds.flatMap((messageId) => {
-        const message = projection.messagesById[messageId];
-        return message
-          ? [message.chronology?.createdAtMs ?? message.createdAtMs]
-          : [];
-      }),
-    ];
-    return {
-      sequence: sequences.length ? Math.min(...sequences) : undefined,
-      atMs: timestamps.length ? Math.min(...timestamps) : Number.MAX_SAFE_INTEGER,
-    };
-  };
-  const leftPosition = position(left);
-  const rightPosition = position(right);
-  if (leftPosition.sequence !== undefined && rightPosition.sequence !== undefined) {
-    const sequenceOrder = leftPosition.sequence - rightPosition.sequence;
-    if (sequenceOrder !== 0) return sequenceOrder;
-  }
-  const timeOrder = leftPosition.atMs - rightPosition.atMs;
-  if (timeOrder !== 0) return timeOrder;
-  if (left.kind !== right.kind) return left.kind === 'user' ? -1 : 1;
-  return left.key.localeCompare(right.key);
-}
-
 const roomTerminalPostLabels: Readonly<Record<string, string>> = {
   alignment: '已确认',
   result: '已完成',
@@ -228,25 +180,54 @@ export function RoomTurn({
       .map((messageId) => projection.messagesById[messageId])
       .filter((message): message is RoomMessageProjection => Boolean(message)),
   );
-  // One execution lane is one factual timeline unit. Splitting it around each
-  // Post made a single Partner look like several serial tasks and detached the
-  // public result from the tools that produced it.
-  const timelineEntries: RoomTimelineEntry[] = [
-    ...conversationMessages
-      .filter((message) => message.role === 'user')
-      .map((message) => ({
-        key: `message:${message.id}`,
-        kind: 'user' as const,
-        message,
-      })),
-    ...lanes.map((lane) => ({
-      key: `lane:${lane.key}`,
-      kind: 'lane' as const,
-      lane,
-      includeDetails: true,
-    })),
-  ];
-  timelineEntries.sort((left, right) => compareTimelineEntries(left, right, projection));
+  // Public Posts must stay in the reducer's canonical server order. A lane can
+  // speak, yield to a user or another participant, and speak again; one DOM
+  // container cannot occupy all of those positions. Segment only the visual
+  // projection while retaining the same factual lane key, and attach the lane's
+  // execution detail once on its final segment.
+  const timelineEntries: RoomTimelineEntry[] = [];
+  const laneSegmentCounts = new Map<string, number>();
+  for (const message of conversationMessages) {
+    if (message.role === 'user') {
+      timelineEntries.push({ key: `message:${message.id}`, kind: 'user', message });
+      continue;
+    }
+    const sourceLane = lanes.find((lane) => lane.messageIds.includes(message.id));
+    if (!sourceLane) continue;
+    const previous = timelineEntries.at(-1);
+    if (previous?.kind === 'lane' && previous.lane.key === sourceLane.key) {
+      previous.lane = {
+        ...previous.lane,
+        messageIds: [...previous.lane.messageIds, message.id],
+      };
+      continue;
+    }
+    const segment = (laneSegmentCounts.get(sourceLane.key) ?? 0) + 1;
+    laneSegmentCounts.set(sourceLane.key, segment);
+    timelineEntries.push({
+      key: `lane:${sourceLane.key}:${segment}`,
+      kind: 'lane',
+      lane: { ...sourceLane, messageIds: [message.id] },
+      includeDetails: false,
+    });
+  }
+  for (const lane of lanes) {
+    const laneEntries = timelineEntries.filter((entry): entry is Extract<
+      RoomTimelineEntry,
+      { kind: 'lane' }
+    > => entry.kind === 'lane' && entry.lane.key === lane.key);
+    const finalEntry = laneEntries.at(-1);
+    if (finalEntry) {
+      finalEntry.includeDetails = true;
+    } else {
+      timelineEntries.push({
+        key: `lane:${lane.key}:activity`,
+        kind: 'lane',
+        lane,
+        includeDetails: true,
+      });
+    }
+  }
   const streamingLaneEntryKeys = timelineEntries.flatMap((entry) => (
     entry.kind === 'lane'
     && entry.lane.messageIds.some((messageId) => (

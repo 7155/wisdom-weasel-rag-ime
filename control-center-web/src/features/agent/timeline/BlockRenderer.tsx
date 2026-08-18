@@ -1,5 +1,7 @@
 import { memo } from 'react';
 import type { UiAgentBlock } from '@/contracts/ui-events';
+import { AgentFileCollection } from '../file-preview/AgentFileCollection';
+import { isHtmlReport } from '../file-preview/file-descriptor';
 import { UnknownBlockRenderer } from './MediaRenderers';
 import { agentRendererPolicy } from './renderer-registry';
 
@@ -28,15 +30,22 @@ export function AgentBlocks({
   streaming = false,
 }: AgentBlocksProps) {
   const tailIndex = streaming ? findLastTextBlock(blocks) : -1;
+  const displayEntries = groupFileResults(blocks);
   return (
     <div className="agent-blocks" data-has-stream-tail={tailIndex >= 0 || undefined}>
-      {blocks.map((block, index) => (
+      {displayEntries.map((entry) => entry.kind === 'files' ? (
+        <AgentFileCollection
+          blocks={entry.blocks}
+          key={`file-results:${entry.firstIndex}`}
+          sessionId={sessionId}
+        />
+      ) : (
         <AgentBlock
-          key={block.id}
-          block={block}
+          key={`${entry.block.id}:${entry.index}`}
+          block={entry.block}
           onApprovalDecision={onApprovalDecision}
           sessionId={sessionId}
-          streamingTail={index === tailIndex}
+          streamingTail={entry.index === tailIndex}
         />
       ))}
     </div>
@@ -79,4 +88,46 @@ function findLastTextBlock(blocks: readonly UiAgentBlock[]) {
     }
   }
   return -1;
+}
+
+type BlockDisplayEntry =
+  | { kind: 'block'; block: UiAgentBlock; index: number }
+  | { kind: 'files'; blocks: UiAgentBlock[]; firstIndex: number };
+
+function groupFileResults(blocks: readonly UiAgentBlock[]): BlockDisplayEntry[] {
+  const entries: BlockDisplayEntry[] = [];
+  let fileRun: { block: UiAgentBlock; index: number }[] = [];
+  const flushFiles = () => {
+    if (fileRun.length === 1) {
+      entries.push({ kind: 'block', ...fileRun[0]! });
+    } else if (fileRun.length > 1) {
+      entries.push({
+        kind: 'files',
+        blocks: fileRun.map(({ block }) => block),
+        firstIndex: fileRun[0]!.index,
+      });
+    }
+    fileRun = [];
+  };
+
+  blocks.forEach((block, index) => {
+    if (collectibleFileBlock(block)) {
+      fileRun.push({ block, index });
+      return;
+    }
+    flushFiles();
+    entries.push({ kind: 'block', block, index });
+  });
+  flushFiles();
+  return entries;
+}
+
+function collectibleFileBlock(block: UiAgentBlock): boolean {
+  if (block.type !== 'file') return false;
+  const fileName = string(block.data.fileName ?? block.data.name ?? block.data.title);
+  return !isHtmlReport(fileName, string(block.data.mimeType));
+}
+
+function string(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }

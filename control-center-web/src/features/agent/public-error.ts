@@ -2,6 +2,7 @@ import { publicErrorText } from '@/features/overview/management-ui';
 
 const unavailableModelPattern = /(?:model\s+["']?[^"']+["']?\s+is\s+not\s+supported|unsupported\s+model|model_not_supported|模型.*(?:不支持|不可用))/i;
 const providerRequestFailurePattern = /(?:error\s+from\s+provider|upstream\s+request\s+failed|provider[_\s-](?:request|response|error)|模型服务.*(?:失败|异常))/i;
+const networkInterruptionPattern = /(?:网络中断|fetch failed|websocket\s+(?:error|failure|closed)|network\s+(?:error|failure)|connection\s+(?:reset|closed|refused)|econn(?:reset|refused)|socket hang up|broken pipe|remote end closed)/i;
 const nativeRouteMismatchPattern = /(?:route[_\s-]policy[_\s-]rejected|unexpected\s+(?:request\s+)?body\s+field|body\s+field\s+is\s+not\s+allowlisted|unknown\s+pathid)/i;
 export type AgentCommandReceiptState =
   | 'pending'
@@ -131,6 +132,9 @@ export function publicAgentErrorText(
   if (unavailableModelPattern.test(message)) {
     return '当前模型不可用，请切换模型后重试。';
   }
+  if (isAgentNetworkInterruption(message)) {
+    return '网络中断，模型未能生成最终回复。已完成的结果已保留，请继续或切换模型。';
+  }
   if (providerRequestFailurePattern.test(message)) {
     return '模型服务请求失败，请重试或切换模型。';
   }
@@ -138,6 +142,11 @@ export function publicAgentErrorText(
     return '控制中心组件版本不一致，请更新并重新打开控制中心。';
   }
   return publicErrorText(value, fallback);
+}
+
+export function isAgentNetworkInterruption(value: unknown): boolean {
+  const message = (value instanceof Error ? value.message : String(value ?? '')).trim();
+  return networkInterruptionPattern.test(message);
 }
 
 function errorPayload(value: unknown): Record<string, unknown> | undefined {
