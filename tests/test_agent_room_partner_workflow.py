@@ -5,7 +5,7 @@ import unittest
 from collections.abc import Mapping
 from types import SimpleNamespace
 
-from rag_ime.agent_room_partner_workflow import RoomPartnerApplicationService
+from rag_ime.agent_room_partner_application import RoomPartnerApplicationService
 from rag_ime.agent_tools import _runtime_tool_parameter_schema
 from rag_ime.contracts.json_schema import (
     ContractValidationError,
@@ -149,7 +149,9 @@ class _RoomWork:
         assignment_key: str,
         previous_accepted_turn_id: str,
         room_turn_id: str,
+        root_turn_id: str = "",
     ) -> dict[str, object]:
+        del root_turn_id
         with self._lock:
             work = self._items[work_id]
             if work["roomId"] != room_id:
@@ -223,6 +225,47 @@ class _RoomWork:
             )
             return dict(work)
 
+    def submit_attempt(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        attempt_id: str,
+        expected_revision: int,
+    ) -> dict[str, object]:
+        with self._lock:
+            work = self._items[str(payload["workId"])]
+            if (
+                work["acceptedTurnId"] != attempt_id
+                or int(work["revision"]) != expected_revision
+            ):
+                raise ValueError("WorkItem attempt changed")
+        return self.submit(session_id, payload)
+
+    def block_attempt(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        attempt_id: str,
+        expected_revision: int,
+    ) -> dict[str, object]:
+        target_id = self.target_for_session(session_id)
+        with self._lock:
+            work = self._items[str(payload["workId"])]
+            if (
+                work["currentOwnerParticipantId"] != target_id
+                or work["acceptedTurnId"] != attempt_id
+                or int(work["revision"]) != expected_revision
+            ):
+                raise ValueError("WorkItem attempt changed")
+            work["state"] = "blocked"
+            work["blocker"] = {
+                "reason": str(payload["reason"]),
+                "nextStep": str(payload.get("nextStep") or ""),
+            }
+            return dict(work)
+
     def accept(
         self,
         session_id: str,
@@ -260,6 +303,36 @@ class _RoomWork:
     def reviewer_participant_id(self, work_id: str) -> str:
         del work_id
         return str(self._source["id"])
+
+    def require_dependencies_done(
+        self,
+        room_id: str,
+        work_ids: tuple[str, ...],
+    ) -> list[dict[str, object]]:
+        values = [self.get(work_id, room_id=room_id) for work_id in work_ids]
+        incomplete = [
+            f"{item['id']}={item['state']}"
+            for item in values
+            if item["state"] != "done"
+        ]
+        if incomplete:
+            raise ValueError(
+                "Room dependencies are not accepted: " + ", ".join(incomplete)
+            )
+        return values
+
+    def open_for_root(
+        self,
+        *,
+        room_id: str,
+        root_turn_id: str,
+    ) -> list[dict[str, object]]:
+        return [
+            item
+            for item in self.list(room_id=room_id, limit=200)
+            if item["rootTurnId"] == root_turn_id
+            and item["state"] in {"queued", "active", "review", "blocked"}
+        ]
 
     def escalate(
         self,
@@ -548,7 +621,21 @@ class RoomPartnerWorkflowTest(unittest.TestCase):
 
 class RoomPartnerSchemaTest(unittest.TestCase):
     def test_schema_rejects_single_and_batch_fields_in_one_call(self) -> None:
-        schema = _runtime_tool_parameter_schema("room_partner")
+        schema = _runtime_tool_parameter_schema(
+            "room_partner",
+            [
+                "list",
+                "delegate",
+                "delegate_batch",
+                "accept",
+                "return",
+                "resume",
+                "reassign",
+                "fail",
+                "abandon",
+                "post",
+            ],
+        )
         with self.assertRaises(ContractValidationError):
             validate_contract(
                 {
@@ -575,7 +662,10 @@ class RoomPartnerSchemaTest(unittest.TestCase):
             )
 
     def test_schema_requires_a_complete_delivery_contract(self) -> None:
-        schema = _runtime_tool_parameter_schema("room_partner")
+        schema = _runtime_tool_parameter_schema(
+            "room_partner",
+            ["delegate"],
+        )
         with self.assertRaises(ContractValidationError):
             validate_contract(
                 {

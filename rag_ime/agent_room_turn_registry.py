@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from threading import RLock
 
 from .agent_protocol import AgentEventEnvelope
@@ -36,6 +36,7 @@ class RoomTurnRegistry:
         self.pending_turn_by_session: dict[str, str] = {}
         self.pending_dispatch_by_session: dict[str, str] = {}
         self.pending_child_dispatch_by_session: set[str] = set()
+        self.pending_work_by_session: dict[str, dict[str, object]] = {}
         self.turn_by_session_turn: dict[
             tuple[str, str],
             str,
@@ -45,6 +46,10 @@ class RoomTurnRegistry:
             str,
         ] = {}
         self.child_dispatch_ids: set[str] = set()
+        self.work_by_session_turn: dict[
+            tuple[str, str],
+            dict[str, object],
+        ] = {}
         self.topic_by_room_turn: dict[str, str] = {}
         self.user_priority_sessions: set[str] = set()
         self.cancelled_turns: dict[str, str] = {}
@@ -79,6 +84,9 @@ class RoomTurnRegistry:
         *,
         dispatch_id: str = "",
         child: bool = False,
+        work_item_id: str = "",
+        work_item_revision: int = 0,
+        attempt_id: str = "",
     ) -> None:
         with self.lock:
             self._discard_pending_events_locked(session_id)
@@ -105,6 +113,15 @@ class RoomTurnRegistry:
                 self.pending_child_dispatch_by_session.add(session_id)
             else:
                 self.pending_child_dispatch_by_session.discard(session_id)
+            normalized_work_id = str(work_item_id or "").strip()
+            if normalized_work_id:
+                self.pending_work_by_session[session_id] = {
+                    "workItemId": normalized_work_id,
+                    "workItemRevision": max(0, int(work_item_revision)),
+                    "attemptId": str(attempt_id or dispatch_id or "").strip(),
+                }
+            else:
+                self.pending_work_by_session.pop(session_id, None)
             self.topic_by_room_turn[room_turn_id] = topic_id
 
     def accept(
@@ -136,6 +153,9 @@ class RoomTurnRegistry:
                 ] = dispatch_id
                 if session_id in self.pending_child_dispatch_by_session:
                     self.child_dispatch_ids.add(dispatch_id)
+            work_identity = self.pending_work_by_session.pop(session_id, None)
+            if work_identity:
+                self.work_by_session_turn[key] = work_identity
             self.pending_child_dispatch_by_session.discard(session_id)
             return self._discard_pending_events_locked(
                 session_id,
@@ -165,6 +185,7 @@ class RoomTurnRegistry:
                     None,
                 )
                 self.pending_child_dispatch_by_session.discard(session_id)
+                self.pending_work_by_session.pop(session_id, None)
                 self._discard_pending_events_locked(session_id)
             for key, value in tuple(
                 self.turn_by_session_turn.items()
@@ -184,6 +205,7 @@ class RoomTurnRegistry:
                     )
                     if removed_dispatch:
                         self.child_dispatch_ids.discard(removed_dispatch)
+                    self.work_by_session_turn.pop(key, None)
             while (
                 len(self.cancelled_turn_by_session_turn)
                 > 4_096
@@ -674,12 +696,23 @@ class RoomTurnRegistry:
             return ""
         key = (event.session_id, event.turn_id)
         with self.lock:
-            dispatch_id = self.dispatch_by_session_turn.get(
-                key
-            )
+            dispatch_id = self.dispatch_by_session_turn.get(key)
             if dispatch_id:
                 return dispatch_id
             return ""
+
+    def work_identity_for_event(
+        self,
+        event: AgentEventEnvelope,
+    ) -> dict[str, object]:
+        """Return the immutable WorkItem fence captured for this Pi turn."""
+
+        if not event.turn_id:
+            return {}
+        key = (event.session_id, event.turn_id)
+        with self.lock:
+            value = self.work_by_session_turn.get(key)
+            return dict(value) if isinstance(value, Mapping) else {}
 
     def child_for_event(self, event: AgentEventEnvelope) -> bool:
         dispatch_id = self.dispatch_for_event(event)
@@ -699,6 +732,7 @@ class RoomTurnRegistry:
             key = (session_id, session_turn_id)
             self.turn_by_session_turn.pop(key, None)
             removed_dispatch = self.dispatch_by_session_turn.pop(key, None)
+            self.work_by_session_turn.pop(key, None)
             if removed_dispatch:
                 self.child_dispatch_ids.discard(removed_dispatch)
             if (
@@ -714,6 +748,7 @@ class RoomTurnRegistry:
                     None,
                 )
                 self.pending_child_dispatch_by_session.discard(session_id)
+                self.pending_work_by_session.pop(session_id, None)
             self._discard_pending_events_locked(session_id)
             self._drop_topic_if_idle(room_turn_id)
 

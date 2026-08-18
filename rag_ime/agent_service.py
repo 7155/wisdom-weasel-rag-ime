@@ -540,6 +540,8 @@ class AgentService:
         )
         self.room_cancellation = RoomSessionCancellationService(self)
         self.room_partner_application = RoomPartnerApplicationService(
+            room_work=self.room_work,
+            publish_room_work_activity=self._publish_room_work_activity,
             rooms=self.rooms,
             room_turns=self.room_turns,
             runtime_status=self.runtime.runtime_status,
@@ -3308,6 +3310,9 @@ class AgentService:
         *,
         dispatch_id: str = "",
         child: bool = False,
+        work_item_id: str = "",
+        work_item_revision: int = 0,
+        attempt_id: str = "",
     ) -> None:
         self.room_turns.begin(
             session_id,
@@ -3315,6 +3320,9 @@ class AgentService:
             topic_id,
             dispatch_id=dispatch_id,
             child=child,
+            work_item_id=work_item_id,
+            work_item_revision=work_item_revision,
+            attempt_id=attempt_id,
         )
 
     def _accept_room_turn(

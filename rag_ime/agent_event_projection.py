@@ -152,6 +152,16 @@ class AgentEventProjectionService:
         dispatch_id = self.room_turns.dispatch_for_event(
             event
         )
+        work_identity_provider = getattr(
+            self.room_turns,
+            "work_identity_for_event",
+            None,
+        )
+        work_identity = (
+            work_identity_provider(event)
+            if callable(work_identity_provider)
+            else {}
+        )
         if cancelled_terminal is not None:
             public_data = {
                 **public_data,
@@ -188,6 +198,7 @@ class AgentEventProjectionService:
                 "data": {
                     **public_data,
                     "rootId": room_turn_id,
+                    **work_identity,
                     **(
                         {"dispatchId": dispatch_id}
                         if dispatch_id
@@ -689,9 +700,13 @@ _ROOM_TOOL_NAMES = frozenset(
 
 _ROOM_REQUEST_TEXT_LIMITS = {
     "op": 40,
+    "phase": 120,
     "targetParticipantId": 240,
+    "workItemId": 240,
     "task": 1_200,
     "expectedOutput": 1_200,
+    "reason": 1_200,
+    "nextStep": 1_200,
     "content": 1_200,
 }
 
@@ -716,6 +731,12 @@ _ROOM_RESULT_KEYS_BY_TOOL = {
         "published",
         "postId",
         "idempotentReplay",
+        "workItemId",
+        "workItemRevision",
+        "attemptId",
+        "contractStatus",
+        "contractError",
+        "requiresAcceptance",
     ),
 }
 
@@ -723,6 +744,7 @@ _ROOM_RESULT_BOOLEAN_KEYS = frozenset(
     {
         "published",
         "idempotentReplay",
+        "requiresAcceptance",
     }
 )
 
@@ -737,6 +759,10 @@ _ROOM_RESULT_TEXT_LIMITS = {
     "status": 160,
     "result": 2_000,
     "postId": 240,
+    "workItemId": 240,
+    "attemptId": 320,
+    "contractStatus": 80,
+    "contractError": 500,
 }
 
 
@@ -834,6 +860,18 @@ def _room_tool_result_projection(
             value = next((item for item in values if isinstance(item, bool)), None)
             if isinstance(value, bool):
                 projected[key] = value
+            continue
+        if key == "workItemRevision":
+            value = next(
+                (
+                    item
+                    for item in values
+                    if isinstance(item, int) and not isinstance(item, bool)
+                ),
+                None,
+            )
+            if isinstance(value, int):
+                projected[key] = max(0, value)
             continue
         maximum = _ROOM_RESULT_TEXT_LIMITS.get(key)
         value = next((item for item in values if isinstance(item, str)), None)
