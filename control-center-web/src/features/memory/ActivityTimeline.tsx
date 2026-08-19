@@ -501,6 +501,7 @@ function DailyJournal({
 }) {
   const highlights = tasks.slice(0, 3);
   const apps = topJournalApps(tasks, 5);
+  const overview = dailyJournalOverview(tasks, stringValue(item.summary));
   return (
     <section className="daily-journal" aria-labelledby="daily-journal-title" data-state={timelineId ? status : 'empty'}>
       <header className="daily-journal__header">
@@ -561,23 +562,29 @@ function DailyJournal({
       ) : (
         <div className="daily-journal__body">
           <article className="daily-journal__story">
-            <p>{stringValue(item.summary, '当天活动已完成结构化整理。')}</p>
+            <div className="daily-journal__overview">
+              <span>当天概览</span>
+              <p>{overview}</p>
+            </div>
             {highlights.length ? (
-              <ol className="daily-journal__highlights" aria-label="日记重点">
-                {highlights.map((task) => (
-                  <li key={task.id}>
-                    <button
-                      aria-label={`查看日记条目：${task.title}`}
-                      onClick={() => onSelectTask(task.id)}
-                      type="button"
-                    >
-                      <time>{formatTimeRange(task.startMs, task.endMs)}</time>
-                      <span><strong>{task.title}</strong><small>{journalTaskCaption(task)}</small></span>
-                      <ChevronRight aria-hidden="true" size={15} />
-                    </button>
-                  </li>
-                ))}
-              </ol>
+              <div className="daily-journal__highlight-section">
+                <span>重点活动</span>
+                <ol className="daily-journal__highlights" aria-label="日记重点">
+                  {highlights.map((task) => (
+                    <li key={task.id}>
+                      <button
+                        aria-label={`查看日记条目：${task.title}`}
+                        onClick={() => onSelectTask(task.id)}
+                        type="button"
+                      >
+                        <time>{formatTimeRange(task.startMs, task.endMs)}</time>
+                        <span><strong>{task.title}</strong><small>{journalTaskCaption(task)}</small></span>
+                        <ChevronRight aria-hidden="true" size={15} />
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             ) : <span className="daily-journal__quiet">当天没有可展示的活动条目。</span>}
             <button className="daily-journal__source" onClick={onOpenSource} type="button">
               <Fingerprint aria-hidden="true" size={13} />
@@ -800,10 +807,14 @@ function ActivityDayMap({
           <Clock3 aria-hidden="true" size={15} />
           <strong>一天的活动分布</strong>
         </div>
-        <span>时间范围按记录的首尾时间计算，不代表全程持续活跃；点击活动可查看来源</span>
+        <span>任务与时间跨度分开显示；跨度按首尾记录计算，不代表持续活跃</span>
       </header>
       <div className="activity-day-map__axis" aria-hidden="true">
-        {[0, 6, 12, 18, 24].map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}
+        <strong>时间与活动</strong>
+        <div>
+          {[0, 6, 12, 18, 24].map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}
+        </div>
+        <em>记录跨度</em>
       </div>
       <div className="activity-day-map__rows">
         {tasks.map((task) => {
@@ -811,18 +822,27 @@ function ActivityDayMap({
           const end = percentInDay(Math.max(task.startMs + 60_000, task.endMs), bounds.start, bounds.end);
           const width = Math.max(1.8, end - start);
           return (
-            <div className="activity-day-map__row" key={task.id}>
-              <button
-                aria-label={`${task.title}，${formatTimeRange(task.startMs, task.endMs)}`}
-                data-period={task.period}
-                onClick={() => onSelect(task.id)}
-                style={{ left: `${start}%`, width: `${Math.min(width, 100 - start)}%` }}
-                title={`${formatTimeRange(task.startMs, task.endMs)} · ${task.title}`}
-                type="button"
-              >
-                <span>{task.title}</span>
-              </button>
-            </div>
+            <button
+              aria-label={`查看活动：${task.title}，${formatTimeRange(task.startMs, task.endMs)}`}
+              className="activity-day-map__row"
+              data-period={task.period}
+              key={task.id}
+              onClick={() => onSelect(task.id)}
+              type="button"
+            >
+              <span className="activity-day-map__identity">
+                <i aria-hidden="true" />
+                <time>{formatTimeRange(task.startMs, task.endMs)}</time>
+                <strong>{task.title}</strong>
+              </span>
+              <span className="activity-day-map__track" aria-hidden="true">
+                <i style={{ left: `${start}%`, width: `${Math.min(width, 100 - start)}%` }} />
+              </span>
+              <span className="activity-day-map__meta">
+                <strong>{formatDuration(Math.max(0, task.endMs - task.startMs))}</strong>
+                <small>{task.evidenceCount} 条来源</small>
+              </span>
+            </button>
           );
         })}
       </div>
@@ -1427,6 +1447,17 @@ function journalTaskCaption(task: SemanticTimelineTask): string {
   return appLabel ? `${periodLabel(task.period)} · ${appLabel}` : periodLabel(task.period);
 }
 
+function dailyJournalOverview(tasks: SemanticTimelineTask[], fallback: string): string {
+  const titles = [...new Set(tasks.map((task) => task.title.trim()).filter(Boolean))];
+  if (!titles.length) return fallback || '当天活动已完成结构化整理。';
+  const visible = titles.slice(0, 3);
+  const subjects = visible.length === 1
+    ? `「${visible[0]}」`
+    : `${visible.slice(0, -1).map((title) => `「${title}」`).join('、')}和「${visible.at(-1)}」`;
+  const suffix = titles.length > visible.length ? `等 ${titles.length} 项活动` : '';
+  return `当天主要围绕${subjects}${suffix}展开。`;
+}
+
 function localDate(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -1533,7 +1564,6 @@ function automaticCatchUpCopy(
   const completed = numberValue(summary.organizedDayCount);
   const total = numberValue(summary.activityDayCount);
   const remaining = numberValue(summary.waitingDayCount);
-  const batchLimit = Math.max(1, numberValue(automation.batchDayLimit, 1));
   const job = asRecord(automation.job);
   const progress = asRecord(job.progress);
   const currentDate = stringValue(progress.currentDate);
@@ -1549,7 +1579,7 @@ function automaticCatchUpCopy(
     return `自动补齐上次未完成${failedDate ? `（${failedDate}）` : ''}；后台会在下一轮重试。${monthProgress}`;
   }
   if (state === 'scheduled') {
-    return `自动补齐已开启：后台维护每轮最多整理 ${batchLimit} 天；${monthProgress}`;
+    return `自动补齐已开启：后台会按日期持续整理全部待整理记录，直到清零；${monthProgress}`;
   }
   if (state === 'caught_up') {
     return total

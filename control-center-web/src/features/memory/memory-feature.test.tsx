@@ -80,7 +80,10 @@ describe('MemoryFeature relations', () => {
 
     expect(await screen.findByText('来源记录')).toBeInTheDocument();
     await user.click(await screen.findByRole('tab', { name: '时间线' }));
+    expect(await screen.findByText('当天概览')).toBeInTheDocument();
+    expect(screen.getByText('当天主要围绕「实现最终输入框捕获并核对三条记忆消费路径」和「运行后端、Web 与输入法验证」展开。')).toBeInTheDocument();
     expect(await screen.findByText('实现最终输入框捕获并核对三条记忆消费路径。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /查看活动：实现最终输入框捕获/ })).toHaveTextContent('1 小时1 条来源');
     expect(screen.getByText('2 项活动')).toBeInTheDocument();
     expect(screen.getByText('整理完成后会自动更新；仅在时间相关问题中按需使用')).toBeInTheDocument();
 
@@ -190,7 +193,8 @@ describe('MemoryFeature relations', () => {
           automation: {
             enabled: true,
             state: 'running',
-            batchDayLimit: 1,
+            drainAll: true,
+            batchDayLimit: 0,
             schedulerPollIntervalMs: 3_600_000,
             job: {
               mode: 'automatic_catch_up',

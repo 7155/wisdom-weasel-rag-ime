@@ -1189,15 +1189,22 @@ def _timeline_summary(
     *,
     timezone: tzinfo,
 ) -> str:
-    parts: list[str] = []
+    del timezone
+    titles: list[str] = []
     for segment in segments:
-        start = datetime.fromtimestamp(segment.start_ms / 1_000, tz=timezone)
-        end = datetime.fromtimestamp(segment.end_ms / 1_000, tz=timezone)
-        time_label = start.strftime("%H:%M")
-        if end.strftime("%H:%M") != time_label:
-            time_label = f"{time_label}-{end.strftime('%H:%M')}"
-        parts.append(f"{time_label} {segment.summary}")
-    return truncate_text("；".join(parts), 1_800)
+        title = compact_whitespace(segment.title)
+        if title and title not in titles:
+            titles.append(title)
+    if not titles:
+        return "当天没有形成可概括的语义活动。"
+    visible = titles[:3]
+    if len(visible) == 1:
+        subjects = f"「{visible[0]}」"
+    else:
+        subjects = "、".join(f"「{title}」" for title in visible[:-1])
+        subjects = f"{subjects}和「{visible[-1]}」"
+    suffix = f"等 {len(titles)} 项活动" if len(titles) > len(visible) else ""
+    return truncate_text(f"当天主要围绕{subjects}{suffix}展开。", 320)
 
 
 def _activity_event_row(event: _ActivityEvent) -> dict[str, object]:

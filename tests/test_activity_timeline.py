@@ -107,6 +107,11 @@ class DailyActivityTimelineTests(unittest.TestCase):
             },
             organized_at_ms=self._ms(9, 6),
         )
+        organized = store.review(draft["timelineId"])
+        self.assertEqual(
+            organized["summary"],
+            "当天主要围绕「完善每日整理日历」展开。",
+        )
         store.approve(
             draft["timelineId"],
             expected_source_event_hash=draft["sourceEventHash"],

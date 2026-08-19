@@ -1510,7 +1510,7 @@ class DebugManagementApiTests(unittest.TestCase):
             instruction="",
         )
 
-    def test_scheduled_gateway_dreaming_enables_bounded_timeline_backfill(self) -> None:
+    def test_scheduled_gateway_dreaming_drains_the_timeline_backlog(self) -> None:
         managed = MemoryMaintenanceSettings(
             automatic_organization_enabled=True,
             dreaming_enabled=False,
@@ -1554,7 +1554,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         config = runner_type.call_args.kwargs["config"]
-        self.assertEqual(config.timeline_catch_up_limit, 1)
+        self.assertEqual(config.timeline_catch_up_limit, 0)
+        self.assertTrue(config.timeline_catch_up_all)
         runner.run_once.assert_called_once_with(force=False, progress=progress)
         organizer.close.assert_called_once_with()
 
@@ -1563,7 +1564,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertTrue(calendar["automation"]["enabled"])
         self.assertEqual(calendar["automation"]["state"], "caught_up")
-        self.assertEqual(calendar["automation"]["batchDayLimit"], 1)
+        self.assertTrue(calendar["automation"]["drainAll"])
+        self.assertEqual(calendar["automation"]["batchDayLimit"], 0)
         self.assertEqual(calendar["automation"]["remainingDayCount"], 0)
 
     def test_gateway_maintenance_skips_dreaming_only_when_both_lanes_are_disabled(

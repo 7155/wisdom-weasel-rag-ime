@@ -831,7 +831,8 @@ class DebugImeService:
                 "schemaVersion": "rag-ime.activity-timeline-automation.v1",
                 "enabled": managed.automatic_organization_enabled,
                 "state": state,
-                "batchDayLimit": 1,
+                "drainAll": True,
+                "batchDayLimit": 0,
                 "schedulerPollIntervalMs": 60 * 60 * 1_000,
                 "configuredIntervalMs": (
                     managed.automatic_organization_interval_seconds * 1_000
@@ -850,7 +851,8 @@ class DebugImeService:
                 "schemaVersion": "rag-ime.activity-timeline-automation.v1",
                 "enabled": False,
                 "state": "unavailable",
-                "batchDayLimit": 1,
+                "drainAll": True,
+                "batchDayLimit": 0,
                 "schedulerPollIntervalMs": 60 * 60 * 1_000,
                 "configuredIntervalMs": 0,
                 "completedDayCount": int(
@@ -3588,13 +3590,18 @@ class DebugImeService:
                     apply_safe_recent_work=managed.dreaming_enabled,
                     auto_publish_timelines=managed.automatic_organization_enabled,
                     timeline_catch_up_limit=(
-                        1
+                        0
                         if (
                             managed.automatic_organization_enabled
                             and not timeline_date
                             and not timeline_through_date
                         )
                         else 0
+                    ),
+                    timeline_catch_up_all=(
+                        managed.automatic_organization_enabled
+                        and not timeline_date
+                        and not timeline_through_date
                     ),
                     batch_limit=_bounded_int(
                         max_sources,

@@ -53,6 +53,7 @@ class PersonalContextMaintenanceConfig:
     apply_safe_recent_work: bool = False
     auto_publish_timelines: bool = False
     timeline_catch_up_limit: int = 0
+    timeline_catch_up_all: bool = False
     batch_limit: int = 500
     model: str = DEFAULT_MAINTENANCE_MODEL
     thinking_level: str = DEFAULT_MAINTENANCE_THINKING_LEVEL
@@ -77,6 +78,7 @@ class PersonalContextMaintenanceConfig:
                 0,
                 min(int(self.timeline_catch_up_limit), 31),
             ),
+            timeline_catch_up_all=bool(self.timeline_catch_up_all),
             batch_limit=max(1, min(int(self.batch_limit), 1_000)),
             model=(
                 compact_whitespace(self.model)
@@ -309,7 +311,10 @@ class PersonalContextMaintenanceRunner:
             self.config.enabled
             and self.config.build_timelines
             and self.config.auto_publish_timelines
-            and self.config.timeline_catch_up_limit > 0
+            and (
+                self.config.timeline_catch_up_all
+                or self.config.timeline_catch_up_limit > 0
+            )
         ):
             previous_date = (
                 datetime.fromtimestamp(timestamp / 1_000).astimezone().date()
@@ -319,7 +324,11 @@ class PersonalContextMaintenanceRunner:
                 previous_date,
                 now_ms=timestamp,
                 progress=progress,
-                max_days=self.config.timeline_catch_up_limit,
+                max_days=(
+                    None
+                    if self.config.timeline_catch_up_all
+                    else self.config.timeline_catch_up_limit
+                ),
                 progress_phase="activity_timeline_auto_catch_up",
             )
 
@@ -343,6 +352,7 @@ class PersonalContextMaintenanceRunner:
             "draftOnly": not self.config.apply_safe_recent_work,
             "applySafeRecentWork": self.config.apply_safe_recent_work,
             "autoPublishTimelines": self.config.auto_publish_timelines,
+            "activityTimelineCatchUpAll": self.config.timeline_catch_up_all,
             "force": bool(force),
             "intervalMs": self.config.min_interval_ms,
             "batchLimit": self.config.batch_limit,
