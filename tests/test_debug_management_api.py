@@ -1320,8 +1320,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertTrue(status["ok"])
         self.assertEqual(status["policy"], "auto_governed")
-        self.assertFalse(status["autoApply"])
-        self.assertTrue(status["scheduledDraftOnly"])
+        self.assertTrue(status["autoApply"])
+        self.assertFalse(status["scheduledDraftOnly"])
         self.assertEqual(status["automation"]["runsPerDay"], 2)
         self.assertEqual(
             status["automation"]["model"],
@@ -1341,10 +1341,10 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(status["modelCuration"]["runs"], [])
         self.assertTrue(status["bookProjection"]["inSync"])
         self.assertEqual(status["ownerCuration"]["policy"]["cadence"], "twice_daily")
-        self.assertFalse(
+        self.assertTrue(
             status["ownerCuration"]["policy"]["autoApplyGovernedWrites"]
         )
-        self.assertTrue(
+        self.assertFalse(
             status["ownerCuration"]["policy"]["semanticWritesRequireReview"]
         )
         self.assertGreaterEqual(status["compileState"]["pendingEventCount"], 1)
@@ -1458,7 +1458,7 @@ class DebugManagementApiTests(unittest.TestCase):
         runner.run_once.assert_called_once_with(force=True)
         organizer.close.assert_called_once_with()
 
-    def test_scheduled_gateway_memory_maintenance_never_auto_applies_its_draft(self) -> None:
+    def test_scheduled_gateway_memory_maintenance_auto_applies_governed_writes(self) -> None:
         managed = MemoryMaintenanceSettings(
             automatic_organization_enabled=True,
             dreaming_enabled=False,
@@ -1502,12 +1502,261 @@ class DebugManagementApiTests(unittest.TestCase):
             report = self.service._execute_gateway_memory_maintenance({})
 
         self.assertTrue(report["ok"])
-        self.assertFalse(curator_type.call_args.kwargs["auto_apply"])
+        self.assertTrue(curator_type.call_args.kwargs["auto_apply"])
         curator.run_due.assert_called_once_with(
             manual=False,
             owner_kind="",
             owner_id="",
             instruction="",
+        )
+
+    def test_manual_full_memory_maintenance_drains_then_audits_catalog(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=False,
+        )
+        executor = Mock(
+            reference="openai-codex/gpt-5.6-luna",
+            thinking_level="max",
+            selected_model={"contextWindow": 400_000},
+        )
+        organizer = Mock(curation_protocol_version="atom-first-v1")
+        curator = Mock()
+        curator.run_due.side_effect = [
+            {
+                "ok": True,
+                "results": [{"ok": True, "autoApplied": True}],
+                "status": {"pendingSourceCount": 2},
+            },
+            {
+                "ok": True,
+                "results": [{"ok": True, "autoApplied": True}],
+                "status": {"pendingSourceCount": 0},
+            },
+        ]
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.run_due_lexicon_organization",
+                return_value={"ok": True},
+            ),
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=executor,
+            ),
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=organizer,
+            ),
+            patch(
+                "rag_ime.debug_server.OwnerMemoryCurator",
+                return_value=curator,
+            ) as curator_type,
+            patch.object(
+                self.service,
+                "_run_memory_catalog_audit",
+                return_value={"ok": True, "status": "applied", "mergeCount": 3},
+                create=True,
+            ) as catalog_audit,
+            patch.object(
+                self.service,
+                "_execute_gateway_memory_dreaming",
+                return_value={"ok": True, "skipped": True},
+            ),
+        ):
+            report = self.service._execute_gateway_memory_maintenance(
+                {
+                    "manual": True,
+                    "autoApply": True,
+                    "drainAll": True,
+                    "catalogAudit": True,
+                    "maxSources": 1_000,
+                }
+            )
+
+        self.assertTrue(curator_type.call_args.kwargs["auto_apply"])
+        self.assertEqual(curator.run_due.call_count, 2)
+        catalog_audit.assert_called_once_with(
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            instruction="",
+            auto_apply=True,
+        )
+        self.assertEqual(report["ranBatchCount"], 2)
+        self.assertTrue(report["drainComplete"])
+        self.assertEqual(report["remainingSourceCount"], 0)
+        self.assertEqual(report["catalogAudit"]["mergeCount"], 3)
+
+    def test_manual_full_memory_maintenance_reports_incomplete_drain(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=False,
+        )
+        executor = Mock(
+            reference="openai-codex/gpt-5.6-luna",
+            thinking_level="max",
+            selected_model={"contextWindow": 400_000},
+        )
+        organizer = Mock(curation_protocol_version="atom-first-v1")
+        curator = Mock()
+        curator.run_due.side_effect = [
+            {
+                "ok": True,
+                "results": [{"ok": True, "autoApplied": True}],
+                "status": {"pendingSourceCount": 7},
+            },
+            {
+                "ok": True,
+                "results": [{"ok": True, "autoApplied": False}],
+                "status": {"pendingSourceCount": 7},
+            },
+        ]
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.run_due_lexicon_organization",
+                return_value={"ok": True},
+            ),
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=executor,
+            ),
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=organizer,
+            ),
+            patch(
+                "rag_ime.debug_server.OwnerMemoryCurator",
+                return_value=curator,
+            ),
+            patch.object(
+                self.service,
+                "_run_memory_catalog_audit",
+                return_value={"ok": True},
+                create=True,
+            ) as catalog_audit,
+            patch.object(
+                self.service,
+                "_execute_gateway_memory_dreaming",
+                return_value={"ok": True, "skipped": True},
+            ),
+        ):
+            report = self.service._execute_gateway_memory_maintenance(
+                {
+                    "manual": True,
+                    "autoApply": True,
+                    "drainAll": True,
+                    "catalogAudit": True,
+                    "maxSources": 1_000,
+                }
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["drainComplete"])
+        self.assertEqual(report["remainingSourceCount"], 7)
+        self.assertEqual(report["catalogAudit"]["status"], "blocked")
+        self.assertIn("7 sources remaining", report["error"])
+        catalog_audit.assert_not_called()
+
+    def test_memory_catalog_audit_applies_semantic_duplicate_merge(self) -> None:
+        first_event_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=int(time.time() * 1_000) - 1_000,
+                    source="manual",
+                    committed_text="PDF 处理优先使用带 AI 识别的 OCR。",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        second_event_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=int(time.time() * 1_000),
+                    source="manual",
+                    committed_text="PDF 方案优先采用 AI 模型识别 OCR。",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            source_bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+        seed_plan = memory_book_plan_from_compile_output(
+            {
+                "memoryAtoms": [
+                    {
+                        "atomId": "atom:pdf-ocr-canonical",
+                        "kind": "project_decision",
+                        "claimKey": "pdf-ocr-canonical",
+                        "canonicalText": "PDF 处理优先使用带 AI 识别的 OCR。",
+                        "sourceEventIds": [first_event_id],
+                        "confidence": 0.92,
+                        "qualityScore": 0.92,
+                    },
+                    {
+                        "atomId": "atom:pdf-ocr-duplicate",
+                        "kind": "project_decision",
+                        "claimKey": "pdf-ocr-duplicate",
+                        "canonicalText": "PDF 方案优先采用 AI 模型识别 OCR。",
+                        "sourceEventIds": [second_event_id],
+                        "confidence": 0.82,
+                        "qualityScore": 0.82,
+                    },
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="test",
+            model="test-model",
+            source_bundle=source_bundle,
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            apply_memory_book_plan(conn, seed_plan)
+
+        organizer = Mock(
+            provider_name="test",
+            config=Mock(model="test-model"),
+        )
+        organizer.compile_memory_curation.return_value = {
+            "schemaVersion": "rag-ime.memory-curation-decisions.v1",
+            "merge": [["P2", "P1"]],
+        }
+
+        report = self.service._run_memory_catalog_audit(
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            instruction="合并重复记忆",
+            auto_apply=True,
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["applied"])
+        self.assertEqual(report["mergeCount"], 1)
+        self.assertEqual(report["catalogAtomCount"], 2)
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            statuses = {
+                str(row["id"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT id, status FROM memory_atoms ORDER BY id"
+                ).fetchall()
+            }
+        self.assertEqual(
+            sorted(statuses.values()),
+            ["active", "superseded"],
         )
 
     def test_scheduled_gateway_dreaming_drains_the_timeline_backlog(self) -> None:
@@ -2540,8 +2789,8 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(roles["items"][0]["displayName"], "澄·远")
         self.assertNotIn("systemPrompt", roles["items"][0])
         self.assertEqual(maintenance["policy"], "auto_governed")
-        self.assertFalse(maintenance["autoApply"])
-        self.assertTrue(maintenance["scheduledDraftOnly"])
+        self.assertTrue(maintenance["autoApply"])
+        self.assertFalse(maintenance["scheduledDraftOnly"])
         self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
         self.assertEqual(command_catalog["items"][0]["invocation"], "/review")
         self.assertEqual(

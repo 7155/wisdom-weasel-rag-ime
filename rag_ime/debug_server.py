@@ -3323,14 +3323,18 @@ class DebugImeService:
             self.agent.runtime,
             managed.automatic_organization_model,
             managed.automatic_organization_thinking_level,
+            db_path=self.core.db_path,
         )
         organizer = ManagedPiMemoryOrganizer(executor)
-        decisions = organizer.compile_memory_curation(
-            bundle=bundle,
-            project=request.project,
-            instruction=request.question,
-            policy=policy,
-        )
+        try:
+            decisions = organizer.compile_memory_curation(
+                bundle=bundle,
+                project=request.project,
+                instruction=request.question,
+                policy=policy,
+            )
+        finally:
+            organizer.close()
         compile_output = curation_decisions_to_compile_output(
             decisions,
             source_bundle=bundle,
@@ -3340,7 +3344,7 @@ class DebugImeService:
             compile_output,
             project=request.project,
             provider=organizer.provider_name,
-            model=config.model,
+            model=executor.reference,
             source_bundle=bundle,
         )
         validation = inspect_memory_book_plan(plan)
@@ -3460,6 +3464,9 @@ class DebugImeService:
             }
         )
         if managed.automatic_organization_enabled:
+            auto_apply = bool(payload.get("autoApply", True))
+            drain_all = bool(payload.get("drainAll"))
+            catalog_audit_requested = bool(payload.get("catalogAudit"))
             executor = build_governed_memory_model_executor(
                 self.agent.runtime,
                 managed.automatic_organization_model,
@@ -3478,9 +3485,11 @@ class DebugImeService:
                         minimum=1,
                         maximum=MAX_PERSONAL_V2_SOURCES,
                     ),
-                    # Scheduled maintenance may prepare the next bounded draft,
-                    # but only the review/apply path can promote semantic writes.
-                    auto_apply=False,
+                    # The model only proposes bounded Evidence-backed diffs.
+                    # Local validation and the transactional apply boundary
+                    # remain authoritative, so governed scheduled writes do not
+                    # need to accumulate as hundreds of stale review drafts.
+                    auto_apply=auto_apply,
                     include_agent_dialogue=managed.include_agent_dialogue,
                     daily_interval_ms=max(
                         60,
@@ -3490,20 +3499,87 @@ class DebugImeService:
                     embedding_provider=self.core.embedding_provider,
                 )
                 curator.initialize()
-                report = curator.run_due(
-                    manual=manual,
-                    owner_kind=_string(payload.get("ownerKind")),
-                    owner_id=_string(payload.get("ownerId")),
-                    instruction=compact_whitespace(
-                        _string(payload.get("instruction"))
-                    )[:800],
-                )
+                instruction = compact_whitespace(
+                    _string(payload.get("instruction"))
+                )[:800]
+                batch_reports: list[dict[str, object]] = []
+                previous_pending: int | None = None
+                for _ in range(64 if drain_all else 1):
+                    batch = curator.run_due(
+                        manual=manual or drain_all,
+                        owner_kind=_string(payload.get("ownerKind")),
+                        owner_id=_string(payload.get("ownerId")),
+                        instruction=instruction,
+                    )
+                    batch_reports.append(batch)
+                    pending = _bounded_int(
+                        dict(batch.get("status") or {}).get("pendingSourceCount"),
+                        default=0,
+                        minimum=0,
+                        maximum=1_000_000,
+                    )
+                    if not drain_all or batch.get("ok") is not True or pending <= 0:
+                        break
+                    if previous_pending is not None and pending >= previous_pending:
+                        break
+                    previous_pending = pending
+                report = dict(batch_reports[-1])
+                report["results"] = [
+                    dict(item)
+                    for batch in batch_reports
+                    for item in batch.get("results") or []
+                    if isinstance(item, Mapping)
+                ]
+                report["ranBatchCount"] = len(batch_reports)
+                report["drainAll"] = drain_all
                 report["effectiveModel"] = executor.reference
                 report["effectiveThinkingLevel"] = executor.thinking_level
                 report["effectiveContextWindow"] = int(
                     executor.selected_model.get("contextWindow") or 0
                 )
                 report["curationProtocol"] = organizer.curation_protocol_version
+                auto_applied = any(
+                    bool(item.get("autoApplied"))
+                    for item in report["results"]
+                    if isinstance(item, Mapping)
+                )
+                pending_after = _bounded_int(
+                    dict(report.get("status") or {}).get("pendingSourceCount"),
+                    default=0,
+                    minimum=0,
+                    maximum=1_000_000,
+                )
+                drain_complete = not drain_all or pending_after == 0
+                report["drainComplete"] = drain_complete
+                report["remainingSourceCount"] = pending_after
+                if pending_after == 0 and (catalog_audit_requested or auto_applied):
+                    catalog_audit = self._run_memory_catalog_audit(
+                        organizer=organizer,
+                        project=project,
+                        instruction=instruction,
+                        auto_apply=auto_apply,
+                    )
+                    report["catalogAudit"] = catalog_audit
+                    if catalog_audit.get("ok") is not True:
+                        report["ok"] = False
+                        report["error"] = (
+                            _string(catalog_audit.get("error"))
+                            or "memory catalog audit did not complete"
+                        )
+                elif catalog_audit_requested:
+                    report["catalogAudit"] = {
+                        "schemaVersion": "rag-ime.memory-catalog-audit.v1",
+                        "ok": False,
+                        "status": "blocked",
+                        "applied": False,
+                        "remainingSourceCount": pending_after,
+                        "error": "catalog audit waits until pending sources are drained",
+                    }
+                if not drain_complete:
+                    report["ok"] = False
+                    report["error"] = (
+                        f"memory organization paused with {pending_after} sources remaining"
+                    )
             finally:
                 organizer.close()
         else:
@@ -3532,6 +3608,106 @@ class DebugImeService:
         report["executionOwner"] = "agent_gateway"
         report["transport"] = "gateway_internal_session"
         return report
+
+    def _run_memory_catalog_audit(
+        self,
+        *,
+        organizer: ManagedPiMemoryOrganizer,
+        project: str,
+        instruction: str,
+        auto_apply: bool,
+    ) -> dict[str, object]:
+        """Merge equivalent existing Atoms after candidate ingestion drains.
+
+        This pass is catalog-only: it never resends raw history and may only
+        consolidate existing governed memory. The standard validator and
+        transactional apply path still own every database mutation.
+        """
+
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            raise ValueError("memory catalog audit requires local SQLite core")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project=project,
+                since_days=7,
+                limit=500,
+                after_event_id=0,
+                newest_first=True,
+                curation_scope="global",
+                catalog_only=True,
+            )
+            stored = find_memory_book_draft_for_bundle(
+                conn,
+                project=project,
+                bundle_hash=str(bundle.get("bundleHash") or ""),
+            )
+        reused = stored is not None
+        if stored is None:
+            decisions = organizer.compile_memory_curation(
+                bundle=bundle,
+                project=project,
+                instruction=(
+                    instruction
+                    or "审计全部正式记忆，合并语义等价的重复 Atom，并补齐稳定主题归属。"
+                ),
+                policy="conservative",
+            )
+            compile_output = curation_decisions_to_compile_output(
+                decisions,
+                source_bundle=bundle,
+                project=project,
+            )
+            plan = memory_book_plan_from_compile_output(
+                compile_output,
+                project=project,
+                provider=organizer.provider_name,
+                model=str(getattr(organizer.config, "model", "")),
+                source_bundle=bundle,
+                # The existing schema already reserves this non-cursor lane
+                # for low-frequency consolidation of governed memory.
+                run_kind="dream_insight",
+            )
+            validation = inspect_memory_book_plan(plan)
+            if not validation.get("ok"):
+                return {
+                    "schemaVersion": "rag-ime.memory-catalog-audit.v1",
+                    "ok": False,
+                    "status": "invalid",
+                    "applied": False,
+                    "reusedDraft": False,
+                    "validation": validation,
+                }
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                stored = store_memory_book_plan(conn, plan)
+        else:
+            plan = memory_book_plan_from_stored_run(stored)
+            validation = inspect_memory_book_plan(plan)
+        run_id = _string(stored.get("runId") or stored.get("run_id"))
+        status = _string(stored.get("status"))
+        applied = False
+        if auto_apply and status in {"draft", "partial"}:
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                stored = apply_stored_memory_book_run(conn, run_id=run_id)
+            status = _string(stored.get("status"))
+            applied = status == "applied"
+        merge_count = sum(
+            1
+            for diff in stored.get("diffs") or []
+            if isinstance(diff, Mapping) and diff.get("op") == "supersede_memory"
+        )
+        return {
+            "schemaVersion": "rag-ime.memory-catalog-audit.v1",
+            "ok": bool(validation.get("ok")),
+            "runId": run_id,
+            "status": status,
+            "applied": applied,
+            "autoApply": bool(auto_apply),
+            "reusedDraft": reused,
+            "changeCount": len(stored.get("diffs") or []),
+            "mergeCount": merge_count,
+            "catalogAtomCount": len(bundle.get("existingMemoryAtoms") or []),
+        }
 
     def _execute_gateway_memory_dreaming(
         self,
@@ -4023,7 +4199,7 @@ class DebugImeService:
                 daily_interval_ms=automatic_interval_ms,
                 owner_kind="" if owner_filter is None else owner_filter[0],
                 owner_id="" if owner_filter is None else owner_filter[1],
-                auto_apply=False,
+                auto_apply=automatic_enabled,
                 include_agent_dialogue=managed.include_agent_dialogue,
                 canonical_personal=True,
             )
@@ -4092,8 +4268,8 @@ class DebugImeService:
             "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
             "ok": True,
             "policy": "auto_governed" if automatic_enabled else "disabled",
-            "autoApply": False,
-            "scheduledDraftOnly": automatic_enabled,
+            "autoApply": automatic_enabled,
+            "scheduledDraftOnly": False,
             # The owner-scoped evidence curator is the authoritative scheduled
             # lane. Legacy compile state remains diagnostic only.
             "due": automatic_enabled and bool(owner_curation.get("due")),
@@ -4129,7 +4305,7 @@ class DebugImeService:
                 "model": managed.automatic_organization_model,
                 "thinkingLevel": managed.automatic_organization_thinking_level,
                 "runsPerDay": managed.automatic_organization_runs_per_day,
-                "autoApply": False,
+                "autoApply": automatic_enabled,
                 "curationProtocol": MEMORY_CURATION_ARCHITECTURE,
                 "targetSourceCount": DEFAULT_MAX_SOURCES,
                 "maximumSourceCount": MAX_PERSONAL_V2_SOURCES,

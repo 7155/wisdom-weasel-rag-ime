@@ -314,9 +314,9 @@ describe('MemoryFeature relations', () => {
     renderMemory(transport);
 
     expect(await screen.findByRole('heading', { name: '我的记忆', level: 1 })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '整理到今天' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '自动整理全部记忆' })).not.toBeInTheDocument();
     await user.click(await screen.findByRole('tab', { name: '让澄整理' }));
-    expect(await screen.findByRole('heading', { name: '整理到今天', level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '自动整理全部记忆', level: 2 })).toBeInTheDocument();
     expect(await screen.findByRole('list', { name: '记忆整理建议' })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('输入一个明确的知识任务')).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.memoryMaintenance.run')).toBe(true);
@@ -324,7 +324,8 @@ describe('MemoryFeature relations', () => {
 
     await user.click(screen.getByRole('button', { name: '补充整理要求' }));
     const handoffDraft = new URLSearchParams(window.location.hash.split('?')[1]).get('draft') ?? '';
-    expect(handoffDraft).toContain('只准备一份可逐项审核的草案');
+    expect(handoffDraft).toContain('自动整理全部记忆');
+    expect(handoffDraft).toContain('合并语义等价的重复记忆');
     expect(handoffDraft).not.toMatch(/memory Tool|curation_prepare|conservative|Atom-first|runId/);
   });
 
@@ -336,8 +337,8 @@ describe('MemoryFeature relations', () => {
         'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
         'agent.memoryMaintenance.run': {
           ok: true,
-          autoApply: false,
-          scheduledDraftOnly: true,
+          autoApply: true,
+          scheduledDraftOnly: false,
           due: true,
           pendingDraftCount: 0,
           compileState: { pendingEventCount: 3714, undraftedEventCount: 1686 },
@@ -368,7 +369,7 @@ describe('MemoryFeature relations', () => {
     await user.click(await screen.findByRole('tab', { name: '让澄整理' }));
 
     expect(await screen.findByText('244 条来源分布在 0 天、0 个应用中。')).toBeInTheDocument();
-    expect(screen.getByText('原始输入不会被改写；每次只处理一批，形成草案后停下来等你审核。')).toBeInTheDocument();
+    expect(screen.getByText('原始来源始终保留；安全变更由本地治理层自动应用，只有不确定项才留给你确认。')).toBeInTheDocument();
     await user.click(screen.getByText('运行与索引详情'));
     expect(screen.getByText('待整理来源')).toBeInTheDocument();
     expect(screen.getByText('244')).toBeInTheDocument();
@@ -378,7 +379,7 @@ describe('MemoryFeature relations', () => {
     expect(screen.queryByText(/1686 条新证据尚未生成草案/)).not.toBeInTheDocument();
   });
 
-  it('starts a bounded review-only batch from the saved cursor and polls the real job', async () => {
+  it('automatically drains all saved sources and audits the governed catalog', async () => {
     const user = userEvent.setup();
     const today = localCalendarDate();
     const transport = new MockControlTransport({
@@ -390,13 +391,13 @@ describe('MemoryFeature relations', () => {
             ok: true,
             jobId: 'memory-maintenance:test',
             state: 'completed',
-            result: { ok: true, requestedSourceCount: 4 },
+            result: { ok: true, requestedSourceCount: 12, catalogAudit: { ok: true, mergeCount: 2 } },
           }
           : {
             ok: true,
             policy: 'auto_governed',
-            autoApply: false,
-            scheduledDraftOnly: true,
+            autoApply: true,
+            scheduledDraftOnly: false,
             runs: [],
             ownerCuration: {
               pendingSourceCount: 12,
@@ -427,8 +428,11 @@ describe('MemoryFeature relations', () => {
             ownerKind: 'user',
             ownerId: 'default',
             manual: true,
-            maxSources: 4,
-            instruction: '从当前已保存的整理位置继续，按时间顺序处理下一批个人记忆来源；只生成可审核草案，不直接保存。',
+            maxSources: 1000,
+            autoApply: true,
+            drainAll: true,
+            catalogAudit: true,
+            instruction: '从已保存位置自动整理全部候选来源，安全变更由本地治理层直接应用；排空后审计全库并合并语义等价的重复记忆。',
           });
           return { ok: true, jobId: 'memory-maintenance:test', state: 'queued' };
         },
@@ -440,7 +444,7 @@ describe('MemoryFeature relations', () => {
     expect(await screen.findByText('来源应用')).toBeInTheDocument();
     expect(screen.getAllByText('Codex')).not.toHaveLength(0);
     expect(screen.getAllByText('Chrome')).not.toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: '开始整理' }));
+    await user.click(screen.getByRole('button', { name: '自动整理全部记忆' }));
 
     await waitFor(() => expect(
       transport.requests.filter((call) => call.request.pathId === 'agent.memoryMaintenance.trigger'),
@@ -448,7 +452,7 @@ describe('MemoryFeature relations', () => {
     await waitFor(() => expect(
       transport.requests.some((call) => call.request.pathId === 'agent.memoryMaintenance.run' && call.request.query?.jobId === 'memory-maintenance:test'),
     ).toBe(true));
-    expect(await screen.findByText('本轮处理完成')).toBeInTheDocument();
+    expect(await screen.findByText('全部整理完成')).toBeInTheDocument();
   });
 
   it('opens a backlog day in the matching activity timeline', async () => {

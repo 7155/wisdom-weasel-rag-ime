@@ -814,8 +814,8 @@ export function previewMemoryCurationStatus(status: string): Record<string, unkn
   return {
     ok: true,
     policy: 'auto_governed',
-    autoApply: false,
-    scheduledDraftOnly: true,
+    autoApply: true,
+    scheduledDraftOnly: false,
     due: true,
     compileState: { undraftedEventCount: 310 },
     ownerCuration: {

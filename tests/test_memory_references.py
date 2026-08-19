@@ -254,10 +254,15 @@ class MemoryReferenceTests(unittest.TestCase):
         self.assertEqual(atom["ref"]["kind"], "atom")
         self.assertEqual(
             {(ref["kind"], ref["id"]) for ref in atom["evidenceRefs"]},
-            {
-                ("event", str(self.safe_event_id)),
-                ("evidence", self.evidence_id),
-            },
+            {("evidence", self.evidence_id)},
+        )
+        evidence = self.service.management.memory_reference(
+            "evidence",
+            self.evidence_id,
+        )
+        self.assertEqual(
+            {(ref["kind"], ref["id"]) for ref in evidence["evidenceRefs"]},
+            {("event", str(self.safe_event_id))},
         )
         self.assertEqual(book["ref"]["kind"], "book")
         self.assertEqual(

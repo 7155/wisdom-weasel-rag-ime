@@ -3165,13 +3165,10 @@ class ManagementService:
             for row in rows:
                 atom_id = str(row["id"])
                 event_ids = _positive_ints(_json_list(row["source_event_ids_json"]))
-                evidence_refs_by_atom[atom_id] = _admitted_event_reference_refs(
-                    conn,
-                    event_ids,
-                )
                 linked_evidence = conn.execute(
                     f"""
-                    SELECT evidence.evidence_id, evidence.content_text
+                    SELECT evidence.evidence_id, evidence.content_text,
+                           evidence.provenance_json
                     FROM memory_atom_evidence_links AS link
                     JOIN agent_memory_evidence AS evidence
                       ON evidence.evidence_id = link.evidence_id
@@ -3183,13 +3180,35 @@ class ManagementService:
                     """,  # noqa: S608 - fixed canonical Evidence predicate.
                     (atom_id, self.project, self.project),
                 ).fetchall()
-                evidence_refs_by_atom[atom_id].extend(
+                represented_event_ids = {
+                    event_id
+                    for evidence in linked_evidence
+                    for event_id in _event_ids_from_provenance(
+                        _json_mapping(evidence["provenance_json"])
+                    )
+                }
+                linked_refs = [
                     _canonical_reference(
                         "evidence",
                         str(evidence["evidence_id"]),
                         label=_safe_reference_preview(str(evidence["content_text"] or "")),
                     )
                     for evidence in linked_evidence
+                ]
+                # Atom -> Evidence -> Event is the canonical provenance chain.
+                # Keep direct Event refs only for legacy sources that do not
+                # yet have a canonical Evidence wrapper; otherwise one input
+                # is rendered twice and looks like two independent sources.
+                fallback_event_refs = _admitted_event_reference_refs(
+                    conn,
+                    [
+                        event_id
+                        for event_id in event_ids
+                        if event_id not in represented_event_ids
+                    ],
+                )
+                evidence_refs_by_atom[atom_id] = _deduplicate_references(
+                    [*linked_refs, *fallback_event_refs]
                 )
         tags_by_atom: dict[str, list[str]] = {}
         for atom_id, tag in tag_rows:

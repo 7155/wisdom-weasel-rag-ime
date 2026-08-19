@@ -379,7 +379,19 @@ export function useMemoryCurationQueries(enabled: boolean) {
     }),
   });
   const trigger = useMutation({
-    mutationFn: async ({ maxSources, instruction }: { maxSources: number; instruction: string }) => {
+    mutationFn: async ({
+      maxSources,
+      instruction,
+      autoApply = true,
+      drainAll = false,
+      catalogAudit = false,
+    }: {
+      maxSources: number;
+      instruction: string;
+      autoApply?: boolean;
+      drainAll?: boolean;
+      catalogAudit?: boolean;
+    }) => {
       const payload = await transport.request({
         pathId: 'agent.memoryMaintenance.trigger',
         body: {
@@ -387,6 +399,9 @@ export function useMemoryCurationQueries(enabled: boolean) {
           ownerId: 'default',
           manual: true,
           maxSources,
+          autoApply,
+          drainAll,
+          catalogAudit,
           instruction,
         },
       });

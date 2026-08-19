@@ -825,6 +825,9 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "instruction",
                 "manual",
                 "maxSources",
+                "autoApply",
+                "drainAll",
+                "catalogAudit",
             },
         )
         request = ControlRequest(

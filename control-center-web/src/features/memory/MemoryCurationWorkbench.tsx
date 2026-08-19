@@ -47,7 +47,7 @@ export function MemoryCurationWorkbench({
   const [editingDiffId, setEditingDiffId] = useState(0);
   const [editError, setEditError] = useState('');
   const [startError, setStartError] = useState('');
-  const batchSize = 4;
+  const batchSize = 1000;
   const statusPayload = asRecord(queries.status.data);
   const compileState = asRecord(statusPayload.compileState);
   const ownerCuration = asRecord(statusPayload.ownerCuration);
@@ -98,7 +98,7 @@ export function MemoryCurationWorkbench({
   const targetDate = stringValue(backlog.targetDate, localToday());
   const caughtUp = booleanValue(backlog.caughtUpThroughToday) || governedPending === 0;
   const hasDraft = Boolean(runId) && runStatus === 'draft';
-  const startBlocked = !automaticOrganizationEnabled || caughtUp || hasDraft || jobActive;
+  const startBlocked = !automaticOrganizationEnabled || jobActive;
   const draftKey = `${runId}:${changes.map((change) => `${numberValue(change.diffId)}:${booleanValue(change.selected)}`).join(',')}`;
   const applyBlockedReason = !runId
     ? `等待自动整理，或让${identity.assistantName}现在准备一份草案。`
@@ -118,8 +118,8 @@ export function MemoryCurationWorkbench({
     <div className="memory-curation">
       <div className="memory-curation__header">
         <div>
-          <h2>整理到今天</h2>
-          <span>从上次位置继续推进；按日期和应用核对来源，再审核本轮形成的记忆草案。</span>
+          <h2>自动整理全部记忆</h2>
+          <span>从保存位置排空全部候选来源，再审计正式记忆目录并合并语义重复项。</span>
         </div>
         <div className="memory-curation__actions">
           <Button leadingIcon={<Sparkles size={15} />} onClick={handoffToAgent} size="small" variant="quiet">补充整理要求</Button>
@@ -130,17 +130,17 @@ export function MemoryCurationWorkbench({
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection
           title="整理进度"
-          description="原始输入不会被改写；每次只处理一批，形成草案后停下来等你审核。"
-          trailing={<StatusBadge label={caughtUp ? '已到今天' : `${governedPending} 条待整理`} tone={caughtUp ? 'success' : 'warning'} />}
+          description="原始来源始终保留；安全变更由本地治理层自动应用，只有不确定项才留给你确认。"
+          trailing={<StatusBadge label={caughtUp ? '来源已排空' : `${governedPending} 条待整理`} tone={caughtUp ? 'success' : 'warning'} />}
         >
           {hasGovernedStatus ? (
             <>
               <div className="memory-curation__progress-card">
                 <div className="memory-curation__progress-copy">
                   <span className="memory-curation__eyebrow">当前覆盖</span>
-                  <strong>{caughtUp ? '已经整理到今天' : `${formatCalendarDate(coveredThroughDate)} → ${formatCalendarDate(targetDate)}`}</strong>
+                  <strong>{caughtUp ? '候选来源已经排空' : `${formatCalendarDate(coveredThroughDate)} → ${formatCalendarDate(targetDate)}`}</strong>
                   <p>{caughtUp
-                    ? '目前没有新的候选来源等待整理。'
+                    ? '可以再次运行全库审计，收敛重复记忆并补齐长期主题。'
                     : `${governedPending} 条来源分布在 ${numberValue(backlog.pendingDayCount)} 天、${backlogApplications.length} 个应用中。`}</p>
                 </div>
                 <div className="memory-curation__progress-meter">
@@ -159,15 +159,15 @@ export function MemoryCurationWorkbench({
                 <div className="memory-curation__runner">
                   <label>
                     <span>本轮来源数</span>
-                    <strong className="memory-curation__verified-batch">4 条 · 已验证</strong>
+                    <strong className="memory-curation__verified-batch">最多 1000 条 · 自动续跑</strong>
                   </label>
                   <Button
                     disabled={startBlocked}
-                    leadingIcon={caughtUp ? <CheckCircle2 size={16} /> : <Play size={16} />}
+                    leadingIcon={caughtUp ? <RefreshCw size={16} /> : <Play size={16} />}
                     loading={jobActive}
                     onClick={() => void startCuration()}
                   >
-                    {jobActive ? '正在整理' : hasDraft ? '先审核本批' : caughtUp ? '已整理到今天' : failedOwnerScope ? '继续整理' : '开始整理'}
+                    {jobActive ? '正在整理全部记忆' : caughtUp ? '重新审计全部记忆' : failedOwnerScope ? '继续自动整理' : '自动整理全部记忆'}
                   </Button>
                 </div>
               </div>
@@ -177,9 +177,9 @@ export function MemoryCurationWorkbench({
                   {startError || publicErrorText(queries.trigger.error ?? queries.job.error ?? jobPayload.error, '整理任务没有完成；进度已经保留，可以重试。')}
                 </InlineNotice>
               ) : jobState === 'completed' ? (
-                <InlineNotice title="本轮处理完成" tone="success">状态正在刷新；如果产生了草案，请在下方逐项审核。</InlineNotice>
+                <InlineNotice title="全部整理完成" tone="success">候选来源已推进，安全变更已应用，并完成了一次正式记忆目录审计。</InlineNotice>
               ) : jobActive ? (
-                <InlineNotice title="正在读取并整理本轮来源" tone="info">你可以留在此页，完成后会自动刷新；正式记忆不会被直接改写。</InlineNotice>
+                <InlineNotice title="正在自动整理全部记忆" tone="info">系统会连续处理候选来源，排空后检查并合并语义重复项；原始来源始终保留。</InlineNotice>
               ) : null}
 
               {failedOwnerScope && !jobActive ? (
@@ -267,7 +267,7 @@ export function MemoryCurationWorkbench({
           )}
         </ManagementSection>
 
-        <ManagementSection title="本批草案" description="按内容判断是否保留；不同应用的原始来源继续分开保存。" trailing={runId ? <StatusBadge label={`${selectedCount} / ${changes.length} 已选择`} tone={selectedCount ? 'success' : 'warning'} /> : undefined}>
+        <ManagementSection title="需要你确认" description="这里只保留治理层无法安全自动决定的建议；不同应用的原始来源继续分开保存。" trailing={runId ? <StatusBadge label={`${selectedCount} / ${changes.length} 已选择`} tone={selectedCount ? 'success' : 'warning'} /> : undefined}>
           {runId ? (
             <>
               <MetricStrip items={[
@@ -308,7 +308,7 @@ export function MemoryCurationWorkbench({
             </div>
             </>
           ) : (
-            <EmptyState description={caughtUp ? '新的输入出现后会继续从今天向后整理。' : '点击上方开始或继续整理；形成草案后会停在这里等待审核。'} icon={caughtUp ? CheckCircle2 : CircleDotDashed} title={caughtUp ? '已经整理到今天' : '当前没有待审核草案'} />
+            <EmptyState description={caughtUp ? '候选来源已排空；再次运行会审计正式目录中的重复项和主题归属。' : '点击上方后会自动续跑；只有不确定建议才会出现在这里。'} icon={caughtUp ? CheckCircle2 : CircleDotDashed} title={caughtUp ? '当前没有需要确认的项目' : '尚未开始自动整理'} />
           )}
         </ManagementSection>
 
@@ -392,7 +392,10 @@ export function MemoryCurationWorkbench({
     try {
       await queries.trigger.mutateAsync({
         maxSources: batchSize,
-        instruction: '从当前已保存的整理位置继续，按时间顺序处理下一批个人记忆来源；只生成可审核草案，不直接保存。',
+        autoApply: true,
+        drainAll: true,
+        catalogAudit: true,
+        instruction: '从已保存位置自动整理全部候选来源，安全变更由本地治理层直接应用；排空后审计全库并合并语义等价的重复记忆。',
       });
     } catch (cause) {
       setStartError(publicErrorText(cause, '未能启动本轮整理；已有进度没有变化。'));
@@ -400,7 +403,7 @@ export function MemoryCurationWorkbench({
   }
 
   function handoffToAgent() {
-    const prompt = '请帮我稳妥地增量整理当前记忆：只准备一份可逐项审核的草案，保留原始来源，不要直接保存，也不要展示内部执行记录。完成后请告诉我可以回来审核。';
+    const prompt = '请帮我自动整理全部记忆：从已保存位置排空候选来源，安全变更直接应用，保留原始来源；最后审计全库，合并语义等价的重复记忆，只把不确定项留给我确认。';
     window.location.hash = `/agent?draft=${encodeURIComponent(prompt)}`;
   }
 }
