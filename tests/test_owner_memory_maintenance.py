@@ -89,7 +89,9 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
             return {"ok": True}
 
         jobs = GatewayMemoryMaintenanceJobs(execute)
-        jobs.trigger({"project": "project-a", "manual": False})
+        # The installed LaunchAgent leaves project blank so the Gateway can
+        # resolve its configured default project at execution time.
+        jobs.trigger({"project": "", "manual": False})
         self.assertTrue(started.wait(timeout=2))
 
         running = jobs.activity_timeline_status(project="project-a")

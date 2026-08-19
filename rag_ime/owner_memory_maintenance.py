@@ -204,7 +204,10 @@ class GatewayMemoryMaintenanceJobs:
             else {}
         )
         requested_project = str(request.get("project") or "").strip()
-        return not project or requested_project == project
+        # A blank request project means "use this Gateway's configured
+        # project".  That is how the installed scheduled trigger runs, so it
+        # must remain visible when the calendar queries the resolved project.
+        return not project or not requested_project or requested_project == project
 
     @classmethod
     def _timeline_payload(cls, job: Mapping[str, object]) -> dict[str, object]:
