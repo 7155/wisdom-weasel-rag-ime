@@ -88,6 +88,25 @@ class GatewayMemoryMaintenanceJobs:
             job["state"] = "running"
             job["updatedAtMs"] = int(time.time() * 1_000)
             request = dict(job["request"])
+            timeline_date = str(request.get("timelineDate") or "").strip()
+            timeline_through_date = str(
+                request.get("timelineThroughDate") or ""
+            ).strip()
+            if timeline_through_date:
+                job["progress"] = {
+                    "phase": "activity_timeline_catch_up",
+                    "throughDate": timeline_through_date,
+                    "currentDate": "",
+                    "totalDayCount": 0,
+                    "completedDayCount": 0,
+                }
+            elif timeline_date:
+                job["progress"] = {
+                    "phase": "activity_timeline_single",
+                    "currentDate": timeline_date,
+                    "totalDayCount": 1,
+                    "completedDayCount": 0,
+                }
             request["_progressCallback"] = lambda value: self._set_progress(
                 job_id,
                 value,

@@ -45,6 +45,40 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         self.assertEqual(terminal["state"], "completed")
         self.assertTrue(terminal["result"]["ok"])
 
+    def test_timeline_job_reports_its_scope_as_soon_as_it_starts(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def execute(_payload: Mapping[str, object]) -> dict[str, object]:
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {"ok": True}
+
+        jobs = GatewayMemoryMaintenanceJobs(execute)
+        single = jobs.trigger(
+            {
+                "timelineOnly": True,
+                "timelineDate": "2026-08-11",
+                "timelineThroughDate": "",
+            }
+        )
+        self.assertTrue(started.wait(timeout=2))
+
+        running = jobs.status(str(single["jobId"]))
+        self.assertEqual(running["state"], "running")
+        self.assertEqual(
+            running["progress"],
+            {
+                "phase": "activity_timeline_single",
+                "currentDate": "2026-08-11",
+                "totalDayCount": 1,
+                "completedDayCount": 0,
+            },
+        )
+
+        release.set()
+        self._wait_for_terminal(jobs, str(single["jobId"]))
+
     def test_failed_execution_is_observable_and_close_stops_admission(self) -> None:
         def fail(_payload: Mapping[str, object]) -> dict[str, object]:
             raise RuntimeError("provider down")

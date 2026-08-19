@@ -158,19 +158,29 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const buildRunning = Boolean(buildJobState) && buildJobState !== 'completed' && buildJobState !== 'failed';
   const buildAwaitingStatus = buildJob.isFetching && !buildJobState;
   const buildActive = build.isPending || buildAwaitingStatus || buildRunning;
+  const buildThroughToday = build.variables?.throughToday === true;
+  const buildTargetDate = build.variables?.targetDate || date;
+  const organizeThroughTodayActive = buildActive && buildThroughToday;
+  const singleDayBuildActive = buildActive && !buildThroughToday;
   const busy = buildActive || approve.isPending || reject.isPending;
   const buildError = build.error ?? buildJobError;
   const error = timeline.error ?? approve.error ?? reject.error;
   const buildProgressMessage = buildError
     ? friendlyTimelineError(buildError)
     : build.isPending
-      ? '正在提交整理任务…'
+      ? buildThroughToday
+        ? '正在提交“整理到今天”任务…'
+        : `正在提交 ${buildTargetDate} 的单日整理任务…`
       : buildAwaitingStatus
         ? '整理任务已受理，正在读取进度…'
         : buildRunning && stringValue(buildJobProgress.phase) === 'activity_timeline_catch_up'
           ? catchUpProgressCopy(buildJobProgress)
           : buildRunning
-            ? '整理任务已进入队列，等待开始…'
+            ? buildJobState === 'queued'
+              ? buildThroughToday
+                ? '“整理到今天”任务已进入队列，等待运行…'
+                : `${buildTargetDate} 的单日整理任务已进入队列，等待运行…`
+              : `正在整理 ${stringValue(buildJobProgress.currentDate, buildTargetDate)}；模型整理与校验可能需要几分钟。`
             : '';
   const semanticReady = timelineId
     ? calendarDays.some((day) => (
@@ -241,7 +251,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         isLoading={capabilities.isPending || (canReadCalendar && calendar.isPending)}
         onMoveMonth={moveMonth}
         onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
-        organizeActive={buildActive}
+        organizeActive={organizeThroughTodayActive}
         organizeFailed={Boolean(buildError)}
         organizeMessage={buildProgressMessage}
         onSelect={chooseDate}
@@ -352,11 +362,13 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
                 <Button
                   disabled={busy || !canWrite}
                   leadingIcon={<Sparkles size={15} />}
-                  loading={build.isPending}
+                  loading={singleDayBuildActive}
                   onClick={() => build.mutate({ targetDate: date })}
                   size="small"
                 >
-                  {semanticReady ? '重新整理' : '语义整理'}
+                  {singleDayBuildActive
+                    ? semanticReady ? '正在重新整理' : '正在语义整理'
+                    : semanticReady ? '重新整理' : '语义整理'}
                 </Button>
               )}
             </div>

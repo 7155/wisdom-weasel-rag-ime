@@ -157,7 +157,7 @@ describe('MemoryFeature relations', () => {
 
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.build')).toHaveLength(1);
     expect(organizeButton).toHaveAttribute('aria-busy', 'true');
-    expect(screen.getByRole('status', { name: '历史日记整理进度' })).toHaveTextContent('正在提交整理任务');
+    expect(screen.getByRole('status', { name: '历史日记整理进度' })).toHaveTextContent('正在提交“整理到今天”任务');
 
     await act(async () => acceptBuild?.({
       ok: true,
@@ -167,6 +167,67 @@ describe('MemoryFeature relations', () => {
     expect(await screen.findByRole('button', { name: '正在整理' })).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByRole('status', { name: '历史日记整理进度' })).toHaveTextContent(
       '正在整理历史日记：已完成 2 / 19 天，当前 2026-07-13。',
+    );
+  });
+
+  it('does not present a single-day rebuild as organize-through-today work', async () => {
+    const user = userEvent.setup();
+    const date = localCalendarDate();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'memory.activityTimeline.get': { ok: true, timeline: activityTimeline('approved', date) },
+        'memory.activityTimeline.calendar': {
+          ok: true,
+          month: date.slice(0, 7),
+          days: [{
+            date,
+            status: 'approved',
+            organized: true,
+            modelOrganized: true,
+            needsRefresh: false,
+            sourceEventCount: 8,
+            segmentCount: 2,
+          }],
+          summary: {
+            activityDayCount: 1,
+            organizedDayCount: 1,
+            waitingDayCount: 0,
+            sourceEventCount: 8,
+          },
+        },
+        'memory.activityTimeline.build': (request: ControlRequest) => {
+          expect(request.body).toEqual({ date, throughToday: false });
+          return {
+            ok: true,
+            jobId: 'memory-maintenance:single-day',
+            state: 'queued',
+          };
+        },
+        'agent.memoryMaintenance.run': {
+          ok: true,
+          jobId: 'memory-maintenance:single-day',
+          state: 'running',
+          progress: {
+            phase: 'activity_timeline_single',
+            currentDate: date,
+            totalDayCount: 1,
+            completedDayCount: 0,
+          },
+        },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '时间线' }));
+    await user.click(await screen.findByRole('button', { name: '重新整理' }));
+
+    expect(await screen.findByRole('button', { name: '整理到今天' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '正在整理' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '正在重新整理' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: '历史日记整理进度' })).toHaveTextContent(
+      `正在整理 ${date}；模型整理与校验可能需要几分钟。`,
     );
   });
 
