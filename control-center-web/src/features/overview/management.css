@@ -32,7 +32,7 @@
 }
 
 .mgmt-page__heading { min-width: 0; }
-.mgmt-page__heading h1 { margin: 4px 0 6px; font-family: var(--font-display); text-wrap: balance; }
+.mgmt-page__heading :is(h1, h2) { margin: 4px 0 6px; text-wrap: balance; }
 
 .mgmt-page__heading p,
 .mgmt-section__header p,
@@ -528,7 +528,7 @@
 .mgmt-page { padding-inline: var(--workspace-gutter); }
 .mgmt-page > * { width: min(100%, calc(var(--workspace-measure) + 160px)); }
 
-.mgmt-page__heading h1,
+.mgmt-page__heading :is(h1, h2),
 .mgmt-section__header h2,
 .memory-system-overview__headline h2 {
   font-weight: var(--font-weight-semibold);
@@ -536,7 +536,7 @@
 }
 
 /* Page titles keep the editorial voice; section headings are operational. */
-.mgmt-page__heading h1 { font-family: var(--font-display); }
+.mgmt-page__heading :is(h1, h2) { font-family: var(--font-display); }
 .mgmt-section__header h2 { font-family: var(--font-ui); font-size: var(--text-section-lead); line-height: var(--text-section-lead-lh); }
 
 .mgmt-metric dd {
@@ -801,6 +801,19 @@ main[data-route-id='overview'] .overview-capability-actions .ui-button { min-hei
     font-size: 16px;
   }
 }
+
+/* A management surface can live inside a broader settings page without
+   creating a second page, a second canvas, or a nested main landmark. */
+.mgmt-page.mgmt-page--embedded {
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.mgmt-page.mgmt-page--embedded > * { width: 100%; }
+.mgmt-page--embedded > .mgmt-page__header { padding-block: 0 var(--space-4); }
+.mgmt-page--embedded .mgmt-page__heading h2 { font-size: var(--text-section-lead); }
 
 
 /* ===================== overview: report, not dashboard =====================

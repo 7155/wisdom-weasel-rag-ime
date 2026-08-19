@@ -5,7 +5,6 @@ export type RouteId =
   | 'agent'
   | 'rooms'
   | 'roles'
-  | 'plugins'
   | 'approvals'
   | 'browser'
   | 'voice'
@@ -34,6 +33,14 @@ export const routeGroupLabels: Record<RouteDefinition['group'], string> = {
   operations: '系统',
 };
 
+export const legacyRoutePathAliases: Readonly<Record<string, RouteDefinition['path']>> = {
+  '/plugins': '/roles',
+};
+
+export function canonicalRoutePath(path: string): string {
+  return legacyRoutePathAliases[path] ?? path;
+}
+
 export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'project-field', path: '/project-field', label: '项目场', shortLabel: '项目', group: 'work' },
   { id: 'overview', path: '/overview', label: '概览', shortLabel: '概览', group: 'work' },
@@ -44,7 +51,6 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'roles', path: '/roles', label: '模型与插件', shortLabel: '模型', group: 'capability' },
   { id: 'memory', path: '/memory', label: '我的记忆', shortLabel: '记忆', group: 'capability' },
   { id: 'knowledge', path: '/knowledge', label: '知识库', shortLabel: '知识', group: 'capability' },
-  { id: 'plugins', path: '/plugins', label: '插件管理', shortLabel: '插件', group: 'capability' },
   { id: 'browser', path: '/browser', label: '浏览器', shortLabel: '浏览器', group: 'capability' },
   { id: 'voice', path: '/voice', label: '语音输入', shortLabel: '语音', group: 'capability' },
   { id: 'input', path: '/input', label: '输入法与词库', shortLabel: '输入', group: 'capability' },

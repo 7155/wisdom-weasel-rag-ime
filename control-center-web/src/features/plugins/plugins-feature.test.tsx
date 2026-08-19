@@ -64,6 +64,18 @@ describe('PluginsFeature', () => {
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'false');
   });
 
+  it('renders the complete management surface as a section inside model settings', async () => {
+    renderPlugins({}, '/roles', true);
+
+    expect(await screen.findByRole('heading', { name: '插件与工具', level: 2 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '插件管理', level: 1 })).not.toBeInTheDocument();
+    expect(document.querySelector('section.mgmt-page--embedded[data-route-id="plugins"]')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '审批中心' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument();
+    expect(await screen.findByRole('group', { name: '能力列表' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '管理扩展与自动整理' })).toBeInTheDocument();
+  });
+
   it('shows fixed base tools without persistent disclosure controls', async () => {
     const user = userEvent.setup();
     const fixedAsk = tool({
@@ -467,6 +479,7 @@ describe('PluginsFeature', () => {
 function renderPlugins(
   overrides: Partial<Record<ControlPathId, MockRouteHandler>> = {},
   initialEntry = '/plugins',
+  embedded = false,
 ) {
   const transport = new MockControlTransport({
     pickedFiles: [{
@@ -520,16 +533,17 @@ function renderPlugins(
       ...overrides,
     },
   });
-  renderPluginsWithTransport(transport, initialEntry);
+  renderPluginsWithTransport(transport, initialEntry, embedded);
   return transport;
 }
 
 function renderPluginsWithTransport(
   transport: ControlTransport,
   initialEntry = '/plugins',
+  embedded = false,
 ): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<MemoryRouter initialEntries={[initialEntry]}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}><QueryClientProvider client={client}><PluginsFeature /></QueryClientProvider></ControlTransportProvider></TooltipProvider></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[initialEntry]}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}><QueryClientProvider client={client}><PluginsFeature embedded={embedded} /></QueryClientProvider></ControlTransportProvider></TooltipProvider></MemoryRouter>);
 }
 
 function LocationProbe() {

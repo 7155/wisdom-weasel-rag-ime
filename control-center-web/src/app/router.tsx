@@ -1,6 +1,6 @@
 import { AlertTriangle, LoaderCircle, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, createHashRouter, useNavigate } from 'react-router-dom';
+import { Navigate, createHashRouter, useLocation, useNavigate } from 'react-router-dom';
 import type { RouteId } from '@/app/route-registry';
 import { Button } from '@/components/primitives';
 
@@ -11,7 +11,6 @@ const lazyRouteModules = {
   agent: async () => ({ Component: (await import('@/features/agent')).AgentFeature }),
   rooms: async () => ({ Component: (await import('@/features/rooms')).RoomsFeature }),
   roles: async () => ({ Component: (await import('@/features/roles')).RolesFeature }),
-  plugins: async () => ({ Component: (await import('@/features/plugins')).PluginsFeature }),
   approvals: async () => ({ Component: (await import('@/features/approvals')).ApprovalsFeature }),
   browser: async () => ({ Component: (await import('@/features/browser')).BrowserFeature }),
   voice: async () => ({ Component: (await import('@/features/voice')).VoiceFeature }),
@@ -49,7 +48,7 @@ export const router = createHashRouter([
       { path: '/agent', HydrateFallback: RouteLoading, lazy: lazyRouteModules.agent },
       { path: '/rooms', HydrateFallback: RouteLoading, lazy: lazyRouteModules.rooms },
       { path: '/roles', HydrateFallback: RouteLoading, lazy: lazyRouteModules.roles },
-      { path: '/plugins', HydrateFallback: RouteLoading, lazy: lazyRouteModules.plugins },
+      { path: '/plugins', element: <LegacyPluginsRedirect /> },
       { path: '/approvals', HydrateFallback: RouteLoading, lazy: lazyRouteModules.approvals },
       { path: '/browser', HydrateFallback: RouteLoading, lazy: lazyRouteModules.browser },
       { path: '/voice', HydrateFallback: RouteLoading, lazy: lazyRouteModules.voice },
@@ -68,6 +67,11 @@ export const router = createHashRouter([
     ],
   },
 ]);
+
+export function LegacyPluginsRedirect() {
+  const location = useLocation();
+  return <Navigate replace to={`/roles${location.search}`} />;
+}
 
 export function RouteLoading() {
   const slow = useSlowLoadingNotice();

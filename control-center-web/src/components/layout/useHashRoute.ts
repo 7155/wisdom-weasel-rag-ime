@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { routeRegistry, type RouteDefinition } from '@/app/route-registry';
+import { canonicalRoutePath, routeRegistry, type RouteDefinition } from '@/app/route-registry';
 import { router } from '@/app/router';
 
 function subscribe(callback: () => void) {
@@ -21,6 +21,7 @@ function getPath(): string {
 
 export function useHashRoute(): RouteDefinition {
   const path = useSyncExternalStore(subscribe, getPath, () => '/agent');
-  return routeRegistry.find((route) => route.path === path)
+  const canonicalPath = canonicalRoutePath(path);
+  return routeRegistry.find((route) => route.path === canonicalPath)
     ?? routeRegistry.find((route) => route.id === 'agent')!;
 }

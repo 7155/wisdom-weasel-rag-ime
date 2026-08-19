@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
@@ -9,9 +9,18 @@ import { StubControlTransport } from '@/test/stub-control-transport';
 import { previewPersonas, previewTemplates } from '@/features/agent/preview-data';
 import { RolesFeature } from './index';
 
+vi.mock('@/features/plugins', () => ({
+  PluginsFeature: ({ embedded = false }: { embedded?: boolean }) => (
+    <section data-embedded={embedded || undefined} data-testid="plugin-management-surface">
+      <h2>插件与工具</h2>
+      <p>安装、启停、权限、更新与回退</p>
+    </section>
+  ),
+}));
+
 describe('Roles experience', () => {
   afterEach(cleanup);
-  it('makes model routing and plugin availability the primary runtime settings', async () => {
+  it('places model routing and full plugin management on the same settings page', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.role.models': modelCatalog(),
@@ -26,17 +35,15 @@ describe('Roles experience', () => {
     expect(screen.getByLabelText('普通对话默认模型')).toHaveTextContent('GPT-5.6 Sol');
     expect(screen.getByLabelText('Room Partner默认模型')).toHaveTextContent('GPT-5.6 Terra');
     expect(screen.getByLabelText('Tool Agent默认模型')).toHaveTextContent('GPT-5.6 Luna');
-    expect(screen.getByText('可用工具').nextElementSibling).toHaveTextContent('2');
-    expect(screen.getByText('已安装插件').nextElementSibling).toHaveTextContent('1');
-    expect(screen.getByRole('button', { name: '管理插件' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '插件与工具', level: 2 })).toBeInTheDocument();
+    expect(screen.getByTestId('plugin-management-surface')).toHaveAttribute('data-embedded', 'true');
+    expect(screen.getByText('安装、启停、权限、更新与回退')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '兼容伙伴身份' })).toBeInTheDocument();
     expect(screen.getByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
     await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining([
       'agent.roles.list',
       'agent.role.models',
       'agent.configuration.get',
-      'agent.tools.list',
-      'agent.extensions.list',
     ])));
     expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(false);
   });
@@ -357,8 +364,6 @@ describe('Roles experience', () => {
       'agent.roles.list',
       'agent.role.models',
       'agent.configuration.get',
-      'agent.tools.list',
-      'agent.extensions.list',
     ]);
   });
 

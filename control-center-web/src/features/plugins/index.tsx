@@ -95,7 +95,7 @@ const operationLabels: Record<string, string> = {
   click: '点击页面元素', type: '向页面输入', scroll: '滚动页面', wait: '等待页面内容', stop: '停止浏览器操作',
 };
 
-export function PluginsFeature() {
+export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const identity = useProductIdentity();
   const [searchParams] = useSearchParams();
@@ -398,10 +398,13 @@ export function PluginsFeature() {
         <Button leadingIcon={<ShieldQuestion size={15} />} onClick={() => navigate('/approvals')} size="small" variant="quiet">审批中心</Button>
         <Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>
       </>}
-      description="管理技能、工具与 Pi 扩展的发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。"
-      eyebrow="伙伴能力"
+      description={embedded
+        ? '在同一页管理技能、工具与 Pi 扩展的发现、安装、启用范围和版本回退；高风险执行仍进入独立审批中心。'
+        : '管理技能、工具与 Pi 扩展的发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。'}
+      embedded={embedded}
+      eyebrow={embedded ? undefined : '伙伴能力'}
       routeId="plugins"
-      title="插件管理"
+      title={embedded ? '插件与工具' : '插件管理'}
     >
       <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection

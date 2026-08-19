@@ -7,7 +7,6 @@ import {
   MessageCirclePlus,
   MessagesSquare,
   Network,
-  Plug,
   Plus,
   RotateCcw,
   ShieldCheck,
@@ -38,6 +37,7 @@ import { previewPersonas } from '@/features/agent/preview-data';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roleItems } from '@/features/agent/types';
 import { publicErrorText } from '@/features/overview/management-ui';
+import { PluginsFeature } from '@/features/plugins';
 import {
   arrayValue,
   agentDefaultCompanion,
@@ -79,7 +79,6 @@ export function RolesFeature() {
   const [modelRouting, setModelRouting] = useState<AgentModelRouting | null>(null);
   const [routingDraft, setRoutingDraft] = useState<AgentModelRouting | null>(null);
   const [routingSaving, setRoutingSaving] = useState(false);
-  const [pluginSummary, setPluginSummary] = useState({ tools: 0, extensions: 0, available: false });
   const [selectedPersona, setSelectedPersona] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas[0]?.roleId ?? '' : '');
   const [sessionCreating, setSessionCreating] = useState(false);
   const [roleCreating, setRoleCreating] = useState(false);
@@ -118,9 +117,7 @@ export function RolesFeature() {
       transport.request({ pathId: 'agent.roles.list' }),
       transport.request({ pathId: 'agent.role.models' }),
       transport.request({ pathId: 'agent.configuration.get' }),
-      transport.request({ pathId: 'agent.tools.list' }),
-      transport.request({ pathId: 'agent.extensions.list' }),
-    ]).then(([roleResult, modelResult, configurationResult, toolsResult, extensionsResult]) => {
+    ]).then(([roleResult, modelResult, configurationResult]) => {
       if (!active) return;
       const errors: string[] = [];
       if (roleResult.status === 'fulfilled') {
@@ -148,11 +145,6 @@ export function RolesFeature() {
       } else {
         errors.push('模型路由与默认身份暂时未读取。');
       }
-      setPluginSummary({
-        tools: toolsResult.status === 'fulfilled' ? arrayValue(record(toolsResult.value).items).length : 0,
-        extensions: extensionsResult.status === 'fulfilled' ? arrayValue(record(extensionsResult.value).items).length : 0,
-        available: toolsResult.status === 'fulfilled' || extensionsResult.status === 'fulfilled',
-      });
       setCatalogNotice(errors.join(' '));
     });
     return () => { active = false; };
@@ -392,7 +384,7 @@ export function RolesFeature() {
 
   return <>
     <main className="roles-feature" data-route-id="roles">
-      <header className="roles-header"><span><h1>模型与插件</h1><p>按运行职责选择默认模型；伙伴身份不再决定算力，插件仍保持独立安装与授权。</p></span></header>
+      <header className="roles-header"><span><h1>模型与插件</h1><p>按运行职责选择默认模型，并在同一页管理插件能力；身份、算力与权限各自保持清晰边界。</p></span></header>
       {actionNotice ? <p className="roles-notice" role="status">{actionNotice}</p> : null}
       {catalogNotice && (personas.length > 0 || roleCatalogState !== 'error') ? <div className="roles-catalog-notice">
         <span><strong>部分运行信息没有读完</strong><small>{catalogNotice}</small></span>
@@ -407,12 +399,7 @@ export function RolesFeature() {
         onOpenProviders={() => navigate('/configuration')}
         onSave={() => void saveModelRouting()}
       />
-      <section className="model-plugin-overview" aria-labelledby="plugin-overview-title">
-        <span className="model-plugin-overview__icon"><Plug size={20} /></span>
-        <span><h2 id="plugin-overview-title">插件与工具</h2><p>扩展为 Session、Room 和 Tool Agent 提供能力；模型路由不会绕过插件权限与确认。</p></span>
-        <dl><div><dt>可用工具</dt><dd>{pluginSummary.available ? pluginSummary.tools : '—'}</dd></div><div><dt>已安装插件</dt><dd>{pluginSummary.available ? pluginSummary.extensions : '—'}</dd></div></dl>
-        <Button variant="quiet" size="small" leadingIcon={<Plug size={14} />} onClick={() => navigate('/plugins')}>管理插件</Button>
-      </section>
+      <PluginsFeature embedded />
       <section className="roles-legacy-section" aria-labelledby="legacy-companion-title">
         <header><span><h2 id="legacy-companion-title">兼容伙伴身份</h2><p>这里只保留称呼、表达方式和长期成长；新运行使用上方按职责配置的模型。</p></span>{view === 'companions' ? <Button variant="quiet" size="small" leadingIcon={<UserRoundPlus size={15} />} onClick={beginRoleCreation}>添加伙伴</Button> : null}</header>
         <div className="roles-layout">

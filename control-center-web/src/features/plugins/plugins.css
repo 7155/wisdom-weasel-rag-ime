@@ -1,4 +1,4 @@
-main[data-route-id='plugins'] .plugins-count {
+.mgmt-page[data-route-id='plugins'] .plugins-count {
   color: var(--color-text-tertiary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
@@ -675,8 +675,8 @@ main[data-route-id='plugins'] .plugins-count {
 
 /* The usage ledger speaks once: per-column boilerplate repeated five times is
    noise, not information — the section description already carries it. */
-main[data-route-id='plugins'] .mgmt-metrics .mgmt-metric__detail { display: none; }
-main[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+.mgmt-page[data-route-id='plugins'] .mgmt-metrics .mgmt-metric__detail { display: none; }
+.mgmt-page[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
 
 @media (prefers-reduced-motion: reduce) {
   .plugins-list__item { transition: none; }
@@ -684,22 +684,22 @@ main[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto
 }
 
 @media (max-width: 760px) {
-  main[data-route-id='plugins'] .mgmt-metrics {
+  .mgmt-page[data-route-id='plugins'] .mgmt-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     column-gap: var(--space-2);
   }
 
-  main[data-route-id='plugins'] .mgmt-metric {
+  .mgmt-page[data-route-id='plugins'] .mgmt-metric {
     grid-template-columns: 14px minmax(0, 1fr);
     column-gap: 5px;
   }
 
-  main[data-route-id='plugins'] .ui-button,
-  main[data-route-id='plugins'] .ui-icon-button,
-  main[data-route-id='plugins'] .ui-input,
-  main[data-route-id='plugins'] .ui-select__trigger,
-  main[data-route-id='plugins'] .ui-segmented__item,
-  main[data-route-id='plugins'] details > summary {
+  .mgmt-page[data-route-id='plugins'] .ui-button,
+  .mgmt-page[data-route-id='plugins'] .ui-icon-button,
+  .mgmt-page[data-route-id='plugins'] .ui-input,
+  .mgmt-page[data-route-id='plugins'] .ui-select__trigger,
+  .mgmt-page[data-route-id='plugins'] .ui-segmented__item,
+  .mgmt-page[data-route-id='plugins'] details > summary {
     min-height: 44px;
   }
 }

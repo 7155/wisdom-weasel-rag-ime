@@ -32,6 +32,7 @@ export function ManagementPage({
   actions,
   children,
   description,
+  embedded = false,
   eyebrow,
   layout = 'sheet',
   routeId,
@@ -40,23 +41,32 @@ export function ManagementPage({
   actions?: ReactNode;
   children: ReactNode;
   description: string;
+  embedded?: boolean;
   eyebrow?: string;
   layout?: 'sheet' | 'workbench';
   routeId: string;
   title: string;
 }) {
+  const headingId = useId();
+  const Root = embedded ? 'section' : 'main';
+  const Heading = embedded ? 'h2' : 'h1';
   return (
-    <main className="mgmt-page" data-layout={layout} data-route-id={routeId}>
+    <Root
+      aria-labelledby={embedded ? headingId : undefined}
+      className={`mgmt-page${embedded ? ' mgmt-page--embedded' : ''}`}
+      data-layout={layout}
+      data-route-id={routeId}
+    >
       <header className="mgmt-page__header">
         <div className="mgmt-page__heading">
           {eyebrow ? <span className="mgmt-page__eyebrow">{eyebrow}</span> : null}
-          <h1>{title}</h1>
+          <Heading id={headingId}>{title}</Heading>
           <p>{description}</p>
         </div>
         {actions ? <div className="mgmt-page__actions">{actions}</div> : null}
       </header>
       <div className="mgmt-page__body">{children}</div>
-    </main>
+    </Root>
   );
 }
 
