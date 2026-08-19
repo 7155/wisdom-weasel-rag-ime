@@ -170,6 +170,53 @@ describe('MemoryFeature relations', () => {
     );
   });
 
+  it('shows persistent automatic backfill progress without a locally started job', async () => {
+    const date = localCalendarDate();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'memory.activityTimeline.get': { ok: true, timeline: activityTimeline('approved', date) },
+        'memory.activityTimeline.calendar': {
+          ok: true,
+          month: date.slice(0, 7),
+          days: [],
+          summary: {
+            activityDayCount: 19,
+            organizedDayCount: 4,
+            waitingDayCount: 15,
+            sourceEventCount: 80,
+          },
+          automation: {
+            enabled: true,
+            state: 'running',
+            batchDayLimit: 1,
+            schedulerPollIntervalMs: 3_600_000,
+            job: {
+              mode: 'automatic_catch_up',
+              state: 'running',
+              progress: {
+                phase: 'activity_timeline_auto_catch_up',
+                currentDate: '2026-08-05',
+                totalDayCount: 1,
+                completedDayCount: 0,
+                remainingDayCount: 15,
+              },
+            },
+          },
+        },
+      },
+    });
+    renderMemory(transport);
+
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '时间线' }));
+
+    expect(await screen.findByRole('status', { name: '历史日记整理进度' })).toHaveTextContent(
+      '自动补齐中：正在整理 2026-08-05；本月已完成 4 / 19 天，剩余 15 天。',
+    );
+    expect(screen.getByRole('button', { name: '正在整理' })).toBeDisabled();
+  });
+
   it('does not present a single-day rebuild as organize-through-today work', async () => {
     const user = userEvent.setup();
     const date = localCalendarDate();

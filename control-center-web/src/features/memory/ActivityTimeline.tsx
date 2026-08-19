@@ -142,6 +142,9 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const payload = asRecord(timeline.data);
   const calendarPayload = asRecord(calendar.data);
   const calendarSummary = asRecord(calendarPayload.summary);
+  const calendarAutomation = asRecord(calendarPayload.automation);
+  const calendarJob = asRecord(calendarAutomation.job);
+  const calendarJobProgress = asRecord(calendarJob.progress);
   const calendarDays = useMemo(
     () => normalizeCalendarDays(calendarPayload),
     [calendarPayload],
@@ -157,12 +160,22 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const status = stringValue(item.status);
   const buildRunning = Boolean(buildJobState) && buildJobState !== 'completed' && buildJobState !== 'failed';
   const buildAwaitingStatus = buildJob.isFetching && !buildJobState;
-  const buildActive = build.isPending || buildAwaitingStatus || buildRunning;
+  const localBuildActive = build.isPending || buildAwaitingStatus || buildRunning;
+  const calendarJobState = stringValue(calendarJob.state);
+  const calendarJobMode = stringValue(calendarJob.mode);
+  const calendarJobActive = calendarJobState === 'queued' || calendarJobState === 'running';
   const buildThroughToday = build.variables?.throughToday === true;
   const buildTargetDate = build.variables?.targetDate || date;
-  const organizeThroughTodayActive = buildActive && buildThroughToday;
-  const singleDayBuildActive = buildActive && !buildThroughToday;
-  const busy = buildActive || approve.isPending || reject.isPending;
+  const organizeThroughTodayActive = (
+    (localBuildActive && buildThroughToday)
+    || (calendarJobActive && calendarJobMode !== 'single_day')
+  );
+  const singleDayBuildActive = (
+    (localBuildActive && !buildThroughToday)
+    || (calendarJobActive && calendarJobMode === 'single_day')
+  );
+  const busy = localBuildActive || approve.isPending || reject.isPending;
+  const writeBusy = busy || calendarJobActive;
   const buildError = build.error ?? buildJobError;
   const error = timeline.error ?? approve.error ?? reject.error;
   const buildProgressMessage = buildError
@@ -182,6 +195,30 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
                 : `${buildTargetDate} 的单日整理任务已进入队列，等待运行…`
               : `正在整理 ${stringValue(buildJobProgress.currentDate, buildTargetDate)}；模型整理与校验可能需要几分钟。`
             : '';
+  const recoveredJobMessage = !buildProgressMessage && calendarJobActive
+    ? calendarJobMode === 'manual_catch_up'
+      ? catchUpProgressCopy(calendarJobProgress)
+      : calendarJobMode === 'single_day'
+        ? `正在整理 ${stringValue(calendarJobProgress.currentDate, date)}；模型整理与校验可能需要几分钟。`
+        : automaticCatchUpCopy(calendarAutomation, calendarSummary)
+    : '';
+  const automaticStatusMessage = automaticCatchUpCopy(
+    calendarAutomation,
+    calendarSummary,
+  );
+  const organizeMessage = buildProgressMessage || recoveredJobMessage || automaticStatusMessage;
+  const automationState = stringValue(calendarAutomation.state);
+  const organizeTone = buildError
+    ? 'danger'
+    : localBuildActive || calendarJobActive
+      ? 'info'
+      : automationState === 'caught_up'
+        ? 'success'
+        : automationState === 'retry_scheduled'
+          || automationState === 'disabled'
+          || automationState === 'unavailable'
+          ? 'warning'
+          : 'info';
   const semanticReady = timelineId
     ? calendarDays.some((day) => (
       day.date === date && day.organized && day.modelOrganized
@@ -243,7 +280,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
       </header>
 
       <ActivityTimelineCalendar
-        busy={busy}
+        busy={writeBusy}
         canWrite={canWrite}
         date={date}
         days={calendarDays}
@@ -252,8 +289,9 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         onMoveMonth={moveMonth}
         onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
         organizeActive={organizeThroughTodayActive}
-        organizeFailed={Boolean(buildError)}
-        organizeMessage={buildProgressMessage}
+        organizeActiveStatus={localBuildActive || calendarJobActive}
+        organizeMessage={organizeMessage}
+        organizeTone={organizeTone}
         onSelect={chooseDate}
         summary={calendarSummary}
         today={today}
@@ -278,7 +316,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         status={status}
         tasks={tasks}
         timelineId={timelineId}
-        busy={busy}
+        busy={writeBusy}
       />
 
       {error ? (
@@ -589,8 +627,9 @@ function ActivityTimelineCalendar({
   onMoveMonth,
   onOrganizeThroughToday,
   organizeActive,
-  organizeFailed,
+  organizeActiveStatus,
   organizeMessage,
+  organizeTone,
   onSelect,
   summary,
   today,
@@ -605,8 +644,9 @@ function ActivityTimelineCalendar({
   onMoveMonth: (offset: number) => void;
   onOrganizeThroughToday: () => void;
   organizeActive: boolean;
-  organizeFailed: boolean;
+  organizeActiveStatus: boolean;
   organizeMessage: string;
+  organizeTone: 'danger' | 'info' | 'success' | 'warning';
   onSelect: (date: string) => void;
   summary: Record<string, unknown>;
   today: string;
@@ -666,10 +706,17 @@ function ActivityTimelineCalendar({
         <div
           aria-label="历史日记整理进度"
           className="activity-calendar__organize-status"
-          data-tone={organizeFailed ? 'danger' : 'info'}
-          role={organizeFailed ? 'alert' : 'status'}
+          data-active={organizeActiveStatus || undefined}
+          data-tone={organizeTone}
+          role={organizeTone === 'danger' ? 'alert' : 'status'}
         >
-          {organizeFailed ? <X aria-hidden="true" size={15} /> : <RefreshCw aria-hidden="true" size={15} />}
+          {organizeTone === 'danger'
+            ? <X aria-hidden="true" size={15} />
+            : organizeTone === 'success'
+              ? <Check aria-hidden="true" size={15} />
+              : organizeActiveStatus
+                ? <RefreshCw aria-hidden="true" size={15} />
+                : <Clock3 aria-hidden="true" size={15} />}
           <span>{organizeMessage}</span>
         </div>
       ) : null}
@@ -1475,6 +1522,49 @@ function catchUpProgressCopy(progress: Record<string, unknown>): string {
   const currentDate = stringValue(progress.currentDate);
   const count = total ? `已完成 ${completed} / ${total} 天` : '正在计算待整理日期';
   return `正在整理历史日记：${count}${currentDate ? `，当前 ${currentDate}` : ''}。`;
+}
+
+function automaticCatchUpCopy(
+  automation: Record<string, unknown>,
+  summary: Record<string, unknown>,
+): string {
+  if (!Object.keys(automation).length) return '';
+  const state = stringValue(automation.state);
+  const completed = numberValue(summary.organizedDayCount);
+  const total = numberValue(summary.activityDayCount);
+  const remaining = numberValue(summary.waitingDayCount);
+  const batchLimit = Math.max(1, numberValue(automation.batchDayLimit, 1));
+  const job = asRecord(automation.job);
+  const progress = asRecord(job.progress);
+  const currentDate = stringValue(progress.currentDate);
+  const monthProgress = `本月已完成 ${completed} / ${total} 天，剩余 ${remaining} 天。`;
+
+  if (state === 'running') {
+    return currentDate
+      ? `自动补齐中：正在整理 ${currentDate}；${monthProgress}`
+      : `自动补齐已进入本轮后台维护；${monthProgress}`;
+  }
+  if (state === 'retry_scheduled') {
+    const failedDate = stringValue(asRecord(job.result).failedDate);
+    return `自动补齐上次未完成${failedDate ? `（${failedDate}）` : ''}；后台会在下一轮重试。${monthProgress}`;
+  }
+  if (state === 'scheduled') {
+    return `自动补齐已开启：后台维护每轮最多整理 ${batchLimit} 天；${monthProgress}`;
+  }
+  if (state === 'caught_up') {
+    return total
+      ? `自动补齐已完成：本月 ${completed} / ${total} 个活动日已整理。`
+      : '自动补齐已开启：本月暂时没有需要整理的活动日。';
+  }
+  if (state === 'disabled') {
+    return remaining
+      ? `自动补齐未开启；本月仍有 ${remaining} 天待整理，可使用“整理到今天”立即处理。`
+      : '自动补齐未开启；当前月份没有待整理活动。';
+  }
+  if (state === 'unavailable') {
+    return `自动补齐状态暂时不可读；月历数据仍可查看，本月还有 ${remaining} 天待整理。`;
+  }
+  return '';
 }
 
 function formatDateHeading(value: string): string {

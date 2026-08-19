@@ -543,6 +543,73 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
             (),
         )
 
+    def test_periodic_maintenance_backfills_one_historical_day_per_run(self) -> None:
+        for day in (10, 11):
+            timestamp = int(
+                datetime(
+                    2026,
+                    8,
+                    day,
+                    9,
+                    0,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ).timestamp()
+                * 1_000
+            )
+            LocalSqliteCoreClient(self.db_path).record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=timestamp,
+                    source="voice_final",
+                    committed_text=f"自动补齐 8 月 {day} 日的活动",
+                    privacy_disposition="allowed",
+                    app="RagImeControl",
+                    project="project-a",
+                )
+            )
+        organizer = _MaintenanceActivityOrganizer()
+        runner = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project="project-a",
+                consolidate_roles=False,
+                build_timelines=True,
+                auto_publish_timelines=True,
+                timeline_catch_up_limit=1,
+            ),
+            activity_organizer=organizer,
+        )
+        now_ms = int(
+            datetime(
+                2026,
+                8,
+                12,
+                10,
+                0,
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            ).timestamp()
+            * 1_000
+        )
+
+        report = runner.run_once(now_ms=now_ms)
+
+        catch_up = report["activityTimelineCatchUp"]
+        self.assertTrue(catch_up["ok"])
+        self.assertEqual(catch_up["pendingDayCount"], 2)
+        self.assertEqual(catch_up["completedDayCount"], 1)
+        self.assertEqual(catch_up["remainingDayCount"], 1)
+        self.assertEqual(
+            [item["date"] for item in catch_up["activityTimelines"]],
+            ["2026-08-10"],
+        )
+        self.assertEqual(
+            DailyActivityTimelineStore(
+                self.db_path,
+                project="project-a",
+            ).dates_requiring_model_organization("2026-08-11"),
+            ("2026-08-11",),
+        )
+
     def test_cli_run_and_status_expose_the_background_maintenance_state(
         self,
     ) -> None:

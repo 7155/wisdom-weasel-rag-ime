@@ -62,11 +62,17 @@
   font-size: 12px;
 }
 
+.activity-calendar__organize-status span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .activity-calendar__organize-status svg {
   flex: 0 0 auto;
   color: var(--color-info);
-  animation: daily-journal-spin 1s linear infinite;
 }
+
+.activity-calendar__organize-status[data-active='true'] svg { animation: daily-journal-spin 1s linear infinite; }
 
 .activity-calendar__organize-status[data-tone='danger'] {
   border-bottom-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
@@ -75,6 +81,16 @@
 }
 
 .activity-calendar__organize-status[data-tone='danger'] svg { animation: none; color: var(--color-danger); }
+.activity-calendar__organize-status[data-tone='warning'] {
+  border-bottom-color: color-mix(in srgb, var(--color-warning) 28%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
+}
+.activity-calendar__organize-status[data-tone='warning'] svg { color: var(--color-warning); }
+.activity-calendar__organize-status[data-tone='success'] {
+  border-bottom-color: color-mix(in srgb, var(--color-success) 26%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface));
+}
+.activity-calendar__organize-status[data-tone='success'] svg { color: var(--color-success); }
 
 .activity-calendar__summary {
   display: flex;

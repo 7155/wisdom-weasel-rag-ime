@@ -785,7 +785,82 @@ class DebugImeService:
         self,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        return self.activity_timelines.calendar(_string(payload.get("month")))
+        calendar = dict(
+            self.activity_timelines.calendar(_string(payload.get("month")))
+        )
+        core = getattr(self, "core", None)
+        jobs = getattr(self, "memory_maintenance_jobs", None)
+        if not isinstance(core, LocalSqliteCoreClient) or not isinstance(
+            jobs,
+            GatewayMemoryMaintenanceJobs,
+        ):
+            return calendar
+        summary = (
+            calendar.get("summary")
+            if isinstance(calendar.get("summary"), Mapping)
+            else {}
+        )
+        waiting_day_count = int(summary.get("waitingDayCount") or 0)
+        try:
+            managed = MemoryMaintenanceSettings.load(core.db_path)
+            job = jobs.activity_timeline_status(project=self.config.project)
+            job_state = _string(job.get("state"))
+            job_mode = _string(job.get("mode"))
+            job_result = (
+                job.get("result")
+                if isinstance(job.get("result"), Mapping)
+                else {}
+            )
+            if not managed.automatic_organization_enabled:
+                state = "disabled"
+            elif (
+                job_mode == "automatic_catch_up"
+                and job_state in {"queued", "running"}
+            ):
+                state = "running"
+            elif (
+                job_mode in {"automatic_catch_up", "manual_catch_up", "single_day"}
+                and job_result.get("ok") is False
+            ):
+                state = "retry_scheduled"
+            elif waiting_day_count:
+                state = "scheduled"
+            else:
+                state = "caught_up"
+            calendar["automation"] = {
+                "schemaVersion": "rag-ime.activity-timeline-automation.v1",
+                "enabled": managed.automatic_organization_enabled,
+                "state": state,
+                "batchDayLimit": 1,
+                "schedulerPollIntervalMs": 60 * 60 * 1_000,
+                "configuredIntervalMs": (
+                    managed.automatic_organization_interval_seconds * 1_000
+                ),
+                "completedDayCount": int(
+                    summary.get("organizedDayCount") or 0
+                ),
+                "totalDayCount": int(summary.get("activityDayCount") or 0),
+                "remainingDayCount": waiting_day_count,
+                "job": job,
+            }
+        except Exception:
+            # The calendar remains a useful read projection when scheduler
+            # settings or its process-local job registry are unavailable.
+            calendar["automation"] = {
+                "schemaVersion": "rag-ime.activity-timeline-automation.v1",
+                "enabled": False,
+                "state": "unavailable",
+                "batchDayLimit": 1,
+                "schedulerPollIntervalMs": 60 * 60 * 1_000,
+                "configuredIntervalMs": 0,
+                "completedDayCount": int(
+                    summary.get("organizedDayCount") or 0
+                ),
+                "totalDayCount": int(summary.get("activityDayCount") or 0),
+                "remainingDayCount": waiting_day_count,
+                "job": {},
+            }
+        return calendar
 
     def activity_timeline_build(
         self,
@@ -3442,6 +3517,7 @@ class DebugImeService:
             manual=manual,
             managed=managed,
             max_sources=payload.get("maxSources"),
+            progress=payload.get("_progressCallback"),
         )
         report["lexiconOrganization"] = lexicon
         report["dreaming"] = dreaming
@@ -3511,6 +3587,15 @@ class DebugImeService:
                     min_interval_ms=managed.dreaming_interval_seconds * 1_000,
                     apply_safe_recent_work=managed.dreaming_enabled,
                     auto_publish_timelines=managed.automatic_organization_enabled,
+                    timeline_catch_up_limit=(
+                        1
+                        if (
+                            managed.automatic_organization_enabled
+                            and not timeline_date
+                            and not timeline_through_date
+                        )
+                        else 0
+                    ),
                     batch_limit=_bounded_int(
                         max_sources,
                         default=500,
@@ -3539,7 +3624,11 @@ class DebugImeService:
             elif timeline_date:
                 result = runner.build_activity_timeline(timeline_date)
             else:
-                result = runner.run_once(force=manual)
+                result = (
+                    runner.run_once(force=manual, progress=progress)
+                    if callable(progress)
+                    else runner.run_once(force=manual)
+                )
             result["executionOwner"] = "agent_gateway"
             result["transport"] = "gateway_internal_session"
             return result

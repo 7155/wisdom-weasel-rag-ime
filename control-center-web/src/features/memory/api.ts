@@ -184,6 +184,17 @@ export function useActivityTimeline(date: string, enabled: boolean) {
       query: { month },
       signal,
     }),
+    refetchInterval: (query) => {
+      const payload = asRecord(query.state.data);
+      const summary = asRecord(payload.summary);
+      const automation = asRecord(payload.automation);
+      const job = asRecord(automation.job);
+      const jobState = stringValue(job.state);
+      if (jobState === 'queued' || jobState === 'running') return 1_200;
+      return automation.enabled === true && Number(summary.waitingDayCount || 0) > 0
+        ? 15_000
+        : false;
+    },
   });
   const settle = async (payload: unknown) => {
     const response = asRecord(payload);

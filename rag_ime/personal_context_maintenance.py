@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -52,9 +52,11 @@ class PersonalContextMaintenanceConfig:
     min_interval_ms: int = DEFAULT_CONSOLIDATION_INTERVAL_MS
     apply_safe_recent_work: bool = False
     auto_publish_timelines: bool = False
+    timeline_catch_up_limit: int = 0
     batch_limit: int = 500
     model: str = DEFAULT_MAINTENANCE_MODEL
     thinking_level: str = DEFAULT_MAINTENANCE_THINKING_LEVEL
+
     def normalized(self) -> "PersonalContextMaintenanceConfig":
         project = compact_whitespace(self.project)
         role_id = compact_whitespace(self.role_id)
@@ -71,6 +73,10 @@ class PersonalContextMaintenanceConfig:
             min_interval_ms=max(0, int(self.min_interval_ms)),
             apply_safe_recent_work=bool(self.apply_safe_recent_work),
             auto_publish_timelines=bool(self.auto_publish_timelines),
+            timeline_catch_up_limit=max(
+                0,
+                min(int(self.timeline_catch_up_limit), 31),
+            ),
             batch_limit=max(1, min(int(self.batch_limit), 1_000)),
             model=(
                 compact_whitespace(self.model)
@@ -193,6 +199,7 @@ class PersonalContextMaintenanceRunner:
         *,
         now_ms: int | None = None,
         force: bool = False,
+        progress: object | None = None,
     ) -> dict[str, object]:
         timestamp = _timestamp(now_ms)
         self.initialize()
@@ -284,6 +291,38 @@ class PersonalContextMaintenanceRunner:
                 entry["statusRefreshError"] = str(refreshed["probeError"])
             targets.append(entry)
 
+        timeline_catch_up: dict[str, object] = {
+            "schemaVersion": "rag-ime.activity-timeline-catch-up.v1",
+            "ok": True,
+            "skipped": True,
+            "reason": "automatic_catch_up_disabled",
+            "throughDate": "",
+            "pendingDayCount": 0,
+            "batchDayCount": 0,
+            "completedDayCount": 0,
+            "remainingDayCount": 0,
+            "failedDate": "",
+            "error": "",
+            "activityTimelines": [],
+        }
+        if (
+            self.config.enabled
+            and self.config.build_timelines
+            and self.config.auto_publish_timelines
+            and self.config.timeline_catch_up_limit > 0
+        ):
+            previous_date = (
+                datetime.fromtimestamp(timestamp / 1_000).astimezone().date()
+                - timedelta(days=1)
+            ).isoformat()
+            timeline_catch_up = self.build_activity_timelines_through(
+                previous_date,
+                now_ms=timestamp,
+                progress=progress,
+                max_days=self.config.timeline_catch_up_limit,
+                progress_phase="activity_timeline_auto_catch_up",
+            )
+
         failed_count = sum(
             1 for target in targets if str(target.get("runStatus") or "") == "failed"
         )
@@ -292,7 +331,11 @@ class PersonalContextMaintenanceRunner:
         )
         return {
             "schemaVersion": PERSONAL_CONTEXT_MAINTENANCE_RUN_SCHEMA_VERSION,
-            "ok": failed_count == 0 and timeline_failed_count == 0,
+            "ok": (
+                failed_count == 0
+                and timeline_failed_count == 0
+                and timeline_catch_up.get("ok") is True
+            ),
             "generatedAtMs": timestamp,
             "enabled": self.config.enabled,
             "dreamingEnabled": self.config.consolidate_roles,
@@ -325,6 +368,7 @@ class PersonalContextMaintenanceRunner:
                 "failedCount": timeline_failed_count,
             },
             "activityTimelines": timeline_results,
+            "activityTimelineCatchUp": timeline_catch_up,
             "summary": _summary(targets),
             "targets": targets,
         }
@@ -351,8 +395,10 @@ class PersonalContextMaintenanceRunner:
         *,
         now_ms: int | None = None,
         progress: object | None = None,
+        max_days: int | None = None,
+        progress_phase: str = "activity_timeline_catch_up",
     ) -> dict[str, object]:
-        """Serially organize every pending source day through a target date."""
+        """Serially organize a bounded prefix of pending source days."""
 
         timestamp = _timestamp(now_ms)
         self.initialize()
@@ -360,16 +406,29 @@ class PersonalContextMaintenanceRunner:
             self.db_path,
             project=self.config.project,
         )
-        dates = store.dates_requiring_model_organization(through_date)
+        pending_dates = store.dates_requiring_model_organization(through_date)
+        bounded_limit = (
+            len(pending_dates)
+            if max_days is None
+            else max(0, min(int(max_days), 31))
+        )
+        dates = pending_dates[:bounded_limit]
+        phase = (
+            "activity_timeline_auto_catch_up"
+            if progress_phase == "activity_timeline_auto_catch_up"
+            else "activity_timeline_catch_up"
+        )
         results: list[dict[str, object]] = []
         callback = progress if callable(progress) else None
         if callback is not None:
             callback(
                 {
-                    "phase": "activity_timeline_catch_up",
+                    "phase": phase,
                     "throughDate": through_date,
                     "totalDayCount": len(dates),
+                    "backlogDayCount": len(pending_dates),
                     "completedDayCount": 0,
+                    "remainingDayCount": len(pending_dates),
                     "currentDate": "",
                 }
             )
@@ -377,10 +436,15 @@ class PersonalContextMaintenanceRunner:
             if callback is not None:
                 callback(
                     {
-                        "phase": "activity_timeline_catch_up",
+                        "phase": phase,
                         "throughDate": through_date,
                         "totalDayCount": len(dates),
+                        "backlogDayCount": len(pending_dates),
                         "completedDayCount": len(results),
+                        "remainingDayCount": max(
+                            0,
+                            len(pending_dates) - len(results),
+                        ),
                         "currentDate": timeline_date,
                     }
                 )
@@ -422,10 +486,15 @@ class PersonalContextMaintenanceRunner:
         if callback is not None:
             callback(
                 {
-                    "phase": "activity_timeline_catch_up",
+                    "phase": phase,
                     "throughDate": through_date,
                     "totalDayCount": len(dates),
+                    "backlogDayCount": len(pending_dates),
                     "completedDayCount": completed,
+                    "remainingDayCount": max(
+                        0,
+                        len(pending_dates) - completed,
+                    ),
                     "currentDate": str((failed or {}).get("date") or ""),
                     "failedDate": str((failed or {}).get("date") or ""),
                 }
@@ -434,9 +503,10 @@ class PersonalContextMaintenanceRunner:
             "schemaVersion": "rag-ime.activity-timeline-catch-up.v1",
             "ok": failed is None,
             "throughDate": through_date,
-            "pendingDayCount": len(dates),
+            "pendingDayCount": len(pending_dates),
+            "batchDayCount": len(dates),
             "completedDayCount": completed,
-            "remainingDayCount": max(0, len(dates) - completed),
+            "remainingDayCount": max(0, len(pending_dates) - completed),
             "failedDate": str((failed or {}).get("date") or ""),
             "error": str((failed or {}).get("error") or ""),
             "activityTimelines": results,

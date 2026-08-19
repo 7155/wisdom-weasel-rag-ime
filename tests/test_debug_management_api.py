@@ -1510,6 +1510,62 @@ class DebugManagementApiTests(unittest.TestCase):
             instruction="",
         )
 
+    def test_scheduled_gateway_dreaming_enables_bounded_timeline_backfill(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=False,
+        )
+        executor = Mock()
+        organizer = Mock()
+        runner = Mock()
+        runner.run_once.return_value = {
+            "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+            "ok": True,
+            "activityTimelineCatchUp": {
+                "ok": True,
+                "completedDayCount": 1,
+                "remainingDayCount": 14,
+            },
+            "targets": [],
+        }
+        progress = Mock()
+
+        with (
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=executor,
+            ),
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=organizer,
+            ),
+            patch(
+                "rag_ime.debug_server.PersonalContextMaintenanceRunner",
+                return_value=runner,
+            ) as runner_type,
+        ):
+            report = self.service._execute_gateway_memory_dreaming(
+                project="wisdom-weasel-rag-ime",
+                manual=False,
+                managed=managed,
+                max_sources=500,
+                progress=progress,
+            )
+
+        self.assertTrue(report["ok"])
+        config = runner_type.call_args.kwargs["config"]
+        self.assertEqual(config.timeline_catch_up_limit, 1)
+        runner.run_once.assert_called_once_with(force=False, progress=progress)
+        organizer.close.assert_called_once_with()
+
+    def test_activity_calendar_exposes_automatic_backfill_status(self) -> None:
+        calendar = self.service.activity_timeline_calendar({"month": "2026-08"})
+
+        self.assertTrue(calendar["automation"]["enabled"])
+        self.assertEqual(calendar["automation"]["state"], "caught_up")
+        self.assertEqual(calendar["automation"]["batchDayLimit"], 1)
+        self.assertEqual(calendar["automation"]["remainingDayCount"], 0)
+
     def test_gateway_maintenance_skips_dreaming_only_when_both_lanes_are_disabled(
         self,
     ) -> None:

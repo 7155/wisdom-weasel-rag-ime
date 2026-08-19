@@ -79,6 +79,57 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         release.set()
         self._wait_for_terminal(jobs, str(single["jobId"]))
 
+    def test_background_timeline_status_is_available_without_a_job_id(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def execute(_payload: Mapping[str, object]) -> dict[str, object]:
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {"ok": True}
+
+        jobs = GatewayMemoryMaintenanceJobs(execute)
+        jobs.trigger({"project": "project-a", "manual": False})
+        self.assertTrue(started.wait(timeout=2))
+
+        running = jobs.activity_timeline_status(project="project-a")
+
+        self.assertEqual(running["mode"], "automatic_catch_up")
+        self.assertEqual(running["state"], "running")
+        self.assertEqual(running["progress"]["phase"], "memory_maintenance")
+        self.assertNotIn("request", running)
+        release.set()
+        self._wait_for_terminal(jobs, str(running["jobId"]))
+
+    def test_failed_manual_catch_up_remains_visible_after_refresh(self) -> None:
+        jobs = GatewayMemoryMaintenanceJobs(
+            lambda _payload: {
+                "ok": False,
+                "pendingDayCount": 4,
+                "completedDayCount": 1,
+                "remainingDayCount": 3,
+                "failedDate": "2026-08-08",
+                "error": "model request failed",
+            }
+        )
+        started = jobs.trigger(
+            {
+                "project": "project-a",
+                "timelineOnly": True,
+                "timelineDate": "",
+                "timelineThroughDate": "2026-08-12",
+            }
+        )
+        self._wait_for_terminal(jobs, str(started["jobId"]))
+
+        failed = jobs.activity_timeline_status(project="project-a")
+
+        self.assertEqual(failed["mode"], "manual_catch_up")
+        self.assertEqual(failed["state"], "failed")
+        self.assertEqual(failed["result"]["failedDate"], "2026-08-08")
+        self.assertEqual(failed["result"]["remainingDayCount"], 3)
+        self.assertEqual(failed["error"], "model request failed")
+
     def test_failed_execution_is_observable_and_close_stops_admission(self) -> None:
         def fail(_payload: Mapping[str, object]) -> dict[str, object]:
             raise RuntimeError("provider down")

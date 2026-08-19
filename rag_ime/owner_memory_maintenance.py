@@ -78,6 +78,36 @@ class GatewayMemoryMaintenanceJobs:
                 raise ValueError(f"memory maintenance job not found: {normalized}")
             return self._payload(job, reused=False)
 
+    def activity_timeline_status(self, *, project: str = "") -> dict[str, object]:
+        """Return one safe timeline-job projection for refresh recovery."""
+
+        normalized_project = str(project or "").strip()
+        with self._lock:
+            candidates = sorted(
+                self._jobs.values(),
+                key=lambda item: int(item.get("updatedAtMs") or 0),
+                reverse=True,
+            )
+            active = self._jobs.get(self._active_job_id)
+            if active is not None and self._matches_project(
+                active,
+                normalized_project,
+            ):
+                return self._timeline_payload(active)
+            for job in candidates:
+                if not self._matches_project(job, normalized_project):
+                    continue
+                request = (
+                    job.get("request")
+                    if isinstance(job.get("request"), Mapping)
+                    else {}
+                )
+                if request.get("timelineDate") or request.get("timelineThroughDate"):
+                    return self._timeline_payload(job)
+                if self._automatic_timeline_result(job):
+                    return self._timeline_payload(job)
+            return {}
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
@@ -105,6 +135,13 @@ class GatewayMemoryMaintenanceJobs:
                     "phase": "activity_timeline_single",
                     "currentDate": timeline_date,
                     "totalDayCount": 1,
+                    "completedDayCount": 0,
+                }
+            else:
+                job["progress"] = {
+                    "phase": "memory_maintenance",
+                    "currentDate": "",
+                    "totalDayCount": 0,
                     "completedDayCount": 0,
                 }
             request["_progressCallback"] = lambda value: self._set_progress(
@@ -158,6 +195,90 @@ class GatewayMemoryMaintenanceJobs:
         )
         for stale in terminal[64:]:
             self._jobs.pop(str(stale.get("jobId") or ""), None)
+
+    @staticmethod
+    def _matches_project(job: Mapping[str, object], project: str) -> bool:
+        request = (
+            job.get("request")
+            if isinstance(job.get("request"), Mapping)
+            else {}
+        )
+        requested_project = str(request.get("project") or "").strip()
+        return not project or requested_project == project
+
+    @classmethod
+    def _timeline_payload(cls, job: Mapping[str, object]) -> dict[str, object]:
+        request = (
+            job.get("request")
+            if isinstance(job.get("request"), Mapping)
+            else {}
+        )
+        mode = (
+            "manual_catch_up"
+            if request.get("timelineThroughDate")
+            else "single_day"
+            if request.get("timelineDate")
+            else "automatic_catch_up"
+        )
+        timeline_result = cls._automatic_timeline_result(job)
+        result_summary = {
+            key: timeline_result[key]
+            for key in (
+                "ok",
+                "throughDate",
+                "pendingDayCount",
+                "batchDayCount",
+                "completedDayCount",
+                "remainingDayCount",
+                "failedDate",
+                "error",
+            )
+            if key in timeline_result
+        }
+        return {
+            "schemaVersion": "rag-ime.activity-timeline-job-status.v1",
+            "ok": str(job.get("state") or "") != "failed",
+            "jobId": str(job.get("jobId") or ""),
+            "state": str(job.get("state") or ""),
+            "mode": mode,
+            "progress": (
+                dict(job.get("progress") or {})
+                if isinstance(job.get("progress"), Mapping)
+                else {}
+            ),
+            "result": result_summary,
+            "error": str(result_summary.get("error") or job.get("error") or ""),
+            "createdAtMs": int(job.get("createdAtMs") or 0),
+            "updatedAtMs": int(job.get("updatedAtMs") or 0),
+            "completedAtMs": int(job.get("completedAtMs") or 0),
+        }
+
+    @staticmethod
+    def _automatic_timeline_result(job: Mapping[str, object]) -> dict[str, object]:
+        request = (
+            job.get("request")
+            if isinstance(job.get("request"), Mapping)
+            else {}
+        )
+        result = (
+            job.get("result")
+            if isinstance(job.get("result"), Mapping)
+            else {}
+        )
+        if request.get("timelineDate") or request.get("timelineThroughDate"):
+            return dict(result)
+        dreaming = (
+            result.get("dreaming")
+            if isinstance(result.get("dreaming"), Mapping)
+            else result
+        )
+        catch_up = (
+            dreaming.get("activityTimelineCatchUp")
+            if isinstance(dreaming, Mapping)
+            and isinstance(dreaming.get("activityTimelineCatchUp"), Mapping)
+            else {}
+        )
+        return dict(catch_up)
 
     @staticmethod
     def _payload(
