@@ -22,8 +22,9 @@ describe('ActivityTimeline activity projection', () => {
     const calendar = calendarHeading.closest('.activity-calendar');
     expect(calendar?.nextElementSibling).toHaveClass('daily-journal');
     expect(screen.getByRole('heading', { name: /的每日日记$/ })).toBeInTheDocument();
-    expect(await screen.findByText('上午完成账号切换与连续开发，下午验证记忆召回。')).toBeInTheDocument();
+    expect(await screen.findByText('当天主要围绕「切换 Codex 账号并继续开发」和「验证三条记忆消费路径」展开。')).toBeInTheDocument();
     expect(screen.getByText('今日足迹')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /查看活动：切换 Codex 账号并继续开发/ })).toHaveTextContent('2 小时8 条来源');
 
     await user.click(screen.getByRole('button', { name: '查看日记条目：验证三条记忆消费路径' }));
     expect(await screen.findByRole('dialog', { name: '验证三条记忆消费路径' })).toBeInTheDocument();
