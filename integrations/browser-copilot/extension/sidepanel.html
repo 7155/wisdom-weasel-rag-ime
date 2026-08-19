@@ -42,11 +42,16 @@
           <input id="pairing-token" name="pairingToken" type="password" autocomplete="off" />
           <label for="display-name">设备名称</label>
           <input id="display-name" name="displayName" value="我的 Chrome" />
+          <label class="checkbox-row" for="auto-site-transitions">
+            <input id="auto-site-transitions" name="autoApproveSiteTransitions" type="checkbox" checked />
+            <span>自动允许站点跳转</span>
+          </label>
           <button type="submit">保存并连接</button>
         </form>
         <dl id="runtime">
           <div><dt>模式</dt><dd id="mode">观察</dd></div>
           <div><dt>设备</dt><dd id="device">未配对</dd></div>
+          <div><dt>站点跳转</dt><dd id="site-transitions">自动允许</dd></div>
           <div><dt>最近同步</dt><dd id="last-sync">暂无</dd></div>
         </dl>
       </section>

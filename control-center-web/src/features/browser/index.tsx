@@ -89,6 +89,12 @@ export function BrowserFeature() {
   const connectedCount = clients.filter((client) => client.connected === true).length;
   const pendingPermissions = permissions.filter((item) => stringValue(item.status) === 'pending');
   const managed = asRecord(status.managedBrowser);
+  const shellHasData = control.status.data !== undefined || control.permissions.data !== undefined;
+  const shellPending = !shellHasData && (control.status.isPending || control.permissions.isPending);
+  const shellError = !shellHasData && !shellPending
+    ? (control.status.error ?? control.permissions.error) as Error | null
+    : null;
+  const statusUnavailable = control.status.data === undefined && control.permissions.data !== undefined;
   const selectedTab = tabs.find(
     (item) => stringValue(item.deviceId) === selectedDeviceId && Number(item.tabId) === selectedTabId,
   );
@@ -226,8 +232,8 @@ export function BrowserFeature() {
       title="浏览器"
     >
       <QueryState
-        error={control.status.error as Error | null}
-        isPending={control.status.isPending}
+        error={shellError}
+        isPending={shellPending}
         onRetry={refresh}
       >
         <div className="browser-modebar">
@@ -236,7 +242,7 @@ export function BrowserFeature() {
               label={connectedCount ? `${connectedCount} 个浏览器在线` : '等待插件连接'}
               tone={connectedCount ? 'success' : 'warning'}
             />
-            <span>{modeCopy[mode]}</span>
+            <span>{statusUnavailable ? '浏览器状态正在恢复，权限请求仍可处理。' : modeCopy[mode]}</span>
           </div>
           <SegmentedControl
             aria-label="浏览器操作方式"

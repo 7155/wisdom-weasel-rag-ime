@@ -63,6 +63,32 @@ class BrowserControlServiceTests(unittest.TestCase):
         self.assertIn("[0:e1]", snapshot["markdown"])
         self.assertEqual(other.tabs()["items"][0]["title"], "Example Docs")
 
+    def test_status_uses_active_tab_projection_without_loading_global_snapshot_payload(self) -> None:
+        png = base64.b64encode(b"\x89PNG\r\n\x1a\nstatus-fixture").decode("ascii")
+        self.service.push_snapshot(
+            {
+                "deviceId": "chrome-test",
+                "snapshotId": "snap-status",
+                "tabId": 7,
+                "url": "https://example.com/status",
+                "title": "Status",
+                "summary": "状态快照",
+                "markdown": "# payload must not be loaded by status",
+                "screenshotDataUrl": f"data:image/png;base64,{png}",
+            }
+        )
+
+        with mock.patch.object(
+            self.service,
+            "_latest_snapshot_row",
+            side_effect=AssertionError("status must not run the global payload query"),
+        ):
+            status = self.service.status()
+
+        self.assertEqual(status["latestSnapshot"]["snapshotId"], "snap-status")
+        self.assertTrue(status["latestSnapshot"]["hasScreenshot"])
+        self.assertNotIn("markdown", status["latestSnapshot"])
+
     def test_snapshot_urls_redact_credentials_fragments_and_sensitive_queries(self) -> None:
         unsafe_url = (
             "https://reader:password@example.com/docs"
@@ -208,6 +234,43 @@ class BrowserControlServiceTests(unittest.TestCase):
         )
         self.assertFalse(next_prompt["authorized"])
         self.assertNotEqual(next_prompt["promptId"], prompt_id)
+
+    def test_extension_auto_approval_consumes_existing_site_prompt(self) -> None:
+        prompt = self.service.request_permission(
+            {
+                "deviceId": "chrome-test",
+                "origin": "https://pi.dev/",
+                "action": "domain_transition",
+                "reason": "从 chatgpt.com 前往 pi.dev",
+            }
+        )
+
+        approved = self.service.request_extension_permission(
+            {
+                "deviceId": "chrome-test",
+                "origin": "https://pi.dev/",
+                "action": "domain_transition",
+                "reason": "从 chatgpt.com 前往 pi.dev",
+            }
+        )
+
+        self.assertTrue(approved["authorized"])
+        self.assertTrue(approved["autoApproved"])
+        self.assertEqual(approved["decision"], "allow_once")
+        self.assertEqual(approved["promptId"], prompt["promptId"])
+        self.assertEqual(self.service.permission_status(str(prompt["promptId"]))["status"], "consumed")
+        self.assertEqual(self.service.status()["pendingPermissions"], 0)
+
+        opted_out = self.service.request_extension_permission(
+            {
+                "deviceId": "chrome-test",
+                "origin": "https://example.com/",
+                "action": "domain_transition",
+                "reason": "逐次确认",
+                "autoApprove": False,
+            }
+        )
+        self.assertFalse(opted_out["authorized"])
 
     def test_site_permission_is_reused_without_a_new_prompt(self) -> None:
         prompt = self.service.request_permission(

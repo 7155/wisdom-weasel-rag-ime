@@ -10,6 +10,7 @@ async function settings() {
     'displayName',
     'clientKind',
     'managedBootstrapToken',
+    'autoApproveSiteTransitions',
   ]);
   let pairingToken = String(stored.pairingToken || '');
   const bridgeUrl = String(stored.bridgeUrl || DEFAULT_BRIDGE_URL).replace(/\/+$/, '');
@@ -48,6 +49,7 @@ async function settings() {
     displayName: String(stored.displayName || (clientKind === 'managed' ? '托管 Chrome' : '我的 Chrome')),
     clientKind,
     managedBootstrapToken,
+    autoApproveSiteTransitions: stored.autoApproveSiteTransitions !== false,
   };
   await chrome.storage.local.set(next);
   return next;
@@ -168,6 +170,7 @@ async function requireCrossOriginPermission(tab, targetUrl) {
       origin: target.href,
       action: 'domain_transition',
       reason: `从 ${current.hostname || current.protocol} 前往 ${target.hostname}`,
+      autoApprove: config.autoApproveSiteTransitions,
     }),
   });
   if (response.authorized === true) return;

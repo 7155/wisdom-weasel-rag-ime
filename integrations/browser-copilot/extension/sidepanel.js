@@ -3,8 +3,10 @@ const settingsForm = document.querySelector('#settings');
 const bridgeUrl = document.querySelector('#bridge-url');
 const pairingToken = document.querySelector('#pairing-token');
 const displayName = document.querySelector('#display-name');
+const autoSiteTransitions = document.querySelector('#auto-site-transitions');
 const mode = document.querySelector('#mode');
 const device = document.querySelector('#device');
+const siteTransitions = document.querySelector('#site-transitions');
 const lastSync = document.querySelector('#last-sync');
 const pageTitle = document.querySelector('#page-title');
 const pageUrl = document.querySelector('#page-url');
@@ -28,8 +30,10 @@ async function refresh() {
     bridgeUrl.value = response.config.bridgeUrl || 'http://127.0.0.1:8766';
     pairingToken.value = response.config.pairingToken || '';
     displayName.value = response.config.displayName || '我的 Chrome';
+    autoSiteTransitions.checked = response.config.autoApproveSiteTransitions !== false;
     mode.textContent = modeLabels[response.status.mode] || response.status.mode || '观察';
     device.textContent = response.config.displayName || response.config.deviceId;
+    siteTransitions.textContent = autoSiteTransitions.checked ? '自动允许' : '逐次确认';
     setConnected(true);
     const snapshot = response.status.latestSnapshot;
     if (snapshot) {
@@ -67,6 +71,7 @@ settingsForm.addEventListener('submit', async (event) => {
         bridgeUrl: bridgeUrl.value.trim(),
         pairingToken: pairingToken.value.trim(),
         displayName: displayName.value.trim(),
+        autoApproveSiteTransitions: autoSiteTransitions.checked,
       },
     });
     settingsForm.hidden = true;

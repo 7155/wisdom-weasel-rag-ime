@@ -81,6 +81,8 @@ input {
   font-size: 13px;
 }
 input:focus { border-color: #0f7466; outline: 2px solid #c9ebe3; outline-offset: 1px; }
+.checkbox-row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.checkbox-row input { width: 16px; min-height: 16px; margin: 0; accent-color: #0f7466; }
 form button { margin-top: 4px; }
 dl { display: grid; margin: 14px 0 0; border-block: 1px solid #cfdbd6; }
 dl div { display: grid; min-height: 36px; align-items: center; border-bottom: 1px solid #cfdbd6; grid-template-columns: 90px 1fr; }

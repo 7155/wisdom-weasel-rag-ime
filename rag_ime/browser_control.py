@@ -313,11 +313,12 @@ class BrowserControlService:
     def status(self, *, agent_safe: bool = False) -> dict[str, object]:
         now = self._now_ms()
         with self._connection() as connection:
+            client_rows = connection.execute(
+                "SELECT * FROM browser_control_clients ORDER BY last_seen_ms DESC"
+            ).fetchall()
             clients = [
                 self._public_client(row, now=now)
-                for row in connection.execute(
-                    "SELECT * FROM browser_control_clients ORDER BY last_seen_ms DESC"
-                ).fetchall()
+                for row in client_rows
             ]
             counts = {
                 str(row["status"]): int(row["count"])
@@ -330,16 +331,35 @@ class BrowserControlService:
                     "SELECT COUNT(*) FROM browser_control_permissions WHERE status='pending'"
                 ).fetchone()[0]
             )
-            snapshot = self._latest_snapshot_row(connection)
+            snapshot = None
+            for row in client_rows:
+                active_tab_id = row["active_tab_id"]
+                if active_tab_id is None:
+                    continue
+                snapshot = self._latest_snapshot_projection_row(
+                    connection,
+                    device_id=str(row["device_id"]),
+                    tab_id=int(active_tab_id),
+                )
+                if snapshot is not None:
+                    break
+            mode = self._setting(connection, "mode") or "observe"
+            raw_pid = self._setting(connection, "managed_pid") or ""
+        pid = int(raw_pid) if raw_pid.isdigit() else 0
+        managed_running = self._pid_running(pid)
         response: dict[str, object] = {
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
-            "mode": self.mode(),
+            "mode": mode,
             "connected": any(client["connected"] for client in clients),
             "clients": clients,
             "commandCounts": counts,
             "pendingPermissions": permission_count,
-            "managedBrowser": self.managed_status(),
+            "managedBrowser": {
+                "running": managed_running,
+                "pid": pid if managed_running else None,
+                "profilePath": str(self.app_support_root / "BrowserCopilot" / "managed-profile"),
+            },
             "latestSnapshot": self._public_snapshot(snapshot, include_markdown=False) if snapshot else None,
             "summary": (
                 f"{sum(1 for item in clients if item['connected'])} 个浏览器已连接"
@@ -666,9 +686,63 @@ class BrowserControlService:
         device_id = self._identifier(payload.get("deviceId"), field="deviceId")
         origin = self._origin(payload.get("origin"))
         action = self._text(payload.get("action"), maximum=80)
+        auto_approve = payload.get("autoApprove") is True and action == "domain_transition"
         prompt_id = f"bperm_{uuid.uuid4().hex}"
         now = self._now_ms()
         with self._connection() as connection:
+            if auto_approve:
+                pending = connection.execute(
+                    """
+                    SELECT prompt_id FROM browser_control_permissions
+                    WHERE device_id=? AND origin=? AND action=? AND status='pending'
+                    ORDER BY created_at_ms DESC
+                    LIMIT 1
+                    """,
+                    (device_id, origin, action),
+                ).fetchone()
+                if pending is not None:
+                    prompt_id = str(pending["prompt_id"])
+                    connection.execute(
+                        """
+                        UPDATE browser_control_permissions
+                        SET status='consumed', decision='allow_once', resolved_at_ms=?
+                        WHERE device_id=? AND origin=? AND action=? AND status='pending'
+                        """,
+                        (now, device_id, origin, action),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO browser_control_permissions(
+                            prompt_id, device_id, origin, action, reason, status,
+                            decision, created_at_ms, resolved_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, 'consumed', 'allow_once', ?, ?)
+                        """,
+                        (
+                            prompt_id,
+                            device_id,
+                            origin,
+                            action,
+                            self._text(payload.get("reason"), maximum=500),
+                            now,
+                            now,
+                        ),
+                    )
+                self._event(
+                    connection,
+                    "permission_auto_approved",
+                    device_id,
+                    {"promptId": prompt_id, "origin": origin, "decision": "allow_once"},
+                )
+                connection.commit()
+                return {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "ok": True,
+                    "authorized": True,
+                    "autoApproved": True,
+                    "decision": "allow_once",
+                    "promptId": prompt_id,
+                }
             remembered = connection.execute(
                 """
                 SELECT * FROM browser_control_permissions
@@ -723,6 +797,17 @@ class BrowserControlService:
             "authorized": False,
             "promptId": prompt_id,
         }
+
+    def request_extension_permission(self, payload: Mapping[str, object]) -> dict[str, object]:
+        """Apply the paired browser's default navigation policy.
+
+        Older installed extension workers do not send the policy field. They
+        still receive the current browser-side default, while an explicit
+        ``false`` from the extension settings preserves opt-out behavior.
+        """
+        extension_payload = dict(payload)
+        extension_payload.setdefault("autoApprove", True)
+        return self.request_permission(extension_payload)
 
     def permission_status(self, prompt_id: str) -> dict[str, object]:
         with self._connection() as connection:
@@ -1012,6 +1097,28 @@ class BrowserControlService:
             values,
         ).fetchone()
 
+    def _latest_snapshot_projection_row(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        device_id: str,
+        tab_id: int,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT
+                snapshot_id, device_id, tab_id, frame_id, url, title, summary,
+                interactive_count, viewport_json,
+                screenshot_bytes IS NOT NULL AS has_screenshot,
+                created_at_ms
+            FROM browser_control_snapshots
+            WHERE device_id=? AND tab_id=?
+            ORDER BY created_at_ms DESC
+            LIMIT 1
+            """,
+            (device_id, tab_id),
+        ).fetchone()
+
     def _public_client(self, row: sqlite3.Row, *, now: int) -> dict[str, object]:
         last_seen = int(row["last_seen_ms"])
         return {
@@ -1027,6 +1134,12 @@ class BrowserControlService:
 
     def _public_snapshot(self, row: sqlite3.Row, *, include_markdown: bool) -> dict[str, object]:
         snapshot_id = str(row["snapshot_id"])
+        columns = set(row.keys())
+        has_screenshot = (
+            bool(row["has_screenshot"])
+            if "has_screenshot" in columns
+            else bool(row["screenshot_bytes"])
+        )
         result: dict[str, object] = {
             "snapshotId": snapshot_id,
             "deviceId": str(row["device_id"]),
@@ -1037,8 +1150,8 @@ class BrowserControlService:
             "pageSummary": str(row["summary"]),
             "interactiveCount": int(row["interactive_count"]),
             "viewport": self._json_object(row["viewport_json"]),
-            "hasScreenshot": bool(row["screenshot_bytes"]),
-            "imagePath": f"/api/browser/snapshots/{snapshot_id}/image" if row["screenshot_bytes"] else "",
+            "hasScreenshot": has_screenshot,
+            "imagePath": f"/api/browser/snapshots/{snapshot_id}/image" if has_screenshot else "",
             "createdAtMs": int(row["created_at_ms"]),
         }
         if include_markdown:

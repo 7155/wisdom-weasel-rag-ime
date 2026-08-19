@@ -7870,7 +7870,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 elif path == "/api/browser/extension/result":
                     response = self.service.browser_control.complete_command(payload)
                 elif path == "/api/browser/extension/permission":
-                    response = self.service.browser_control.request_permission(payload)
+                    response = self.service.browser_control.request_extension_permission(payload)
                 else:
                     self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
                     return

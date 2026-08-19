@@ -53,6 +53,15 @@ describe('BrowserFeature', () => {
     expect(await screen.findByText('允许一次已确认')).toBeInTheDocument();
   });
 
+  it('keeps a site permission actionable while browser status is still loading', async () => {
+    const user = userEvent.setup();
+    renderBrowser({ pendingStatus: true, permissionOrigin: 'https://pi.dev' });
+
+    await user.click(await screen.findByRole('tab', { name: /权限 1/ }));
+    expect(await screen.findByText('https://pi.dev')).toBeInTheDocument();
+    expect(screen.getByText('浏览器状态正在恢复，权限请求仍可处理。')).toBeInTheDocument();
+  });
+
   it('shows accepted-but-unconfirmed receipts and keeps pairing credentials guarded', async () => {
     const user = userEvent.setup();
     renderBrowser();
@@ -153,9 +162,13 @@ type BrowserQueryFailure = 'pairing' | 'permissions' | 'snapshot' | 'tabs' | 'tr
 function renderBrowser({
   failCommand = false,
   failOnce = [],
+  pendingStatus = false,
+  permissionOrigin = 'https://research.example.com',
 }: {
   failCommand?: boolean;
   failOnce?: BrowserQueryFailure[];
+  pendingStatus?: boolean;
+  permissionOrigin?: string;
 } = {}) {
   const now = Date.now();
   const pendingFailures = new Set(failOnce);
@@ -180,7 +193,7 @@ function renderBrowser({
   const transport = new MockControlTransport({
     browserSnapshotImageUrl: (snapshotId) => `blob:browser-${snapshotId}`,
     routes: {
-      'browser.status': {
+      'browser.status': pendingStatus ? async () => new Promise(() => undefined) : {
         ok: true,
         mode: 'observe',
         clients: [{
@@ -217,7 +230,7 @@ function renderBrowser({
         ok: true,
         items: [{
           promptId: 'bperm-research',
-          origin: 'https://research.example.com',
+          origin: permissionOrigin,
           reason: '首次进入调研站点',
           action: 'domain_transition',
           status: 'pending',
