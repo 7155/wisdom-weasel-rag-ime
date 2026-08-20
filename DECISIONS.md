@@ -1,6 +1,6 @@
 # Project Decisions
 
-Updated: 2026-08-16
+Updated: 2026-08-20
 
 This file records decisions that remain relevant across Outcomes. It does not
 record ordinary implementation choices or live status.
@@ -140,4 +140,23 @@ record ordinary implementation choices or live status.
 - **Consequence:** source preparation and inspection do not invoke Luna. The
   product asks for confirmation only before installation-state mutation. New
   Sessions receive the active Package resources; already-running Sessions keep
-  their stable resource snapshot.
+  their stable resource snapshot. A future OS shell may project an installed Pi
+  Package as an application when that Package declares an application surface;
+  install, update, enable, disable, uninstall, and rollback remain Pi-owned.
+  Packages without a visual surface remain background capabilities rather than
+  fake windowed apps.
+
+## D-012 — Tutti Hosts PAW As A Product Profile
+
+- **Status:** proposed
+- **Decision:** the `7155/tutti` fork may host PAW through product-owned desktop
+  composition and narrow Workbench capability/shell seams. Generic Workbench
+  packages remain product-neutral; Pi and the PAW Gateway keep all Agent and
+  collaboration Runtime ownership.
+- **Why:** PAW should reuse a mature desktop shell without copying Session,
+  Room, Tool, approval, cancellation, document, or terminal-state logic into a
+  second frontend Runtime.
+- **Consequence:** frontend migration is accepted one feature at a time. The
+  selected product profile may choose PAW contributions, chrome, navigation,
+  and dock policy, while Workbench snapshots retain shell/layout state only.
+  The upstream Tutti repository is fetch-only and must not receive PAW changes.
