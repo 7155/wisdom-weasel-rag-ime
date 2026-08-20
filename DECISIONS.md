@@ -146,17 +146,16 @@ record ordinary implementation choices or live status.
   Packages without a visual surface remain background capabilities rather than
   fake windowed apps.
 
-## D-012 — Tutti Hosts PAW As A Product Profile
+## D-012 — PAW OS Reuses Tutti In An Independent Private Product Repository
 
-- **Status:** proposed
-- **Decision:** the `7155/tutti` fork may host PAW through product-owned desktop
-  composition and narrow Workbench capability/shell seams. Generic Workbench
-  packages remain product-neutral; Pi and the PAW Gateway keep all Agent and
-  collaboration Runtime ownership.
-- **Why:** PAW should reuse a mature desktop shell without copying Session,
-  Room, Tool, approval, cancellation, document, or terminal-state logic into a
-  second frontend Runtime.
-- **Consequence:** frontend migration is accepted one feature at a time. The
-  selected product profile may choose PAW contributions, chrome, navigation,
-  and dock policy, while Workbench snapshots retain shell/layout state only.
-  The upstream Tutti repository is fetch-only and must not receive PAW changes.
+- **Status:** accepted
+- **Decision:** private `7155/paw-os` owns PAW OS composition on the neutral
+  Tutti Workbench. Tutti remotes are references only; PAW/Pi retain all Runtime
+  ownership.
+- **Why:** PAW can reuse real windows, Dock, Mission Control, and App Center
+  without copying Session, Room, approval, document, or Package state machines.
+- **Consequence:** only `7155/paw-os` receives product frontend pushes. Migrated
+  Apps use `paw.*` identities and versioned PAW transport. Layout snapshots are
+  product-partitioned presentation state. The bounded App trunk, Input Control,
+  Room main/satellite windows, and shared three-theme system are specified in
+  that private repository.

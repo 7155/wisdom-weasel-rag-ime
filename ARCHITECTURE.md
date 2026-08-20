@@ -160,6 +160,7 @@ current Room runtime or UI owner.
 | Light Room | `rag_ime/agent_rooms.py`, `rag_ime/agent_room_turn_registry.py`, Room methods in `agent_service.py` | Room identity, participants, topics, explicit dispatch mapping, public event order, cancellation fan-out, one Root terminal | Pi loop, document quality gates, mandatory review |
 | Persistence | `rag_ime/local_sqlite_core.py` and focused stores | schema, transactions, authoritative local state | Provider or presentation policy |
 | UI projection | `control-center-web/src/contracts/room-reducer.ts`, `control-center-web/src/features/rooms/` | deterministic read model, rendering, user intent | runtime ownership or inferred completion |
+| PAW OS product frontend | private `7155/paw-os` product composition plus versioned PAW transport adapters | Workbench composition, windows, Dock, Mission Control, layout snapshots, PAW surface rendering | Session/Room/Package/WorkDocument/Memory/Knowledge lifecycle or copied Runtime state |
 
 ## Primary Flows
 
@@ -219,6 +220,48 @@ React feature
 Simple route families use descriptors. Streaming, path-parameter, binary, and
 special-authorization routes keep dedicated adapters when a generic descriptor
 would hide behavior.
+
+### PAW OS Frontend Projection
+
+```text
+PAW snapshot / ordered SSE / typed command
+  -> versioned PAW transport adapter
+  -> PAW OS product composition in private 7155/paw-os
+  -> paw.* Workbench contribution or node
+  -> Tutti window / Dock / Mission Control / snapshot mechanics
+```
+
+`7155/paw-os` reuses the Tutti frontend and Workbench foundation but is an
+independent private product repository. `7155/tutti` and `tutti-os/tutti` are
+fetch-only references. Generic Workbench packages stay product-neutral; PAW
+branding, Chrome, Wayfinder, Dock policy, Feature contributions, and transport
+adapters remain product-owned composition.
+
+A PAW OS shell snapshot may retain product identity, node identity, frame,
+focus, z-order, and other presentation state. It must not persist or reconstruct
+Room, Session, WorkItem, approval, Package, WorkDocument, Memory, Knowledge, or
+terminal state. Those facts continue to come from their existing PAW/Pi owners
+after refresh. Product identity is part of the durable snapshot namespace so a
+Tutti workspace and a PAW OS workspace cannot overwrite each other's layout.
+
+Feature migration keeps the PAW reducer/store/contract owner intact and adds a
+narrow Workbench surface around it. Closing a node removes or hides that view;
+Stop and Cancel remain explicit PAW/Pi commands. Cross-repository code is
+shared only through an explicit versioned package or transport contract, never
+through absolute local paths.
+
+Related Web routes converge into PAW OS Apps instead of becoming one App per
+sidebar item. Project Workbench owns overview, WorkItems, and WorkDocuments;
+Agent and Rooms own multi-window collaboration; Input Control owns the
+Squirrel/Rime management flywheel; App Center, System Monitor, and Settings own
+their respective capability, evidence, and policy views. Files, File Preview,
+Browser, and Terminal reuse neutral Workbench capabilities.
+
+A Room always has one complete main window plus bounded optional participant
+satellites. The main window retains objective, ordered loops, Workflow, direct
+peer relationships, approvals, Root convergence, and final answer. Satellites
+project one participant's local slice and share the same Room snapshot/reducer/
+event owner; window layout never becomes collaboration truth.
 
 ### Pi Package Market And Skill Creation
 
