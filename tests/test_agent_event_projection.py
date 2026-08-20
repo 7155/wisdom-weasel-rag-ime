@@ -110,12 +110,83 @@ class AgentEventProjectionTests(unittest.TestCase):
             sequence=1,
             created_at_ms=1,
             event_type="text_delta",
-            payload={"messageId": "message:1", "delta": "你好"},
+            payload={
+                "messageId": "message:1",
+                "delta": "你好",
+                "sourceLoopId": "pi:message:assistant:101",
+            },
             resume_token="event:1",
         )
         service.mirror_to_room(event)
         self.assertEqual(room_events.items[0]["event_type"], "participant_delta")
         self.assertEqual(room_events.items[0]["turn_id"], "room-turn:1")
+        self.assertEqual(
+            room_events.items[0]["payload"]["data"]["sourceTurnId"],
+            "turn:1",
+        )
+        self.assertEqual(
+            room_events.items[0]["payload"]["data"]["sourceLoopId"],
+            "pi:message:assistant:101",
+        )
+
+    def test_room_projection_keeps_the_hash_needed_for_inline_approval(self) -> None:
+        event = AgentEventEnvelope(
+            event_id="event:approval",
+            session_id="session:1",
+            turn_id="turn:1",
+            sequence=1,
+            created_at_ms=1,
+            event_type="approval_required",
+            payload={
+                "approvalId": "approval:1",
+                "payloadSha256": "a" * 64,
+                "toolId": "workspace_write",
+                "operation": "apply",
+                "state": "pending",
+            },
+            resume_token="event:approval",
+        )
+
+        event_type, payload = room_event_projection(event)
+
+        self.assertEqual(event_type, "participant_activity")
+        self.assertEqual(payload["approvalId"], "approval:1")
+        self.assertEqual(payload["payloadSha256"], "a" * 64)
+
+    def test_room_projection_coalesces_micro_deltas_before_terminal(self) -> None:
+        service, _sessions, room_events = self._service()
+        for sequence in range(1, 201):
+            service.mirror_to_room(AgentEventEnvelope(
+                event_id=f"event:{sequence}",
+                session_id="session:1",
+                turn_id="turn:1",
+                sequence=sequence,
+                created_at_ms=sequence,
+                event_type="text_delta",
+                payload={"messageId": "message:1", "delta": "字"},
+                resume_token=f"event:{sequence}",
+            ))
+        service.mirror_to_room(AgentEventEnvelope(
+            event_id="event:201",
+            session_id="session:1",
+            turn_id="turn:1",
+            sequence=201,
+            created_at_ms=201,
+            event_type="turn_completed",
+            payload={"status": "completed"},
+            resume_token="event:201",
+        ))
+
+        deltas = [
+            item for item in room_events.items
+            if item["event_type"] == "participant_delta"
+        ]
+        self.assertLess(len(deltas), 20)
+        self.assertEqual(
+            "".join(str(item["payload"]["data"]["delta"]) for item in deltas),
+            "字" * 200,
+        )
+        self.assertEqual(room_events.items[-1]["event_type"], "turn_completed")
 
     def test_tool_failure_maps_to_a_terminal_public_activity(self) -> None:
         event = AgentEventEnvelope(

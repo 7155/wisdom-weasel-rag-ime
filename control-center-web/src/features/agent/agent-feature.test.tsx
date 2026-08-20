@@ -435,7 +435,7 @@ describe('Agent experience', () => {
     expect(markers.length).toBeGreaterThan(1);
     expect(markers[0]).toHaveTextContent('第 1 轮');
     expect(navigator).toHaveTextContent('读取输入法工具书');
-    expect(navigator).toHaveTextContent('澄');
+    expect(navigator).toHaveTextContent('Agent');
   });
 
   it('preserves bottom-follow through layout growth and restores it after the reader returns', async () => {
@@ -1527,6 +1527,9 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
+    await waitFor(() => expect(
+      transport.requests.some((call) => call.request.pathId === 'agent.session.commands'),
+    ).toBe(true));
     await user.click(await screen.findByRole('button', { name: '打开子 Agent 工作台' }));
     const workspace = await screen.findByLabelText('Session 子 Agent 工作台');
     expect(workspace).toHaveAttribute('data-open', 'true');
@@ -1788,8 +1791,8 @@ describe('Agent experience', () => {
     expect(pending).toHaveTextContent('消息已收到');
     const assistantTurn = pending.closest('.agent-assistant-turn');
     expect(assistantTurn).not.toBeNull();
-    expect(within(assistantTurn as HTMLElement).getByAltText('澄·今头像')).toBeInTheDocument();
-    expect(within(assistantTurn as HTMLElement).getByText('澄·今')).toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).getByRole('img', { name: 'Pi Agent' })).toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).getByText('Agent')).toBeInTheDocument();
     expect(within(assistantTurn as HTMLElement).getByText('正在处理')).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true);
   });
@@ -3976,13 +3979,36 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toMatchObject({
-      roleId: 'companion-future-v1',
-      roleVersion: '1',
-      mode: 'coordinator',
+      mode: 'assistant',
+      executionMode: 'per_action',
+      toolProfileVersion: 'control-center-v1',
       workspaceRoots: [],
     });
+    expect(create?.request.body).not.toHaveProperty('roleId');
+    expect(create?.request.body).not.toHaveProperty('roleVersion');
     expect(create?.request.body).not.toHaveProperty('modelProfile');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.model.select')).toBe(false);
+  });
+
+  it('keeps ordinary Sessions neutral when Persona and Subagent Packages are absent', async () => {
+    const transport = productionTransport({
+      'agent.session.commands': {
+        schemaVersion: 'rag-ime.agent-command-catalog.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        runtimeAvailable: true,
+        items: [{ name: 'review', invocation: '/review', description: '审阅当前改动', source: 'extension' }],
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    expect((await screen.findAllByRole('img', { name: 'Pi Agent' })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: '打开子 Agent 工作台' })).not.toBeInTheDocument();
+    const composer = screen.getByRole('textbox', { name: '消息' });
+    expect(composer).toHaveAttribute('placeholder', expect.stringContaining('给Agent发消息'));
+    await user.type(composer, '/');
+    expect(screen.queryByRole('option', { name: /\/subagents/ })).not.toBeInTheDocument();
   });
 
   it('renders Pi-provided Max reasoning and sends max without inventing levels', async () => {
@@ -5117,6 +5143,7 @@ function commandCatalog() {
     runtimeAvailable: true,
     items: [
       { name: 'review', invocation: '/review', description: '审阅当前改动', source: 'extension' },
+      { name: 'subagents', invocation: '/subagents', description: '查看子 Agent', source: 'extension' },
       { name: 'plan', invocation: '/plan', description: '运行规划模板', source: 'prompt' },
       { name: 'skill:browser', invocation: '/skill:browser', description: '调用浏览器技能', source: 'skill' },
     ],

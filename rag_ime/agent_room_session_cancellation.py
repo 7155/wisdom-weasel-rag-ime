@@ -381,26 +381,27 @@ class RoomSessionCancellationService:
 
         if not pending_targets:
             for target in active_targets:
-                self.host.room_turns.mark_cancelled_terminal(
+                publish_synthetic_terminal = self.host.room_turns.mark_cancelled_terminal(
                     target["sessionId"],
                     room_turn_id,
                 )
-                self.host.room_events.publish(
-                    room_id=room_id,
-                    event_type="turn_completed",
-                    payload={
-                        "status": "aborted",
-                        "aborted": True,
-                        "rootId": room_turn_id,
-                        "dispatchId": target["dispatchId"],
-                        "cancellationReceiptId": cancellation_receipt_id,
-                        "pendingTargets": [],
-                    },
-                    turn_id=room_turn_id,
-                    participant_id=target["participantId"],
-                    source_session_id=target["sessionId"],
-                    topic_id=self.host._room_topic_for_turn(room_turn_id),
-                )
+                if publish_synthetic_terminal:
+                    self.host.room_events.publish(
+                        room_id=room_id,
+                        event_type="turn_completed",
+                        payload={
+                            "status": "aborted",
+                            "aborted": True,
+                            "rootId": room_turn_id,
+                            "dispatchId": target["dispatchId"],
+                            "cancellationReceiptId": cancellation_receipt_id,
+                            "pendingTargets": [],
+                        },
+                        turn_id=room_turn_id,
+                        participant_id=target["participantId"],
+                        source_session_id=target["sessionId"],
+                        topic_id=self.host._room_topic_for_turn(room_turn_id),
+                    )
                 self.host._cancel_room_turn(target["sessionId"], room_turn_id)
             self.host.room_turns.release_priority(
                 primary_session_ids

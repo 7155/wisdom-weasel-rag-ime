@@ -31,9 +31,11 @@ from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     CONTROL_TOOL_IDS,
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    PI_PACKAGE_OWNED_CONTROL_TOOL_IDS,
     READONLY_TOOL_PROFILE,
 )
 from .agent_sessions import AgentSessionStore
+from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
 from .browser_control import BrowserControlService
 from .contracts.json_schema import validate_contract
@@ -361,19 +363,19 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "room_partner",
         "domain": "agents",
         "displayName": "Room 伙伴协作",
-        "description": "查看当前 Room 伙伴、委派一个有界子任务、在同一阶段并行委派 2–3 个独立任务，或发布公开进展与最终结果",
+        "description": "在 Room 中查看伙伴、直接向任意伙伴发送/提问/回复，委派有界工作，或发布公开进展与最终结果",
         "when": (
-            "当前 Session 正在 Room 中主持任务，且需要另一位正式伙伴独立处理有界子任务",
+            "当前 Session 是 Room 的任一正式伙伴，需要直接与另一位伙伴通信或独立处理有界子任务",
             "同一阶段有 2–3 个无依赖、不重叠的工作轨道，需要真实并行启动",
         ),
         "notFor": (
             "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
             "存在前后依赖、写入范围重叠，或需要上一阶段交付才能开始的任务",
         ),
-        "input": "list；单个目标伙伴及交付合同；或阶段名称与 2–3 个独立任务；或带 kind 的公开进展/最终结果",
-        "output": "伙伴模型/状态、单子 Session 终态结果、带 waveId 的有序并行回执，或类型明确的公开回执",
-        "does": "把正式 Room Partner 作为普通 Pi Session 调用；delegate_batch 会一次保留并并发启动同阶段伙伴，子事件共用同一 waveId 并归入当前 Room turn。",
-        "operations": ("list", "delegate", "delegate_batch", "post"),
+        "input": "peer_list；peer_send/peer_ask 的目标伙伴与内容；peer_reply 的 replyTo 与内容；或原有委派/公开回执参数",
+        "output": "真实 source→target 的 Room Intercom 回执、伙伴模型/状态、并行回执或类型明确的公开回执",
+        "does": "所有 Room participant 共享同一直接 peer 通道；消息由 source Session 直接投递到 target Session，不经 Facilitator 转发。",
+        "operations": ("list", "delegate", "delegate_batch", "post", "peer_list", "peer_send", "peer_ask", "peer_reply"),
         # Availability is still Room-bound below. Once available, this is the
         # only formal Partner primitive and must be callable directly.
         "alwaysAvailable": True,
@@ -414,6 +416,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "todo",
+        "modelVisible": False,
         "domain": "planning",
         "displayName": "Todo",
         "description": "维护当前 Session 的分阶段执行清单；状态变更立即同步到任务中心，不需要用户批准",
@@ -442,6 +445,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "agent_goal",
+        "modelVisible": False,
         "domain": "planning",
         "displayName": "长期目标",
         "description": "在用户明确确认后配置并维护当前 Session 的长期 Goal、验收标准、预算与完成证据",
@@ -759,7 +763,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
         "properties": {
             "op": {
                 "type": "string",
-                "enum": ["list", "delegate", "delegate_batch", "post"],
+                "enum": ["list", "delegate", "delegate_batch", "post", "peer_list", "peer_send", "peer_ask", "peer_reply"],
             },
             "targetParticipantId": {
                 "type": "string",
@@ -774,10 +778,12 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             },
             "expectedOutput": {
                 "type": "string",
+                "minLength": 1,
                 "maxLength": 1_200,
             },
             "acceptanceCriteria": {
                 "type": "array",
+                "minItems": 1,
                 "maxItems": 8,
                 "items": {
                     "type": "string",
@@ -858,6 +864,17 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 ],
                 "description": "公开内容类型；省略时为 progress，最终答复使用 result。",
             },
+            "clientMessageId": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "可选幂等键；省略时使用当前 Tool 调用 ID。",
+            },
+            "replyTo": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": "peer_reply 必须使用 peer_ask 回执中的 message.id。",
+            },
         },
         "oneOf": [
             {
@@ -875,6 +892,22 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             {
                 "required": ["op", "content"],
                 "properties": {"op": {"const": "post"}},
+            },
+            {
+                "required": ["op"],
+                "properties": {"op": {"const": "peer_list"}},
+            },
+            {
+                "required": ["op", "targetParticipantId", "content"],
+                "properties": {"op": {"const": "peer_send"}},
+            },
+            {
+                "required": ["op", "targetParticipantId", "content"],
+                "properties": {"op": {"const": "peer_ask"}},
+            },
+            {
+                "required": ["op", "replyTo", "content"],
+                "properties": {"op": {"const": "peer_reply"}},
             },
         ],
     },
@@ -2560,6 +2593,11 @@ class ControlToolGateway:
         }
         manifests: list[Mapping[str, object]] = []
         for manifest in manifest_items:
+            if str(manifest["id"]) in PI_PACKAGE_OWNED_CONTROL_TOOL_IDS:
+                # Migration storage remains readable through the legacy
+                # management APIs, but live Pi Sessions get this capability
+                # only from an enabled native Package.
+                continue
             if manifest.get("enabled") is not True or manifest["id"] not in disclosed_tools:
                 continue
             spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
@@ -2683,19 +2721,6 @@ class ControlToolGateway:
             }
             validate_contract(manifest, "control-tool-manifest.v1.json")
             if session is not None:
-                fixed_todo = _fixed_todo_for_session(
-                    session,
-                    tool_id=str(spec["id"]),
-                )
-                authorization_session = (
-                    {
-                        **session,
-                        "toolAllowlistMode": "profile",
-                        "allowedTools": [],
-                    }
-                    if fixed_todo
-                    else session
-                )
                 mode_compatible = str(session.get("mode") or "assistant") in manifest["sessionModes"]
                 manifest["profileOperations"] = {
                     profile: [
@@ -2724,7 +2749,7 @@ class ControlToolGateway:
                     for operation in operations
                     if mode_compatible
                     and _tool_profile_allows(
-                        authorization_session,
+                        session,
                         tool=str(spec["id"]),
                         operation=operation,
                         spec=spec,
@@ -2743,16 +2768,10 @@ class ControlToolGateway:
                 manifest["enabled"] = bool(effective_operations)
                 manifest["effectiveOperations"] = effective_operations
                 manifest["explicitlyAllowed"] = (
-                    True
-                    if fixed_todo
-                    else (
-                        str(session.get("toolAllowlistMode") or "profile") != "explicit"
-                        or str(spec["id"])
-                        in {str(value) for value in session.get("allowedTools") or []}
-                    )
+                    str(session.get("toolAllowlistMode") or "profile") != "explicit"
+                    or str(spec["id"])
+                    in {str(value) for value in session.get("allowedTools") or []}
                 )
-                if fixed_todo and manifest["enabled"] is True:
-                    manifest["alwaysAvailable"] = True
                 if (
                     include_runtime_projection
                     and str(spec["id"]) == "workspace_lsp"
@@ -2792,6 +2811,7 @@ class ControlToolGateway:
                 session_id,
                 args,
                 tool_call_id=str(request["toolCallId"]),
+                source_loop_id=str(request.get("sourceLoopId") or ""),
             )
             return {"ok": True, "result": dict(result)}
         spec = _TOOL_SPEC_BY_ID.get(tool)
@@ -9392,20 +9412,6 @@ def _secret_key(key: str) -> bool:
     )
 
 
-def _fixed_todo_for_session(
-    session: Mapping[str, object],
-    *,
-    tool_id: str,
-) -> bool:
-    return (
-        tool_id == "todo"
-        and str(session.get("sessionKind") or "conversation") == "conversation"
-        and str(session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE)
-        == CONTROL_CENTER_TOOL_PROFILE
-        and str(session.get("mode") or "assistant") in {"assistant", "coordinator"}
-    )
-
-
 def _tool_profile_allows(
     session: Mapping[str, object],
     *,
@@ -9479,9 +9485,21 @@ def _tool_profile_allows(
         # Formal Room delegation does not widen the workspace policy: the
         # target remains an ordinary participant Session carrying the same
         # read-only execution mode. Public progress/result posts are Room
-        # projection receipts, not source mutations.
+        # projection receipts, not source mutations. Direct peer intercom is
+        # likewise a Room message operation; it must remain available to every
+        # read-only participant or those Sessions receive a stale, facilitator-
+        # only schema even though the shared Room tool supports peer delivery.
         "room_partner": frozenset(
-            {"list", "delegate", "delegate_batch", "post"}
+            {
+                "list",
+                "delegate",
+                "delegate_batch",
+                "post",
+                "peer_list",
+                "peer_send",
+                "peer_ask",
+                "peer_reply",
+            }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
         "todo": frozenset(

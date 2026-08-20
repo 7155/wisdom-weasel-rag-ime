@@ -160,24 +160,97 @@ class AgentConfigurationStore:
                         (_json(configuration), now),
                     )
                 else:
-                    self._canonicalize_legacy_role_id(conn, row)
+                    self._canonicalize_legacy_configuration(
+                        conn,
+                        row,
+                        fallback=configuration,
+                    )
             self._initialized = True
 
-    def _canonicalize_legacy_role_id(
+    def _canonicalize_legacy_configuration(
         self,
         conn: sqlite3.Connection,
         row: sqlite3.Row,
+        *,
+        fallback: Mapping[str, object],
     ) -> None:
-        configuration = _configuration_from_row(row, canonicalize_role_id=False)
-        defaults = configuration["sessionDefaults"]
+        raw = json.loads(str(row["configuration_json"]))
+        if not isinstance(raw, dict):
+            raise RuntimeError("agent configuration row is invalid")
+        configuration = copy.deepcopy(raw)
+        changed_keys: list[str] = []
+
+        defaults = configuration.get("sessionDefaults")
         if not isinstance(defaults, dict):
             raise RuntimeError("agent session defaults are invalid")
+        defaults.setdefault("capabilityDisclosurePreferences", {})
+
+        # A short-lived model-settings build persisted the model profile only
+        # in a flattened modelRouting object.  Read that shape before replacing
+        # it so an upgrade never makes an otherwise healthy local database
+        # unbootable.  The nested routes below are the sole canonical shape.
+        routing = configuration.get("modelRouting")
+        if isinstance(routing, Mapping) and any(
+            key in routing
+            for key in (
+                "sessionModelProfile",
+                "sessionThinkingLevel",
+                "toolAgentModelProfile",
+                "toolAgentThinkingLevel",
+                "roomPartnerModelProfile",
+                "roomPartnerThinkingLevel",
+            )
+        ):
+            def legacy_route(profile_key: str, thinking_key: str) -> dict[str, str]:
+                profile = str(routing.get(profile_key) or "inherit").strip()
+                thinking = str(routing.get(thinking_key) or "inherit").strip()
+                candidate = {
+                    "modelProfile": profile,
+                    "thinkingLevel": thinking,
+                }
+                return _model_route(candidate, field=f"legacyModelRouting.{profile_key}")
+
+            primary = legacy_route("sessionModelProfile", "sessionThinkingLevel")
+            tool_agent = legacy_route(
+                "toolAgentModelProfile",
+                "toolAgentThinkingLevel",
+            )
+            room_partner = legacy_route(
+                "roomPartnerModelProfile",
+                "roomPartnerThinkingLevel",
+            )
+            configuration["modelRouting"] = {
+                "primary": primary,
+                "toolAgent": tool_agent,
+                "subagent": room_partner,
+                "roomCoordinator": room_partner,
+            }
+            changed_keys.append("modelRouting")
+            if "modelProfile" not in defaults:
+                defaults["modelProfile"] = primary["modelProfile"]
+                changed_keys.append("sessionDefaults.modelProfile")
+        elif "modelProfile" not in defaults:
+            fallback_defaults = fallback.get("sessionDefaults")
+            if not isinstance(fallback_defaults, Mapping):
+                raise RuntimeError("agent configuration fallback is invalid")
+            defaults["modelProfile"] = str(
+                fallback_defaults.get("modelProfile") or ""
+            )
+            changed_keys.append("sessionDefaults.modelProfile")
+
+        configuration.setdefault(
+            "capabilityDisclosure",
+            {"projectPreferences": {}},
+        )
+        _ensure_model_routing(configuration)
         previous = str(defaults.get("roleId") or "")
         canonical = canonical_agent_role_id(previous)
-        if canonical == previous:
-            return
-        defaults["roleId"] = canonical
+        if canonical != previous:
+            defaults["roleId"] = canonical
+            changed_keys.append("sessionDefaults.roleId")
         _validate_configuration(configuration)
+        if not changed_keys:
+            return
         revision = int(row["revision"]) + 1
         synchronized = str(row["sync_state"]) == "synchronized"
         applied_revision = revision if synchronized else int(row["applied_revision"])
@@ -186,7 +259,7 @@ class AgentConfigurationStore:
             """
             UPDATE agent_configuration_state
             SET revision = ?, configuration_json = ?, applied_revision = ?,
-                updated_at_ms = ?, updated_by = 'legacy-role-id-canonicalizer'
+                updated_at_ms = ?, updated_by = 'legacy-configuration-migrator'
             WHERE singleton_id = 1
             """,
             (revision, _json(configuration), applied_revision, now),
@@ -197,8 +270,8 @@ class AgentConfigurationStore:
             {
                 "revision": revision,
                 "revisionToken": _revision_token(revision),
-                "changedKeys": ["sessionDefaults.roleId"],
-                "updatedBy": "legacy-role-id-canonicalizer",
+                "changedKeys": sorted(set(changed_keys)),
+                "updatedBy": "legacy-configuration-migrator",
                 "syncState": str(row["sync_state"]),
             },
             created_at_ms=now,

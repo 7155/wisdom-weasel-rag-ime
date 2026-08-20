@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from rag_ime.agent_core_policy import (
+    base_agent_safety_policy_prompt,
     core_agent_policy_prompt,
     durable_memory_policy_prompt,
     managed_goal_policy_prompt,
@@ -12,6 +13,14 @@ from rag_ime.agent_core_policy import (
 
 
 class AgentCorePolicyTests(unittest.TestCase):
+    def test_base_safety_policy_is_neutral_and_package_gated(self) -> None:
+        prompt = base_agent_safety_policy_prompt()
+
+        self.assertIn("你在当前 Session 中协助用户", prompt)
+        self.assertIn("未启用的 Persona 或 Workflow 不得被固定注入", prompt)
+        self.assertNotIn("你是长期与用户一起思考和做事的伙伴", prompt)
+        self.assertNotIn("澄·", prompt)
+
     def test_durable_memory_policy_keeps_only_the_stable_governance_boundary(self) -> None:
         prompt = durable_memory_policy_prompt()
 
@@ -138,17 +147,16 @@ class AgentCorePolicyTests(unittest.TestCase):
         )
 
         self.assertLess(prompt.index("SAFETY"), prompt.index("<work-policy>"))
-        self.assertLess(prompt.index("</work-policy>"), prompt.index("<todo-policy>"))
         self.assertLess(
-            prompt.index("</todo-policy>"),
+            prompt.index("</work-policy>"),
             prompt.index("<durable-memory-policy>"),
         )
-        self.assertEqual(prompt.count("<todo-policy>"), 1)
         self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
+        self.assertNotIn("<todo-policy>", prompt)
         self.assertNotIn("<managed-work>", prompt)
         self.assertNotIn("<execution-mode", prompt)
 
-    def test_goal_task_and_managed_template_include_state_machine(self) -> None:
+    def test_goal_task_and_template_do_not_bypass_optional_workflow_package(self) -> None:
         for label, managed_session in (
             ("goal", {"goalId": "goal:1"}),
             ("task", {"currentTaskId": "task:1"}),
@@ -163,11 +171,9 @@ class AgentCorePolicyTests(unittest.TestCase):
                     },
                 )
 
-                self.assertLess(
-                    prompt.index("</durable-memory-policy>"),
-                    prompt.index("<managed-work>"),
-                )
-                self.assertEqual(prompt.count("<managed-work>"), 1)
+                self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
+                self.assertNotIn("<todo-policy>", prompt)
+                self.assertNotIn("<managed-work>", prompt)
                 self.assertNotIn("<execution-mode", prompt)
 
 

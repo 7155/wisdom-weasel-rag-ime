@@ -100,6 +100,18 @@ interface RoomChildDelegationProjection {
   state: CockpitState;
 }
 
+export interface RoomPeerRelation {
+  id: string;
+  sourceParticipantId: string;
+  sourceName: string;
+  targetParticipantId: string;
+  targetName: string;
+  kind: 'send' | 'ask' | 'reply';
+  state: CockpitState;
+  content: string;
+  replyTo: string;
+}
+
 interface FlowTaskItem {
   id: string;
   objective: string;
@@ -110,6 +122,7 @@ interface FlowTaskItem {
   acceptanceCriteria?: string[];
   resultSummary?: string;
   workItem?: RoomWorkItem;
+  document?: WorkDocumentV1;
 }
 
 interface FlowStage {
@@ -153,6 +166,9 @@ export function RoomTaskGraph({
     : undefined;
   const partners = buildPartnerProjections(room, runtime, execution?.lanes ?? [], projection);
   const childDelegations = roomChildDelegations(execution?.activities ?? [], room);
+  const peerRelations = projection
+    ? roomPeerRelationsFromProjection(projection, room)
+    : roomPeerRelations(execution?.activities ?? [], room);
   const sessionFacts = useRoomTaskSessionFacts(partners.map((partner) => partner.sessionId));
   const plan = roomPlan(sessionFacts, room.id, rootId);
   const goal = roomGoal(room, runtime, sessionFacts, rootId);
@@ -215,13 +231,14 @@ export function RoomTaskGraph({
       {modules.isMounted('flow') ? <section className="room-cockpit__section" id="room-flow">
         <SectionHeading
           icon={<Network size={16} />}
-          title="任务图与流转"
+          title="任务 Workflow"
           detail={partners.length
-            ? `${completedPartners}/${partners.length} 位伙伴完成当前分工`
-            : '等待主持伙伴产生实际分工'}
+            ? `${completedPartners}/${partners.length} 位伙伴完成当前分工 · ${navigationDocuments.items.length} 份活动工作文档`
+            : '等待真实 WorkItem 或 Session 分派'}
         />
         <TaskFlow
           coordinatorParticipantId={room.moderatorParticipantId}
+          documents={navigationDocuments.items}
           facts={sessionFacts}
           goal={goal}
           partners={partners}
@@ -230,6 +247,14 @@ export function RoomTaskGraph({
           rootId={rootId}
           rootReply={rootReply}
         />
+        <details className="room-cockpit__peer-evidence">
+          <summary>
+            <span><MessageSquareText size={14} /><strong>直接 @ 通信证据</strong></span>
+            <small>{peerRelations.length} 条 · 不参与任务依赖计算</small>
+            <ChevronDown className="room-cockpit__chevron" size={14} />
+          </summary>
+          <PeerRelationGraph relations={peerRelations} participants={roomPeerParticipants(room, partners)} />
+        </details>
       </section> : null}
 
       {modules.isMounted('partner-work') ? <section className="room-cockpit__section room-cockpit__assignments" id="room-partner-work">
@@ -294,7 +319,7 @@ function RoomQuickIndex({
   return <nav aria-label="任务快速导航" className="room-cockpit__quick-index">
     {hasNavigation ? <RoomQuickIndexTarget detail={plan ? `${plan.completed}/${plan.total}` : `${navigationCount}`} label={plan ? '计划' : '文档'} targetId="room-plan" /> : null}
     {showAssignments ? <RoomQuickIndexTarget detail={`${partners.length}`} label="分工" targetId="room-assignments" /> : null}
-    {showFlow ? <RoomQuickIndexTarget detail={active ? `@ ${active.name}` : '待开始'} label="当前执行" primary targetId="room-flow" /> : null}
+    {showFlow ? <RoomQuickIndexTarget detail={active ? `@ ${active.name}` : '待开始'} label="Workflow" primary targetId="room-flow" /> : null}
     {showPartnerWork ? <RoomQuickIndexTarget detail={`${partners.length}`} label="伙伴交付" targetId="room-partner-work" /> : null}
     <RoomQuickIndexTarget detail={rootReply ? '已形成' : '待汇合'} label="Root" targetId="room-root-reply" />
   </nav>;
@@ -450,6 +475,7 @@ function SessionConversationLink({
 function TaskFlow({
   childDelegations,
   coordinatorParticipantId,
+  documents,
   facts,
   goal,
   partners,
@@ -459,6 +485,7 @@ function TaskFlow({
 }: {
   childDelegations: RoomChildDelegationProjection[];
   coordinatorParticipantId: string;
+  documents: WorkDocumentV1[];
   facts: ReadonlyMap<string, RoomTaskSessionFact>;
   goal: string;
   partners: PartnerProjection[];
@@ -471,7 +498,18 @@ function TaskFlow({
     <Network size={18} />
     <span><strong>还没有实际流转</strong><small>只有产生真实 dispatch / WorkItem 后，Room 才会绘制节点与关系。</small></span>
   </div>;
-  const stages = taskFlowStages(partners, coordinatorParticipantId);
+  const documentByWorkItem = new Map(
+    documents
+      .filter((document) => document.authorityKind === 'room_work_item')
+      .map((document) => [document.authorityId, document]),
+  );
+  const stages = taskFlowStages(partners, coordinatorParticipantId).map((stage) => ({
+    ...stage,
+    items: stage.items.map((item) => ({
+      ...item,
+      document: item.workItem ? documentByWorkItem.get(item.workItem.id) : undefined,
+    })),
+  }));
   const flowItems = stages.flatMap((stage) => stage.items.map((item) => ({ item, stage })));
   const selected = flowItems.find(({ item }) => item.id === selectedBranch)
     ?? flowItems.find(({ item }) => item.state === 'active')
@@ -488,7 +526,14 @@ function TaskFlow({
         <p>已完成节点不重跑；只读节点可恢复；写文件、命令和外部操作先核对原 Tool 回执。</p>
       </details>
     </div>
-    <ol aria-label="目标到 Root 的流转路径" className="room-cockpit__flow-route">
+    <section className="room-cockpit__workflow-graph" aria-label="当前任务 Workflow 图">
+      <header>
+        <span><GitBranch size={15} /><strong>当前任务 Workflow</strong></span>
+        <small>实线箭头来自真实 WorkItem 父子依赖；无父节点的工作从目标直接分派。</small>
+      </header>
+      <TaskDag goal={goal} rootReady={Boolean(rootReply)} stages={stages} />
+    </section>
+    <ol aria-label="目标到 Root 的流转路径" className="room-cockpit__flow-route room-cockpit__flow-route--accessible">
       <li data-state="complete" title={goal}>
         <span>00</span>
         <span><strong>目标</strong><small>已确认</small></span>
@@ -573,6 +618,141 @@ function TaskFlow({
   </div>;
 }
 
+interface TaskDagNode {
+  id: string;
+  x: number;
+  y: number;
+  label: string;
+  detail: string;
+  document: string;
+  state: CockpitState;
+  kind: 'goal' | 'task' | 'root';
+  workItemId?: string;
+}
+
+function TaskDag({
+  goal,
+  rootReady,
+  stages,
+}: {
+  goal: string;
+  rootReady: boolean;
+  stages: FlowStage[];
+}) {
+  const nodeWidth = 214;
+  const nodeHeight = 88;
+  const columnWidth = 286;
+  const width = Math.max(660, (stages.length + 2) * columnWidth);
+  const maxRows = Math.max(1, ...stages.map((stage) => stage.items.length));
+  const height = Math.max(310, maxRows * 122 + 110);
+  const centerY = height / 2 + 10;
+  const stageNodes: TaskDagNode[][] = stages.map((stage, stageIndex) => (
+    stage.items.map((item, itemIndex) => ({
+      id: item.id,
+      x: columnWidth * (stageIndex + 1) + columnWidth / 2,
+      y: stage.items.length === 1
+        ? centerY
+        : 82 + itemIndex * ((height - 150) / Math.max(1, stage.items.length - 1)),
+      label: compactGraphText(item.objective),
+      detail: `@ ${item.partner.name}${item.workItem ? ` · WorkItem r${item.workItem.revision}` : ' · Session 运行'}`,
+      document: item.document
+        ? `文档 · ${compactGraphText(item.document.title || item.document.path)}`
+        : item.workItem
+          ? '文档 · 尚未登记'
+          : '文档 · 无结构化 WorkItem',
+      state: item.state,
+      kind: 'task' as const,
+      workItemId: item.workItem?.id,
+    }))
+  ));
+  const goalNode: TaskDagNode = {
+    id: 'goal', x: columnWidth / 2, y: centerY,
+    label: '共同目标', detail: compactGraphText(goal), document: '入口 · 用户请求', state: 'complete', kind: 'goal',
+  };
+  const rootNode: TaskDagNode = {
+    id: 'root', x: columnWidth * (stages.length + 1) + columnWidth / 2, y: centerY,
+    label: 'Root 汇合', detail: rootReady ? '已形成最终答复' : '等待所有支线汇合',
+    document: rootReady ? '验收 · 已交付' : '验收 · 等待证据',
+    state: rootReady ? 'complete' : 'waiting', kind: 'root',
+  };
+  const edges: Array<{ id: string; source: TaskDagNode; target: TaskDagNode; label: string; state: CockpitState }> = [];
+  const taskNodes = stageNodes.flat();
+  const taskNodeByWorkItem = new Map<string, TaskDagNode>();
+  for (const node of taskNodes) {
+    if (node.workItemId) taskNodeByWorkItem.set(node.workItemId, node);
+  }
+  const dependencySources = new Set<string>();
+  stages.forEach((stage, stageIndex) => stage.items.forEach((item, itemIndex) => {
+    const target = stageNodes[stageIndex]?.[itemIndex];
+    if (!target) return;
+    const parent = item.workItem?.parentWorkId
+      ? taskNodeByWorkItem.get(item.workItem.parentWorkId)
+      : undefined;
+    const source = parent ?? goalNode;
+    if (parent) dependencySources.add(parent.id);
+    edges.push({
+      id: `${source.id}:${target.id}`,
+      source,
+      target,
+      label: parent ? '依赖' : '分派',
+      state: target.state,
+    });
+  }));
+  const leaves = taskNodes.filter((node) => !dependencySources.has(node.id));
+  leaves.forEach((source) => edges.push({
+    id: `${source.id}:root`, source, target: rootNode, label: '汇合',
+    state: source.state === 'attention' ? 'attention' : rootNode.state,
+  }));
+  const nodes = [goalNode, ...stageNodes.flat(), rootNode];
+  return <div className="room-cockpit__task-dag-scroll">
+    <svg
+      aria-label={`${nodes.length} 个节点、${edges.length} 条任务关系的有向图`}
+      className="room-cockpit__task-dag"
+      preserveAspectRatio="xMidYMid meet"
+      role="img"
+      style={stages.length > 2 ? { minWidth: width + 'px' } : undefined}
+      viewBox={`0 0 ${width} ${height}`}
+    >
+      <title>目标、分派、依赖、并行与 Root 汇合关系图</title>
+      <defs>
+        <marker id="room-task-dag-arrow" markerHeight="7" markerWidth="7" orient="auto" refX="6" refY="3.5" viewBox="0 0 7 7">
+          <path d="M0,0 L7,3.5 L0,7 z" />
+        </marker>
+      </defs>
+      {stages.map((stage, index) => <text className="room-cockpit__task-dag-stage" key={stage.id} textAnchor="middle" x={columnWidth * (index + 1) + columnWidth / 2} y="30">
+        {stage.label}{stage.parallel ? ` · ${stage.items.length} 路并行` : ''}
+      </text>)}
+      <g className="room-cockpit__task-dag-edges">
+        {edges.map((edge) => {
+          const sourceX = edge.source.x + nodeWidth / 2;
+          const targetX = edge.target.x - nodeWidth / 2;
+          const midX = (sourceX + targetX) / 2;
+          return <g data-state={edge.state} key={edge.id}>
+            <path d={`M ${sourceX} ${edge.source.y} C ${midX} ${edge.source.y}, ${midX} ${edge.target.y}, ${targetX} ${edge.target.y}`} markerEnd="url(#room-task-dag-arrow)" />
+            <text textAnchor="middle" x={midX} y={(edge.source.y + edge.target.y) / 2 - 6}>{edge.label}</text>
+          </g>;
+        })}
+      </g>
+      <g className="room-cockpit__task-dag-nodes">
+        {nodes.map((node) => <g
+          data-kind={node.kind}
+          data-state={node.state}
+          key={node.id}
+          transform={`translate(${node.x - nodeWidth / 2} ${node.y - nodeHeight / 2})`}
+        >
+          <title>{node.label}：{node.detail}</title>
+          <rect height={nodeHeight} rx="12" width={nodeWidth} />
+          <circle cx="22" cy="24" r="9" />
+          <text className="room-cockpit__task-dag-label" x="40" y="27">{node.label}</text>
+          <text className="room-cockpit__task-dag-detail" x="14" y="50">{node.detail}</text>
+          <text className="room-cockpit__task-dag-document" x="14" y="67">{node.document}</text>
+          <text className="room-cockpit__task-dag-state" x="14" y="81">{stateLabel(node.state)}</text>
+        </g>)}
+      </g>
+    </svg>
+  </div>;
+}
+
 function FlowBranchInspector({ item, stage }: { item: FlowTaskItem; stage: FlowStage }) {
   const workItem = item.workItem;
   const expectedOutput = item.expectedOutput || workItem?.expectedOutput || '';
@@ -604,6 +784,16 @@ function FlowBranchInspector({ item, stage }: { item: FlowTaskItem; stage: FlowS
       </section>
       {resultSummary ? <section><strong>当前交付</strong><p>{resultSummary}</p></section> : null}
     </div> : <p className="room-cockpit__flow-inspector-empty">当前节点只有运行事实，尚未形成结构化 WorkItem。</p>}
+    {item.document ? <a
+      className="room-cockpit__workflow-document-link"
+      href={`#/work-documents?document=${encodeURIComponent(item.document.documentId)}${item.document.state === 'archived' ? '&scope=history' : ''}`}
+    >
+      <FileText size={14} />
+      <span><strong>{item.document.title || '未命名工作文档'}</strong><small>{item.document.path} · 对应 Session {item.partner.sessionId}</small></span>
+      <ExternalLink size={12} />
+    </a> : workItem ? <p className="room-cockpit__workflow-document-missing">
+      <FileText size={13} />此 WorkItem 尚未登记活动文档；伙伴仍可从 Room 工作区 docs/ 创建并注册。
+    </p> : null}
     {workItem ? <WorkRecovery workItem={workItem} /> : null}
     <SessionConversationLink className="room-cockpit__conversation-link" sessionId={item.partner.sessionId}>
       打开 @ {item.partner.name} 对话
@@ -767,7 +957,7 @@ function buildPartnerProjections(
     const participant = room.participants.find((item) => item.id === lane.participantId)
       ?? room.participants.find((item) => item.sessionId === lane.sourceSessionId);
     if (!participant) continue;
-    const workItems = relevantWorkItems.filter((item) => [item.currentOwnerParticipantId, item.accountableParticipantId, item.offeredToParticipantId].includes(participant.id));
+    const workItems = relevantWorkItems.filter((item) => [item.currentOwnerParticipantId, item.offeredToParticipantId].includes(participant.id));
     const messages = lane.messageIds.map((id) => projection?.messagesById[id]).filter((item): item is RoomMessageProjection => Boolean(item));
     const existing = result.get(participant.id);
     const activities = [...(existing?.activities ?? []), ...lane.activities];
@@ -777,7 +967,9 @@ function buildPartnerProjections(
       participantId: participant.id,
       name: participant.displayName,
       sessionId: participant.sessionId || lane.sourceSessionId,
-      assignment: existing?.assignment || partnerAssignment(workItems, lane.activities, runtime?.objective),
+      assignment: participant.id === room.moderatorParticipantId
+        ? 'Root 汇合与最终答复'
+        : existing?.assignment || partnerAssignment(workItems, lane.activities, runtime?.objective),
       state: partnerState(workItems, activities, combinedMessages, runtime?.status),
       activities,
       lanes: partnerLanes,
@@ -1116,6 +1308,293 @@ function roomChildDelegations(
   return [...byId.values()];
 }
 
+export function roomPeerRelations(
+  activities: readonly RoomActivityProjection[],
+  room: RoomSummary,
+): RoomPeerRelation[] {
+  const byId = new Map<string, RoomPeerRelation>();
+  for (const activity of activities) {
+    if (text(activity.payload.activityKind) !== 'intercom') continue;
+    const raw = activity.payload.message;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const message = raw as Record<string, unknown>;
+    const sourceParticipantId = text(message.sourceParticipantId);
+    const targetParticipantId = text(message.targetParticipantId);
+    const kind = text(message.kind);
+    if (!sourceParticipantId || !targetParticipantId || !['send', 'ask', 'reply'].includes(kind)) continue;
+    const id = text(message.id) || activity.id;
+    const state = intercomCockpitState(text(message.status) || text(activity.payload.phase));
+    byId.set(id, {
+      id,
+      sourceParticipantId,
+      sourceName: roomParticipantName(room, sourceParticipantId),
+      targetParticipantId,
+      targetName: roomParticipantName(room, targetParticipantId),
+      kind: kind as RoomPeerRelation['kind'],
+      state,
+      content: text(message.content) || activity.summary.trim(),
+      replyTo: text(message.replyTo),
+    });
+  }
+  return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+/** Intercom is a Room-wide peer channel and may use a delivery Session turn id
+ * instead of the current Root id. Read the full projection so real A -> B and
+ * B -> A edges remain visible in the task graph after Root convergence. */
+export function roomPeerRelationsFromProjection(
+  projection: RoomProjectionState,
+  room: RoomSummary,
+): RoomPeerRelation[] {
+  return roomPeerRelations(
+    projection.activityOrder
+      .map((activityId) => projection.activitiesById[activityId])
+      .filter((activity): activity is RoomActivityProjection => Boolean(activity)),
+    room,
+  );
+}
+
+function intercomCockpitState(status: string): CockpitState {
+  if (['failed', 'stale'].includes(status)) return 'attention';
+  if (status === 'cancelled') return 'cancelled';
+  if (['queued', 'delivering', 'running'].includes(status)) return 'active';
+  if (['delivered', 'replied', 'completed'].includes(status)) return 'complete';
+  return 'waiting';
+}
+
+const PEER_GRAPH_NODE_WIDTH = 168;
+const PEER_GRAPH_NODE_HEIGHT = 76;
+
+interface PeerGraphPoint {
+  x: number;
+  y: number;
+}
+
+export interface PeerGraphLayout {
+  width: number;
+  height: number;
+  nodes: Array<PeerGraphPoint & { participantId: string }>;
+  edges: Array<{
+    id: string;
+    path: string;
+    labelX: number;
+    labelY: number;
+    relation: RoomPeerRelation;
+  }>;
+}
+
+/** Build a real node-edge layout: paths terminate on participant cards and
+ * repeated messages occupy distinct curves with labels on the edges. */
+export function roomPeerGraphLayout(
+  participantIds: readonly string[],
+  relations: readonly RoomPeerRelation[],
+): PeerGraphLayout {
+  const width = Math.max(640, participantIds.length * 210);
+  const height = participantIds.length <= 2 ? 286 : 350;
+  const center = { x: width / 2, y: height / 2 };
+  const positions = new Map<string, PeerGraphPoint>();
+  participantIds.forEach((participantId, index) => {
+    if (participantIds.length === 1) {
+      positions.set(participantId, center);
+    } else if (participantIds.length === 2) {
+      positions.set(participantId, { x: index === 0 ? 120 : width - 120, y: center.y });
+    } else {
+      const angle = -Math.PI / 2 + (index * Math.PI * 2) / participantIds.length;
+      positions.set(participantId, {
+        x: center.x + Math.cos(angle) * (width / 2 - 120),
+        y: center.y + Math.sin(angle) * 112,
+      });
+    }
+  });
+
+  const visibleRelations = relations.filter((relation) => (
+    positions.has(relation.sourceParticipantId)
+    && positions.has(relation.targetParticipantId)
+    && relation.sourceParticipantId !== relation.targetParticipantId
+  ));
+  const pairKey = (relation: RoomPeerRelation) => [
+    relation.sourceParticipantId,
+    relation.targetParticipantId,
+  ].sort().join('\u001f');
+  const pairCounts = new Map<string, number>();
+  visibleRelations.forEach((relation) => {
+    const key = pairKey(relation);
+    pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+  });
+  const pairIndexes = new Map<string, number>();
+  const participantIndex = new Map(participantIds.map((id, index) => [id, index]));
+  const edges = visibleRelations.map((relation) => {
+    const key = pairKey(relation);
+    const index = pairIndexes.get(key) ?? 0;
+    pairIndexes.set(key, index + 1);
+    const count = pairCounts.get(key) ?? 1;
+    const offset = (index - (count - 1) / 2) * 54;
+    const sourceCenter = positions.get(relation.sourceParticipantId)!;
+    const targetCenter = positions.get(relation.targetParticipantId)!;
+    const source = peerNodeBoundaryPoint(sourceCenter, targetCenter);
+    const target = peerNodeBoundaryPoint(targetCenter, sourceCenter);
+    const canonicalForward = (
+      (participantIndex.get(relation.sourceParticipantId) ?? 0)
+      < (participantIndex.get(relation.targetParticipantId) ?? 0)
+    );
+    const canonicalSource = canonicalForward ? sourceCenter : targetCenter;
+    const canonicalTarget = canonicalForward ? targetCenter : sourceCenter;
+    const dx = canonicalTarget.x - canonicalSource.x;
+    const dy = canonicalTarget.y - canonicalSource.y;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const control = {
+      x: (source.x + target.x) / 2 + (-dy / length) * offset,
+      y: (source.y + target.y) / 2 + (dx / length) * offset,
+    };
+    return {
+      id: relation.id,
+      path: `M ${source.x.toFixed(1)} ${source.y.toFixed(1)} Q ${control.x.toFixed(1)} ${control.y.toFixed(1)} ${target.x.toFixed(1)} ${target.y.toFixed(1)}`,
+      labelX: (source.x + 2 * control.x + target.x) / 4,
+      labelY: (source.y + 2 * control.y + target.y) / 4,
+      relation,
+    };
+  });
+  return {
+    width,
+    height,
+    nodes: participantIds.map((participantId) => ({
+      participantId,
+      ...positions.get(participantId)!,
+    })),
+    edges,
+  };
+}
+
+function peerNodeBoundaryPoint(from: PeerGraphPoint, toward: PeerGraphPoint): PeerGraphPoint {
+  const dx = toward.x - from.x;
+  const dy = toward.y - from.y;
+  const scale = 1 / Math.max(
+    Math.abs(dx) / (PEER_GRAPH_NODE_WIDTH / 2),
+    Math.abs(dy) / (PEER_GRAPH_NODE_HEIGHT / 2),
+    Number.EPSILON,
+  );
+  return { x: from.x + dx * scale, y: from.y + dy * scale };
+}
+
+function PeerRelationGraph({
+  participants,
+  relations,
+}: {
+  participants: Array<Pick<PartnerProjection, 'participantId' | 'name' | 'assignment' | 'state'>>;
+  relations: RoomPeerRelation[];
+}) {
+  if (!participants.length) return null;
+  const participantIds = participants.map((participant) => participant.participantId);
+  const visibleRelations = relations.filter((relation) => (
+    participantIds.includes(relation.sourceParticipantId)
+    && participantIds.includes(relation.targetParticipantId)
+  ));
+  const layout = roomPeerGraphLayout(participantIds, visibleRelations);
+  const participantById = new Map(participants.map((participant) => [
+    participant.participantId,
+    participant,
+  ]));
+  return <section aria-label="伙伴直接通信关系图" className="room-cockpit__peer-graph">
+    <header className="room-cockpit__peer-graph-heading">
+      <span><strong>直接 @ 关系</strong><small>伙伴是节点；带标签的箭头从 source 节点连到 target 节点。</small></span>
+      <span>{visibleRelations.length} 条消息</span>
+    </header>
+    <div className="room-cockpit__peer-graph-canvas">
+      <svg
+        aria-label={`${participants.length} 位伙伴、${visibleRelations.length} 条直接通信的节点关系图`}
+        className="room-cockpit__peer-network"
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        style={participants.length > 4 ? { minWidth: layout.width + 'px' } : undefined}
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
+      >
+        <title>伙伴直接通信节点关系图</title>
+        <defs>
+          {(['send', 'ask', 'reply', 'attention'] as const).map((kind) => <marker
+            className={'room-cockpit__peer-arrow room-cockpit__peer-arrow--' + kind}
+            id={'room-peer-arrow-' + kind}
+            key={kind}
+            markerHeight="7"
+            markerWidth="7"
+            orient="auto-start-reverse"
+            refX="6"
+            refY="3.5"
+            viewBox="0 0 7 7"
+          >
+            <path d="M0,0 L7,3.5 L0,7 z" />
+          </marker>)}
+        </defs>
+        <g className="room-cockpit__peer-network-edges">
+          {layout.edges.map(({ id, labelX, labelY, path, relation }) => {
+            const markerKind = ['attention', 'cancelled'].includes(relation.state)
+              ? 'attention'
+              : relation.kind;
+            const label = `${peerRelationKindLabel(relation.kind)} · ${stateLabel(relation.state)}`;
+            const labelWidth = Math.max(86, Math.min(132, label.length * 9 + 22));
+            return <g data-kind={relation.kind} data-state={relation.state} key={id}>
+              <path d={path} markerEnd={'url(#room-peer-arrow-' + markerKind + ')'} />
+              <g className="room-cockpit__peer-edge-label" transform={`translate(${labelX} ${labelY})`}>
+                <rect height="24" rx="12" width={labelWidth} x={-labelWidth / 2} y="-12" />
+                <text dominantBaseline="central" textAnchor="middle">{label}</text>
+              </g>
+            </g>;
+          })}
+        </g>
+        <g className="room-cockpit__peer-network-nodes">
+          {layout.nodes.map((node) => {
+            const participant = participantById.get(node.participantId)!;
+            return <g
+              data-state={participant.state}
+              key={participant.participantId}
+              transform={`translate(${node.x - PEER_GRAPH_NODE_WIDTH / 2} ${node.y - PEER_GRAPH_NODE_HEIGHT / 2})`}
+            >
+              <title>@ {participant.name}：{participant.assignment}</title>
+              <rect height={PEER_GRAPH_NODE_HEIGHT} rx="14" width={PEER_GRAPH_NODE_WIDTH} />
+              <circle cx="28" cy="29" r="17" />
+              <text className="room-cockpit__peer-node-avatar" dominantBaseline="central" textAnchor="middle" x="28" y="29">{partnerInitial(participant.name)}</text>
+              <text className="room-cockpit__peer-node-name" x="54" y="27">@ {participant.name}</text>
+              <text className="room-cockpit__peer-node-state" x="54" y="47">{stateLabel(participant.state)}</text>
+              <text className="room-cockpit__peer-node-assignment" x="14" y="65">{compactGraphText(participant.assignment)}</text>
+            </g>;
+          })}
+        </g>
+      </svg>
+    </div>
+    {visibleRelations.length ? <details className="room-cockpit__peer-relation-details">
+      <summary>通信明细 · {visibleRelations.length} 条</summary>
+      <ol aria-label="伙伴直接通信列表" className="room-cockpit__peer-relation-list">
+        {visibleRelations.map((relation) => <li data-kind={relation.kind} data-state={relation.state} key={relation.id}>
+          <span className="room-cockpit__peer-relation-arrow">{relation.kind === 'ask' ? '?' : relation.kind === 'reply' ? '↩' : '→'}</span>
+          <span><strong>@ {relation.sourceName} → @ {relation.targetName}</strong><small>{peerRelationKindLabel(relation.kind)} · {stateLabel(relation.state)}{relation.content ? ' · ' + relation.content : ''}</small></span>
+        </li>)}
+      </ol>
+    </details> : <p className="room-cockpit__peer-graph-empty">尚未记录伙伴之间的直接 @；分派关系仍会显示在下方任务流中。</p>}
+  </section>;
+}
+
+function compactGraphText(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > 22 ? normalized.slice(0, 21) + '…' : normalized;
+}
+
+function roomPeerParticipants(
+  room: RoomSummary,
+  partners: PartnerProjection[],
+): Array<Pick<PartnerProjection, 'participantId' | 'name' | 'assignment' | 'state'>> {
+  return room.participants
+    .filter((participant) => participant.status === 'active')
+    .map((participant) => partners.find((partner) => partner.participantId === participant.id) ?? {
+      participantId: participant.id,
+      name: participant.displayName,
+      assignment: '等待直接通信或分工',
+      state: participant.id === room.moderatorParticipantId ? 'active' : 'waiting',
+    });
+}
+
+function peerRelationKindLabel(kind: RoomPeerRelation['kind']): string {
+  return kind === 'ask' ? '提问' : kind === 'reply' ? '回复' : '发送';
+}
+
 function partnerAssignment(workItems: RoomWorkItem[], activities: RoomActivityProjection[], fallback = ''): string {
   const workObjective = workItems.find((item) => item.objective.trim())?.objective.trim();
   if (workObjective) return workObjective;
@@ -1229,8 +1708,18 @@ function findRootReply(
   const candidates = [...ids].reverse().map((id) => projection.messagesById[id]).filter((message): message is RoomMessageProjection => (
     Boolean(message?.text.trim()) && message?.postKind === 'result'
   ));
-  return candidates.find((message) => message.participantId === moderatorParticipantId)
+  const published = candidates.find((message) => message.participantId === moderatorParticipantId)
     ?? candidates.at(0);
+  if (published) return published;
+  // Light Rooms do not require a second structured Post after Pi completes.
+  // The moderator's terminal execution message is already the Root answer.
+  if (turnId && projection.turnsById[turnId]?.status !== 'completed') return undefined;
+  return [...ids].reverse().map((id) => projection.messagesById[id]).find((message) => (
+    Boolean(message?.text.trim())
+    && message?.role === 'assistant'
+    && message?.status === 'completed'
+    && message?.participantId === moderatorParticipantId
+  ));
 }
 
 function roomOverallState(
@@ -1274,8 +1763,8 @@ function workRecoveryProjection(workItem: RoomWorkItem): WorkRecoveryProjection 
   if (workItem.state === 'review') {
     return {
       kind: 'acceptance',
-      label: '已提交 · 只继续验收',
-      detail: '恢复时进入复核，不重新执行已经交付的工作。',
+      label: '已提交 · 等待自动汇合',
+      detail: '恢复时只继续核对文档门槛并汇合，不重新执行已经交付的工作。',
     };
   }
   if (['failed', 'blocked', 'cancelled'].includes(workItem.state)) {
@@ -1323,7 +1812,7 @@ function todoStateLabel(state: 'pending' | 'in_progress' | 'blocked' | 'complete
 }
 
 function stateLabel(state: CockpitState): string {
-  return ({ waiting: '等待开始', active: '进行中', review: '复核中', complete: '已完成', attention: '需要处理', contract: '合同待修复', recovery: '等待修复/改派', cancelled: '已停止' })[state];
+  return ({ waiting: '等待开始', active: '进行中', review: '汇合中', complete: '已完成', attention: '需要处理', contract: '合同待修复', recovery: '等待修复/改派', cancelled: '已停止' })[state];
 }
 
 function stateIcon(state: CockpitState) {

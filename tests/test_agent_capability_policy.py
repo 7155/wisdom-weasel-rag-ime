@@ -3,7 +3,6 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 from rag_ime.agent_configuration import (
     AgentConfigurationStore,
@@ -119,8 +118,9 @@ class _RoomCapabilityGateway:
         args: dict[str, object],
         *,
         tool_call_id: str,
+        source_loop_id: str = "",
     ) -> dict[str, object]:
-        del session_id, tool_call_id
+        del session_id, tool_call_id, source_loop_id
         self.room_calls.append(("room_partner", dict(args)))
         return {"operation": str(args.get("op") or "list")}
 
@@ -143,17 +143,9 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.runtime = _Runtime()
         self.rooms = _Rooms()
         self.events = _Events()
-        self.personas = SimpleNamespace(
-            resolve=lambda _role_id, _role_version: SimpleNamespace(
-                role_id="companion-future-v1",
-                version="1",
-                selectable_modes=("assistant", "coordinator"),
-            )
-        )
         self.policy = AgentSessionPolicyService(
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
-            personas=self.personas,
             rooms=self.rooms,
             events=self.events,
             runtime_status=self.runtime.runtime_status,
@@ -414,7 +406,7 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             },
         )
 
-    def test_todo_and_ask_are_fixed_for_ordinary_sessions_despite_hiding(self) -> None:
+    def test_workflow_package_tools_are_not_fixed_core_tools(self) -> None:
         session = self.sessions.create(title="fixed base tools")
         session_id = str(session["id"])
 
@@ -430,16 +422,15 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             },
         )
 
-        self.assertIn("todo", updated["session"]["allowedTools"])
+        self.assertNotIn("todo", updated["session"]["allowedTools"])
         catalog = self._gateway().manifests(session_id=session_id)
         todo = next(
             item
             for item in catalog["items"]
             if item["canonicalId"] == "tool:todo"
         )
-        self.assertEqual(todo["authorization"]["state"], "authorized")
-        self.assertEqual(todo["disclosure"]["effective"], "enabled")
-        self.assertEqual(todo["disclosure"]["reason"], "required_session_tool")
+        self.assertEqual(todo["authorization"]["state"], "denied")
+        self.assertEqual(todo["disclosure"]["effective"], "disabled")
         ask = next(
             item
             for item in catalog["items"]
@@ -449,14 +440,14 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertEqual(ask["disclosure"]["effective"], "enabled")
         self.assertEqual(ask["disclosure"]["reason"], "required_session_tool")
         self.assertTrue(ask["alwaysAvailable"])
-        runtime_todo = next(
-            item
+        runtime_names = {
+            str(item["name"])
             for item in self._gateway().runtime_manifests(
                 self.sessions.get(session_id)
             )
-            if item["name"] == "todo"
-        )
-        self.assertTrue(runtime_todo["alwaysAvailable"])
+        }
+        self.assertNotIn("todo", runtime_names)
+        self.assertNotIn("agent_goal", runtime_names)
 
     def test_reviewer_and_read_only_collaborator_manifest_fences_workspace_mutations(
         self,

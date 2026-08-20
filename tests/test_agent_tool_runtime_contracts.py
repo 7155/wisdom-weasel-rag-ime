@@ -66,8 +66,8 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         return catalog, gateway.runtime_manifests(session)
 
     def test_runtime_schema_projection_does_not_share_mutable_global_branches(self) -> None:
-        _, manifests = self._runtime_contracts(mode="coordinator")
-        todo = next(item for item in manifests if item["name"] == "todo")
+        operations = ["init", "start", "done", "drop", "block", "unblock", "append", "view", "rm"]
+        todo = {"parameters": _runtime_tool_parameter_schema("todo", operations)}
         append = next(
             branch
             for branch in todo["parameters"]["oneOf"]
@@ -75,10 +75,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         )
         append.pop("additionalProperties")
 
-        _, fresh_manifests = self._runtime_contracts(mode="coordinator")
-        fresh_todo = next(
-            item for item in fresh_manifests if item["name"] == "todo"
-        )
+        fresh_todo = {"parameters": _runtime_tool_parameter_schema("todo", operations)}
         fresh_append = next(
             branch
             for branch in fresh_todo["parameters"]["oneOf"]
@@ -202,6 +199,8 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             if item["enabled"] is not True or item.get("runtimeOwner") == "pi_host":
                 continue
             tool_id = str(item["id"])
+            if tool_id in {"todo", "agent_goal"}:
+                continue
             operations = {str(value) for value in item["effectiveOperations"]}
             effective[tool_id] = operations
         native_ask = next(item for item in catalog if item["id"] == "ask")
@@ -301,11 +300,24 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             )
         )
         self.assertIn("work_documents", {manifest["name"] for manifest in manifests})
-        self.assertIn("agent_goal", {manifest["name"] for manifest in manifests})
+        self.assertNotIn("todo", {manifest["name"] for manifest in manifests})
+        self.assertNotIn("agent_goal", {manifest["name"] for manifest in manifests})
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
         tools = {manifest["name"]: manifest for manifest in manifests}
+        legacy_todo = {
+            "parameters": _runtime_tool_parameter_schema(
+                "todo",
+                ["init", "start", "done", "drop", "block", "unblock", "append", "view", "rm"],
+            )
+        }
+        legacy_goal = {
+            "parameters": _runtime_tool_parameter_schema(
+                "agent_goal",
+                ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"],
+            )
+        }
         internal_edit = {
             "parameters": _runtime_tool_parameter_schema("workspace_edit", ["apply"])
         }
@@ -423,7 +435,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertIn("可选 Todo 导航链接", delegate["properties"]["todoTask"]["description"])
         todo_branches = {
             branch["properties"]["op"]["const"]: branch
-            for branch in tools["todo"]["parameters"]["oneOf"]
+            for branch in legacy_todo["parameters"]["oneOf"]
         }
         self.assertEqual(
             set(todo_branches),
@@ -467,12 +479,12 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             [{"required": ["runId"]}, {"required": ["batchId"]}],
         )
         self.assertEqual(self._branch(tools["agents"], "status")["required"], ["op"])
-        goal_setup = self._branch(tools["agent_goal"], "confirm_setup")
+        goal_setup = self._branch(legacy_goal, "confirm_setup")
         self.assertEqual(
             goal_setup["required"],
             ["op", "confirmed", "objective"],
         )
-        goal_complete = self._branch(tools["agent_goal"], "complete")
+        goal_complete = self._branch(legacy_goal, "complete")
         self.assertEqual(
             goal_complete["properties"]["evidence"]["items"]["required"],
             ["kind", "summary", "reference"],

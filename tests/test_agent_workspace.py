@@ -77,6 +77,32 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         read = harness.read(self.session, {"path": str(self.root / "README.md")})
         self.assertEqual(read["content"], "hello 澄\n")
 
+    def test_read_accepts_a_workspace_basename_prefixed_relative_path(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        read = harness.read(
+            self.session,
+            {"path": f"{self.root.name}/src/main.py"},
+        )
+
+        self.assertEqual(read["content"], "print('ok')\n")
+
+    def test_missing_read_distinguishes_missing_from_outside_and_suggests_nearby(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        with self.assertRaises(WorkspaceHarnessError) as raised:
+            harness.read(self.session, {"path": "src/missing.py"})
+
+        message = str(raised.exception)
+        self.assertIn("path does not exist in the authorized workspace", message)
+        self.assertIn("nearby entries: src/main.py", message)
+        self.assertNotIn("outside", message)
+
+        with self.assertRaises(WorkspaceHarnessError) as outside:
+            harness.read(self.session, {"path": str(self.outside)})
+        self.assertIn("outside the authorized workspace", str(outside.exception))
+        self.assertNotIn("does not exist", str(outside.exception))
+
     def test_sensitive_binary_symlink_and_outside_reads_fail_closed(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})
         for path in (

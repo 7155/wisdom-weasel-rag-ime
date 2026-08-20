@@ -943,7 +943,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
         )
         self.policy.authorize(request, authorized)
 
-    def test_room_message_accepts_optional_work_item_and_attachment_ids(self) -> None:
+    def test_room_message_accepts_retry_work_item_and_attachment_ids(self) -> None:
         request = ControlRequest(
             request_id="request-room-work-item",
             path_id=ControlPathId.AGENT_ROOM_MESSAGE.value,
@@ -951,6 +951,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
             body={
                 "message": "继续处理",
                 "clientMessageId": "message-1",
+                "retryOfRootId": "room-root:failed-1",
                 "workItemId": "room-work:1",
                 "attachmentIds": ["media_room_attachment01"],
             },

@@ -3454,10 +3454,33 @@ class WorkspaceHarness:
         allow_directory: bool,
     ) -> tuple[Path, Path]:
         requested = Path(raw_path).expanduser()
-        candidates = [requested] if requested.is_absolute() else [root / requested for root in roots]
-        for candidate in candidates:
+        candidates: list[Path] = []
+        if requested.is_absolute():
+            candidates.append(requested)
+        else:
+            for root in roots:
+                # Models often repeat the visible repository name even though
+                # relative paths are already resolved from that repository.
+                # Normalize that unambiguous form without widening the grant.
+                if requested.parts and requested.parts[0] == root.name:
+                    candidates.append(root.parent / requested)
+                candidates.append(root / requested)
+
+        unique_candidates = list(dict.fromkeys(candidates))
+        missing_inside_workspace: list[tuple[Path, Path]] = []
+        for candidate in unique_candidates:
             try:
                 resolved = candidate.resolve(strict=True)
+            except (FileNotFoundError, NotADirectoryError):
+                try:
+                    unresolved = candidate.resolve(strict=False)
+                except (OSError, RuntimeError):
+                    continue
+                for root in roots:
+                    if _is_within(unresolved, root):
+                        missing_inside_workspace.append((unresolved, root))
+                        break
+                continue
             except (OSError, RuntimeError):
                 continue
             for root in roots:
@@ -3465,7 +3488,50 @@ class WorkspaceHarness:
                     if resolved.is_dir() and not allow_directory:
                         raise WorkspaceHarnessError("workspace_read path must be a file")
                     return resolved, root
-        raise WorkspaceHarnessError("path is outside the authorized workspace or does not exist")
+        if missing_inside_workspace:
+            target, root = missing_inside_workspace[0]
+            raise WorkspaceHarnessError(self._missing_path_message(target, root))
+        raise WorkspaceHarnessError("path is outside the authorized workspace")
+
+    def _missing_path_message(self, target: Path, root: Path) -> str:
+        message = "path does not exist in the authorized workspace"
+        ancestor = target.parent
+        while _is_within(ancestor, root) and not ancestor.exists():
+            ancestor = ancestor.parent
+        try:
+            resolved_ancestor = ancestor.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return message
+        if (
+            not _is_within(resolved_ancestor, root)
+            or resolved_ancestor.is_symlink()
+            or not resolved_ancestor.is_dir()
+        ):
+            return message
+        try:
+            children = [
+                child
+                for child in resolved_ancestor.iterdir()
+                if not child.is_symlink() and not self._is_sensitive(child, root)
+            ]
+        except OSError:
+            return message
+        ranked = sorted(
+            children,
+            key=lambda child: (
+                child.suffix.casefold() != target.suffix.casefold(),
+                -difflib.SequenceMatcher(
+                    None,
+                    target.name.casefold(),
+                    child.name.casefold(),
+                ).ratio(),
+                child.name.casefold(),
+            ),
+        )
+        nearby = [str(child.relative_to(root)) for child in ranked[:8]]
+        if nearby:
+            return f"{message}; nearby entries: {', '.join(nearby)}"
+        return message
 
     def _resolve_write_path(
         self,

@@ -75,17 +75,28 @@ def main() -> int:
     args = parser.parse_args()
 
     payload = args.payload.resolve()
-    workspace_root = args.workspace_root.resolve()
+    source_workspace_root = args.workspace_root.resolve()
     node = payload / "bin" / "node"
     entrypoint = payload / "runtime-host" / "cli.mjs"
     manifest_path = payload / "manifest.json"
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
+    pi_version = str(manifest.get("piVersion") or "").strip()
     if not node.is_file() or not entrypoint.is_file():
         raise SystemExit("staged Runtime Host payload is incomplete")
+    if not pi_version:
+        raise SystemExit("staged Runtime Host manifest has no Pi version")
 
     with tempfile.TemporaryDirectory(prefix="pi-room-composition-") as state_root_text:
         state_root = Path(state_root_text)
+        workspace_root = state_root / "workspace"
+        workspace_root.mkdir()
+        source_package_json = source_workspace_root / "package.json"
+        (workspace_root / "package.json").write_bytes(
+            source_package_json.read_bytes()
+            if source_package_json.is_file()
+            else b'{"name":"pi-room-composition-smoke","private":true}\n'
+        )
         environment = {
             "NODE_ENV": "test",
             "RAG_IME_PI_DETERMINISTIC_ADAPTER": "room-v2",
@@ -110,7 +121,7 @@ def main() -> int:
                         "RAG_IME_PI_DETERMINISTIC_ADAPTER": "room-v2",
                         "RAG_IME_PI_DETERMINISTIC_SLOW": "1",
                     },
-                    pi_version="0.80.7",
+                    pi_version=pi_version,
                     protocol_version="2",
                     max_sessions=8,
                 ),
@@ -234,19 +245,94 @@ def main() -> int:
                     partner_parent_session_turn,
                     partner_parent_root,
                 )
+                # Pre-establish the same durable WorkItem identity that the
+                # room_partner Tool creates, then prove the opening and final
+                # WorkDocument revisions before the child reaches its terminal
+                # gate. The Tool reuses this item by idempotency key.
+                partner_tool_call_id = "room-composition-partner-tool"
+                partner_task = "Return the exact marker ROOM-PARTNER-CHILD-OK."
+                partner_expected_output = "One exact marker"
+                partner_acceptance = [
+                    "The result contains ROOM-PARTNER-CHILD-OK"
+                ]
+                delegated_work = service.room_work.create(
+                    room_id=room_id,
+                    objective=partner_task,
+                    expected_output=partner_expected_output,
+                    current_owner_participant_id=str(partner["id"]),
+                    created_by_participant_id=str(facilitator["id"]),
+                    accountable_participant_id=str(facilitator["id"]),
+                    client_message_id=(
+                        f"room-partner:{partner_parent_root}:{partner_tool_call_id}"
+                    ),
+                    topic_id=str(room.get("activeTopicId") or ""),
+                    root_turn_id=partner_parent_root,
+                    acceptance_criteria=partner_acceptance,
+                    state="active",
+                    depth=1,
+                )
+                work_events = service.room_work.list_events(
+                    str(delegated_work["id"])
+                )
+                authority_revision = int(work_events[-1]["sequence"])
+                source_document = (
+                    workspace_root / "docs" / "agent" / "room-partner-smoke.md"
+                )
+                source_document.parent.mkdir(parents=True, exist_ok=True)
+                source_document.write_text(
+                    "# Room Partner smoke\n\n"
+                    "## Goal\nReturn the required marker.\n\n"
+                    "## Scope\nInspect the isolated fixture only.\n\n"
+                    "## Plan\nRead package.json, then report the marker.\n",
+                    encoding="utf-8",
+                )
+                opened_document = service.work_documents.register(
+                    {
+                        "authorityKind": "room_work_item",
+                        "authorityId": str(delegated_work["id"]),
+                        "authorityRevision": authority_revision,
+                        "workspaceRoot": str(workspace_root),
+                        "sourcePath": "docs/agent/room-partner-smoke.md",
+                        "title": "Room Partner smoke",
+                    }
+                )["document"]
+                canonical_document = workspace_root / str(opened_document["path"])
+                canonical_document.write_text(
+                    "# Room Partner smoke\n\n"
+                    "## Goal\nReturn the required marker.\n\n"
+                    "## Scope\nInspected the isolated fixture only.\n\n"
+                    "## Result\nROOM-PARTNER-CHILD-OK\n\n"
+                    "## Evidence\nRead package.json through the staged Pi Session.\n\n"
+                    "## Changed files\nNone.\n\n"
+                    "## Verification\nThe delegated Session reached its terminal response.\n\n"
+                    "## Remaining risks\nNone for this isolated acceptance.\n",
+                    encoding="utf-8",
+                )
+                synced_document = service.work_documents.register(
+                    {
+                        "authorityKind": "room_work_item",
+                        "authorityId": str(delegated_work["id"]),
+                        "authorityRevision": authority_revision,
+                        "workspaceRoot": str(workspace_root),
+                        "sourcePath": str(opened_document["path"]),
+                        "title": "Room Partner smoke",
+                    }
+                )["document"]
+                if int(synced_document.get("documentRevision") or 0) < 2:
+                    raise RuntimeError(
+                        "Room Partner WorkDocument did not record its final sync"
+                    )
                 child_result = service.execute_room_partner_tool(
                     str(facilitator["sessionId"]),
                     {
                         "op": "delegate",
                         "targetParticipantId": str(partner["id"]),
-                        "task": "Return the exact marker ROOM-PARTNER-CHILD-OK.",
-                        "expectedOutput": "One exact marker",
-                        "acceptanceCriteria": [
-                            "The result contains ROOM-PARTNER-CHILD-OK"
-                        ],
+                        "task": partner_task,
+                        "expectedOutput": partner_expected_output,
+                        "acceptanceCriteria": partner_acceptance,
                         "timeoutSeconds": 12,
                     },
-                    tool_call_id="room-composition-partner-tool",
+                    tool_call_id=partner_tool_call_id,
                 )
                 if child_result.get("status") != "completed":
                     raise RuntimeError(
@@ -337,6 +423,13 @@ def main() -> int:
                             "partnerSessionId": partner.get("sessionId"),
                             "partnerChildStatus": child_result.get("status"),
                             "partnerChildTerminalCount": len(child_terminals),
+                            "partnerWorkDocumentRevision": synced_document.get(
+                                "documentRevision"
+                            ),
+                            "partnerWorkItemState": service.room_work.get(
+                                str(delegated_work["id"]),
+                                room_id=room_id,
+                            ).get("state"),
                             "steerDelivery": steered.get("delivery"),
                             "steerOrderedBeforeTerminal": steer_index < terminal_index,
                             "stopStatus": stopped.get("status"),

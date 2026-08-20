@@ -515,9 +515,7 @@ class AgentPromptApplicationService:
             Callable[[Mapping[str, object]], None] | None
         ) = None,
     ) -> dict[str, object]:
-        session = self.memory_context.ensure_role_book(
-            session_id
-        )
+        session = self.sessions.get(session_id)
         self._require_prompt_admission_active(
             session_id,
             client_message_id=client_message_id,

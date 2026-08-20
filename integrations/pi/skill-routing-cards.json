@@ -1,9 +1,9 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 13,
-    "projectedBundledCards": 3,
-    "canonicalCards": 40
+    "bundledSkillEntries": 14,
+    "projectedBundledCards": 4,
+    "canonicalCards": 41
   },
   "collisionPolicy": {
     "default": "reject",
@@ -11,6 +11,7 @@
       "configured": [],
       "pi-installed": [
         "alignment-and-decision",
+        "bootstrap-project-context",
         "facilitate-room",
         "implementation-planning",
         "improve-codebase-architecture",
@@ -27,7 +28,7 @@
     }
   },
   "coverage": {
-    "representedSourceEntries": 49,
+    "representedSourceEntries": 50,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -66,30 +67,42 @@
     {
       "name": "plugin-creator",
       "when": [
-        "用户要求安装、更新、回滚或创建可复用 Pi Package",
-        "现有 Tool 或 Skill 无法满足且能力值得复用"
+        "用户要求管理或创建可复用 Pi Package",
+        "缺少可复用 Tool 或 Skill"
       ],
       "notFor": [
-        "已有能力可完成的普通任务或一次性修改",
-        "密钥、不明代码、绕过确认或第二套加载器"
+        "普通任务或一次性修改",
+        "密钥、不明代码或绕过确认"
       ],
-      "does": "先搜索已有包；没有合适项时创建、校验并提交安装预览。",
-      "input": "缺失能力、来源、触发边界和验收。",
-      "output": "匹配包或草案、校验回执、安装提议和限制。"
+      "does": "搜索、校验并生成安装预览；缺少时创建包。",
+      "input": "能力、来源和验收。",
+      "output": "包、校验与安装提议。"
+    },
+    {
+      "name": "bootstrap-project-context",
+      "when": [
+        "项目根缺少 AGENTS.md 或用户要求初始化上下文"
+      ],
+      "notFor": [
+        "普通任务或覆盖已有规则"
+      ],
+      "does": "创建精简 AGENTS.md 并索引 docs 与 WorkDocument。",
+      "input": "项目根与文档。",
+      "output": "入口与索引。"
     },
     {
       "name": "project-maintainer",
       "when": [
-        "设计或实施 PAW 构建、安装、卸载、升级、回滚或恢复",
-        "修改安装器、LaunchAgent、受管 Pi Runtime 或自举维护流程"
+        "维护 PAW 安装、升级或回滚",
+        "修改 LaunchAgent 或 Pi Runtime"
       ],
       "notFor": [
-        "普通功能开发、一次性代码修改或外部软件安装",
-        "绕过权限、审批、回执和版本快照"
+        "普通功能或一次性修改",
+        "绕过权限、审批或版本快照"
       ],
-      "does": "识别真实安装层与回执，按可恢复顺序实施并验证。",
-      "input": "维护目标、允许的状态变更和验收边界。",
-      "output": "变更、确认点、安装或恢复回执、验证与残余风险。"
+      "does": "按可恢复顺序实施并验证安装。",
+      "input": "维护目标、授权和验收。",
+      "output": "变更、回执、验证与风险。"
     },
     {
       "name": "review-agent",
@@ -435,16 +448,16 @@
     {
       "name": "memory-curation",
       "when": [
-        "用户明确要求整理、纠正、遗忘或回滚记忆",
-        "验收结果产生少量可复用事实，或低频维护运行"
+        "用户要求管理或回滚记忆",
+        "验收产生复用事实或低频维护"
       ],
       "notFor": [
-        "普通聊天、临时进度、失败回执或 Room 私有过程",
-        "直写数据库、自动批准或保存整段对话"
+        "普通聊天、临时进度或 Room 私有过程",
+        "直写数据库、自动批准或整段保存"
       ],
-      "does": "基于证据生成可审阅的记忆变更草案。",
-      "input": "用户意图、授权证据、当前记忆和冲突。",
-      "output": "待审变更、证据、冲突、审批和回滚信息。"
+      "does": "据授权证据生成待审草案。",
+      "input": "意图、证据、记忆与冲突。",
+      "output": "变更、审批与回滚。"
     }
   ]
 }

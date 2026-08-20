@@ -1,4 +1,4 @@
-import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, Bot, BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Virtuoso,
@@ -158,7 +158,6 @@ function logicalRetryRootUserIds(
 }
 
 export function AgentTimeline({
-  assistantName = '澄',
   sessionId,
   persona,
   loading = false,
@@ -393,7 +392,7 @@ export function AgentTimeline({
         </div>
       );
     }
-    return <AgentWelcome assistantName={assistantName} persona={persona} onSuggestion={onSuggestion} />;
+    return <AgentWelcome persona={persona} onSuggestion={onSuggestion} />;
   }
   return (
     <div className="agent-timeline" aria-label="对话时间线" role="log">
@@ -418,7 +417,6 @@ export function AgentTimeline({
         itemContent={(_index, turnId) => (
           <AgentTurn
             key={turnId}
-            assistantName={assistantName}
             sessionId={sessionId}
             turnId={turnId}
             persona={persona}
@@ -501,7 +499,7 @@ export function AgentTimeline({
                   </span>
                   {userPreview ? <small><b>你</b><span>{userPreview}</span></small> : null}
                   <small>
-                    <b>{persona?.displayName ?? assistantName}</b>
+                    <b>{persona?.displayName ?? 'Agent'}</b>
                     <span>{assistantPreview || turnMarkerLabel(markerKind)}</span>
                   </small>
                 </span>
@@ -540,7 +538,6 @@ function AgentTurnTombstone({
 }
 
 export function AgentTurn({
-  assistantName = '澄',
   sessionId,
   turnId,
   persona,
@@ -640,15 +637,31 @@ export function AgentTurn({
   const rawFailure = turn.failure || blockFailure;
   const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
   const networkInterrupted = turn.status === 'failed' && isAgentNetworkInterruption(rawFailure);
+  const terminalFailureActivity = [...activities].reverse().find((activity) => (
+    activity.kind === 'turn_failed' && activity.status === 'failed'
+  ));
+  const retryExhausted = terminalFailureActivity?.payload.retryExhausted === true;
+  const providerRetryAttempts = numberValue(
+    terminalFailureActivity?.payload.providerRetryAttempts,
+  );
   const retainedResults = assistantMessages.some((message) => (
     message.blocks.some((block) => block.type === 'file' || block.type === 'artifact' || block.type === 'diff')
   ));
-  const failureTitle = networkInterrupted ? '网络中断' : '本轮未完成';
-  const failureDetail = networkInterrupted
+  const safeContinuation = networkInterrupted || retryExhausted;
+  const failureTitle = networkInterrupted
+    ? '网络中断'
+    : retryExhausted
+      ? '模型服务请求失败'
+      : '本轮未完成';
+  const failureDetail = retryExhausted && providerRetryAttempts > 0
     ? retainedResults
-      ? '连接在最终回复生成前中断；已完成的工具与文件结果已保留。继续会基于当前 Session 接续，不重放原请求。'
-      : '连接在最终回复生成前中断；请继续当前对话，或切换模型后继续。'
-    : failure;
+      ? `模型连接已自动重试 ${providerRetryAttempts} 次，仍未恢复；已完成的工具与文件结果已保留。继续会基于当前 Session 接续，不重放原请求。`
+      : `模型连接已自动重试 ${providerRetryAttempts} 次，仍未恢复；请稍后继续，或切换模型后继续。`
+    : networkInterrupted
+      ? retainedResults
+        ? '连接在最终回复生成前中断；已完成的工具与文件结果已保留。继续会基于当前 Session 接续，不重放原请求。'
+        : '连接在最终回复生成前中断；请继续当前对话，或切换模型后继续。'
+      : failure;
   const retryRequested = retryRequestedFor === `${turnId}:${turn.status}`;
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const turnSettled = turn.status === 'completed' || turn.status === 'failed' || turn.status === 'aborted';
@@ -660,9 +673,9 @@ export function AgentTurn({
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
-          <PersonaAvatar fallbackName={assistantName} persona={persona} presence={showWorking ? 'thinking' : presence} size="small" />
+          <AgentIdentityMark persona={persona} presence={showWorking ? 'thinking' : presence} size="small" />
           <div className="agent-assistant-turn__body">
-            <header><strong>{persona?.displayName ?? assistantName}</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
+            <header><strong>{persona?.displayName ?? 'Agent'}</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
             <div className="agent-turn-sequence" aria-label="本轮响应过程">
               {timelineEntries.map((entry) => entry.kind === 'message' ? (
@@ -695,7 +708,7 @@ export function AgentTurn({
                 <span><strong>{failureTitle}</strong><small>{failureDetail}</small></span>
                 {onSwitchModel && !nonRetryableAdmission ? (
                   <div className="agent-turn__failure-actions">
-                    {networkInterrupted ? (
+                    {safeContinuation ? (
                       onContinueTurn && latestTurnId === turnId ? (
                         <Button
                           size="small"
@@ -1135,11 +1148,9 @@ function ContextCompactionNotice({ activity }: { activity: AgentActivityProjecti
 }
 
 function AgentWelcome({
-  assistantName,
   persona,
   onSuggestion,
 }: {
-  assistantName: string;
   persona?: AgentPersonaV1;
   onSuggestion: (value: string) => void;
 }) {
@@ -1150,8 +1161,8 @@ function AgentWelcome({
   ];
   return (
     <div className="agent-welcome">
-      <PersonaAvatar fallbackName={assistantName} persona={persona} size="hero" />
-      <div><h2>今天想先从哪里开始？</h2><p>{persona?.tagline ?? '连续对话、检索和整理都从这里开始。'}</p></div>
+      <AgentIdentityMark persona={persona} size="hero" />
+      <div><h2>今天想先从哪里开始？</h2><p>{persona?.tagline ?? '普通 Pi Session 已就绪；命令、工具和辅助面板跟随当前 Package 快照。'}</p></div>
       <div className="agent-welcome__suggestions">
         {suggestions.map(([title, prompt]) => (
           <Button key={title} variant="quiet" leadingIcon={<Sparkles size={15} />} trailingIcon={<ArrowUpRight size={14} />} onClick={() => onSuggestion(prompt)}>{title}</Button>
@@ -1159,6 +1170,25 @@ function AgentWelcome({
       </div>
     </div>
   );
+}
+
+function AgentIdentityMark({
+  persona,
+  presence = 'idle',
+  size,
+}: {
+  persona?: AgentPersonaV1;
+  presence?: PersonaPresence;
+  size: 'small' | 'hero';
+}) {
+  if (persona) return <PersonaAvatar persona={persona} presence={presence} size={size} />;
+  return <span
+    aria-label="Pi Agent"
+    className="agent-runtime-avatar"
+    data-presence={presence}
+    data-size={size}
+    role="img"
+  ><Bot aria-hidden="true" size={size === 'hero' ? 27 : 17} /></span>;
 }
 
 function turnStatusLabel(status: string): string {

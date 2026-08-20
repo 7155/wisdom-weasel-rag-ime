@@ -491,13 +491,14 @@ class RoomTurnRegistry:
         self,
         session_id: str,
         room_turn_id: str,
-    ) -> None:
-        """Fence duplicate runtime terminals after Room emitted an abort.
+    ) -> bool:
+        """Reserve Room's one public abort terminal.
 
-        A synchronous Room abort writes its own public terminal before Pi's
-        private Session necessarily settles. Remember that fact so the later
-        runtime `turn_completed(status=aborted)` remains a private receipt
-        instead of producing a second Room terminal.
+        Return ``True`` only when the caller won the reservation. Pi may settle
+        while the synchronous abort request is still collecting cancellation
+        receipts; in that race the runtime event has already claimed and
+        published the terminal, so the Room cancellation path must not publish
+        a second synthetic terminal.
         """
 
         with self.lock:
@@ -506,12 +507,16 @@ class RoomTurnRegistry:
                 "",
             )
             if not receipt_id:
-                return
+                return False
+            terminal_key = (session_id, room_turn_id)
+            if terminal_key in self.cancelled_terminal_by_session_root:
+                return False
             self._remember_cancelled_terminal_locked(
                 session_id,
                 room_turn_id,
                 receipt_id,
             )
+            return True
 
     def claim_cancelled_terminal(
         self,

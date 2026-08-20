@@ -291,6 +291,15 @@ class AgentApprovalApplicationService:
         self,
         approval: Mapping[str, object],
     ) -> dict[str, object]:
+        try:
+            return self._auto_approve_pending(approval)
+        except Exception as exc:
+            return self._fail_automatic_approval(approval, exc)
+
+    def _auto_approve_pending(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
         approval_id = str(approval.get("approvalId") or "")
         current = self.host.sessions.get_approval(approval_id)
         session_id = str(current.get("sessionId") or "")
@@ -433,6 +442,80 @@ class AgentApprovalApplicationService:
         result["retryable"] = False
         result["terminalReason"] = summary
         return result
+
+    def _fail_automatic_approval(
+        self,
+        approval: Mapping[str, object],
+        error: Exception,
+    ) -> dict[str, object]:
+        """Close an unattended approval when its bridge fails.
+
+        The Pi Tool call is synchronous, so an exception between preview
+        creation and the automatic decision otherwise leaves a durable
+        ``pending`` approval with no human owner.  That orphan is projected as
+        an endlessly running Room activity.  Convert the exact approval to a
+        terminal state and return an ordinary terminal Tool result instead.
+        """
+
+        approval_id = str(approval.get("approvalId") or "")
+        current = self.host.sessions.get_approval(approval_id)
+        state = str(current.get("state") or "")
+        if state == "pending":
+            try:
+                current = self.host.sessions.decide_approval(
+                    approval_id,
+                    approved=False,
+                    payload_sha256=str(current.get("payloadSha256") or ""),
+                    decided_by="automatic-approval-bridge",
+                )
+            except ValueError:
+                current = self.host.sessions.get_approval(approval_id)
+        elif state == "approved":
+            receipt = _failed_receipt(
+                current,
+                summary="自动审批执行失败，原操作没有执行",
+                reason="automatic_approval_bridge_failed",
+                error=error,
+            )
+            try:
+                current = self.host.sessions.complete_approval(
+                    approval_id,
+                    state="failed",
+                    receipt=receipt,
+                )
+            except ValueError:
+                current = self.host.sessions.get_approval(approval_id)
+
+        terminal_state = str(current.get("state") or "failed")
+        summary = "自动审批执行失败，原操作没有执行"
+        event_payload: dict[str, object] = {
+            "approvalId": approval_id,
+            "state": terminal_state,
+            "automatic": True,
+            "decisionMode": "policy",
+            "error": _public_error(error),
+            **_approval_event_identity(current),
+        }
+        self.host.events.publish(
+            str(current.get("sessionId") or approval.get("sessionId") or ""),
+            "approval_resolved",
+            event_payload,
+            turn_id=_approval_turn_id(current),
+        )
+        return {
+            "summary": summary,
+            "approvalRequired": False,
+            "autoApproved": False,
+            "approvalId": approval_id,
+            "approval": dict(current),
+            "receipt": {},
+            "memoryCheckpoint": {},
+            "decisionMode": "policy",
+            "terminal": True,
+            "retryable": False,
+            "terminalReason": summary,
+            "failureCode": "automatic_approval_bridge_failed",
+        }
 
     @staticmethod
     def _automatic_terminal_result(

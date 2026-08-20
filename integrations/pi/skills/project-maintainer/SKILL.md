@@ -2,14 +2,14 @@
 name: project-maintainer
 description: Maintain the Personal Agent Workbench product installation and its self-hosted runtime. Use when designing or implementing PAW build, install, uninstall, update, rollback, repair, or recovery behavior, including LaunchAgents and the managed Pi Runtime. Do not use for ordinary feature development, one-off code edits, unrelated software installation, or as a substitute for runtime permissions, approvals, receipts, and version snapshots.
 when:
-  - 设计或实施 PAW 构建、安装、卸载、升级、回滚或恢复
-  - 修改安装器、LaunchAgent、受管 Pi Runtime 或自举维护流程
-does: 识别真实安装层与回执，按可恢复顺序实施并验证。
-input: 维护目标、允许的状态变更和验收边界。
-output: 变更、确认点、安装或恢复回执、验证与残余风险。
+  - 维护 PAW 安装、升级或回滚
+  - 修改 LaunchAgent 或 Pi Runtime
+does: 按可恢复顺序实施并验证安装。
+input: 维护目标、授权和验收。
+output: 变更、回执、验证与风险。
 notFor:
-  - 普通功能开发、一次性代码修改或外部软件安装
-  - 绕过权限、审批、回执和版本快照
+  - 普通功能或一次性修改
+  - 绕过权限、审批或版本快照
 ---
 
 # Maintain Personal Agent Workbench

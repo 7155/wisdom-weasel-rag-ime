@@ -137,6 +137,18 @@ class AgentProtocolTests(unittest.TestCase):
         event_types = contract["properties"]["eventType"]["enum"]
         self.assertEqual(AGENT_EVENT_TYPES, frozenset(event_types))
 
+    def test_event_contract_accepts_package_command_receipts(self) -> None:
+        event = {
+            **_fixture("agent-event.json"),
+            "eventType": "session_command_invoked",
+            "payload": {
+                "command": "/workflow",
+                "name": "workflow",
+                "handled": True,
+            },
+        }
+        validate_contract(event, "agent-event.v1.json")
+
     def test_payload_hash_is_order_independent(self) -> None:
         first = canonical_payload_sha256({"operation": "apply", "args": {"b": 2, "a": 1}})
         second = canonical_payload_sha256({"args": {"a": 1, "b": 2}, "operation": "apply"})

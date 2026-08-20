@@ -18,6 +18,30 @@ class _FakePluginRuntime:
     def plugin_list(self):
         return list(self.installed)
 
+    def plugin_catalog(self):
+        return [
+            {
+                "id": "@paw/session-workflow",
+                "name": "@paw/session-workflow",
+                "displayName": "Session Workflow",
+                "version": "1.0.0",
+                "description": "Optional Goal, Plan, Todo, and Workflow state",
+                "capabilities": ["session-workflow"],
+                "source": str(self.package_source),
+                "distribution": "pi_package",
+                "bundled": True,
+                "installed": any(
+                    value.get("id") == "@paw/session-workflow"
+                    for value in self.installed
+                ),
+                "enabled": any(
+                    value.get("id") == "@paw/session-workflow"
+                    and value.get("enabled") is True
+                    for value in self.installed
+                ),
+            }
+        ]
+
     def plugin_validate(self, source_path: str):
         self.calls.append(("validate", source_path))
         manifest = json.loads((Path(source_path) / "rag-ime-plugin.json").read_text())
@@ -72,6 +96,14 @@ class _FakePluginRuntime:
                 "name": str(payload["packageJson"]["name"]),
                 "version": str(payload["packageJson"]["version"]),
             },
+        }
+
+    def plugin_preview_install(self, payload):
+        self.calls.append(("preview_install", dict(payload)))
+        return {
+            "previewToken": "host-preview-token",
+            "payloadSha256": "b" * 64,
+            "requiredConfirm": "apply",
         }
 
     def plugin_install(self, payload):
@@ -146,6 +178,36 @@ class _FakePluginRuntime:
         self.installed[0]["version"] = target["version"]
         return self.installed[0]
 
+    def plugin_uninstall(
+        self,
+        plugin_id: str,
+        *,
+        expected_active_digest: str,
+        expected_enabled: bool,
+    ):
+        self.calls.append(
+            (
+                "uninstall",
+                {
+                    "pluginId": plugin_id,
+                    "expectedActiveDigest": expected_active_digest,
+                    "expectedEnabled": expected_enabled,
+                },
+            )
+        )
+        if (
+            self.installed[0]["digest"] != expected_active_digest
+            or self.installed[0]["enabled"] is not expected_enabled
+        ):
+            raise ValueError("plugin state changed")
+        removed = {
+            "id": plugin_id,
+            "digest": expected_active_digest,
+            "removed": True,
+        }
+        self.installed = []
+        return removed
+
 
 class AgentExtensionServiceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -168,6 +230,8 @@ class AgentExtensionServiceTests(unittest.TestCase):
         )
         (self.source / "index.ts").write_text("export default function () {}\n")
         self.runtime = _FakePluginRuntime()
+        self.runtime.package_source = self.root / "session-workflow"
+        self.runtime.package_source.mkdir()
         self.service = AgentExtensionService(
             runtime_provider=lambda: self.runtime,
             inbox_root=self.root / "managed-inbox",
@@ -238,6 +302,27 @@ class AgentExtensionServiceTests(unittest.TestCase):
                     "confirmText": "apply",
                 }
             )
+
+    def test_catalog_projects_native_pi_packages_and_prepares_them_in_pi(self) -> None:
+        catalog = self.service.catalog()
+        workflow = next(
+            item
+            for item in catalog["items"]
+            if item["id"] == "@paw/session-workflow"
+        )
+        self.assertEqual(workflow["distribution"], "pi_package")
+        self.assertEqual(workflow["capabilities"], ["session-workflow"])
+        self.assertEqual(workflow["installState"], "available")
+
+        validation = self.service.validate(
+            {"catalogId": "@paw/session-workflow", "catalogVersion": "1.0.0"}
+        )
+
+        self.assertEqual(validation["distribution"], "pi_package")
+        self.assertEqual(
+            self.runtime.calls[-1],
+            ("prepare_package", str(self.runtime.package_source)),
+        )
 
     def test_enable_disable_and_rollback_also_use_preview(self) -> None:
         self.runtime.installed = [
@@ -413,6 +498,49 @@ class AgentExtensionServiceTests(unittest.TestCase):
                     "preparedPackageId": "prepared-pi-package",
                     "expectedDigest": "a" * 64,
                     "enable": True,
+                    "previewToken": "host-preview-token",
+                    "payloadSha256": "b" * 64,
+                    "confirmText": "apply",
+                },
+            ),
+        )
+
+    def test_uninstall_uses_reviewed_digest_and_removes_runtime_capability(self) -> None:
+        self.runtime.installed = [
+            {
+                "id": "log-helper",
+                "name": "Log Helper",
+                "version": "1.0.0",
+                "digest": "digest-v1",
+                "enabled": False,
+                "installedVersions": [
+                    {"version": "1.0.0", "digest": "digest-v1"},
+                ],
+            }
+        ]
+
+        preview = self.service.preview(
+            {"action": "uninstall", "pluginId": "log-helper"}
+        )
+        receipt = self.service.apply(
+            {
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+
+        self.assertEqual(receipt["receipt"]["action"], "uninstall")
+        self.assertTrue(receipt["receipt"]["plugin"]["removed"])
+        self.assertEqual(self.runtime.installed, [])
+        self.assertEqual(
+            self.runtime.calls[-1],
+            (
+                "uninstall",
+                {
+                    "pluginId": "log-helper",
+                    "expectedActiveDigest": "digest-v1",
+                    "expectedEnabled": False,
                 },
             ),
         )

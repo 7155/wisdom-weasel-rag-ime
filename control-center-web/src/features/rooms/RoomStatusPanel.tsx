@@ -464,6 +464,7 @@ function latestRoomTurn(projection: RoomProjectionState): RoomTurnProjection | u
 type RoomProjectedStatus =
   | 'queued'
   | 'running'
+  | 'waiting_approval'
   | 'waiting_review'
   | 'waiting_select'
   | 'waiting_input'
@@ -583,6 +584,8 @@ function roomActivityStatus(
   const decision = text(activity.payload.decision)
     || text((activity.payload.approvalModelDecision as Record<string, unknown> | undefined)?.decision);
   const state = text(activity.payload.resolutionState || activity.payload.state);
+  const decisionMode = text(activity.payload.decisionMode || activity.payload.mode);
+  if (automatic && decisionMode === 'policy') return 'completed';
   if (
     automatic
     && !decision
@@ -623,9 +626,11 @@ function roomProjectedStatus(
   if (pending) {
     const requestKind = text(pending.payload.requestKind);
     if (
+      Boolean(text(pending.payload.approvalId))
+    ) return 'waiting_approval';
+    if (
       requestKind === 'plan_review'
       || requestKind === 'memory_review'
-      || Boolean(text(pending.payload.approvalId))
     ) return 'waiting_review';
     if (text(pending.payload.method) === 'select' || Array.isArray(pending.payload.options)) {
       return 'waiting_select';
@@ -652,6 +657,7 @@ function roomProjectedStatusLabel(status: RoomProjectedStatus): string {
   return {
     queued: '等待协作',
     running: '协作中',
+    waiting_approval: '等待审批',
     waiting_review: '等待审阅',
     waiting_select: '等待选择',
     waiting_input: '等待回答',
@@ -682,7 +688,7 @@ function roomWorkStateLabel(state: RoomWorkItem['state']): string {
   return {
     queued: '待接收',
     active: '执行中',
-    review: '一起检查',
+    review: '等待汇合',
     blocked: '已阻塞',
     done: '已完成',
     failed: '未完成',

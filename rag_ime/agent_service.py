@@ -314,19 +314,13 @@ class AgentService:
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
             runtime_factory=self.runtime_factory,
-            personas=self.personas,
-            role_books=self.role_books,
             configuration_store=self.configuration_store,
             rooms=self.rooms,
             delegation=self.delegation,
             media=self.media,
             events=self.events,
             runtime_status=lambda: self.runtime_status(),
-            initial_role_runtime_defaults=self._initial_role_runtime_defaults,
             pending_memory_bootstrap=self._pending_memory_bootstrap,
-            ensure_session_role_book=lambda session_id: (
-                self._ensure_session_role_book(session_id)
-            ),
             probe_memory_maintenance=lambda session_id, **kwargs: (
                 self._probe_memory_maintenance(session_id, **kwargs)
             ),
@@ -334,7 +328,6 @@ class AgentService:
         self.session_policy = AgentSessionPolicyService(
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
-            personas=self.personas,
             rooms=self.rooms,
             events=self.events,
             runtime_status=lambda: self.runtime_status(),
@@ -351,9 +344,6 @@ class AgentService:
             media=self.media,
             events=self.events,
             command_receipts=self.command_receipts,
-            ensure_session_role_book=lambda session_id: (
-                self._ensure_session_role_book(session_id)
-            ),
             prompt_with_checkpoint=lambda **kwargs: (
                 self._prompt_with_checkpoint(**kwargs)
             ),
@@ -365,8 +355,6 @@ class AgentService:
         self.memory_context_application = (
             AgentMemoryContextService(
                 sessions=self.sessions,
-                personas=self.personas,
-                role_books=self.role_books,
                 memory_bootstrap=self.memory_bootstrap,
                 context_runtime=self.context_runtime,
                 task_context=self.task_context,
@@ -481,7 +469,7 @@ class AgentService:
                 ),
                 room_intercom_prompt=_room_intercom_prompt,
                 room_participant_prompt=(
-                    _room_participant_prompt
+                    self._room_participant_prompt_with_documents
                 ),
                 publish_room_work_activity=(
                     lambda work, **kwargs: (
@@ -536,7 +524,7 @@ class AgentService:
         )
         self.room_dispatch = RoomSessionDispatchService(
             self,
-            build_participant_prompt=_room_participant_prompt,
+            build_participant_prompt=self._room_participant_prompt_with_documents,
             resolve_attachments=self._resolve_room_attachments,
         )
         self.room_cancellation = RoomSessionCancellationService(self)
@@ -552,6 +540,20 @@ class AgentService:
             cancel_room_turn=self._cancel_room_turn,
             abort_session=self.abort,
             room_topic_for_turn=self._room_topic_for_turn,
+            send_room_intercom=lambda session_id, payload: self.room_work_application.send_room_intercom(
+                session_id,
+                payload,
+            )["message"],
+            list_room_intercom=lambda session_id: self.room_work_application.list_room_intercom(
+                session_id,
+                {"limit": 100},
+            )["items"],
+            room_work=self.room_work,
+            publish_room_work_activity=lambda work, **kwargs: self._publish_room_work_activity(
+                work,
+                **kwargs,
+            ),
+            work_document_for_authority=self._work_document_for_authority,
         )
         self.room_work_application = RoomWorkApplicationService(self)
         self.approval_application = AgentApprovalApplicationService(self)
@@ -870,6 +872,86 @@ class AgentService:
         # is the recovery source; there is no second Kernel recovery packet.
         return ""
 
+    def _room_participant_prompt_with_documents(
+        self,
+        room: Mapping[str, object],
+        target: Mapping[str, object],
+        message: str,
+        **kwargs: object,
+    ) -> str:
+        """Add a soft, recoverable WorkItem-to-document index to Room context.
+
+        WorkDocument remains the registry owner and Room WorkItem remains the
+        responsibility owner.  The prompt only tells a participant where the
+        current documents live; it does not copy document bodies or create a
+        second context store.
+        """
+        try:
+            documents = self.work_documents.context_discovery(limit=200)["items"]
+        except Exception:
+            # Document discovery is advisory. A registry/read failure must not
+            # turn an otherwise valid Pi Session dispatch into a false failure.
+            documents = []
+        document_authorities: dict[str, Mapping[str, object]] = {}
+        work_candidates = [
+            value
+            for value in room.get("workItems", [])
+            if isinstance(value, Mapping)
+        ]
+        explicit_work_item = kwargs.get("work_item")
+        if isinstance(explicit_work_item, Mapping):
+            explicit_id = str(explicit_work_item.get("id") or "")
+            if explicit_id and all(
+                str(value.get("id") or "") != explicit_id
+                for value in work_candidates
+            ):
+                # A delegate is created after the caller captured its Room
+                # snapshot. The explicit WorkItem is authoritative for this
+                # dispatch and must still receive its current document receipt.
+                work_candidates.append(explicit_work_item)
+        for value in work_candidates:
+            work_id = str(value.get("id") or "").strip()
+            if not work_id:
+                continue
+            try:
+                authority = self.work_documents.authority_context(
+                    "room_work_item",
+                    work_id,
+                )
+            except Exception:
+                # Like document discovery, the hint is recoverable and must
+                # never become a second dispatch gate.
+                continue
+            document_authorities[str(authority["authorityKey"])] = authority
+        return _room_participant_prompt(
+            room,
+            target,
+            message,
+            work_documents=documents,
+            work_document_authorities=document_authorities,
+            **kwargs,
+        )
+
+    def _work_document_for_authority(
+        self,
+        authority_kind: str,
+        authority_id: str,
+    ) -> Mapping[str, object] | None:
+        authority_key = f"{authority_kind}:{authority_id}"
+        try:
+            documents = self.work_documents.list(limit=500)["items"]
+        except Exception:
+            return None
+        return next(
+            (
+                document
+                for document in documents
+                if document.get("state") == "active"
+                and document.get("authorityKey") == authority_key
+            ),
+            None,
+        )
+
 
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
         delegation = getattr(self, "delegation", None)
@@ -927,15 +1009,6 @@ class AgentService:
         changes = payload.get("changes")
         if not isinstance(changes, Mapping):
             raise ValueError("agent configuration update requires a changes object")
-        role_id = changes.get("sessionDefaults.roleId")
-        role_version = changes.get("sessionDefaults.roleVersion")
-        if role_id is not None or role_version is not None:
-            current = self.configuration_store.snapshot()["configuration"]
-            defaults = current["sessionDefaults"]
-            self.personas.resolve_active(
-                role_id or defaults["roleId"],
-                role_version or defaults["roleVersion"],
-            )
         runtime_keys = {
             "runtime.enabled",
             "runtime.startup",
@@ -1911,6 +1984,9 @@ class AgentService:
                 f"Room message must not exceed {ROOM_MESSAGE_CHAR_LIMIT} characters"
             )
         client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
+        retry_of_root_id = str(payload.get("retryOfRootId") or "").strip()
+        if len(retry_of_root_id) > 320:
+            raise ValueError("Room retry root identity is too long")
         work_item_id = _optional_work_item_id(payload.get("workItemId"))
         answer_to_post_id = str(payload.get("answerToPostId") or "").strip()
         answer_to_root_id = str(payload.get("answerToRootId") or "").strip()
@@ -1937,6 +2013,7 @@ class AgentService:
                 room_id,
                 message=message,
                 client_message_id="",
+                retry_of_root_id=retry_of_root_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
                 attachment_ids=attachment_ids,
@@ -1949,6 +2026,7 @@ class AgentService:
             client_message_id=client_message_id,
             payload={
                 "message": message,
+                "retryOfRootId": retry_of_root_id,
                 "participantIds": requested_participant_ids,
                 "workItemId": work_item_id,
                 "attachmentIds": attachment_ids,
@@ -1963,6 +2041,7 @@ class AgentService:
                 room_id,
                 message=message,
                 client_message_id=client_message_id,
+                retry_of_root_id=retry_of_root_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
                 attachment_ids=attachment_ids,
@@ -1992,11 +2071,13 @@ class AgentService:
         args: Mapping[str, object],
         *,
         tool_call_id: str,
+        source_loop_id: str = "",
     ) -> dict[str, object]:
         return self.room_partner_application.execute(
             session_id,
             args,
             tool_call_id=tool_call_id,
+            source_loop_id=source_loop_id,
         )
 
     def steer_room_participant(
@@ -2244,6 +2325,7 @@ class AgentService:
         *,
         message: str,
         client_message_id: str,
+        retry_of_root_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
@@ -2256,6 +2338,7 @@ class AgentService:
             room_id,
             message=message,
             client_message_id=client_message_id,
+            retry_of_root_id=retry_of_root_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
             attachment_ids=attachment_ids,
@@ -2396,6 +2479,13 @@ class AgentService:
 
     def command_catalog(self, session_id: str) -> dict[str, object]:
         return self.session_policy.command_catalog(session_id)
+
+    def invoke_command(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.session_policy.invoke_command(session_id, payload)
 
     def select_model(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         return self.session_policy.select_model(session_id, payload)
@@ -2777,11 +2867,6 @@ class AgentService:
             source_kind=source_kind,
             delivery=delivery,
             transient_context=transient_context,
-        )
-
-    def _ensure_session_role_book(self, session_id: str) -> dict[str, object]:
-        return self.memory_context_application.ensure_role_book(
-            session_id
         )
 
     def _pending_memory_bootstrap(

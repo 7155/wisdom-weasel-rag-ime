@@ -1,24 +1,12 @@
-import { useLayoutEffect, useState } from 'react';
+import { useMemo } from 'react';
+import { richHtmlPreviewUrl } from './rich-html';
 
 /**
- * The Control Center CSP deliberately allows framed documents through blob:
- * URLs. WebKit does not consistently treat about:srcdoc as that source, which
- * made the same report work in Chromium tests but render as a white frame in
- * the native host. Keep the authored document intact and move only its
- * transport to the CSP-owned blob channel.
+ * The preview is a dedicated loopback document rather than srcdoc/blob/data.
+ * Those local documents inherit the Control Center CSP and therefore cannot
+ * execute authored inline scripts. The loopback document has its own
+ * preview-only CSP and is still isolated by an opaque iframe sandbox.
  */
 export function useRichHtmlUrl(document: string, enabled = true): string {
-  const [url, setUrl] = useState('');
-  useLayoutEffect(() => {
-    if (!enabled || typeof URL.createObjectURL !== 'function') {
-      setUrl('');
-      return undefined;
-    }
-    const next = URL.createObjectURL(new Blob([document], { type: 'text/html;charset=utf-8' }));
-    setUrl(next);
-    return () => {
-      URL.revokeObjectURL(next);
-    };
-  }, [document, enabled]);
-  return url;
+  return useMemo(() => (enabled ? richHtmlPreviewUrl(document) : ''), [document, enabled]);
 }

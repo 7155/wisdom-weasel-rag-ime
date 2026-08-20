@@ -3,39 +3,62 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "a4d15d3a3cc99000f3a2e5e98d19c5dfb3c291d5",
+  "minimumHandlersCommit": "59a71b235dadb4ad0d67557a8abb0aaa093e68b4",
   "requiredMethods": [
     "session.open",
+    "session.close",
+    "session.commands",
+    "session.command.invoke",
     "session.prompt",
     "session.steer",
-    "session.debug.context",
+    "session.follow_up",
     "session.abort",
-    "session.snapshot"
+    "session.compact",
+    "session.debug.context",
+    "session.snapshot",
+    "tools.list",
+    "plugins.catalog",
+    "plugins.list",
+    "plugins.package.prepare",
+    "plugins.install.preview",
+    "plugins.install",
+    "plugins.enable",
+    "plugins.disable",
+    "plugins.uninstall",
+    "plugins.rollback"
   ],
   "handlerSources": {
-    "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
-    "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
-    "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
-    "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
-    "toolResults": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
-    "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
+    "protocol": "integrations/rag-ime-runtime-host/src/protocol.ts",
+    "runtimeHost": "integrations/rag-ime-runtime-host/src/runtime-host.ts",
+    "contextInspection": "integrations/rag-ime-runtime-host/src/debug-context.ts",
+    "toolBridge": "integrations/rag-ime-runtime-host/src/tool-bridge.ts",
+    "toolResults": "integrations/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
+    "session": "integrations/rag-ime-runtime-host/src/pi-session.ts",
+    "packageCatalog": "integrations/rag-ime-runtime-host/src/bundled-package-catalog.ts",
+    "packageManager": "integrations/rag-ime-runtime-host/src/native-package-manager.ts"
   },
   "requiredSourceMarkers": {
     "protocol": [
       "export const PROTOCOL_VERSION = \"2\" as const;",
-      "| \"session.open\"",
-      "| \"session.prompt\"",
-      "| \"session.steer\"",
-      "| \"session.abort\""
+      "| \"session.commands\"",
+      "| \"session.command.invoke\"",
+      "| \"session.compact\"",
+      "| \"plugins.catalog\"",
+      "| \"plugins.uninstall\""
     ],
     "runtimeHost": [
       "case \"session.open\"",
-      "case \"session.snapshot\"",
-      "case \"session.debug.context\"",
-      "case \"session.prompt\"",
-      "case \"session.steer\"",
+      "case \"session.commands\"",
+      "case \"session.command.invoke\"",
+      "case \"session.compact\"",
       "case \"session.abort\"",
-      "sessionCancelOperationRegistry: true"
+      "case \"plugins.catalog\"",
+      "case \"plugins.package.prepare\"",
+      "case \"plugins.install\"",
+      "case \"plugins.disable\"",
+      "case \"plugins.uninstall\"",
+      "sessionCancelOperationRegistry: true",
+      "bundledPackageCatalog: true"
     ],
     "contextInspection": [
       "const MAX_TOOLS_PER_TURN = 96;",
@@ -57,7 +80,19 @@
       "async prompt(options:",
       "async queueMessage(options:",
       "abort(): Promise<PiSessionAbortReceipt>",
-      "async compact(customInstructions?: string)"
+      "async compact(customInstructions?: string)",
+      "listCommands(): Array<Record<string, unknown>>",
+      "async invokeCommand(commandText: string)"
+    ],
+    "packageCatalog": [
+      "const CATALOG_URL = new URL(\"../pi-packages/catalog.json\", import.meta.url);",
+      "export async function listBundledPiPackages(",
+      "distribution: \"pi_package\""
+    ],
+    "packageManager": [
+      "this.managedPackagesRoot = join(pluginsRoot, \"packages\");",
+      "await cp(prepared.packageRoot, temporary, {",
+      "Copied Pi Package failed digest verification"
     ]
   }
 }

@@ -367,8 +367,7 @@ def _isolated_runtime_config(
     ).expanduser()
     installation = snapshot_managed_pi_runtime(
         source_app_support,
-        expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "0.80.7").strip()
-        or "0.80.7",
+        expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "").strip(),
     )
     overrides = {
         "RAG_IME_APP_SUPPORT_DIR": str(run_root / "runtime-support"),

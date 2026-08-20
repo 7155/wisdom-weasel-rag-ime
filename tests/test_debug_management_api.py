@@ -2121,6 +2121,16 @@ class DebugManagementApiTests(unittest.TestCase):
                     }
                 ],
             }
+            command_invocation_payload = {
+                "schemaVersion": "rag-ime.agent-command-invocation.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "command": "/workflow",
+                "name": "workflow",
+                "handled": True,
+                "result": "No active workflow",
+                "leafId": "entry-command-1",
+            }
             fork_catalog_payload = {
                 "schemaVersion": "rag-ime.agent-session-fork-candidates.v1",
                 "ok": True,
@@ -2146,6 +2156,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 patch.object(self.service.agent, "model_catalog", return_value=model_catalog_payload),
                 patch.object(self.service.agent, "select_model", return_value=model_selection_payload),
                 patch.object(self.service.agent, "command_catalog", return_value=command_catalog_payload),
+                patch.object(self.service.agent, "invoke_command", return_value=command_invocation_payload),
                 patch.object(self.service.agent, "fork_candidates", return_value=fork_catalog_payload),
                 patch.object(self.service.agent, "fork_session", return_value=fork_create_payload),
             ):
@@ -2153,6 +2164,14 @@ class DebugManagementApiTests(unittest.TestCase):
                     model_catalog = json.loads(response.read().decode("utf-8"))
                 with urlopen(f"{base_url}/sessions/{session_id}/commands", timeout=5) as response:
                     command_catalog = json.loads(response.read().decode("utf-8"))
+                command_request = Request(
+                    f"{base_url}/sessions/{session_id}/commands",
+                    data=json.dumps({"command": "/workflow"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(command_request, timeout=5) as response:
+                    command_invocation = json.loads(response.read().decode("utf-8"))
                 model_request = Request(
                     f"{base_url}/sessions/{session_id}/model",
                     data=json.dumps(
@@ -2486,6 +2505,8 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(maintenance["scheduledDraftOnly"])
         self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
         self.assertEqual(command_catalog["items"][0]["invocation"], "/review")
+        self.assertTrue(command_invocation["handled"])
+        self.assertEqual(command_invocation["result"], "No active workflow")
         self.assertEqual(
             model_selection["session"]["modelProfile"],
             "openrouter/anthropic/claude-sonnet",
@@ -2639,6 +2660,35 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(preview["descriptor"]["sessionId"], session_id)
         self.assertEqual(preview["descriptor"]["sha256"], digest)
         self.assertEqual(preview["content"], markdown.decode("utf-8"))
+
+    def test_isolated_html_preview_bootstrap_has_opaque_script_capability(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/__paw_html_preview",
+                timeout=5,
+            ) as response:
+                body = response.read().decode("utf-8")
+                csp = response.headers["Content-Security-Policy"]
+                cache_control = response.headers["Cache-Control"]
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertIn("document.write(source)", body)
+        self.assertIn("script-src 'unsafe-inline'", csp)
+        self.assertIn("sandbox", csp)
+        self.assertIn("allow-scripts", csp)
+        self.assertNotIn("allow-same-origin", csp)
+        self.assertEqual(cache_control, "private, no-store")
 
     def test_lifecycle_hook_http_routes_require_runtime_token_and_keep_policy_product_owned(self) -> None:
         class Handler(DebugRequestHandler):

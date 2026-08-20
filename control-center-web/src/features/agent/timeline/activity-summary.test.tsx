@@ -134,7 +134,7 @@ describe('Agent tool activity details', () => {
     expect(group).not.toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     expect(group).toHaveAttribute('data-state', 'mixed');
-    expect(group).toHaveTextContent('33 已完成 · 1 未完成');
+    expect(group).toHaveTextContent('33 已完成 · 1 失败');
     fireEvent.click(group.querySelector('summary')!);
     const scrollRegion = within(group).getByRole('region', { name: '操作与思考过程' });
     expect(scrollRegion).toHaveAttribute('data-bounded-scroll', 'true');
@@ -190,7 +190,8 @@ describe('Agent tool activity details', () => {
     expect(group).toHaveAttribute('data-state', 'mixed');
     fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
-    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('搜索参数超出允许范围');
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('搜索参数超出允许范围');
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('失败原因');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
 
     rerender(<ActivitySummary activities={[{ ...activity, updatedAtMs: 3 }]} inline />);
@@ -284,6 +285,44 @@ describe('Agent tool activity details', () => {
     const result = within(row).getByRole('region', { name: '命令输出' });
     expect(result).toHaveAttribute('data-result-kind', 'terminal');
     expect(result).toHaveTextContent('Tests: 12 passed');
+  });
+
+  it('projects the latest non-empty subagent return into the activity card', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-subagent-return',
+      toolName: 'subagent',
+      result: {
+        details: {
+          results: [
+            { status: 'completed', output: '(no output)' },
+            { status: 'completed', output: 'RETURN_CHECK_7F3A\n独立子 Session 已完成只读检查。' },
+          ],
+        },
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    expect(group).toHaveTextContent('RETURN_CHECK_7F3A');
+    expect(group).not.toHaveTextContent('这条历史回执未包含可公开的调用参数或返回内容。');
+
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('RETURN_CHECK_7F3A');
+    expect(within(row).getByLabelText('完整工具返回')).toBeInTheDocument();
+  });
+
+  it('explains a completed subagent with no child output instead of showing an empty receipt', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-subagent-empty-return',
+      toolName: 'subagent',
+      result: { results: [{ status: 'completed', output: '(no output)' }] },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    expect(container).toHaveTextContent('子进程未返回内容');
+    expect(container).not.toHaveTextContent('这条历史回执未包含可公开的调用参数或返回内容。');
   });
 
   it('renders a read result as code with its safe file name and language', () => {
@@ -560,7 +599,12 @@ describe('Agent tool activity details', () => {
       kind: 'turn_failed',
       status: 'failed',
       summary: '400 Error from provider (Console Go): Upstream request failed',
-      payload: { error: '400 Error from provider (Console Go): Upstream request failed' },
+      payload: {
+        error: '400 Error from provider (Console Go): Upstream request failed',
+        retryExhausted: true,
+        providerRetryAttempts: 6,
+        providerRetryMaxAttempts: 6,
+      },
       createdAtMs: 1,
       updatedAtMs: 2,
     };
@@ -569,7 +613,7 @@ describe('Agent tool activity details', () => {
     expect(container).toHaveTextContent('模型服务请求失败');
     expect(container).not.toHaveTextContent('工具操作');
     openActivity(container);
-    expect(screen.getByRole('dialog')).toHaveTextContent('模型服务请求失败，请重试或切换模型。');
+    expect(screen.getByRole('dialog')).toHaveTextContent('已自动重试 6 次，模型服务仍未恢复；请稍后重试或切换模型。');
     expect(screen.queryByText(/Console Go|Upstream request failed/)).not.toBeInTheDocument();
   });
 
@@ -1034,8 +1078,8 @@ describe('Agent tool activity details', () => {
     );
     openActivity(container);
 
-    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('工作区不在授权目录内，当前权限不足。');
-    expect(within(screen.getByLabelText('工具未完成')).getByRole('button', { name: '复制错误' })).toBeInTheDocument();
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('工作区不在授权目录内，当前权限不足。');
+    expect(within(screen.getByLabelText('工具失败')).getByRole('button', { name: '复制错误' })).toBeInTheDocument();
     expect(container).not.toHaveTextContent('/Users/private/project');
     expect(container).not.toHaveTextContent('sk-do-not-render');
     fireEvent.click(screen.getByRole('button', { name: '请求权限' }));
@@ -1064,7 +1108,7 @@ describe('Agent tool activity details', () => {
     );
     openActivity(container);
 
-    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('该操作需要本机审批后继续。');
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('该操作需要本机审批后继续。');
     fireEvent.click(screen.getByRole('button', { name: '去审批' }));
     expect(onOpenApproval).toHaveBeenCalledOnce();
     expect(onOpenApproval).toHaveBeenCalledWith(activity);

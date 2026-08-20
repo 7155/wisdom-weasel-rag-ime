@@ -1,4 +1,4 @@
-import { FolderOpen, LoaderCircle, MessageSquare, Plus } from 'lucide-react';
+import { Eye, FolderOpen, LoaderCircle, MessageSquare, Plus, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import {
@@ -16,6 +16,7 @@ import {
 export interface NewSessionInput {
   title: string;
   workspaceRoots: string[];
+  executionMode: 'read_only' | 'per_action' | 'workspace_managed';
 }
 
 export function NewSessionDialog({
@@ -35,6 +36,7 @@ export function NewSessionDialog({
 }) {
   const [title, setTitle] = useState('');
   const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([]);
+  const [executionMode, setExecutionMode] = useState<NewSessionInput['executionMode']>('per_action');
   const [picking, setPicking] = useState(false);
   const [creating, setCreating] = useState(false);
   const projectOptions = useMemo(() => uniquePaths(projects), [projects]);
@@ -44,6 +46,7 @@ export function NewSessionDialog({
     const initial = uniquePaths(defaultRoots);
     setTitle('');
     setWorkspaceRoots(initial);
+    setExecutionMode('per_action');
   }, [defaultRoots, open]);
 
   async function pickRoots(): Promise<void> {
@@ -64,6 +67,7 @@ export function NewSessionDialog({
       const created = await onCreate({
         title: title.trim() || '新对话',
         workspaceRoots,
+        executionMode,
       });
       if (created) onOpenChange(false);
     } finally {
@@ -77,7 +81,7 @@ export function NewSessionDialog({
       <DialogContent className="agent-new-task-dialog">
         <DialogHeader>
           <DialogTitle><Plus size={18} />新建对话</DialogTitle>
-          <DialogDescription>可以直接聊，也可以关联工作目录，让伙伴读取项目并使用工作区工具。</DialogDescription>
+          <DialogDescription>创建普通 Pi Session。工作目录与执行权限会在创建前明确显示，能力来自当前 Session 的 Package 快照。</DialogDescription>
         </DialogHeader>
         <Field htmlFor="agent-new-task-title" label="对话名称" description="不填写时会使用“新对话”，之后仍可重命名。">
           <Input
@@ -93,7 +97,13 @@ export function NewSessionDialog({
           <RadioGroup.Root
             aria-label="对话的工作目录"
             value={primaryRoot || NO_WORKSPACE}
-            onValueChange={(value) => setWorkspaceRoots(value === NO_WORKSPACE ? [] : [value])}
+            onValueChange={(value) => {
+              const roots = value === NO_WORKSPACE ? [] : [value];
+              setWorkspaceRoots(roots);
+              if (!roots.length && executionMode === 'workspace_managed') {
+                setExecutionMode('per_action');
+              }
+            }}
           >
             <RadioGroup.Item value={NO_WORKSPACE}>
               <MessageSquare size={16} />
@@ -115,6 +125,27 @@ export function NewSessionDialog({
           <Button variant="quiet" leadingIcon={picking ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />} onClick={() => void pickRoots()} disabled={picking || creating}>
             {primaryRoot ? '换一个目录' : '选择工作目录'}
           </Button>
+        </section>
+        <section className="agent-new-task-dialog__permissions" aria-label="新对话权限">
+          <header><strong>执行权限</strong><small>不会自动启用全自动模式</small></header>
+          <RadioGroup.Root
+            aria-label="新对话的执行权限"
+            value={executionMode}
+            onValueChange={(value) => setExecutionMode(value as NewSessionInput['executionMode'])}
+          >
+            <RadioGroup.Item value="per_action">
+              <ShieldCheck size={16} />
+              <span><strong>逐项确认</strong><small>读取可直接进行；写入与命令按风险请求确认</small></span>
+            </RadioGroup.Item>
+            <RadioGroup.Item value="read_only">
+              <Eye size={16} />
+              <span><strong>只读</strong><small>适合检查、理解和规划，不允许修改工作区</small></span>
+            </RadioGroup.Item>
+            <RadioGroup.Item value="workspace_managed" disabled={!primaryRoot}>
+              <FolderOpen size={16} />
+              <span><strong>工作区托管</strong><small>{primaryRoot ? '仅在上方明确选择的目录内工作' : '先选择工作目录后可用'}</small></span>
+            </RadioGroup.Item>
+          </RadioGroup.Root>
         </section>
         <DialogFooter>
           <Button variant="quiet" onClick={() => onOpenChange(false)} disabled={creating || picking}>取消</Button>

@@ -190,14 +190,15 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
 
         self.assertEqual(
             session["roleBookRevisionId"],
-            self.active_role_revision["revisionId"],
+            "",
         )
         system_prompt = self.service.runtime_factory.config.system_prompt_for_session(
             session
         )
-        self.assertIn("<agent-profile>", system_prompt)
+        self.assertNotIn("<agent-profile>", system_prompt)
+        self.assertNotIn("<persona", system_prompt)
         # Recent work remains in the governed Role Book inspector, but is not
-        # copied into every Provider request as durable persona memory.
+        # copied into Provider requests until a Persona Package is enabled.
         self.assertNotIn(ROLE_MARKER, system_prompt)
         self.assertNotIn(NEW_ATOM_ID, system_prompt)
         self.assertNotIn(BOOK_ID, system_prompt)
@@ -209,9 +210,16 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
     ) -> None:
         self._seed_old_current_model_fact()
         self._seed_model_book(memory_atom_id=OLD_ATOM_ID)
-        governed_session = self.service.create_session({"title": "受治理记忆更正"})[
-            "session"
-        ]
+        governed_session = self.service.create_session(
+            {
+                "title": "受治理记忆更正",
+                # Role Book is now an explicit compatibility surface.  This
+                # test opts into the legacy Persona metadata because it calls
+                # agent_role_book directly; ordinary Sessions do not load it.
+                "roleId": "companion-present-v1",
+                "roleVersion": "1",
+            }
+        )["session"]
         governed_session_id = str(governed_session["id"])
         evidence = self.service.memory_evidence.record_user_message(
             session_id=governed_session_id,
@@ -286,6 +294,10 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
 
         active_role_revision_id = str(
             self.service.role_books.active("companion-present-v1", "1")["revisionId"]
+        )
+        self.service.sessions.set_role_book_revision(
+            governed_session_id,
+            active_role_revision_id,
         )
         role_proposal = self._execute_tool(
             governed_session_id,

@@ -177,7 +177,9 @@ required=(--require control --require sidecar --require squirrel)
 if [[ "$INCLUDE_PI" == "auto" ]]; then
   if [[ -n "$PI_WORKTREE" ]] \
     || [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]] \
+    || [[ -d "$ROOT/../pi/integrations/rag-ime-runtime-host" ]] \
     || [[ -d "$ROOT/../pi/packages/rag-ime-runtime-host" ]] \
+    || [[ -d "$ROOT/../pi-rag-ime-runtime/integrations/rag-ime-runtime-host" ]] \
     || [[ -d "$ROOT/../pi-rag-ime-runtime/packages/rag-ime-runtime-host" ]]; then
     INCLUDE_PI=1
   else
@@ -302,11 +304,17 @@ else
   "$ROOT/scripts/build_control_center_web_host.sh" install-release
 fi
 
-"$ROOT/scripts/check_installed_product_components.py" \
-  --repo-root "$ROOT" \
-  --expected-commit "$SOURCE_COMMIT" \
-  "${required[@]}" \
-  --require-current
+audit_args=(
+  --repo-root "$ROOT"
+  --expected-commit "$SOURCE_COMMIT"
+  "${required[@]}"
+)
+if [[ "${RAG_IME_ALLOW_DIRTY_INSTALL:-0}" != "1" ]]; then
+  audit_args+=(--require-current)
+else
+  echo "Development install: retaining dirty-build audit findings without blocking activation."
+fi
+"$ROOT/scripts/check_installed_product_components.py" "${audit_args[@]}"
 
 # Runtime retention is deliberately after deterministic session.open,
 # room.dispatch, Provider-context inspection and room.cancel exercised the

@@ -1315,7 +1315,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             [],
         )
 
-    def test_unaddressed_room_starts_with_facilitator_despite_specialist_profile(self) -> None:
+    def test_unaddressed_room_ignores_optional_persona_profile(self) -> None:
         role = self.service.personas.resolve("companion-firstlight-v1", "1")
         self.service.role_books.ensure_seeded(
             role.role_id,
@@ -1342,7 +1342,7 @@ class AgentRoomServiceTests(unittest.TestCase):
                 ]
             },
         )
-        active = self.service.role_books.activate_revision(draft["revisionId"])
+        self.service.role_books.activate_revision(draft["revisionId"])
         room = self.service.create_room(
             {
                 "title": "自然路由",
@@ -1363,7 +1363,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service.sessions.get(str(hermes["sessionId"]))[
                 "roleBookRevisionId"
             ],
-            active["revisionId"],
+            "",
         )
 
         with patch.object(
@@ -1378,11 +1378,20 @@ class AgentRoomServiceTests(unittest.TestCase):
 
         self.assertEqual(accepted["participant"]["id"], facilitator["id"])
         self.assertEqual(accepted["routeDecision"]["reason"], "facilitator")
+        self.assertEqual(
+            self.service.sessions.get(str(hermes["sessionId"]))[
+                "roleBookRevisionId"
+            ],
+            "",
+        )
         facilitator_context = str(
             prompt.call_args.args[1].get("_transientContext") or ""
         )
         self.assertIn("skill_load 加载 facilitate-room", facilitator_context)
         self.assertIn("room_partner", facilitator_context)
+        self.assertIn("这不代表当前请求是普通闲聊", facilitator_context)
+        self.assertIn("输出实现结果前必须先加载 facilitate-room", facilitator_context)
+        self.assertNotIn("当前阶段：普通对话", facilitator_context)
         evidence = self.service.memory_evidence.list(
             role_id=str(facilitator["roleId"]),
             session_id=str(facilitator["sessionId"]),
@@ -1556,8 +1565,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(future_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(future_session["executionMode"], "workspace_managed")
         self.assertTrue(future_session["workspaceScopeGranted"])
-        self.assertEqual(future_session["modelProfile"], "openai-codex/gpt-5.6-sol")
-        self.assertEqual(future_session["thinkingLevel"], "max")
+        self.assertEqual(future_session["modelProfile"], "pi/default")
+        self.assertEqual(future_session["thinkingLevel"], "")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
 
         with patch.object(self.service, "prompt", return_value={"turnId": "turn:hermes"}) as prompt:
@@ -1566,6 +1575,7 @@ class AgentRoomServiceTests(unittest.TestCase):
                 {
                     "message": "@澄·初 请先诊断状态",
                     "clientMessageId": "room-client-1",
+                    "retryOfRootId": "room-turn:prior-failed",
                 },
             )
             replay = self.service.post_room_message(
@@ -1573,6 +1583,7 @@ class AgentRoomServiceTests(unittest.TestCase):
                 {
                     "message": "@澄·初 请先诊断状态",
                     "clientMessageId": "room-client-1",
+                    "retryOfRootId": "room-turn:prior-failed",
                 },
             )
         prompt.assert_called_once()
@@ -1586,6 +1597,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertNotIn("@澄·初 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
+        self.assertEqual(accepted["retryOfRootId"], "room-turn:prior-failed")
         self.assertTrue(replay["idempotentReplay"])
         self.assertEqual(replay["roomTurnId"], accepted["roomTurnId"])
 
@@ -1618,6 +1630,10 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(events[-2]["participantId"], hermes["id"])
         self.assertEqual(events[-2]["sourceSessionId"], hermes["sessionId"])
         self.assertEqual(events[1]["payload"]["clientMessageId"], "room-client-1")
+        self.assertEqual(
+            events[1]["payload"]["retryOfRootId"],
+            "room-turn:prior-failed",
+        )
         self.assertNotEqual(accepted["roomTurnId"], accepted["sessionTurnId"])
         self.assertEqual(
             {item["turnId"] for item in events[1:]},

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bootstrap Project Context"
+  short_description: "Create a bounded AGENTS.md and docs routing entrypoint"
+  default_prompt: "Use $bootstrap-project-context to create or minimally repair the bound project's root AGENTS.md without inventing Runtime state."

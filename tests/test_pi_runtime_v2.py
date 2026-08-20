@@ -136,6 +136,21 @@ for line in sys.stdin:
     elif method == "session.commands":
         result(request, {"commands": [{"name": "skill:plugin-creator",
                                         "description": "Create and propose a managed plugin", "source": "skill"}]})
+    elif method == "session.command.invoke":
+        command = params["command"]
+        result(request, {
+            "schemaVersion": "rag-ime.pi-package-command-invocation.v1",
+            "command": command,
+            "name": command.split()[0].removeprefix("/"),
+            "handled": True,
+            "result": {
+                "schemaVersion": "rag-ime.pi-package-command-result.v1",
+                "packageId": "@paw/pi-session-workflow",
+                "command": command.split()[0].removeprefix("/"),
+                "message": "Goal [active]: Ship the TUI",
+            },
+            "leafId": "entry-command-result",
+        })
     elif method == "models.list":
         result(request, {"models": [model]})
     elif method == "session.thinking.set":
@@ -766,6 +781,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
             tool_manifest_provider=lambda _session: [],
         )
 
+        self.runtime.plugin_preview_install(
+            {
+                "sourcePath": "/tmp/plugin",
+                "expectedDigest": "d" * 64,
+                "enable": False,
+            }
+        )
         self.runtime.plugin_install({"sourcePath": "/tmp/plugin"})
         self.runtime.plugin_enable(
             "plugin:test",
@@ -778,6 +800,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
             expected_active_digest="b" * 64,
             target_digest="c" * 64,
         )
+        self.runtime.plugin_uninstall(
+            "plugin:test",
+            expected_active_digest="b" * 64,
+            expected_enabled=True,
+        )
 
         requests = [
             json.loads(line)
@@ -789,9 +816,14 @@ class PiRuntimeV2Tests(unittest.TestCase):
             request
             for request in requests
             if request["method"]
-            in {"plugins.install", "plugins.enable", "plugins.rollback"}
+            in {
+                "plugins.install",
+                "plugins.enable",
+                "plugins.rollback",
+                "plugins.uninstall",
+            }
         ]
-        self.assertEqual(len(mutations), 3)
+        self.assertEqual(len(mutations), 4)
         self.assertTrue(
             all(
                 request["params"]["approvalToken"] == "plugin-approval-only"
@@ -799,6 +831,18 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
         )
         self.assertNotIn("tool-gateway-only", json.dumps(mutations))
+
+    def test_plugin_catalog_uses_the_native_runtime_method(self) -> None:
+        catalog = self.runtime.plugin_catalog()
+
+        self.assertEqual(catalog, [])
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(requests[-1]["method"], "plugins.catalog")
 
     def test_pi_package_draft_and_prepare_use_native_host_methods_without_approval(self) -> None:
         self.runtime.plugin_create_package(
@@ -1770,6 +1814,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
 
         send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 101, "content": []},
+        })
+        send({
             "type": "tool_execution_end",
             "toolCallId": "call-patch",
             "toolName": "workspace_patch",
@@ -1788,6 +1836,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
             },
         })
         send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 102, "content": []},
+        })
+        send({
             "type": "message_end",
             "message": {
                 "role": "assistant",
@@ -1802,8 +1854,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
         completed = [event.payload["message"] for event in events if event.event_type == "message_completed"]
         progress = [event.payload for event in events if event.event_type == "text_delta"]
         self.assertEqual(
-            [(item["delta"], item.get("replaceContent")) for item in progress],
-            [("我已经找到主要结构，继续核对最后一项。", True)],
+            [
+                (item["delta"], item.get("replaceContent"), item.get("sourceLoopId"))
+                for item in progress
+            ],
+            [("我已经找到主要结构，继续核对最后一项。", True, "pi:message:assistant:101")],
         )
         self.assertEqual(len(completed), 1)
         completed_event = next(
@@ -1813,8 +1868,63 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertIs(completed_event.payload["usageReported"], True)
         self.assertIs(completed_event.payload["cacheUsageReported"], False)
+        self.assertEqual(
+            completed_event.payload.get("sourceLoopId"),
+            "pi:message:assistant:102",
+        )
         self.assertEqual([block["type"] for block in completed[-1]["blocks"]], ["file", "text"])
         self.assertEqual(completed[-1]["blocks"][0]["data"]["mimeType"], "text/x-diff")
+
+    def test_host_projects_one_source_loop_id_per_assistant_tool_loop(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-two-assistant-loops"
+
+        def send(payload: dict[str, object]) -> None:
+            self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "payload": payload,
+                }
+            )
+
+        send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 101, "content": []},
+        })
+        send({
+            "type": "tool_execution_start",
+            "toolCallId": "call-open",
+            "toolName": "room_partner",
+            "args": {"op": "delegate_batch"},
+        })
+        send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 202, "content": []},
+        })
+        send({
+            "type": "tool_execution_start",
+            "toolCallId": "call-final",
+            "toolName": "room_partner",
+            "args": {"op": "post", "kind": "result"},
+        })
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        tool_events = [
+            event for event in events
+            if event.event_type == "tool_started"
+        ]
+        self.assertEqual(
+            [event.payload.get("sourceLoopId") for event in tool_events],
+            [
+                "pi:message:assistant:101",
+                "pi:message:assistant:202",
+            ],
+        )
 
     def test_manual_and_automatic_compaction_notify_memory_checkpoint_observer(self) -> None:
         session_id = str(self.first["id"])
@@ -2477,6 +2587,27 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "source": "skill",
                 }
             ],
+        )
+
+    def test_v2_invokes_pi_package_command_without_starting_model_turn(self) -> None:
+        session_id = str(self.first["id"])
+        receipt = self.runtime.invoke_command(session_id, "/workflow")
+        self.assertEqual(receipt["name"], "workflow")
+        self.assertTrue(receipt["handled"])
+        self.assertEqual(
+            receipt["result"]["message"],
+            "Goal [active]: Ship the TUI",
+        )
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(requests[-1]["method"], "session.command.invoke")
+        self.assertNotIn(
+            "session.prompt",
+            [item["method"] for item in requests[-2:]],
         )
 
     def test_v2_fork_uses_host_owned_anchor_and_binds_a_distinct_target(self) -> None:

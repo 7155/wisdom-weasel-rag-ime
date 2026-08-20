@@ -35,12 +35,40 @@ SESSION_RUNTIME_CONTRACT = (
 SKILL_ROUTING_CARDS = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
 BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
 PROJECT_ROUTING_SKILLS = frozenset(
-    {"memory-curation", "plugin-creator", "project-maintainer"}
+    {
+        "bootstrap-project-context",
+        "memory-curation",
+        "plugin-creator",
+        "project-maintainer",
+    }
 )
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 200
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "a4d15d3a3cc99000f3a2e5e98d19c5dfb3c291d5"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "59a71b235dadb4ad0d67557a8abb0aaa093e68b4"
+REQUIRED_RUNTIME_METHODS = (
+    "session.open",
+    "session.close",
+    "session.commands",
+    "session.command.invoke",
+    "session.prompt",
+    "session.steer",
+    "session.follow_up",
+    "session.abort",
+    "session.compact",
+    "session.debug.context",
+    "session.snapshot",
+    "tools.list",
+    "plugins.catalog",
+    "plugins.list",
+    "plugins.package.prepare",
+    "plugins.install.preview",
+    "plugins.install",
+    "plugins.enable",
+    "plugins.disable",
+    "plugins.uninstall",
+    "plugins.rollback",
+)
 _SESSION_RUNTIME_SOURCE_KEYS = (
     "protocol",
     "runtimeHost",
@@ -48,6 +76,8 @@ _SESSION_RUNTIME_SOURCE_KEYS = (
     "toolBridge",
     "toolResults",
     "session",
+    "packageCatalog",
+    "packageManager",
 )
 _OAUTH_RUNTIME_MODULES = {
     "anthropic.ts": (
@@ -113,12 +143,20 @@ def _default_node() -> str:
     return shutil.which("node") or ""
 
 
+def _runtime_host_root(pi_root: Path) -> Path:
+    candidates = (
+        pi_root / "integrations" / "rag-ime-runtime-host",
+        pi_root / "packages" / "rag-ime-runtime-host",
+    )
+    return next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
+
+
 def _default_pi_worktree(parent: Path | None = None) -> Path:
     workspace_root = parent or ROOT.parent
     canonical = workspace_root / "pi"
     legacy = workspace_root / "pi-rag-ime-runtime"
     for candidate in (canonical, legacy):
-        if (candidate / "packages" / "rag-ime-runtime-host").is_dir():
+        if _runtime_host_root(candidate).is_dir():
             return candidate
     return canonical
 
@@ -151,6 +189,7 @@ def _source_revision(pi_root: Path) -> tuple[str, str]:
             "HEAD",
             "--",
             "packages",
+            "integrations/rag-ime-runtime-host",
             "package.json",
             "package-lock.json",
             "tsconfig.json",
@@ -168,6 +207,7 @@ def _source_revision(pi_root: Path) -> tuple[str, str]:
             "--exclude-standard",
             "--",
             "packages",
+            "integrations/rag-ime-runtime-host",
             "package.json",
             "package-lock.json",
             "tsconfig.json",
@@ -213,14 +253,7 @@ def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object]
             "Session runtime source provenance is unsupported"
         )
     methods = contract.get("requiredMethods")
-    if methods != [
-        "session.open",
-        "session.prompt",
-        "session.steer",
-        "session.debug.context",
-        "session.abort",
-        "session.snapshot",
-    ]:
+    if methods != list(REQUIRED_RUNTIME_METHODS):
         raise ManagedPiRuntimeError(
             "Session runtime source contract methods are incomplete"
         )
@@ -351,6 +384,24 @@ def _skill_frontmatter(skill_file: Path, *, source: str) -> dict[str, object]:
     return value
 
 
+def _skill_routing_projection(
+    frontmatter: dict[str, object],
+    *,
+    skill_name: str,
+) -> dict[str, object]:
+    metadata = frontmatter.get("metadata")
+    nested = metadata.get("routing") if isinstance(metadata, dict) else None
+    routing = nested if isinstance(nested, dict) else frontmatter
+    projection: dict[str, object] = {"name": frontmatter.get("name")}
+    for field in ROUTING_CARD_FIELDS[1:]:
+        if field not in routing:
+            raise ManagedPiRuntimeError(
+                f"bundled Skill {skill_name!r} is missing routing field {field!r}"
+            )
+        projection[field] = routing[field]
+    return projection
+
+
 def _discover_skill_files(paths: tuple[Path, ...], *, source: str) -> tuple[Path, ...]:
     discovered: dict[Path, Path] = {}
     for configured_path in paths:
@@ -459,7 +510,7 @@ def _resolve_skill_source_collisions(
 def _compact_card_length(card: dict[str, object]) -> int:
     runtime_card = {
         field: card[field]
-        for field in ("name", "when", "does", "notFor")
+        for field in ROUTING_CARD_FIELDS
         if field in card
     }
     return len(json.dumps(runtime_card, ensure_ascii=False, separators=(",", ":")))
@@ -562,12 +613,7 @@ def _validated_skill_routing_catalog(
                 f"project routing card source Skill is missing: bundled={name}"
             )
         source = _skill_frontmatter(skills_root / name / "SKILL.md", source="bundled")
-        try:
-            projection = {field: source[field] for field in ROUTING_CARD_FIELDS}
-        except KeyError as error:
-            raise ManagedPiRuntimeError(
-                f"bundled Skill {name!r} is missing routing field {error.args[0]!r}"
-            ) from error
+        projection = _skill_routing_projection(source, skill_name=name)
         card = cards_by_name.get(name)
         if card != projection:
             raise ManagedPiRuntimeError(
@@ -629,6 +675,105 @@ def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ..
     for skill in _product_skill_dirs(source_root):
         shutil.copytree(skill, runtime_root / skill.name, dirs_exist_ok=True)
         copied.append(skill.name)
+    return tuple(copied)
+
+
+def _copy_bundled_pi_packages(
+    source_root: Path,
+    destination_root: Path,
+    *,
+    esbuild: Path,
+    pi_root: Path,
+) -> tuple[str, ...]:
+    catalog_path = source_root / "catalog.json"
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ManagedPiRuntimeError(
+            f"bundled Pi Package catalog is invalid: {error}"
+        ) from error
+    entries = catalog.get("packages") if isinstance(catalog, dict) else None
+    if (
+        not isinstance(catalog, dict)
+        or catalog.get("schemaVersion") != 1
+        or not isinstance(entries, list)
+    ):
+        raise ManagedPiRuntimeError("bundled Pi Package catalog schema is unsupported")
+    for item in source_root.rglob("*"):
+        if item.is_symlink():
+            raise ManagedPiRuntimeError(
+                f"bundled Pi Package source contains a symlink: {item}"
+            )
+    shutil.copytree(source_root, destination_root)
+    copied: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ManagedPiRuntimeError("bundled Pi Package catalog entry is invalid")
+        directory = entry.get("directory")
+        if (
+            not isinstance(directory, str)
+            or not directory
+            or Path(directory).name != directory
+            or directory in {".", ".."}
+        ):
+            raise ManagedPiRuntimeError("bundled Pi Package directory is unsafe")
+        source_package = source_root / directory
+        destination_package = destination_root / directory
+        try:
+            manifest = json.loads(
+                (source_package / "package.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ManagedPiRuntimeError(
+                f"bundled Pi Package manifest is invalid for {directory}: {error}"
+            ) from error
+        pi_manifest = manifest.get("pi") if isinstance(manifest, dict) else None
+        extensions = pi_manifest.get("extensions") if isinstance(pi_manifest, dict) else None
+        if not isinstance(extensions, list) or not extensions:
+            raise ManagedPiRuntimeError(
+                f"bundled Pi Package has no extensions: {directory}"
+            )
+        bundled_extensions: list[str] = []
+        for index, extension in enumerate(extensions):
+            if not isinstance(extension, str) or not extension.startswith("./"):
+                raise ManagedPiRuntimeError(
+                    f"bundled Pi Package extension is unsafe: {directory}"
+                )
+            relative = Path(extension[2:])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ManagedPiRuntimeError(
+                    f"bundled Pi Package extension is unsafe: {directory}"
+                )
+            source_extension = source_package / relative
+            if not source_extension.is_file():
+                raise ManagedPiRuntimeError(
+                    f"bundled Pi Package extension is missing: {source_extension}"
+                )
+            # Pi 0.84's extension discovery deliberately accepts only .ts and
+            # .js entrypoints.  The staged package is ESM (its package.json has
+            # type=module), so keep the bundle as ESM while using the supported
+            # .js suffix; an .mjs entry is silently excluded before loading.
+            output_name = f"extension-{index}.js"
+            output = destination_package / output_name
+            _run(
+                [
+                    str(esbuild),
+                    str(source_extension),
+                    "--bundle",
+                    "--platform=node",
+                    "--format=esm",
+                    "--target=node22",
+                    f"--outfile={output}",
+                ],
+                cwd=pi_root,
+            )
+            bundled_extensions.append(f"./{output_name}")
+        manifest["pi"] = {**pi_manifest, "extensions": bundled_extensions}
+        (destination_package / "package.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        copied.append(directory)
     return tuple(copied)
 
 
@@ -824,7 +969,7 @@ def main(argv: list[str] | None = None) -> int:
 
     pi_root = Path(args.pi_worktree).expanduser().resolve()
     node = Path(args.node).expanduser().resolve() if args.node else Path()
-    package_root = pi_root / "packages" / "rag-ime-runtime-host"
+    package_root = _runtime_host_root(pi_root)
     package_json = pi_root / "packages" / "coding-agent" / "package.json"
     esbuild = pi_root / "node_modules" / ".bin" / "esbuild"
     if not package_root.is_dir() or not package_json.is_file() or not esbuild.is_file():
@@ -865,6 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
         packager_digest = hashlib.sha256(
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
+            + _hash_tree(package_root / "pi-packages")
             + _hash_tree(product_skills)
             + routing_catalog_bytes
             + SESSION_RUNTIME_CONTRACT.read_bytes()
@@ -891,6 +1037,12 @@ def main(argv: list[str] | None = None) -> int:
             bin_dir = staging / "bin"
             runtime_dir.mkdir(mode=0o700)
             bin_dir.mkdir(mode=0o700)
+            _copy_bundled_pi_packages(
+                package_root / "pi-packages",
+                staging / "pi-packages",
+                esbuild=esbuild,
+                pi_root=pi_root,
+            )
             _copy_product_skills(product_skills, runtime_dir / "skills")
             (runtime_dir / "skill-routing-cards.json").write_bytes(
                 routing_catalog_bytes
@@ -914,6 +1066,31 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=pi_root,
             )
             bundled_entrypoint.chmod(0o755)
+
+            # The Runtime Host is the managed Session RPC entrypoint, not the
+            # coding-agent CLI.  The bundled subagent Package launches
+            # isolated child Sessions through Pi's JSON print mode, so ship a
+            # sibling CLI explicitly instead of letting it recursively invoke
+            # runtime-host/cli.mjs (which exits 0 with no output).
+            bundled_pi_cli = runtime_dir / "pi-cli.mjs"
+            _run(
+                [
+                    str(esbuild),
+                    str(pi_root / "packages" / "coding-agent" / "src" / "cli.ts"),
+                    "--bundle",
+                    "--platform=node",
+                    "--format=esm",
+                    "--target=node22",
+                    f"--outfile={bundled_pi_cli}",
+                    f'--banner:js={_runtime_host_banner(product_skills, routing_catalog["collisionPolicy"])}',
+                ],
+                cwd=pi_root,
+            )
+            bundled_pi_cli.chmod(0o755)
+            bundled_pi_theme_dir = runtime_dir / "dist" / "modes" / "interactive" / "theme"
+            bundled_pi_theme_dir.mkdir(parents=True, exist_ok=True)
+            for theme_file in (pi_root / "packages" / "coding-agent" / "src" / "modes" / "interactive" / "theme").glob("*.json"):
+                shutil.copy2(theme_file, bundled_pi_theme_dir / theme_file.name)
             provider_bridge = runtime_dir / "provider-bridge.mjs"
             _run(
                 [

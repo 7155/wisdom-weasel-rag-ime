@@ -4311,6 +4311,7 @@ def _subagent_failure_class(error: object) -> str:
             "tool failed",
             "tool error",
             "outside the authorized workspace",
+            "does not exist in the authorized workspace",
             "path is outside",
             "permission denied",
         )

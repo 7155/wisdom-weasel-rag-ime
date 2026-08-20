@@ -224,6 +224,17 @@
 .agent-new-task-dialog__projects [role='radio'] small,
 .agent-new-task-dialog__picked small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-new-task-dialog__projects > .ui-button { justify-self: start; }
+.agent-new-task-dialog__permissions { display: grid; gap: 8px; }
+.agent-new-task-dialog__permissions > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.agent-new-task-dialog__permissions > header strong { font-size: 13px; }
+.agent-new-task-dialog__permissions > header small { color: var(--color-text-tertiary); font-size: 13px; }
+.agent-new-task-dialog__permissions [role='radiogroup'] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.agent-new-task-dialog__permissions [role='radio'] { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 7px; padding: 9px; border: 1px solid var(--color-border); border-radius: var(--radius-1); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.agent-new-task-dialog__permissions [role='radio'][data-state='checked'] { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.agent-new-task-dialog__permissions [role='radio']:disabled { opacity: .48; cursor: not-allowed; }
+.agent-new-task-dialog__permissions [role='radio'] > span { display: grid; min-width: 0; gap: 3px; }
+.agent-new-task-dialog__permissions [role='radio'] strong { font-size: 13px; }
+.agent-new-task-dialog__permissions [role='radio'] small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.35; }
 .agent-timeline { position: relative; display: grid; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .agent-timeline > div:first-child { height: 100%; }
 .agent-timeline__header-space { height: calc(var(--workspace-header-height) + 8px); }
@@ -357,6 +368,10 @@
 .agent-assistant-turn__body > header { display: flex; align-items: baseline; gap: 8px; min-height: 24px; margin-bottom: 4px; }
 .agent-assistant-turn__body > header strong { font-size: var(--font-size-ui-strong); font-weight: var(--font-weight-bold); }
 .agent-assistant-turn__body > header span { color: var(--color-text-tertiary); font-size: 12px; }
+.agent-runtime-avatar { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface-subtle); color: var(--color-text-secondary); }
+.agent-runtime-avatar[data-size='hero'] { width: 64px; height: 64px; border-radius: var(--radius-3); color: var(--color-accent); }
+.agent-runtime-avatar[data-presence='thinking'] { border-color: color-mix(in srgb, var(--color-info) 45%, var(--color-border)); color: var(--color-info); }
+.agent-runtime-avatar[data-presence='warning'] { border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-border)); color: var(--color-danger); }
 .agent-turn-sequence { display: grid; width: 100%; max-width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .agent-turn-sequence > div { min-width: 0; }
 .agent-assistant-message-shell { position: relative; min-width: 0; }
@@ -473,12 +488,12 @@
 .agent-html-output__action { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 4px 7px; border: 0; border-radius: var(--radius-1); background: transparent; color: var(--color-text-secondary); cursor: pointer; font: var(--font-weight-semibold) 12px var(--font-sans); }
 .agent-html-output__action:hover { background: var(--color-surface-hover); color: var(--color-text); }
 .agent-html-output__action:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
-.agent-html-output__frame { display: block; width: 100%; min-height: 180px; border: 0; background: #fff; transition: height 160ms ease-out; }
+.agent-html-output__frame { display: block; width: 100%; min-height: 180px; border: 0; background: #fff; overflow-anchor: none; }
 .agent-html-output__source { max-height: 420px; margin: 0; overflow: auto; padding: 14px 16px 18px; border-top: 1px solid var(--color-border); background: #17201c; color: #edf5f0; font: 12px/1.58 var(--font-mono); white-space: pre; }
 .agent-html-output-placeholder { display: flex; min-height: 96px; align-items: center; justify-content: center; gap: 9px; margin: 8px 0 12px; border: 1px dashed var(--color-border-strong); border-radius: var(--radius-2); background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 13px; }
 .agent-html-output-placeholder__dot { width: 8px; height: 8px; border-radius: 999px; background: var(--color-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 15%, transparent); animation: agent-html-output-pulse 1.2s ease-in-out infinite; }
 @keyframes agent-html-output-pulse { 0%, 100% { opacity: .45; transform: scale(.86); } 50% { opacity: 1; transform: scale(1); } }
-@media (prefers-reduced-motion: reduce) { .agent-html-output__frame { transition: none; } .agent-html-output-placeholder__dot { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .agent-html-output-placeholder__dot { animation: none; } }
 .agent-code-block { max-width: 100%; margin: 10px 0 13px; border: 1px solid var(--color-code-border); border-radius: var(--radius-2); background: var(--color-code-bg); color: var(--color-code-text); overflow: hidden; }
 .agent-code-block figcaption { display: flex; height: 34px; align-items: center; justify-content: space-between; padding: 0 6px 0 10px; border-bottom: 1px solid var(--color-code-border); color: var(--color-code-muted); font-family: var(--font-mono); font-size: 13px; }
 .agent-code-block figcaption > span { display: flex; align-items: center; gap: 6px; }
@@ -587,6 +602,8 @@
 .agent-approval-block__actions { display: flex !important; min-width: 0 !important; flex: 0 1 auto !important; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 
 @media (max-width: 520px) {
+  .agent-new-task-dialog__permissions [role='radiogroup'] { grid-template-columns: 1fr; }
+  .agent-new-task-dialog__permissions [role='radio'] { padding-block: 8px; }
   .agent-rich-artifact, .agent-rich-status { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .agent-rich-status dl { grid-column: 1 / -1; }
   .agent-rich-card dl > div, .agent-rich-status dl > div { grid-template-columns: 72px minmax(0, 1fr); }

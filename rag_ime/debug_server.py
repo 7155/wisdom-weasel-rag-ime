@@ -3263,7 +3263,7 @@ class DebugImeService:
             compile_output,
             project=request.project,
             provider=organizer.provider_name,
-            model=config.model,
+            model=organizer.config.model,
             source_bundle=bundle,
         )
         validation = inspect_memory_book_plan(plan)
@@ -6459,6 +6459,36 @@ _MEMORY_ENTITY_PATH_PREFIX = "/api/memory/entities/"
 _MEMORY_REFERENCE_PATH_PREFIX = "/api/memory/references/"
 _KNOWLEDGE_BASES_PATH = "/api/knowledge-bases"
 _MAX_KNOWLEDGE_IMPORT_BYTES = 200 * 1024 * 1024
+_ISOLATED_HTML_PREVIEW_PATH = "/__paw_html_preview"
+_ISOLATED_HTML_PREVIEW_DOCUMENT = b"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PAW HTML Preview</title>
+</head>
+<body>
+  <noscript>This preview requires JavaScript.</noscript>
+  <script>
+  (() => {
+    try {
+      const encoded = window.location.hash.slice(1).replace(/-/g, '+').replace(/_/g, '/');
+      if (!encoded) throw new Error('preview source is missing');
+      const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
+      const binary = window.atob(padded);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const source = new TextDecoder().decode(bytes);
+      document.open();
+      document.write(source);
+      document.close();
+    } catch (error) {
+      document.body.textContent = `HTML preview failed: ${String(error)}`;
+    }
+  })();
+  </script>
+</body>
+</html>
+"""
 _MEMORY_GRAPH_QUERY_FIELDS = frozenset(
     {
         "plane",
@@ -6500,6 +6530,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)
         if not self._authorize_gateway_request("GET", parsed):
+            return
+        if self._serve_isolated_html_preview(parsed.path):
             return
         if self._serve_gateway_static(parsed.path):
             return
@@ -8132,6 +8164,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "compact":
                 self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
+            elif agent_session_id and agent_action == "commands":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.invoke_command(agent_session_id, payload),
+                )
             elif agent_session_id and agent_action == "goal":
                 self._write_json(
                     HTTPStatus.OK,
@@ -8311,6 +8348,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if not self._authorize_gateway_request("GET", parsed):
             return
+        if self._serve_isolated_html_preview(parsed.path, include_body=False):
+            return
         if self._serve_gateway_static(parsed.path, include_body=False):
             return
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -8435,11 +8474,44 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; "
             "worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
-            "frame-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            "frame-src 'self' blob:; base-uri 'none'; "
+            "form-action 'none'; frame-ancestors 'none'",
         )
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        if include_body:
+            self.wfile.write(body)
+        return True
+
+    def _serve_isolated_html_preview(
+        self,
+        request_path: str,
+        *,
+        include_body: bool = True,
+    ) -> bool:
+        if request_path != _ISOLATED_HTML_PREVIEW_PATH:
+            return False
+        body = _ISOLATED_HTML_PREVIEW_DOCUMENT
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; script-src 'unsafe-inline' https: http: blob: data:; "
+            "style-src 'unsafe-inline' https: http:; img-src data: blob: https: http:; "
+            "font-src data: blob: https: http:; media-src data: blob: https: http:; "
+            "connect-src https: http: ws: wss:; worker-src blob: data:; "
+            "child-src blob: data: https: http:; object-src 'none'; base-uri 'none'; "
+            "form-action https: http:; "
+            "sandbox allow-downloads allow-forms allow-modals allow-pointer-lock "
+            "allow-popups allow-scripts",
+        )
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         if include_body:
             self.wfile.write(body)

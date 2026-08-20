@@ -165,6 +165,36 @@ class WorkDocumentService:
                         "updates must use the canonical active path"
                     )
 
+    def authority_context(
+        self,
+        authority_kind: str,
+        authority_id: str,
+    ) -> dict[str, object]:
+        """Return the current authority receipt used by a document binding.
+
+        This is an advisory prompt projection over the existing authority
+        owner.  It does not reserve a revision or create another document
+        lifecycle.
+        """
+        kind = _required(authority_kind, "authorityKind", 40)
+        identifier = _required(authority_id, "authorityId", 240)
+        with sqlite_connection(
+            self.db_path,
+            row_factory=sqlite3.Row,
+            foreign_keys=True,
+        ) as conn:
+            authority = self._authority(conn, kind, identifier)
+        return {
+            "authorityKind": kind,
+            "authorityId": identifier,
+            "authorityKey": f"{kind}:{identifier}",
+            "authorityRevision": int(authority["revision"]),
+            "state": str(authority["state"]),
+            "terminal": bool(authority["terminal"]),
+            "terminalState": str(authority["terminalState"]),
+            "transitionReceiptId": str(authority["receiptId"]),
+        }
+
     def register(self, payload: Mapping[str, object]) -> dict[str, object]:
         kind = _required(payload.get("authorityKind"), "authorityKind", 40)
         authority_id = _required(payload.get("authorityId"), "authorityId", 240)

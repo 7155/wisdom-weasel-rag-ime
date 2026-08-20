@@ -263,6 +263,47 @@ class AgentRoomIntercomStore:
             ).fetchone()
         return _intercom_payload(row) if row is not None else None
 
+    def refresh_generations(
+        self,
+        message_id: str,
+        *,
+        source_generation: int,
+        target_generation: int,
+    ) -> dict[str, object]:
+        """Keep a durable peer message attached to the current participant loops.
+
+        A generation identifies a Pi loop, not a different Room participant.
+        Queued peer messages may legitimately outlive either participant's
+        current loop, so refresh the delivery fence while the immutable source
+        and target Session bindings remain active.
+        """
+
+        now = _now_ms()
+        with self._connect(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_room_intercom_messages
+                SET source_generation = ?, target_generation = ?,
+                    updated_at_ms = ?
+                WHERE id = ? AND status = 'queued'
+                """,
+                (
+                    max(0, int(source_generation)),
+                    max(0, int(target_generation)),
+                    now,
+                    message_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("room intercom message is no longer queued")
+            row = conn.execute(
+                "SELECT * FROM agent_room_intercom_messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover - guarded by the update
+            raise KeyError(message_id)
+        return _intercom_payload(row)
+
     def requeue(self, message_id: str, *, error: str = "") -> dict[str, object]:
         return self._transition(
             message_id,
@@ -386,7 +427,7 @@ class AgentRoomIntercomStore:
             """,
             (room_id, str(source["id"]), client_message_id),
         ).fetchone()
-        requested_target = str(payload.get("targetParticipantId") or "").strip()
+        requested_target = _participant_reference(payload.get("targetParticipantId"))
         work_item_id = str(payload.get("workItemId") or "").strip()
         work_action = str(payload.get("workAction") or "").strip()
         if work_action and work_action not in {
@@ -492,7 +533,6 @@ class AgentRoomIntercomStore:
             "source": _participant_identity(source),
             "target": _participant_identity(target),
         }
-
     @contextmanager
     def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path, timeout=10)
@@ -595,10 +635,12 @@ class AgentRoomIntercomRouter:
                 continue
             item: Mapping[str, object] | None = None
             for candidate in candidates:
-                if not self._generation_matches(candidate):
+                try:
+                    candidate = self._refresh_candidate_generations(candidate)
+                except Exception:
                     stale = self.store.mark_failed(
                         str(candidate["id"]),
-                        error="participant runtime generation changed before delivery",
+                        error="participant runtime is unavailable before delivery",
                         stale=True,
                         expected="queued",
                     )
@@ -656,16 +698,26 @@ class AgentRoomIntercomRouter:
                 else:
                     self._audit(delivered, "delivered")
 
-    def _generation_matches(self, item: Mapping[str, object]) -> bool:
-        try:
-            return (
-                self.generation_provider(str(item["sourceSessionId"]))
-                == int(item["sourceGeneration"])
-                and self.generation_provider(str(item["targetSessionId"]))
-                == int(item["targetGeneration"])
-            )
-        except Exception:
-            return False
+    def _refresh_candidate_generations(
+        self,
+        item: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        source_generation = self.generation_provider(
+            str(item["sourceSessionId"])
+        )
+        target_generation = self.generation_provider(
+            str(item["targetSessionId"])
+        )
+        if (
+            source_generation == int(item["sourceGeneration"])
+            and target_generation == int(item["targetGeneration"])
+        ):
+            return item
+        return self.store.refresh_generations(
+            str(item["id"]),
+            source_generation=source_generation,
+            target_generation=target_generation,
+        )
 
     def _audit(self, item: Mapping[str, object], phase: str) -> None:
         try:
@@ -673,6 +725,26 @@ class AgentRoomIntercomRouter:
         except Exception:
             # The intercom row is the durable audit source; Room events are a projection.
             pass
+
+
+def _participant_reference(value: object) -> str:
+    """Accept the canonical participant id and Pi's safe UUID shorthand.
+
+    Models occasionally preserve the UUID from ``participant:<uuid>`` while
+    dropping only the namespace prefix.  The UUID remains globally unique and
+    Room membership is still checked by the authoritative SQL query below, so
+    canonicalizing that narrow shorthand is safe without accepting display
+    names or inventing a second routing namespace.
+    """
+
+    text = str(value or "").strip()
+    prefix = "participant:"
+    candidate = text[len(prefix) :] if text.startswith(prefix) else text
+    try:
+        canonical = str(uuid.UUID(candidate))
+    except (ValueError, AttributeError):
+        return text
+    return f"{prefix}{canonical}"
 
 
 def _participant_identity(row: sqlite3.Row | None) -> dict[str, str]:

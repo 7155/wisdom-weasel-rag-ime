@@ -46,7 +46,7 @@ export function MarkdownBody({
   return (
     <div className="agent-markdown">
       {partition.stableFragments.map((fragment, index) => (
-        <StableMarkdownFragment key={`stable:${index}`} source={fragment} />
+        <StableMarkdownFragment deferRichHtml={streamingTail} key={`stable:${index}`} source={fragment} />
       ))}
       {partition.active ? (
         <MarkdownFragment source={partition.active} streamingTail />
@@ -56,17 +56,21 @@ export function MarkdownBody({
 }
 
 const StableMarkdownFragment = memo(function StableMarkdownFragment({
+  deferRichHtml = false,
   source,
 }: {
+  deferRichHtml?: boolean;
   source: string;
 }) {
-  return <MarkdownFragment source={source} />;
+  return <MarkdownFragment deferRichHtml={deferRichHtml} source={source} />;
 });
 
 function MarkdownFragment({
+  deferRichHtml = false,
   source,
   streamingTail = false,
 }: {
+  deferRichHtml?: boolean;
   source: string;
   streamingTail?: boolean;
 }) {
@@ -134,7 +138,7 @@ function MarkdownFragment({
           const tail = hasStreamingTail(props);
           const html = match?.[1]?.toLowerCase() === 'html';
           if (fenced && html) {
-            return streamingTail || tail
+            return deferRichHtml || streamingTail || tail
               ? <HtmlOutputPlaceholder />
               : <InlineHtmlOutput content={code} />;
           }

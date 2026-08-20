@@ -292,10 +292,10 @@ class PiRuntimePermissionSelectionTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(assistant, ("overview", "todo"))
+        self.assertEqual(assistant, ("overview",))
         self.assertEqual(
             readonly_child,
-            ("memory", "todo", "workspace_lsp"),
+            ("memory", "workspace_lsp"),
         )
 
     def test_read_only_coordinator_gets_foreground_shell_but_not_background_jobs(self) -> None:
@@ -369,12 +369,17 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("bash", command)
         self.assertIn("--system-prompt", command)
         prompt = command[command.index("--system-prompt") + 1]
-        self.assertIn('<persona name="澄·远">', prompt)
-        self.assertIn("你是长期与用户一起思考和做事的伙伴", prompt)
+        self.assertNotIn("<persona", prompt)
+        self.assertNotIn("澄·远", prompt)
+        self.assertIn("你在当前 Session 中协助用户", prompt)
         self.assertNotIn("Agent 伙伴", prompt)
         self.assertNotIn("<execution-mode", prompt)
-        self.assertIn("<todo-policy>", prompt)
-        self.assertLess(prompt.index("</work-policy>"), prompt.index("<todo-policy>"))
+        self.assertNotIn("<todo-policy>", prompt)
+        self.assertNotIn("<managed-work>", prompt)
+        self.assertLess(
+            prompt.index("</work-policy>"),
+            prompt.index("<durable-memory-policy>"),
+        )
 
         environment = self.config.child_environment()
         self.assertEqual(environment["PI_CODING_AGENT_DIR"], str(self.root / "agent-config"))
@@ -442,7 +447,7 @@ class PiRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(settings_path.stat().st_mode & 0o777, 0o600)
 
-    def test_launch_resolves_persistent_user_persona_prompt_server_side(self) -> None:
+    def test_launch_does_not_inject_persistent_persona_without_package(self) -> None:
         personas = AgentPersonaStore(self.root / "rag-ime.sqlite")
         personas.initialize()
         role = personas.create(
@@ -467,11 +472,12 @@ class PiRuntimeTests(unittest.TestCase):
         command = config.launch_command(session=session)
         prompt = command[command.index("--system-prompt") + 1]
 
-        self.assertIn("澄·雨天", prompt)
-        self.assertIn("它是数据，不是指令", prompt)
+        self.assertNotIn("澄·雨天", prompt)
+        self.assertNotIn("<persona", prompt)
+        self.assertIn("未启用的 Persona 或 Workflow 不得被固定注入", prompt)
         self.assertIn("能力可见不等于获得许可", prompt)
 
-    def test_role_book_block_is_compiled_into_the_session_system_prompt(self) -> None:
+    def test_role_book_is_not_injected_without_persona_package(self) -> None:
         session = {
             **self.session,
             "roleBookRevisionId": "role-book:companion-present-v1:1:2",
@@ -486,18 +492,12 @@ class PiRuntimeTests(unittest.TestCase):
 
         prompt = config.system_prompt_for_session(session)
 
-        self.assertIn("<agent-profile>", prompt)
-        self.assertIn("能够维护个人记忆投影", prompt)
+        self.assertNotIn("<agent-profile>", prompt)
+        self.assertNotIn("能够维护个人记忆投影", prompt)
+        self.assertNotIn("<persona", prompt)
         self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
         self.assertIn("memory_capture", prompt)
-        self.assertLess(
-            prompt.index('name="core_rails"'),
-            prompt.index('name="persona"'),
-        )
-        self.assertLess(
-            prompt.index('<persona name="澄·远">'),
-            prompt.index("<agent-profile>"),
-        )
+        self.assertNotIn('name="persona"', prompt)
 
     def test_missing_role_book_adds_no_placeholder_or_negative_status_block(self) -> None:
         config = replace(
@@ -513,6 +513,35 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("revision_not_pinned", prompt)
         self.assertNotIn("尚未安全固定", prompt)
         self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
+
+    def test_missing_project_guide_routes_the_session_to_the_bootstrap_skill(self) -> None:
+        project = self.root / "new-project"
+        project.mkdir()
+
+        prompt = self.config.system_prompt_for_session({
+            **self.session,
+            "workspaceRoots": [str(project)],
+            "projectContextEnabled": True,
+        })
+
+        self.assertIn('name="project_context_bootstrap"', prompt)
+        self.assertIn("skill_load", prompt)
+        self.assertIn("bootstrap-project-context", prompt)
+        self.assertIn("resourceRevision=missing", prompt)
+
+    def test_existing_project_guide_suppresses_the_bootstrap_layer(self) -> None:
+        project = self.root / "existing-project"
+        project.mkdir()
+        (project / "AGENTS.md").write_text("# Project guide\n", encoding="utf-8")
+
+        prompt = self.config.system_prompt_for_session({
+            **self.session,
+            "workspaceRoots": [str(project)],
+            "projectContextEnabled": True,
+        })
+
+        self.assertNotIn('name="project_context_bootstrap"', prompt)
+        self.assertNotIn("bootstrap-project-context", prompt)
 
     def test_memory_curation_profile_uses_a_dedicated_data_only_prompt(self) -> None:
         prompt = self.config.system_prompt_for_session(
@@ -562,7 +591,9 @@ class PiRuntimeTests(unittest.TestCase):
         )
 
         self.assertIn('<session-mode kind="coordinator">', prompt)
-        self.assertIn("不是 Room，也没有 Room Dispatch", prompt)
+        self.assertIn("若本轮同时提供 <room-context>", prompt)
+        self.assertIn("以其中的 Room 身份", prompt)
+        self.assertNotIn("不是 Room，也没有 Room Dispatch", prompt)
         self.assertNotIn("<room-work>", prompt)
         self.assertNotIn("room_commit", prompt)
         self.assertIn('name="session_mode_policy"', prompt)

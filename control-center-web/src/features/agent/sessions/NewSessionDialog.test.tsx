@@ -25,6 +25,7 @@ describe('NewSessionDialog', () => {
     expect(onCreate).toHaveBeenCalledWith({
       title: '新对话',
       workspaceRoots: [],
+      executionMode: 'per_action',
     });
   });
 
@@ -50,6 +51,7 @@ describe('NewSessionDialog', () => {
     expect(onCreate).toHaveBeenCalledWith({
       title: '整理 RAG 工具',
       workspaceRoots: ['/Volumes/work/learnA'],
+      executionMode: 'per_action',
     });
   });
 
@@ -75,6 +77,7 @@ describe('NewSessionDialog', () => {
     expect(onCreate).toHaveBeenCalledWith({
       title: '新对话',
       workspaceRoots: [],
+      executionMode: 'per_action',
     });
   });
 });

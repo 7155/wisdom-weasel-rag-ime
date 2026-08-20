@@ -99,7 +99,7 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("build_managed_pi_runtime_v2.py", installer)
         self.assertIn("--pi-worktree", installer)
         self.assertIn("RAG_IME_PI_WORKTREE", installer)
-        self.assertIn("../pi/packages/rag-ime-runtime-host", installer)
+        self.assertIn("../pi/integrations/rag-ime-runtime-host", installer)
         self.assertIn("install_managed_pi_runtime.py", installer)
         self.assertIn("--no-activate", installer)
         self.assertIn("smoke_pi_session_staged_runtime.py", installer)

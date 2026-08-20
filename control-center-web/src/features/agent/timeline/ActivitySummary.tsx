@@ -130,7 +130,7 @@ export function ActivitySummary({
     : title;
   // A long Agent loop can legitimately contain failed probes. Keep the group
   // neutral and reserve terminal red for a turn/provider failure. The inline
-  // detail list still identifies every unfinished call and its recovery reason.
+  // detail list still identifies every failed call and its recovery reason.
   const inlineSummary = inlineTools.count
     ? inlineTools.count === 1
       ? inlineTools.highlight || inlineTools.outcome || inlineTools.names
@@ -145,7 +145,7 @@ export function ActivitySummary({
         : failed && inlineTools.count > 1
           ? '查看'
           : failed
-            ? '未完成'
+            ? '失败'
             : '完成';
   const liveActivities = running || waiting ? activities.slice(-3) : [];
   const state = terminalFailure ? 'failed' : waiting ? 'waiting' : running ? 'running' : failed ? 'mixed' : 'done';
@@ -340,7 +340,7 @@ const ActivityRow = memo(function ActivityRow({
         </span>
         <i data-status={activity.status}>
           {toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}
-          {isToolActivity && activity.status === 'failed' ? '未完成' : statusLabel(activity.status)}
+          {statusLabel(activity.status)}
           {duration ? ` · ${duration}` : ''}
         </i>
       </summary>
@@ -1006,9 +1006,9 @@ function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResul
 export function PublicToolError({ reason }: { reason: string }) {
   const { copy, state } = useCopyableText(reason);
   return (
-    <section className="agent-tool-result-panel" data-tone="error" aria-label="工具未完成">
+    <section className="agent-tool-result-panel" data-tone="error" aria-label="工具失败">
       <header className="agent-tool-result-panel__header">
-        <strong><TriangleAlert size={13} />未完成原因</strong>
+        <strong><TriangleAlert size={13} />失败原因</strong>
         <Button
           aria-live="polite"
           leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
@@ -1046,7 +1046,11 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     return { title: '处理说明', kind: 'thinking', icon: Brain };
   }
   if (activity.kind === 'turn_failed') {
-    return { title: '模型服务请求失败', kind: 'runtime', icon: TriangleAlert, detail: '模型请求没有完成；可返回对话重试或切换模型。' };
+    const retryAttempts = finiteCount(payload.providerRetryAttempts);
+    const detail = payload.retryExhausted === true && retryAttempts > 0
+      ? `已自动重试 ${retryAttempts} 次，模型服务仍未恢复；请稍后重试或切换模型。`
+      : '模型请求没有完成；可返回对话重试或切换模型。';
+    return { title: '模型服务请求失败', kind: 'runtime', icon: TriangleAlert, detail };
   }
   if (activity.kind.includes('approval') || activity.kind === 'user_input_required') {
     const decision = approvalDecisionView(payload);
@@ -1191,7 +1195,7 @@ function compactToolSummary(activities: AgentActivityProjection[]) {
   const running = statuses.filter((status) => status === 'running').length;
   const outcome = [
     completed ? `${completed} 已完成` : '',
-    failed ? `${failed} 未完成` : '',
+    failed ? `${failed} 失败` : '',
     waiting ? `${waiting} 待确认` : '',
     running ? `${running} 进行中` : '',
   ].filter(Boolean).join(' · ');
@@ -1277,4 +1281,10 @@ function elapsedLabel(elapsedMs: number): string {
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function finiteCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : 0;
 }

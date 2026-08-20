@@ -31,6 +31,11 @@ class RoomPartnerApplicationService:
         cancel_room_turn: Callable[[str, str], None],
         abort_session: Callable[[str], Mapping[str, object]],
         room_topic_for_turn: Callable[[str], str],
+        send_room_intercom: Callable[[str, Mapping[str, object]], Mapping[str, object]] | None = None,
+        list_room_intercom: Callable[[str], list[Mapping[str, object]]] | None = None,
+        room_work: Any | None = None,
+        publish_room_work_activity: Callable[..., None] | None = None,
+        work_document_for_authority: Callable[[str, str], Mapping[str, object] | None] | None = None,
     ) -> None:
         self.rooms = rooms
         self.room_turns = room_turns
@@ -43,6 +48,11 @@ class RoomPartnerApplicationService:
         self.cancel_room_turn = cancel_room_turn
         self.abort_session = abort_session
         self.room_topic_for_turn = room_topic_for_turn
+        self.send_room_intercom = send_room_intercom
+        self.list_room_intercom = list_room_intercom
+        self.room_work = room_work
+        self.publish_room_work_activity = publish_room_work_activity
+        self.work_document_for_authority = work_document_for_authority
 
     def execute(
         self,
@@ -50,6 +60,7 @@ class RoomPartnerApplicationService:
         args: Mapping[str, object],
         *,
         tool_call_id: str,
+        source_loop_id: str = "",
     ) -> dict[str, object]:
         source = self._participant(session_id)
         operation = str(args.get("op") or "list").strip()
@@ -72,10 +83,84 @@ class RoomPartnerApplicationService:
                 source,
                 args,
                 tool_call_id=tool_call_id,
+                source_loop_id=source_loop_id,
+            )
+        if operation == "peer_list":
+            return self._peer_list(source)
+        if operation in {"peer_send", "peer_ask", "peer_reply"}:
+            return self._peer_message(
+                source,
+                args,
+                operation=operation,
+                tool_call_id=tool_call_id,
             )
         raise ValueError(
-            "room_partner op must be list, delegate, delegate_batch, or post"
+            "room_partner op must be list, delegate, delegate_batch, post, "
+            "peer_list, peer_send, peer_ask, or peer_reply"
         )
+
+    def _peer_list(self, source: Mapping[str, object]) -> dict[str, object]:
+        root_id, dispatch_id = self.room_turns.active_turn(
+            str(source["sessionId"])
+        )
+        items = (
+            self.list_room_intercom(str(source["sessionId"]))
+            if self.list_room_intercom is not None
+            else []
+        )
+        return {
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": "peer_list",
+            "roomId": str(source["roomId"]),
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "messages": [dict(item) for item in items],
+        }
+
+    def _peer_message(
+        self,
+        source: Mapping[str, object],
+        args: Mapping[str, object],
+        *,
+        operation: str,
+        tool_call_id: str,
+    ) -> dict[str, object]:
+        if self.send_room_intercom is None:
+            raise ValueError("Room peer messaging is unavailable")
+        # Peer communication is Room-member authority, not Facilitator or
+        # parent-turn authority. In particular, an intercom-delivered Pi turn
+        # may answer its sender even though it is not a dispatched Room root.
+        root_id, dispatch_id = self.room_turns.active_turn(
+            str(source["sessionId"])
+        )
+        kind = {
+            "peer_send": "send",
+            "peer_ask": "ask",
+            "peer_reply": "reply",
+        }[operation]
+        payload: dict[str, object] = {
+            "kind": kind,
+            "content": _required_text(args, "content", maximum=4_000),
+            "clientMessageId": _text(args.get("clientMessageId"), maximum=200)
+            or tool_call_id,
+        }
+        if kind != "reply":
+            payload["targetParticipantId"] = _required_text(
+                args,
+                "targetParticipantId",
+                maximum=240,
+            )
+        else:
+            payload["replyTo"] = _required_text(args, "replyTo", maximum=240)
+        item = self.send_room_intercom(str(source["sessionId"]), payload)
+        return {
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": operation,
+            "roomId": str(source["roomId"]),
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "message": dict(item),
+        }
 
     def _delegate_batch(
         self,
@@ -377,12 +462,14 @@ class RoomPartnerApplicationService:
     ) -> dict[str, object]:
         target_id = _required_text(args, "targetParticipantId", maximum=240)
         task = _required_text(args, "task", maximum=8_000)
-        expected_output = _text(args.get("expectedOutput"), maximum=1_200)
+        expected_output = _required_text(args, "expectedOutput", maximum=1_200)
         criteria = _string_list(
             args.get("acceptanceCriteria"),
             limit=8,
             maximum=320,
         )
+        if not criteria:
+            raise ValueError("acceptanceCriteria must not be empty")
         timeout_seconds = _integer(
             args.get("timeoutSeconds"),
             default=180,
@@ -407,6 +494,17 @@ class RoomPartnerApplicationService:
             tool_call_id,
         )
         if existing_dispatch_id:
+            work_item = self._create_delegated_work(
+                room_id=room_id,
+                root_id=root_id,
+                topic_id=str(room.get("activeTopicId") or ""),
+                tool_call_id=tool_call_id,
+                source=source,
+                target=target,
+                task=task,
+                expected_output=expected_output,
+                acceptance_criteria=criteria,
+            )
             result = self._wait_for_child(
                 room_id=room_id,
                 root_id=root_id,
@@ -415,6 +513,7 @@ class RoomPartnerApplicationService:
                 source=source,
                 timeout_seconds=timeout_seconds,
                 idempotent_replay=True,
+                work_item=work_item,
             )
             if wave_id:
                 result.update(
@@ -469,6 +568,17 @@ class RoomPartnerApplicationService:
             conversation_only=False,
         )[0]
         child_dispatch_id = f"room-child:{uuid.uuid4()}"
+        work_item = self._create_delegated_work(
+            room_id=room_id,
+            root_id=root_id,
+            topic_id=str(room.get("activeTopicId") or ""),
+            tool_call_id=tool_call_id,
+            source=source,
+            target=target,
+            task=task,
+            expected_output=expected_output,
+            acceptance_criteria=criteria,
+        )
         decision.update(
             {
                 # A Partner Tool dispatch is an explicit coordinator
@@ -486,6 +596,14 @@ class RoomPartnerApplicationService:
                 **({"phaseName": phase} if phase else {}),
                 "parallelIndex": parallel_index,
                 "parallelSize": parallel_size,
+                **(
+                    {
+                        "workItemId": str(work_item["id"]),
+                        "workItemState": str(work_item.get("state") or ""),
+                    }
+                    if work_item
+                    else {}
+                ),
             }
         )
         topic_id = str(room.get("activeTopicId") or "")
@@ -512,6 +630,7 @@ class RoomPartnerApplicationService:
                 "task": task[:1_200],
                 "expectedOutput": expected_output,
                 "acceptanceCriteria": criteria,
+                **({"workItem": dict(work_item)} if work_item else {}),
                 **({"waveId": wave_id} if wave_id else {}),
                 **({"phaseName": phase} if phase else {}),
                 "parallelIndex": parallel_index,
@@ -529,6 +648,18 @@ class RoomPartnerApplicationService:
             dispatch_id=child_dispatch_id,
             child=True,
         )
+        previous_accepted_turn_id = str(work_item.get("acceptedTurnId") or "")
+        work_claimed = False
+        if self.room_work is not None and previous_accepted_turn_id != root_id:
+            work_item = self.room_work.claim_dispatch(
+                str(work_item["id"]),
+                room_id=room_id,
+                owner_participant_id=target_id,
+                assignment_key=str(work_item["assignmentKey"]),
+                previous_accepted_turn_id=previous_accepted_turn_id,
+                room_turn_id=root_id,
+            )
+            work_claimed = True
         unread = self.rooms.unread_public_messages(
             room_id,
             target_id,
@@ -550,10 +681,19 @@ class RoomPartnerApplicationService:
             room_turn_id=root_id,
             topic_id=topic_id,
             unread=unread,
-            work_item=None,
+            work_item=work_item or None,
             attachment_ids=(),
         )
         if dispatched.get("accepted") is not True:
+            self._fail_delegated_work(
+                work_item,
+                source=source,
+                target=target,
+                root_id=root_id,
+                previous_accepted_turn_id=previous_accepted_turn_id,
+                work_claimed=work_claimed,
+                reason=str(dispatched.get("error") or "Partner rejected task"),
+            )
             raise RuntimeError(str(dispatched.get("error") or "Partner rejected task"))
         result = self._wait_for_child(
             room_id=room_id,
@@ -563,6 +703,7 @@ class RoomPartnerApplicationService:
             source=source,
             timeout_seconds=timeout_seconds,
             idempotent_replay=False,
+            work_item=work_item,
         )
         if wave_id:
             result.update(
@@ -585,6 +726,7 @@ class RoomPartnerApplicationService:
         source: Mapping[str, object],
         timeout_seconds: int,
         idempotent_replay: bool,
+        work_item: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         deadline = time.monotonic() + timeout_seconds
         latest_message: Mapping[str, object] | None = None
@@ -595,9 +737,23 @@ class RoomPartnerApplicationService:
                 limit=2_000,
             )
             terminal: Mapping[str, object] | None = None
+            work_result_post: Mapping[str, object] | None = None
             for event in events:
                 payload = event.get("payload")
                 if not isinstance(payload, Mapping):
+                    continue
+                if str(event.get("eventType") or "") == "room_post":
+                    post = payload.get("post")
+                    if (
+                        isinstance(post, Mapping)
+                        and str(post.get("rootId") or "") == root_id
+                        and str(post.get("dispatchId") or "")
+                        == child_dispatch_id
+                        and str(post.get("authorActorRef") or "")
+                        == str(target["id"])
+                        and str(post.get("kind") or "") == "work_result"
+                    ):
+                        work_result_post = post
                     continue
                 data = payload.get("data")
                 if not isinstance(data, Mapping):
@@ -621,6 +777,21 @@ class RoomPartnerApplicationService:
                     if latest_message is not None
                     else ""
                 )
+                settled_work = self._settle_delegated_work(
+                    work_item,
+                    phase=phase,
+                    result=text,
+                    child_dispatch_id=child_dispatch_id,
+                    source=source,
+                    target=target,
+                )
+                settled_status = (
+                    "blocked"
+                    if phase == "completed"
+                    and settled_work is not None
+                    and str(settled_work.get("state") or "") == "blocked"
+                    else phase
+                )
                 return {
                     "schemaVersion": "rag-ime.room-partner-result.v1",
                     "operation": "delegate",
@@ -629,14 +800,68 @@ class RoomPartnerApplicationService:
                     "childDispatchId": child_dispatch_id,
                     "participantId": str(target["id"]),
                     "displayName": str(target.get("displayName") or ""),
-                    "status": phase,
+                    "status": settled_status,
                     "result": text[:16_000],
                     "idempotentReplay": idempotent_replay,
+                    **(
+                        {"workItem": dict(settled_work)}
+                        if settled_work is not None
+                        else {}
+                    ),
+                }
+            if work_result_post is not None:
+                # A typed work_result is the participant's explicit delivery
+                # boundary.  Do not keep the parent Tool call open until the
+                # whole Pi Session turn also becomes terminal: direct peer
+                # messages may legitimately start more loops after delivery.
+                # WorkDocument readiness is still enforced by the same durable
+                # settlement path used for a normal child terminal.
+                text = str(work_result_post.get("content") or "")
+                settled_work = self._settle_delegated_work(
+                    work_item,
+                    phase="completed",
+                    result=text,
+                    child_dispatch_id=child_dispatch_id,
+                    source=source,
+                    target=target,
+                )
+                settled_status = (
+                    "blocked"
+                    if settled_work is not None
+                    and str(settled_work.get("state") or "") == "blocked"
+                    else "completed"
+                )
+                return {
+                    "schemaVersion": "rag-ime.room-partner-result.v1",
+                    "operation": "delegate",
+                    "roomId": room_id,
+                    "rootId": root_id,
+                    "childDispatchId": child_dispatch_id,
+                    "participantId": str(target["id"]),
+                    "displayName": str(target.get("displayName") or ""),
+                    "status": settled_status,
+                    "result": text[:16_000],
+                    "completionSource": "room_post",
+                    "postId": str(work_result_post.get("postId") or ""),
+                    "idempotentReplay": idempotent_replay,
+                    **(
+                        {"workItem": dict(settled_work)}
+                        if settled_work is not None
+                        else {}
+                    ),
                 }
             if self.room_turns.is_cancelled(
                 str(source["sessionId"]),
                 root_id,
             ):
+                settled_work = self._settle_delegated_work(
+                    work_item,
+                    phase="aborted",
+                    result="Room root turn was cancelled",
+                    child_dispatch_id=child_dispatch_id,
+                    source=source,
+                    target=target,
+                )
                 return {
                     "schemaVersion": "rag-ime.room-partner-result.v1",
                     "operation": "delegate",
@@ -647,6 +872,11 @@ class RoomPartnerApplicationService:
                     "status": "aborted",
                     "result": "",
                     "idempotentReplay": idempotent_replay,
+                    **(
+                        {"workItem": dict(settled_work)}
+                        if settled_work is not None
+                        else {}
+                    ),
                 }
             time.sleep(0.05)
         target_session_id = str(target.get("sessionId") or "")
@@ -678,6 +908,14 @@ class RoomPartnerApplicationService:
             source_session_id=target_session_id,
             topic_id=self.room_topic_for_turn(root_id),
         )
+        settled_work = self._settle_delegated_work(
+            work_item,
+            phase="timed_out",
+            result="Partner dispatch exceeded its bounded wait",
+            child_dispatch_id=child_dispatch_id,
+            source=source,
+            target=target,
+        )
         return {
             "schemaVersion": "rag-ime.room-partner-result.v1",
             "operation": "delegate",
@@ -689,7 +927,196 @@ class RoomPartnerApplicationService:
             "status": "timed_out",
             "result": "",
             "idempotentReplay": idempotent_replay,
+            **(
+                {"workItem": dict(settled_work)}
+                if settled_work is not None
+                else {}
+            ),
         }
+
+    def _create_delegated_work(
+        self,
+        *,
+        room_id: str,
+        root_id: str,
+        topic_id: str,
+        tool_call_id: str,
+        source: Mapping[str, object],
+        target: Mapping[str, object],
+        task: str,
+        expected_output: str,
+        acceptance_criteria: list[str],
+    ) -> dict[str, object]:
+        if self.room_work is None:
+            # Compatibility for isolated adapters. The installed AgentService
+            # always supplies the durable Room responsibility ledger.
+            return {}
+        client_message_id = f"room-partner:{root_id}:{tool_call_id}"
+        for existing in self.room_work.list(
+            room_id=room_id,
+            states=(),
+            limit=200,
+        ):
+            if (
+                str(existing.get("createdByParticipantId") or "")
+                == str(source["id"])
+                and str(existing.get("clientMessageId") or "")
+                == client_message_id
+            ):
+                return dict(existing)
+        work = self.room_work.create(
+            room_id=room_id,
+            objective=task,
+            expected_output=expected_output,
+            current_owner_participant_id=str(target["id"]),
+            created_by_participant_id=str(source["id"]),
+            accountable_participant_id=str(source["id"]),
+            client_message_id=client_message_id,
+            topic_id=topic_id,
+            root_turn_id=root_id,
+            acceptance_criteria=acceptance_criteria,
+            state="active",
+            depth=1,
+        )
+        self._publish_work_activity(work, phase="assigned", actor=source)
+        return dict(work)
+
+    def _settle_delegated_work(
+        self,
+        work_item: Mapping[str, object] | None,
+        *,
+        phase: str,
+        result: str,
+        child_dispatch_id: str,
+        source: Mapping[str, object],
+        target: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        if self.room_work is None or not work_item or not work_item.get("id"):
+            return work_item
+        current = self.room_work.get(
+            str(work_item["id"]),
+            room_id=str(work_item["roomId"]),
+        )
+        state = str(current.get("state") or "")
+        if phase == "completed":
+            document: Mapping[str, object] | None = None
+            if self.work_document_for_authority is not None:
+                document = self.work_document_for_authority(
+                    "room_work_item",
+                    str(current["id"]),
+                )
+                document_revision = int(
+                    (document or {}).get("documentRevision") or 0
+                )
+                if document is None or document_revision < 2:
+                    if state == "active":
+                        current = self.room_work.block(
+                            str(target["sessionId"]),
+                            {
+                                "workId": current["id"],
+                                "reason": (
+                                    "伙伴回合已结束，但负责的 WorkDocument 尚未完成开工与交付同步。"
+                                ),
+                                "nextStep": (
+                                    "先登记 room_work_item 活动文档，写入目标/范围；完成后再次更新结果、"
+                                    "证据、改动文件、验证与剩余风险，使 documentRevision 至少为 2。"
+                                ),
+                            },
+                        )
+                        self._publish_work_activity(
+                            current,
+                            phase="blocked",
+                            actor=target,
+                        )
+                    return current
+            if state in {"active", "blocked"}:
+                evidence_refs = [child_dispatch_id]
+                if document is not None:
+                    evidence_refs.append(
+                        "workdoc:"
+                        f"{document.get('documentId')}@"
+                        f"{document.get('documentRevision')}"
+                    )
+                current = self.room_work.submit(
+                    str(target["sessionId"]),
+                    {
+                        "workId": current["id"],
+                        "resultSummary": result[:4_000]
+                        or "Partner Session completed the delegated WorkItem.",
+                        "evidenceRefs": evidence_refs,
+                    },
+                )
+                self._publish_work_activity(
+                    current,
+                    phase="submitted",
+                    actor=target,
+                )
+                current = self.room_work.accept(
+                    str(source["sessionId"]),
+                    {"workId": current["id"]},
+                )
+                self._publish_work_activity(
+                    current,
+                    phase="completed",
+                    actor=source,
+                )
+            return current
+        if state in {"active", "blocked"}:
+            current = self.room_work.escalate(
+                str(target["sessionId"]),
+                {
+                    "workId": current["id"],
+                    "reason": result[:2_000] or f"Partner dispatch ended as {phase}",
+                    "nextStep": "由 Room 伙伴缩小范围后重新分派，或明确保留为未解决项。",
+                },
+            )
+            self._publish_work_activity(current, phase="failed", actor=target)
+        return current
+
+    def _fail_delegated_work(
+        self,
+        work_item: Mapping[str, object],
+        *,
+        source: Mapping[str, object],
+        target: Mapping[str, object],
+        root_id: str,
+        previous_accepted_turn_id: str,
+        work_claimed: bool,
+        reason: str,
+    ) -> None:
+        if self.room_work is None or not work_item.get("id"):
+            return
+        current = dict(work_item)
+        if work_claimed:
+            current = self.room_work.fail_dispatch(
+                str(current["id"]),
+                room_id=str(current["roomId"]),
+                actor_participant_id=str(source["id"]),
+                room_turn_id=root_id,
+                previous_accepted_turn_id=previous_accepted_turn_id,
+                reason=reason,
+            )
+        if str(current.get("state") or "") in {"active", "blocked"}:
+            current = self.room_work.escalate(
+                str(target["sessionId"]),
+                {
+                    "workId": current["id"],
+                    "reason": reason,
+                    "nextStep": "检查目标 Session 后重新分派。",
+                },
+            )
+        self._publish_work_activity(current, phase="failed", actor=source)
+
+    def _publish_work_activity(
+        self,
+        work: Mapping[str, object],
+        *,
+        phase: str,
+        actor: Mapping[str, object],
+    ) -> None:
+        if self.publish_room_work_activity is None or not work:
+            return
+        self.publish_room_work_activity(work, phase=phase, actor=actor)
 
     def _existing_child_dispatch(
         self,
@@ -724,6 +1151,7 @@ class RoomPartnerApplicationService:
         args: Mapping[str, object],
         *,
         tool_call_id: str,
+        source_loop_id: str = "",
     ) -> dict[str, object]:
         content = _required_text(args, "content", maximum=8_000)
         kind = _text(args.get("kind"), maximum=40) or "progress"
@@ -739,6 +1167,29 @@ class RoomPartnerApplicationService:
             raise ValueError("room_partner post kind is invalid")
         root_id, dispatch_id = self._active_root(source)
         room = self.rooms.get(str(source["roomId"]))
+        settled_work_items: list[dict[str, object]] = []
+        if kind in {"result", "blocked"} and self.room_work is not None:
+            for work in self.room_work.list(
+                room_id=str(room["id"]),
+                states=("review",),
+                limit=200,
+            ):
+                if (
+                    str(work.get("rootTurnId") or "") != root_id
+                    or str(work.get("accountableParticipantId") or "")
+                    != str(source["id"])
+                ):
+                    continue
+                accepted = self.room_work.accept(
+                    str(source["sessionId"]),
+                    {"workId": work["id"]},
+                )
+                self._publish_work_activity(
+                    accepted,
+                    phase="completed",
+                    actor=source,
+                )
+                settled_work_items.append(dict(accepted))
         post_id = f"room-post:{tool_call_id}"
         created_at_ms = int(time.time() * 1_000)
         post = {
@@ -759,10 +1210,32 @@ class RoomPartnerApplicationService:
             },
             "createdAtMs": created_at_ms,
         }
+        latest_runtime_turn_id = getattr(
+            self.sessions,
+            "latest_runtime_turn_id",
+            None,
+        )
+        source_turn_id = (
+            str(latest_runtime_turn_id(str(source["sessionId"])) or "")
+            if callable(latest_runtime_turn_id)
+            else ""
+        )
         self.room_events.publish(
             room_id=str(room["id"]),
             event_type="room_post",
-            payload={"post": post},
+            payload={
+                "post": post,
+                **(
+                    {"sourceTurnId": source_turn_id}
+                    if source_turn_id
+                    else {}
+                ),
+                **(
+                    {"sourceLoopId": source_loop_id[:240]}
+                    if source_loop_id
+                    else {}
+                ),
+            },
             turn_id=root_id,
             participant_id=str(source["id"]),
             source_session_id=str(source["sessionId"]),
@@ -776,6 +1249,7 @@ class RoomPartnerApplicationService:
             "postId": post_id,
             "kind": kind,
             "published": True,
+            "settledWorkItems": settled_work_items,
         }
 
 
@@ -787,7 +1261,7 @@ def _partner_task_message(
     acceptance_criteria: list[str],
 ) -> str:
     lines = [
-        f"来自 Room 主伙伴 {source.get('displayName') or 'Facilitator'} 的子任务：",
+        f"来自 Room 伙伴 {source.get('displayName') or 'Partner'} 的 WorkItem：",
         task,
     ]
     if expected_output:
@@ -799,7 +1273,7 @@ def _partner_task_message(
     lines.extend(
         [
             "",
-            "直接完成当前子任务并返回有界结果；不要重新拆分整个 Room，也不要代替主伙伴给用户最终答复。",
+            "直接完成当前 WorkItem 并返回有界结果；需要其他伙伴信息时直接使用 peer @ 通道，不要让发送者代为转发。Root 伙伴负责最终汇合。",
         ]
     )
     return "\n".join(lines)[:12_000]

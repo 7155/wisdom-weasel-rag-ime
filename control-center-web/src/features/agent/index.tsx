@@ -749,10 +749,16 @@ function AgentWorkspace() {
     return () => { active = false; };
   }, [isUserConversation, selectedId, snapshotReadySessionId, transport]);
 
-  const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
-    ?? personas.find((item) => item.roleId === 'companion-future-v1')
-    ?? personas[0];
-  const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
+  // Persona is optional Package data. Ordinary Sessions remain usable and
+  // visually neutral when that Package is absent; legacy role metadata is
+  // projected only for Room participant deep links that still own it.
+  const persona = isRoomParticipant
+    ? personas.find((item) => item.roleId === session?.roleId)
+    : undefined;
+  const subagentPackageEnabled = commands.some((command) => command.name === 'subagents');
+  useEffect(() => {
+    if (!subagentPackageEnabled) setSubagentsOpen(false);
+  }, [subagentPackageEnabled]);
   const busy = Boolean(activeTurnId);
   const branchBlocked = busy || sending;
   const rewriteBlocked = (
@@ -873,15 +879,21 @@ function AgentWorkspace() {
   }
 
   async function createSession(input: NewSessionInput): Promise<boolean> {
-    const creationPersona = defaultPersona;
-    if (!creationPersona) {
-      setError('角色目录尚未加载，暂时不能创建对话。');
-      return false;
-    }
     try {
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.sessions.create',
-        body: { title: input.title, mode: 'coordinator', roleId: creationPersona.roleId, roleVersion: creationPersona.version, toolProfileVersion: creationPersona.defaults.toolProfileVersion, workspaceRoots: input.workspaceRoots },
+        body: {
+          title: input.title,
+          mode: input.workspaceRoots.length ? 'coordinator' : 'assistant',
+          executionMode: input.executionMode,
+          toolProfileVersion: input.executionMode === 'read_only'
+            ? 'subagent-readonly-v1'
+            : 'control-center-v1',
+          workspaceRoots: input.workspaceRoots,
+          ...(input.executionMode === 'workspace_managed'
+            ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+            : {}),
+        },
       });
       const created = isRecord(response.session) ? response.session as unknown as SessionSummary : undefined;
       if (created?.id) await loadSessions(created.id);
@@ -1024,7 +1036,13 @@ function AgentWorkspace() {
     if (value === '/permissions') { setSelectedDraft(''); setPermissionPickerRequest((current) => current + 1); return; }
     if (value === '/tools') { setSelectedDraft(''); openToolPicker(); return; }
     if (value === '/status' || value === '/session') { setSelectedDraft(''); setFilesOpen(false); setSubagentsOpen(false); setStatusOpen(true); return; }
-    if (value === '/subagents') { setSelectedDraft(''); setFilesOpen(false); setStatusOpen(false); setSubagentsOpen(true); return; }
+    if (value === '/subagents') {
+      if (!subagentPackageEnabled) {
+        setError('当前 Session 没有安装或启用 Subagent Package。');
+        return;
+      }
+      setSelectedDraft(''); setFilesOpen(false); setStatusOpen(false); setSubagentsOpen(true); return;
+    }
     if (value === '/settings') { setSelectedDraft(''); window.location.hash = '/configuration'; return; }
     if (value === '/help' || value === '/hotkeys') { setSelectedDraft(''); setHelpRequest((current) => current + 1); return; }
     if (value === '/stop') { setSelectedDraft(''); await stop(); return; }
@@ -1968,7 +1986,7 @@ function AgentWorkspace() {
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
-            <IconButton ref={subagentsToggleRef} className="agent-subagents-toggle" aria-controls="agent-subagent-panel" aria-expanded={subagentsOpen} label={subagentsOpen ? '收起子 Agent 工作台' : '打开子 Agent 工作台'} icon={<Network size={17} />} disabled={!session} onClick={toggleSubagents} tooltip />
+            {subagentPackageEnabled ? <IconButton ref={subagentsToggleRef} className="agent-subagents-toggle" aria-controls="agent-subagent-panel" aria-expanded={subagentsOpen} label={subagentsOpen ? '收起子 Agent 工作台' : '打开子 Agent 工作台'} icon={<Network size={17} />} disabled={!session} onClick={toggleSubagents} tooltip /> : null}
             <IconButton ref={filesToggleRef} className="agent-files-toggle" aria-controls="agent-files-panel" aria-expanded={filesOpen} label={filesOpen ? '收起文件目录' : '展开文件目录'} icon={<FolderTree size={17} />} disabled={!session} onClick={toggleFiles} tooltip />
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
@@ -2045,7 +2063,7 @@ function AgentWorkspace() {
         onClose={closeFilesPanel}
         onManageRoots={() => void manageWorkspaceRoots()}
       />
-      <SessionSubagentPanel
+      {subagentPackageEnabled ? <SessionSubagentPanel
         ref={subagentsRef}
         sessionId={selectedId}
         session={session}
@@ -2053,7 +2071,7 @@ function AgentWorkspace() {
         open={subagentsOpen}
         modal={subagentsModal}
         onClose={closeSubagentsPanel}
-      />
+      /> : null}
       <AgentStatusPanel
         ref={statusRef}
         sessionId={selectedId}

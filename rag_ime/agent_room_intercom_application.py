@@ -102,16 +102,13 @@ class RoomIntercomApplicationService:
                 str(runtime_status.get("status") or "")
                 != "busy"
             )
-        active_session_ids = {
-            str(value)
-            for value in runtime_status.get(
-                "activeSessionIds",
-                [],
-            )
-            if str(value or "").strip()
-        }
+        active_session_ids = _active_session_ids(runtime_status)
         if session_id in active_session_ids:
-            return False
+            # Direct peer @ belongs to the current Room work rather than a
+            # competing turn. Pi can steer an active Room participant; an
+            # unrelated active Agent turn remains fenced until it is idle.
+            root_id, _dispatch_id = self.room_turns.active_turn(session_id)
+            return bool(root_id)
         participant = self.rooms.participant_for_session(
             session_id,
             active_only=False,
@@ -144,6 +141,14 @@ class RoomIntercomApplicationService:
             raise AgentRoomTargetBusy(
                 "target participant is not idle"
             )
+        runtime_status = self.runtime.runtime_status()
+        active_session_ids = _active_session_ids(runtime_status)
+        root_id, _dispatch_id = self.room_turns.active_turn(target_session_id)
+        delivery = (
+            "steer"
+            if target_session_id in active_session_ids and root_id
+            else "prompt"
+        )
         source = self.rooms.participant(
             str(item.get("sourceParticipantId") or "")
         )
@@ -167,42 +172,43 @@ class RoomIntercomApplicationService:
         )
         kind = str(item.get("kind") or "send")
         private_notice = _is_private_notice(item)
-        self.context_runtime.enqueue(
-            session_id=target_session_id,
-            source_kind="room_intercom",
-            source_id=str(item.get("id") or ""),
-            lane="room",
-            lifecycle="turn",
-            dedupe_key=f"room:{item.get('id')}",
-            title=(
-                f"来自 {source.get('displayName')} "
-                "的房间协作消息"
-            ),
-            summary=f"{kind} · 房间协作消息",
-            payload={
-                "messageId": str(item.get("id") or ""),
-                "kind": kind,
-                "sourceParticipantId": str(
-                    source.get("id") or ""
+        if delivery == "prompt":
+            self.context_runtime.enqueue(
+                session_id=target_session_id,
+                source_kind="room_intercom",
+                source_id=str(item.get("id") or ""),
+                lane="room",
+                lifecycle="turn",
+                dedupe_key=f"room:{item.get('id')}",
+                title=(
+                    f"来自 {source.get('displayName')} "
+                    "的房间协作消息"
                 ),
-                "sourceDisplayName": str(
-                    source.get("displayName") or ""
-                ),
-                "targetParticipantId": str(
-                    target.get("id") or ""
-                ),
-                "replyTo": str(
-                    item.get("replyTo") or ""
-                ),
-                "workItemId": work_item_id,
-                "workAction": str(
-                    item.get("workAction") or ""
-                ),
-                "content": str(item.get("content") or ""),
-            },
-        )
+                summary=f"{kind} · 房间协作消息",
+                payload={
+                    "messageId": str(item.get("id") or ""),
+                    "kind": kind,
+                    "sourceParticipantId": str(
+                        source.get("id") or ""
+                    ),
+                    "sourceDisplayName": str(
+                        source.get("displayName") or ""
+                    ),
+                    "targetParticipantId": str(
+                        target.get("id") or ""
+                    ),
+                    "replyTo": str(
+                        item.get("replyTo") or ""
+                    ),
+                    "workItemId": work_item_id,
+                    "workAction": str(
+                        item.get("workAction") or ""
+                    ),
+                    "content": str(item.get("content") or ""),
+                },
+            )
         message_id = str(item.get("id") or "")
-        if private_notice:
+        if private_notice and delivery == "prompt":
             self.room_turns.begin_private_intercom(
                 target_session_id,
                 message_id,
@@ -219,6 +225,8 @@ class RoomIntercomApplicationService:
                         work=work,
                     ),
                     source_kind="room",
+                    client_message_id=message_id,
+                    delivery=delivery,
                     transient_context=(
                         self.room_participant_prompt(
                             room,
@@ -229,13 +237,13 @@ class RoomIntercomApplicationService:
                 )
             )
         except Exception:
-            if private_notice:
+            if private_notice and delivery == "prompt":
                 self.room_turns.abandon_private_intercom(
                     target_session_id,
                     message_id,
                 )
             raise
-        if private_notice:
+        if private_notice and delivery == "prompt":
             session_turn_id = str(
                 accepted.get("turnId") or ""
             )
@@ -257,6 +265,7 @@ class RoomIntercomApplicationService:
             "contextTraceId": trace_id,
             "contextItemsDelivered": delivered,
             "privateNotice": private_notice,
+            "delivery": delivery,
         }
 
     def publish_audit(
@@ -385,6 +394,16 @@ def _bool(value: object) -> bool:
         "true",
         "yes",
         "on",
+    }
+
+
+def _active_session_ids(
+    runtime_status: Mapping[str, object],
+) -> set[str]:
+    return {
+        str(value)
+        for value in runtime_status.get("activeSessionIds", [])
+        if str(value or "").strip()
     }
 
 

@@ -59,7 +59,10 @@ export function PermissionPicker({
   const current = permissionPreset(session?.executionMode, profile);
   const sessionMode = session?.mode ?? 'assistant';
   const workspaceRoots = session?.workspaceRoots ?? [];
-  const canCoordinate = persona?.selectableModes.includes('coordinator') ?? false;
+  // Session ownership and the runtime policy decide whether a user
+  // conversation can enter coordinator mode. Persona is optional metadata and
+  // must never grant or withhold execution permissions.
+  const canCoordinate = Boolean(session && !session.roomParticipant);
 
   useEffect(() => {
     if (requestOpen > 0 && session && !disabled) setOpen(true);

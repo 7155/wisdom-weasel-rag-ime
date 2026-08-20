@@ -80,16 +80,85 @@ interface RoomTurnProps {
   roomSyncState?: 'recovering' | 'failed' | 'synced';
   onAbortTurn?: (rootId: string) => void;
   retryingTurn?: boolean;
-  onRetryTurn?: (message: string) => void;
+  onRetryTurn?: (message: string, rootId: string) => void;
   onAnswerQuestion?: (
     question: PendingRoomQuestion,
     value: string,
   ) => Promise<boolean>;
+  onApprovalDecision?: (
+    approvalId: string,
+    decision: 'approved' | 'rejected',
+    payloadSha256: string,
+  ) => Promise<void>;
 }
 
 type RoomTimelineEntry =
   | { key: string; kind: 'user'; message: RoomMessageProjection }
   | { key: string; kind: 'lane'; lane: RoomExecutionLane; includeDetails: boolean };
+
+function compareRoomTimelineEntries(
+  left: RoomTimelineEntry,
+  right: RoomTimelineEntry,
+  projection: RoomProjectionState,
+  leftIndex: number,
+  rightIndex: number,
+): number {
+  const leftChronology = roomTimelineEntryChronology(left, projection);
+  const rightChronology = roomTimelineEntryChronology(right, projection);
+  if (leftChronology.sequence !== undefined || rightChronology.sequence !== undefined) {
+    if (leftChronology.sequence === undefined) return 1;
+    if (rightChronology.sequence === undefined) return -1;
+    const sequenceOrder = leftChronology.sequence - rightChronology.sequence;
+    if (sequenceOrder !== 0) return sequenceOrder;
+  }
+  const timeOrder = leftChronology.createdAtMs - rightChronology.createdAtMs;
+  return timeOrder || leftIndex - rightIndex || left.key.localeCompare(right.key);
+}
+
+function roomTimelineEntryChronology(
+  entry: RoomTimelineEntry,
+  projection: RoomProjectionState,
+): { sequence?: number; createdAtMs: number } {
+  if (entry.kind === 'user') {
+    return roomMessageChronology(entry.message);
+  }
+  const messages = entry.lane.messageIds
+    .map((messageId) => projection.messagesById[messageId])
+    .filter((message): message is RoomMessageProjection => Boolean(message));
+  if (messages.length > 0) {
+    return messages
+      .map(roomMessageChronology)
+      .sort(compareTimelineChronology)[0]!;
+  }
+  const activities = entry.lane.activities.map((activity) => ({
+    sequence: activity.sequence,
+    createdAtMs: activity.createdAtMs,
+  }));
+  return activities.sort(compareTimelineChronology)[0]
+    ?? { createdAtMs: Number.MAX_SAFE_INTEGER };
+}
+
+function roomMessageChronology(
+  message: RoomMessageProjection,
+): { sequence?: number; createdAtMs: number } {
+  return {
+    sequence: message.chronology?.roomEventSequence ?? message.sequence,
+    createdAtMs: message.chronology?.createdAtMs ?? message.createdAtMs,
+  };
+}
+
+function compareTimelineChronology(
+  left: { sequence?: number; createdAtMs: number },
+  right: { sequence?: number; createdAtMs: number },
+): number {
+  if (left.sequence !== undefined || right.sequence !== undefined) {
+    if (left.sequence === undefined) return 1;
+    if (right.sequence === undefined) return -1;
+    const sequenceOrder = left.sequence - right.sequence;
+    if (sequenceOrder !== 0) return sequenceOrder;
+  }
+  return left.createdAtMs - right.createdAtMs;
+}
 
 const roomTerminalPostLabels: Readonly<Record<string, string>> = {
   alignment: '已确认',
@@ -124,6 +193,39 @@ function roomVisibleConversationMessages(
   ));
 }
 
+function roomLogicalRetryUserMessageIds(
+  projection: RoomProjectionState,
+  turnId: string,
+): string[] {
+  let rootTurnId = turnId;
+  const visited = new Set<string>();
+  while (!visited.has(rootTurnId)) {
+    visited.add(rootTurnId);
+    const retryOfRootId = projection.turnsById[rootTurnId]?.retryOfRootId;
+    if (!retryOfRootId || !projection.turnsById[retryOfRootId]) break;
+    rootTurnId = retryOfRootId;
+  }
+  return (projection.turnsById[rootTurnId]?.messageIds ?? []).filter((messageId) => (
+    projection.messagesById[messageId]?.role === 'user'
+  ));
+}
+
+function roomMessageIsTerminalFailure(
+  message: RoomMessageProjection | undefined,
+): boolean {
+  if (!message || message.role !== 'assistant' || message.postKind) return false;
+  if (message.status === 'failed' || message.message?.status === 'failed') return true;
+  return message.message?.blocks.some((block) => (
+    block.type === 'error' || block.status === 'failed'
+  )) ?? false;
+}
+
+function roomActivityIsSubstantiveExecution(activity: RoomActivityProjection): boolean {
+  if (activity.kind === 'route_decision' || activity.kind === 'turn_failed') return false;
+  const sourceEventType = textValue(activity.payload.sourceEventType);
+  return sourceEventType !== 'turn_failed';
+}
+
 const roomActiveEventFreshnessMs = 15_000;
 const emptyExpandedLaneKeys: ReadonlySet<string> = new Set();
 
@@ -153,6 +255,7 @@ export function RoomTurn({
   retryingTurn = false,
   onRetryTurn,
   onAnswerQuestion,
+  onApprovalDecision,
 }: RoomTurnProps) {
   useRoomLiveStore((state) => (
     providedProjection ? 0 : state.turnRevisions[roomId]?.[turnId] ?? 0
@@ -167,16 +270,40 @@ export function RoomTurn({
     ? laneDisclosure.expandedLaneKeys
     : emptyExpandedLaneKeys;
   const turn = projection.turnsById[turnId];
-  const previousTurnStatus = usePrevious(turn?.status);
   const nowMs = useRoomUpdateClock(Boolean(
     turn && ['queued', 'running'].includes(turn.status),
   ));
-  const { activities, lanes, messageIds, userMessageIds } = selectRoomTurnExecution(
+  const execution = selectRoomTurnExecution(
     projection,
     turnId,
   );
+  const { activities, messageIds } = execution;
+  const isRetryAttempt = Boolean(turn?.retryOfRootId);
+  const logicalUserMessageIds = isRetryAttempt
+    ? roomLogicalRetryUserMessageIds(projection, turnId)
+    : execution.userMessageIds;
+  const terminalMessageIds = new Set(messageIds.filter((messageId) => (
+    ['failed', 'aborted'].includes(turn?.status ?? '')
+    && roomMessageIsTerminalFailure(projection.messagesById[messageId])
+  )));
+  const lanes = execution.lanes
+    .map((lane) => ({
+      ...lane,
+      messageIds: lane.messageIds.filter((messageId) => !terminalMessageIds.has(messageId)),
+    }))
+    .filter((lane) => (
+      !['failed', 'aborted'].includes(turn?.status ?? '')
+      || lane.messageIds.length > 0
+      || lane.activities.some(roomActivityIsSubstantiveExecution)
+    ));
+  const conversationMessageIds = isRetryAttempt
+    ? [...logicalUserMessageIds, ...messageIds.filter((messageId) => (
+        projection.messagesById[messageId]?.role !== 'user'
+        && !terminalMessageIds.has(messageId)
+      ))]
+    : messageIds.filter((messageId) => !terminalMessageIds.has(messageId));
   const conversationMessages = roomVisibleConversationMessages(
-    messageIds
+    conversationMessageIds
       .map((messageId) => projection.messagesById[messageId])
       .filter((message): message is RoomMessageProjection => Boolean(message)),
   );
@@ -228,11 +355,24 @@ export function RoomTurn({
       });
     }
   }
+  const timelineEntryIndex = new Map(
+    timelineEntries.map((entry, index) => [entry.key, index]),
+  );
+  timelineEntries.sort((left, right) => compareRoomTimelineEntries(
+    left,
+    right,
+    projection,
+    timelineEntryIndex.get(left.key) ?? Number.MAX_SAFE_INTEGER,
+    timelineEntryIndex.get(right.key) ?? Number.MAX_SAFE_INTEGER,
+  ));
   const streamingLaneEntryKeys = timelineEntries.flatMap((entry) => (
     entry.kind === 'lane'
-    && entry.lane.messageIds.some((messageId) => (
-      projection.messagesById[messageId]?.status === 'streaming'
-    ))
+    && entry.lane.messageIds.some((messageId) => {
+      const message = projection.messagesById[messageId];
+      return message?.status === 'streaming'
+        || (message?.projectionKind !== 'execution'
+          && ['result', 'blocked'].includes(message?.postKind ?? ''));
+    })
       ? [entry.key]
       : []
   ));
@@ -266,7 +406,7 @@ export function RoomTurn({
   const rootTerminal = ['completed', 'failed', 'aborted'].includes(turn.status);
   const pendingAction = rootTerminal
     ? undefined
-    : pendingRoomSessionAction(activities, projection, lanes, room);
+    : pendingRoomSessionAction(activities, room);
   const rootId = turn.rootId || turnId;
   const rootHasActiveLane = lanes.length === 0
     ? ['queued', 'running'].includes(turn.status)
@@ -291,7 +431,7 @@ export function RoomTurn({
     : '';
   const publicFailure = publicAgentErrorText(
     turn.failure,
-    '伙伴未能完成这轮任务，你可以调整原消息后再试。',
+    '本轮未能完成；可以保留原请求并开始一次新的尝试。',
   );
   const outcome = roomTurnOutcome(
     projection,
@@ -299,11 +439,8 @@ export function RoomTurn({
     turn,
     publicFailure,
   );
-  const outcomeArriving = Boolean(
-    outcome && ['queued', 'running'].includes(previousTurnStatus ?? ''),
-  );
-  const retrySource = outcome && outcome.state !== 'completed'
-    ? userMessageIds
+  const retrySource = outcome
+      ? logicalUserMessageIds
         .map((messageId) => projection.messagesById[messageId])
         .find((message) => (
           Boolean(message?.text.trim())
@@ -356,6 +493,9 @@ export function RoomTurn({
       const laneAction = rootTerminal
         ? undefined
         : lane.activities.find(roomActivityNeedsSessionAction);
+      const laneHasRoomApproval = Boolean(
+        laneAction && textValue(laneAction.payload.approvalId),
+      );
       const laneFreshness = roomLaneFreshness(
         lane,
         projection,
@@ -447,7 +587,7 @@ export function RoomTurn({
             return { expandedLaneKeys: next, scope: laneDisclosureScope };
           });
         }}
-        open={expandedLaneKeys.has(entry.key)}
+        open={laneHasRoomApproval || expandedLaneKeys.has(entry.key)}
       >
         <summary>
           {participant
@@ -494,6 +634,7 @@ export function RoomTurn({
           motionActive={laneMotionActive}
           participantName={participant?.displayName}
           attention={laneState === 'failed'}
+          onApprovalDecision={onApprovalDecision}
         /> : null}
         {visibleMessages.length ? <div className="room-agent-lane__posts">
           {visibleMessages.map((message) => <Fragment key={message.id}>
@@ -504,6 +645,7 @@ export function RoomTurn({
                 && (!message.question || pendingQuestion?.postId === message.id)
               }
               evidence={roomResponseEvidenceForPost(message, responseUsageActivities)}
+              forceOpen={['result', 'blocked'].includes(message.postKind ?? '')}
               message={message}
               onAnswerQuestion={onAnswerQuestion}
               participants={room?.participants ?? []}
@@ -544,21 +686,14 @@ export function RoomTurn({
     </div> : null}
     {outcome ? <section
       className="room-turn__terminal"
-      data-arriving={outcomeArriving || undefined}
       data-state={outcome.state}
       role="status"
     >
       <span className="room-turn__terminal-icon" aria-hidden="true">
-        {outcome.state === 'completed'
-          ? <CheckCircle2 size={16} />
-          : outcome.state === 'blocked'
-            ? <CircleAlert size={16} />
-            : outcome.state === 'failed'
-              ? <X size={16} />
-              : <CircleStop size={16} />}
+        {outcome.state === 'failed' ? <X size={16} /> : <CircleStop size={16} />}
       </span>
       <span>
-        <small className="room-turn__terminal-label">运行结论</small>
+        <small className="room-turn__terminal-label">运行状态</small>
         <strong>{outcome.title}</strong>
         <small>{outcome.detail}</small>
       </span>
@@ -569,7 +704,7 @@ export function RoomTurn({
           ? <LoaderCircle className="ui-spin" size={14} />
           : <RotateCcw size={14} />}
         disabled={retryingTurn}
-        onClick={() => onRetryTurn(retryMessage)}
+        onClick={() => onRetryTurn(retryMessage, rootId)}
       >{retryingTurn ? '正在重试' : '再试一次'}</Button> : null}
     </section> : null}
     {pendingAction ? <SessionActionLink action={pendingAction} /> : null}
@@ -669,19 +804,25 @@ function ActivityLog({
   motionActive,
   attention,
   participantName,
+  onApprovalDecision,
 }: {
   activities: RoomActivityProjection[];
   active: boolean;
   motionActive: boolean;
   attention: boolean;
   participantName?: string;
+  onApprovalDecision?: RoomTurnProps['onApprovalDecision'];
 }) {
-  const [open, setOpen] = useState(active || attention);
+  const publicActivities = roomVisibleIncrementalActivities(activities);
+  const requiresRoomApproval = publicActivities.some((activity) => (
+    Boolean(textValue(activity.payload.approvalId))
+    && roomActivityNeedsSessionAction(activity)
+  ));
+  const [open, setOpen] = useState(active || attention || requiresRoomApproval);
   const [arrivingActivityIds, setArrivingActivityIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const previousActivityIds = useRef<ReadonlySet<string> | null>(null);
-  const publicActivities = roomVisibleIncrementalActivities(activities);
   const latestReasoning = [...publicActivities].reverse().find((activity) => (
     textValue(activity.payload.sourceEventType) === 'reasoning_summary'
   ));
@@ -706,8 +847,8 @@ function ActivityLog({
     return () => window.clearTimeout(timer);
   }, [activityIdentityKey]);
   useEffect(() => {
-    if (active || attention) setOpen(true);
-  }, [active, attention]);
+    if (active || attention || requiresRoomApproval) setOpen(true);
+  }, [active, attention, requiresRoomApproval]);
   if (!publicActivities.length) return null;
   return <details
     className="room-agent-lane__activity"
@@ -736,6 +877,14 @@ function ActivityLog({
       const displayStatus = roomActivityDisplayStatus(activity);
       const sourceEventType = textValue(activity.payload.sourceEventType);
       const arriving = motionActive && arrivingActivityIds.has(activity.id);
+      if (textValue(activity.payload.approvalId)) {
+        return <RoomInlineApprovalActivity
+          activity={activity}
+          arriving={arriving}
+          key={activity.id}
+          onApprovalDecision={onApprovalDecision}
+        />;
+      }
       if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
         const toolName = textValue(activity.payload.toolName);
         const recovered = displayStatus === 'failed' && chronologicalActivities
@@ -782,6 +931,65 @@ function ActivityLog({
       </div>;
     })}</div>
   </details>;
+}
+
+function RoomInlineApprovalActivity({
+  activity,
+  arriving,
+  onApprovalDecision,
+}: {
+  activity: RoomActivityProjection;
+  arriving: boolean;
+  onApprovalDecision?: RoomTurnProps['onApprovalDecision'];
+}) {
+  const payload = activity.payload;
+  const approvalId = textValue(payload.approvalId);
+  const approvalHash = textValue(payload.payloadSha256);
+  const resolutionState = textValue(payload.resolutionState || payload.state);
+  const pending = Boolean(
+    approvalId
+    && approvalHash
+    && approvalNeedsHumanDecision(payload)
+    && !['approved', 'rejected', 'applied', 'resolved', 'cancelled'].includes(resolutionState),
+  );
+  const [submitting, setSubmitting] = useState<'' | 'approved' | 'rejected'>('');
+  const [error, setError] = useState('');
+  const description = describeRoomActivity(activity);
+  const decide = (decision: 'approved' | 'rejected') => {
+    if (!onApprovalDecision) return;
+    setError('');
+    setSubmitting(decision);
+    void onApprovalDecision(approvalId, decision, approvalHash)
+      .catch((requestError: unknown) => setError(publicAgentErrorText(requestError)))
+      .finally(() => setSubmitting(''));
+  };
+  return <section
+    className="room-agent-activity room-agent-activity--approval"
+    data-arriving={arriving || undefined}
+    data-state={roomActivityDisplayStatus(activity)}
+    aria-label="Room 审批"
+  >
+    <ShieldAlert aria-hidden="true" size={14} />
+    <span>
+      <strong>{description.title}</strong>
+      <small>{description.detail}</small>
+      {pending && onApprovalDecision ? <span className="room-agent-activity__approval-actions">
+        <Button
+          disabled={Boolean(submitting)}
+          size="small"
+          onClick={() => decide('approved')}
+        >{submitting === 'approved' ? '正在批准' : '批准并继续'}</Button>
+        <Button
+          disabled={Boolean(submitting)}
+          size="small"
+          variant="quiet"
+          onClick={() => decide('rejected')}
+        >{submitting === 'rejected' ? '正在拒绝' : '拒绝'}</Button>
+      </span> : null}
+      {pending && !onApprovalDecision ? <small>当前 Room 不允许处理这条审批。</small> : null}
+      {error ? <small role="alert">{error}</small> : null}
+    </span>
+  </section>;
 }
 
 function RoomReasoningActivity({
@@ -921,6 +1129,7 @@ type RoomResponseUsage = NonNullable<
 function RoomLanePost({
   message,
   evidence,
+  forceOpen,
   showEvidence,
   participants,
   turnStartedAtMs,
@@ -931,6 +1140,7 @@ function RoomLanePost({
 }: {
   message: RoomMessageProjection;
   evidence?: RoomResponseEvidence;
+  forceOpen: boolean;
   showEvidence: boolean;
   participants: readonly TimelineParticipant[];
   turnStartedAtMs: number;
@@ -942,10 +1152,14 @@ function RoomLanePost({
     value: string,
   ) => Promise<boolean>;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(forceOpen);
   const visibleBlocks = roomVisibleBlocks(message.message?.blocks ?? []);
   const reportLabel = roomPostReportLabel(message);
   const collapsible = roomPostShouldCollapse(message, visibleBlocks);
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
+  const reportOpen = open;
   const questionIsAuthoritative = Boolean(
     message.question?.status === 'pending'
     && pendingQuestion
@@ -981,9 +1195,9 @@ function RoomLanePost({
       ? <small className="room-agent-lane__projection-label">实时进展 · 完成后会在这里留下公开结果</small>
       : null}
     {collapsible ? (
-      <details className="room-agent-lane__report" open={open}>
+      <details className="room-agent-lane__report" open={reportOpen}>
         <summary
-          aria-expanded={open}
+          aria-expanded={reportOpen}
           onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
           onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
         >
@@ -991,9 +1205,9 @@ function RoomLanePost({
             <strong>{reportLabel}</strong>
             <small>{roomReportPreview(message.text)}</small>
           </span>
-          <span>{open ? '收起' : '查看完整汇报'}<ChevronRight aria-hidden="true" size={14} /></span>
+          <span>{reportOpen ? '收起' : '查看完整汇报'}<ChevronRight aria-hidden="true" size={14} /></span>
         </summary>
-        {open ? <div className="room-agent-lane__report-body">{content}</div> : null}
+        {reportOpen ? <div className="room-agent-lane__report-body">{content}</div> : null}
       </details>
     ) : (
       <>
@@ -1281,7 +1495,7 @@ function roomReportPreview(value: string): string {
   return `${normalized.slice(0, end).trimEnd()}…`;
 }
 
-type RoomTurnOutcomeState = 'completed' | 'blocked' | 'failed' | 'aborted';
+type RoomTurnOutcomeState = 'failed' | 'aborted';
 
 interface RoomTurnOutcome {
   state: RoomTurnOutcomeState;
@@ -1301,7 +1515,6 @@ function roomTurnOutcome(
     && turn.status !== 'aborted'
   ) return null;
   let publicReportCount = 0;
-  let blockedLaneCount = 0;
   for (const lane of lanes) {
     const visibleMessages = roomVisibleConversationMessages(
       lane.messageIds
@@ -1314,64 +1527,24 @@ function roomTurnOutcome(
       && Boolean(roomTerminalPostLabels[message.postKind ?? ''])
     ));
     publicReportCount += terminalPosts.length;
-    if (terminalPosts.some((message) => message.postKind === 'blocked')) {
-      blockedLaneCount += 1;
-    }
   }
-  const state: RoomTurnOutcomeState = turn.status === 'aborted'
-    ? 'aborted'
-    : blockedLaneCount > 0
-      ? 'blocked'
-      : turn.status;
-  const reportDetail = publicReportCount > 0
-    ? `已保留 ${publicReportCount} 条伙伴公开汇报，可在上方查看。`
-    : state === 'completed'
-      ? '本轮没有产生伙伴公开汇报。'
-      : '';
-  if (state === 'completed') {
-    if (publicReportCount === 0) {
-      return {
-        state,
-        title: '这轮回复已结束',
-        detail: lanes.length > 1
-          ? `${lanes.length} 位伙伴的运行回合已结束，但没有提交结构化交付回执。`
-          : '本轮只结束了伙伴的 Pi 回合，没有提交结构化交付回执；若这是执行任务，不能视为已经完成。',
-      };
-    }
-    const workDetail = lanes.length > 0 ? `${lanes.length} 项分工已经收束。` : '';
-    return {
-      state,
-      title: '这轮协作已完成',
-      detail: `${workDetail}${reportDetail}`,
-    };
-  }
-  if (state === 'blocked') {
-    return {
-      state,
-      title: '这轮协作受阻',
-      detail: `${blockedLaneCount} 项分工报告阻塞。${reportDetail || '可调整原任务后再试。'}`,
-    };
-  }
+  // A real Room Post is the public answer. Never append a synthetic
+  // "运行结论" after it: that obscures the final response and makes a
+  // participant's blocked report look like a second Root reply.
+  if (publicReportCount > 0 || turn.status === 'completed') return null;
+  const state: RoomTurnOutcomeState = turn.status === 'aborted' ? 'aborted' : 'failed';
   if (state === 'failed') {
     return {
       state,
-      title: '这轮协作没有完成',
-      detail: `${publicFailure}${reportDetail ? ` ${reportDetail}` : ''}`,
+      title: '本轮未完成',
+      detail: publicFailure,
     };
   }
   return {
     state,
-    title: '这轮协作已停止',
-    detail: `未完成的伙伴、工具和后续任务不会继续。${reportDetail}`,
+    title: '本轮已停止',
+    detail: '未完成的伙伴、工具和后续任务不会继续。',
   };
-}
-
-function usePrevious<T>(value: T): T | undefined {
-  const current = useRef<T | undefined>(undefined);
-  useEffect(() => {
-    current.current = value;
-  }, [value]);
-  return current.current;
 }
 
 function roomActivityProvenanceLabel(activity: RoomActivityProjection): '进度更新' | '伙伴沟通' | '运行记录' {
@@ -1828,6 +2001,9 @@ function roomActivityDisplayStatus(
   const approvalState = textValue(
     activity.payload.resolutionState || activity.payload.state,
   );
+  if (approvalDecision.automatic && approvalDecision.mode === 'policy') {
+    return 'completed';
+  }
   if (
     approvalDecision.automatic
     && !approvalDecision.decision
@@ -2040,6 +2216,7 @@ function roomInteractionKind(
 }
 
 function roomInteractionStatusLabel(activity: RoomActivityProjection): string {
+  if (textValue(activity.payload.approvalId)) return '等待审批';
   const kind = roomInteractionKind(activity);
   if (kind === 'review') return '等待审阅';
   if (kind === 'select') return '等待选择';
@@ -2048,33 +2225,22 @@ function roomInteractionStatusLabel(activity: RoomActivityProjection): string {
 
 function pendingRoomSessionAction(
   activities: RoomActivityProjection[],
-  projection: RoomProjectionState,
-  lanes: ReturnType<typeof selectRoomTurnExecution>['lanes'],
   room?: TimelineRoom,
 ): RoomSessionAction | undefined {
-  const activity = [...activities].reverse().find(roomActivityNeedsSessionAction);
+  const activity = [...activities].reverse().find((candidate) => (
+    roomActivityNeedsSessionAction(candidate)
+    && !textValue(candidate.payload.approvalId)
+  ));
   if (activity) {
     const sessionId = activity.sourceSessionId
       || room?.participants.find((item) => item.id === activity.participantId)?.sessionId
       || '';
     if (sessionId) return { sessionId, kind: roomInteractionKind(activity) };
   }
-  for (const lane of [...lanes].reverse()) {
-    for (const messageId of [...lane.messageIds].reverse()) {
-      const message = projection.messagesById[messageId];
-      const pendingApproval = message?.message?.blocks.some((block) => (
-        block.type === 'approval'
-        && approvalNeedsHumanDecision(block.data)
-        && !['approved', 'rejected', 'applied'].includes(textValue(block.data.state))
-      ));
-      if (!pendingApproval) continue;
-      const participantSessionId = room?.participants.find(
-        (item) => item.id === lane.participantId,
-      )?.sessionId;
-      const sessionId = message?.sourceSessionId || lane.sourceSessionId || participantSessionId || '';
-      if (sessionId) return { sessionId, kind: 'review' };
-    }
-  }
+  // Message blocks are historical render artifacts. A later
+  // approval_resolved event does not rewrite the original block, so using it
+  // as a pending-action owner creates a dead “立即审阅” link. The Room activity
+  // stream above is the only authoritative source for live human input.
   return undefined;
 }
 

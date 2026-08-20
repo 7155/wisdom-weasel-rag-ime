@@ -2225,6 +2225,7 @@ export const contractSchemas = {
           "reasoning_summary",
           "status_changed",
           "session_configuration_changed",
+          "session_command_invoked",
           "message_queue_updated",
           "workflow_changed",
           "lifecycle_cancellation_changed",
@@ -7832,6 +7833,11 @@ export const contractSchemas = {
       "toolCallId": {
         "type": "string",
         "minLength": 1
+      },
+      "sourceLoopId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
       },
       "args": {
         "type": "object"

@@ -1244,12 +1244,14 @@ class ControlToolGatewayTests(unittest.TestCase):
             args,
             *,
             tool_call_id,
+            source_loop_id="",
         ):
             calls.append(
                 {
                     "sessionId": session_id,
                     "args": args,
                     "toolCallId": tool_call_id,
+                    "sourceLoopId": source_loop_id,
                 }
             )
             return {"operation": "list", "partners": []}
@@ -1275,6 +1277,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "sessionId": str(self.session["id"]),
             "tool": "room_partner",
             "toolCallId": "tool:room-partner",
+            "sourceLoopId": "pi:message:assistant:101",
             "args": {"op": "list"},
         }
 
@@ -1289,6 +1292,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "sessionId": str(self.session["id"]),
                     "args": request["args"],
                     "toolCallId": "tool:room-partner",
+                    "sourceLoopId": "pi:message:assistant:101",
                 }
             ],
         )
@@ -1303,6 +1307,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             title="read-only Room coordinator",
             mode="coordinator",
             execution_mode="read_only",
+            tool_profile_version="subagent-readonly-v1",
             workspace_roots=[self.tmp.name],
             created_at_ms=2,
         )
@@ -1313,7 +1318,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertEqual(
             read_only_room_partner["parameters"]["properties"]["op"]["enum"],
-            ["list", "delegate", "delegate_batch", "post"],
+            ["list", "delegate", "delegate_batch", "post", "peer_list", "peer_send", "peer_ask", "peer_reply"],
         )
         batch_schema = next(
             option
@@ -1382,16 +1387,16 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertFalse(result["retryable"])
         self.assertFalse(result["createsDurableMemory"])
 
-    def test_runtime_knowledge_and_todo_tools_keep_static_and_backend_schemas_aligned(self) -> None:
+    def test_runtime_uses_package_workflow_and_keeps_legacy_schemas_migratable(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
         knowledge = next(item for item in manifests if item["name"] == "knowledge")
-        todo = next(item for item in manifests if item["name"] == "todo")
-        goal = next(item for item in manifests if item["name"] == "agent_goal")
         agents = next(item for item in manifests if item["name"] == "agents")
+        runtime_names = {item["name"] for item in manifests}
 
-        self.assertTrue(todo["alwaysAvailable"])
         self.assertTrue(agents["alwaysAvailable"])
-        self.assertNotIn("ask", {item["name"] for item in manifests})
+        self.assertNotIn("ask", runtime_names)
+        self.assertNotIn("todo", runtime_names)
+        self.assertNotIn("agent_goal", runtime_names)
 
         knowledge_branches = {
             branch["properties"]["op"]["const"]: branch
@@ -1409,9 +1414,13 @@ class ControlToolGatewayTests(unittest.TestCase):
             [{"required": ["fileId"]}, {"required": ["chunkId"]}],
         )
 
+        todo_schema = _runtime_tool_parameter_schema(
+            "todo",
+            ["init", "start", "done", "drop", "block", "unblock", "append", "view", "rm"],
+        )
         todo_branches = {
             branch["properties"]["op"]["const"]: branch
-            for branch in todo["parameters"]["oneOf"]
+            for branch in todo_schema["oneOf"]
         }
         self.assertCountEqual(
             todo_branches,
@@ -1437,7 +1446,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             [{"required": ["task"]}, {"required": ["phase"]}],
         )
         self.assertEqual(
-            todo["parameters"]["properties"]["reason"]["maxLength"],
+            todo_schema["properties"]["reason"]["maxLength"],
             500,
         )
         self.assertEqual(
@@ -1446,9 +1455,13 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertFalse(todo_branches["append"]["additionalProperties"])
 
+        goal_schema = _runtime_tool_parameter_schema(
+            "agent_goal",
+            ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"],
+        )
         goal_branches = {
             branch["properties"]["op"]["const"]: branch
-            for branch in goal["parameters"]["oneOf"]
+            for branch in goal_schema["oneOf"]
         }
         self.assertEqual(
             goal_branches["confirm_setup"]["required"],
@@ -1586,8 +1599,6 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "session_search",
                 "room_partner",
                 "browser",
-                "todo",
-                "agent_goal",
                 "plugins",
                 "desktop_semantic",
                 "workspace_lsp",
@@ -4104,6 +4115,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         ):
             self.assertIn(f'gatewayName: "{gateway_name}"', extension)
         self.assertIn("gatewayParamsFor(spec, params)", extension)
+        self.assertIn('pi.on?.("message_start"', extension)
+        self.assertIn("activeSourceLoopId", extension)
+        self.assertIn("...(sourceLoopId ? { sourceLoopId } : {})", extension)
         self.assertIn("const maxInlineToolResultBytes = 24 * 1024", extension)
         self.assertIn("const maxTurnToolResultBytes = 48 * 1024", extension)
         self.assertIn("turnInlineToolResultBytes", extension)
@@ -4122,6 +4136,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn('required: ["path", "resourceRevision", "edits"]', extension)
         self.assertIn('required: ["path", "resourceRevision", "content"]', extension)
         self.assertIn("resourceRevision: params.resourceRevision", extension)
+        self.assertIn('authorityKind: "session_goal" | "room_work_item"', extension)
+        self.assertIn('enum: ["session_goal", "room_work_item"]', extension)
+        self.assertIn("workDocument: params.workDocument", extension)
         self.assertIn('todoTask: {', extension)
         self.assertIn('可选导航链接；仅在确实需要将子 Agent 工作定位到当前 Todo 时传入。', extension)
         self.assertNotIn('todoPhase?: string;', extension)

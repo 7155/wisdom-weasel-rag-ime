@@ -315,6 +315,12 @@ class RuntimeTurnBindingTests(unittest.TestCase):
         self.assertIsNone(
             registry.claim_cancelled_terminal(aborted)
         )
+        self.assertFalse(
+            registry.mark_cancelled_terminal(
+                "session:target",
+                "room-root:cancelled",
+            )
+        )
 
         late_completed = AgentEventEnvelope(
             event_id="event:cancelled:completed",
@@ -328,6 +334,24 @@ class RuntimeTurnBindingTests(unittest.TestCase):
         )
         self.assertIsNone(
             registry.claim_cancelled_terminal(late_completed)
+        )
+
+    def test_synthetic_abort_terminal_reservation_is_exactly_once(self) -> None:
+        registry = RoomTurnRegistry()
+        registry.begin("session:target", "room-root:cancelled")
+        registry.record_cancellation("room-root:cancelled", "cancel:cancelled")
+
+        self.assertTrue(
+            registry.mark_cancelled_terminal(
+                "session:target",
+                "room-root:cancelled",
+            )
+        )
+        self.assertFalse(
+            registry.mark_cancelled_terminal(
+                "session:target",
+                "room-root:cancelled",
+            )
         )
 
 

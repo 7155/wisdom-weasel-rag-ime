@@ -15,6 +15,16 @@ test('managed Markdown, code, Diff, image, and interactive HTML previews stay us
   page.on('request', (request) => {
     if (request.url().includes('evil.example')) externalRequests.push(request.url());
   });
+  await page.route('**/__paw_html_preview', async (route) => {
+    await route.fulfill({
+      body: ISOLATED_PREVIEW_BOOTSTRAP,
+      contentType: 'text/html; charset=utf-8',
+      headers: {
+        'Content-Security-Policy': ISOLATED_PREVIEW_CSP,
+        'Cache-Control': 'private, no-store',
+      },
+    });
+  });
   await page.route('https://evil.example/**', async (route) => {
     const url = route.request().url();
     if (url.endsWith('.png')) {
@@ -93,6 +103,26 @@ test('managed Markdown, code, Diff, image, and interactive HTML previews stay us
     contentType: 'image/png',
   });
 });
+
+const ISOLATED_PREVIEW_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline' https: http: blob: data:",
+  "style-src 'unsafe-inline' https: http:",
+  'img-src data: blob: https: http:',
+  'connect-src https: http: ws: wss:',
+  'form-action https: http:',
+  'sandbox allow-forms allow-modals allow-pointer-lock allow-popups allow-scripts',
+].join('; ');
+
+const ISOLATED_PREVIEW_BOOTSTRAP = `<!doctype html><meta charset="utf-8"><script>
+(() => {
+  const encoded = location.hash.slice(1).replace(/-/g, '+').replace(/_/g, '/');
+  const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
+  const binary = atob(padded);
+  const source = new TextDecoder().decode(Uint8Array.from(binary, c => c.charCodeAt(0)));
+  document.open(); document.write(source); document.close();
+})();
+</script>`;
 
 /**
  * Generated HTML is delivered as a report card with its own labelled action

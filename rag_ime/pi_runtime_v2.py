@@ -474,6 +474,10 @@ class _HostedSessionState:
         repr=False,
     )
     stream_pi_message_id: str = ""
+    # One product Turn can contain many Pi assistant/tool loops. This identity
+    # is advanced by each assistant message_start and inherited by the Tool
+    # events produced from that assistant message.
+    source_loop_id: str = ""
     tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
     last_agent_messages: list[object] = field(default_factory=list)
     final_error: str = ""
@@ -1906,6 +1910,31 @@ class PiRuntimeHostManager:
             )
         return commands
 
+    def invoke_command(self, session_id: str, command: str) -> dict[str, object]:
+        text = str(command).strip()
+        if not text.startswith("/") or "\n" in text or "\r" in text:
+            raise ValueError("Pi Package command must be one slash-command line")
+        self._inspection_snapshot(session_id, durable_fallback=False)
+        response = self._require_client().send(
+            "session.command.invoke",
+            {"sessionId": session_id, "command": text},
+        )
+        if response.get("schemaVersion") != "rag-ime.pi-package-command-invocation.v1":
+            raise PiRuntimeError("Pi returned an invalid Package command receipt")
+        if response.get("handled") is not True:
+            raise PiRuntimeError("Pi did not handle the Package command")
+        result = response.get("result")
+        if not isinstance(result, Mapping):
+            raise PiRuntimeError("Pi Package command receipt has no result")
+        return {
+            "schemaVersion": "rag-ime.pi-package-command-invocation.v1",
+            "command": text,
+            "name": str(response.get("name") or "")[:80],
+            "handled": True,
+            "result": dict(result),
+            "leafId": str(response.get("leafId") or "")[:240],
+        }
+
     def model_catalog(self, session_id: str) -> dict[str, object]:
         # Model selection and thinking level are persisted after every Pi-owned
         # change. Reading that desired Session state avoids opening a large
@@ -2716,6 +2745,13 @@ class PiRuntimeHostManager:
     def plugin_list(self) -> list[dict[str, object]]:
         return [dict(value) for value in self._require_host_result("plugins.list").get("plugins") or [] if isinstance(value, Mapping)]
 
+    def plugin_catalog(self) -> list[dict[str, object]]:
+        return [
+            dict(value)
+            for value in self._require_host_result("plugins.catalog").get("packages") or []
+            if isinstance(value, Mapping)
+        ]
+
     def plugin_create_package(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self._require_host_result("plugins.package.create", payload)
 
@@ -2726,6 +2762,11 @@ class PiRuntimeHostManager:
         return self._require_host_result(
             "plugins.package.prepare", {"source": source}
         )
+
+    def plugin_preview_install(
+        self, payload: Mapping[str, object]
+    ) -> dict[str, object]:
+        return self._require_host_result("plugins.install.preview", payload)
 
     def plugin_install(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self._require_host_result(
@@ -2748,6 +2789,23 @@ class PiRuntimeHostManager:
                 "approvalToken": self.config.plugin_approval_token,
                 "expectedActiveDigest": expected_active_digest,
                 "expectedEnabled": expected_enabled,
+            },
+        )
+
+    def plugin_uninstall(
+        self,
+        plugin_id: str,
+        *,
+        expected_active_digest: str,
+        expected_enabled: bool,
+    ) -> dict[str, object]:
+        return self._require_host_result(
+            "plugins.uninstall",
+            {
+                "pluginId": plugin_id,
+                "expectedActiveDigest": expected_active_digest,
+                "expectedEnabled": expected_enabled,
+                "approvalToken": self.config.plugin_approval_token,
             },
         )
 
@@ -2887,6 +2945,14 @@ class PiRuntimeHostManager:
                     state.abort_requested_turn_id = turn_id
             if client_message_id:
                 state.client_message_id = client_message_id
+        if event_type == "message_start":
+            raw_message = as_mapping(raw.get("message"))
+            if str(raw_message.get("role") or "").lower() == "assistant":
+                source_loop_id = pi_message_id(raw_message, turn_id)
+                with self._lock:
+                    state.source_loop_id = source_loop_id
+                    state.stream_pi_message_id = source_loop_id
+            return
         if event_type == "message_update":
             update = as_mapping(raw.get("assistantMessageEvent"))
             update_type = str(update.get("type") or "")
@@ -2907,6 +2973,11 @@ class PiRuntimeHostManager:
                         "contentIndex": as_integer(update.get("contentIndex")),
                         "delta": str(update.get("delta") or ""),
                         "replaceBlock": replace_block,
+							**(
+								{"sourceLoopId": state.source_loop_id}
+								if state.source_loop_id
+								else {}
+							),
                     },
                     turn_id=turn_id,
                 )
@@ -2938,6 +3009,11 @@ class PiRuntimeHostManager:
                             "items": summaries,
                             "source": "provider_reasoning_summary",
                             "state": "completed",
+                            **(
+                                {"sourceLoopId": state.source_loop_id}
+                                if state.source_loop_id
+                                else {}
+                            ),
                         },
                         turn_id=turn_id,
                     )
@@ -2983,6 +3059,11 @@ class PiRuntimeHostManager:
                             "blockId": f"{turn_id}:assistant:text",
                             "delta": progress_text,
                             "replaceContent": True,
+                            **(
+                                {"sourceLoopId": state.source_loop_id}
+                                if state.source_loop_id
+                                else {}
+                            ),
                         },
                         turn_id=turn_id,
                     )
@@ -2995,6 +3076,11 @@ class PiRuntimeHostManager:
                     "usage": public_usage(raw.get("message")),
                     **public_usage_evidence(raw_message),
                     "telemetry": dict(as_mapping(raw.get("telemetry"))),
+                    **(
+                        {"sourceLoopId": state.source_loop_id}
+                        if state.source_loop_id
+                        else {}
+                    ),
                 },
                 turn_id=turn_id,
             )
@@ -3100,6 +3186,11 @@ class PiRuntimeHostManager:
                 "toolName": tool_name,
                 "args": redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
+                **(
+                    {"sourceLoopId": state.source_loop_id}
+                    if state.source_loop_id
+                    else {}
+                ),
             }
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             raw_result = raw.get(result_key)
@@ -3306,6 +3397,7 @@ class PiRuntimeHostManager:
                     state.turn_id = ""
                     state.client_message_id = ""
                     state.stream_pi_message_id = ""
+                    state.source_loop_id = ""
                     state.tool_blocks.clear()
                     state.last_agent_messages = []
                     state.final_error = ""
@@ -3631,6 +3723,7 @@ class PiRuntimeHostManager:
             state.turn_id = ""
             state.client_message_id = ""
             state.stream_pi_message_id = ""
+            state.source_loop_id = ""
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""

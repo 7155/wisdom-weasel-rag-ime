@@ -874,7 +874,18 @@ describe('Agent chat rendering', () => {
     };
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
       messages: [userMessage(sessionId, turnId), failedWithResult],
-      liveEvents: [],
+      liveEvents: [{
+        ...agentEventFixture(9, 'turn_failed', {
+          error: 'WebSocket error',
+          retryExhausted: true,
+          providerRetryAttempts: 6,
+          providerRetryMaxAttempts: 6,
+          nextStep: '模型连接在自动重试后仍未恢复，请稍后继续或切换模型。',
+        }),
+        eventId: `${sessionId}:9`,
+        sessionId,
+        turnId,
+      }],
       lastSequence: 9,
       resumeToken: `${sessionId}:9`,
       status: 'faulted',
@@ -896,6 +907,66 @@ describe('Agent chat rendering', () => {
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent('网络中断');
+    expect(screen.getByRole('alert')).toHaveTextContent('已自动重试 6 次，仍未恢复');
+    expect(screen.getByRole('alert')).toHaveTextContent('已完成的工具与文件结果已保留');
+    fireEvent.click(screen.getByRole('button', { name: '继续' }));
+    expect(continueTurn).toHaveBeenCalledWith(turnId);
+    expect(retryTurn).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+  });
+
+  it('reports exhausted provider retries before offering a safe continuation', () => {
+    const sessionId = 'session-provider-retry-exhausted';
+    const turnId = 'turn-provider-retry-exhausted';
+    const failedWithResult: UiAgentMessage = {
+      ...failedAssistantMessage(sessionId, turnId),
+      id: 'provider-retry-exhausted-assistant',
+      blocks: [
+        {
+          id: 'provider-retry-exhausted-error',
+          type: 'error',
+          status: 'failed',
+          presentationKind: 'error',
+          data: { message: '503 upstream request failed' },
+        },
+        fileBlock('provider-retry-result', 'result.md', 'media_provider_retry_01', '8'.repeat(64)),
+      ],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId), failedWithResult],
+      liveEvents: [{
+        ...agentEventFixture(10, 'turn_failed', {
+          error: '503 upstream request failed',
+          retryExhausted: true,
+          providerRetryAttempts: 6,
+          providerRetryMaxAttempts: 6,
+        }),
+        eventId: `${sessionId}:10`,
+        sessionId,
+        turnId,
+      }],
+      lastSequence: 10,
+      resumeToken: `${sessionId}:10`,
+      status: 'faulted',
+    });
+    const continueTurn = vi.fn(() => true);
+    const retryTurn = vi.fn(() => true);
+
+    render(
+      <TooltipProvider>
+        <AgentTurn
+          sessionId={sessionId}
+          turnId={turnId}
+          onApprovalDecision={() => {}}
+          onContinueTurn={continueTurn}
+          onRetryTurn={retryTurn}
+          onSwitchModel={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('模型服务请求失败');
+    expect(screen.getByRole('alert')).toHaveTextContent('已自动重试 6 次，仍未恢复');
     expect(screen.getByRole('alert')).toHaveTextContent('已完成的工具与文件结果已保留');
     fireEvent.click(screen.getByRole('button', { name: '继续' }));
     expect(continueTurn).toHaveBeenCalledWith(turnId);

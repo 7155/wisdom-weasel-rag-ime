@@ -16,7 +16,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 from urllib.request import getproxies
 
-from .agent_core_policy import core_agent_policy_prompt
+from .agent_core_policy import base_agent_safety_policy_prompt, core_agent_policy_prompt
 from .agent_events import AgentEventHub
 from .agent_blocks import extract_completed_agent_blocks, normalize_trusted_agent_blocks
 from .agent_tool_block_bridge import AgentToolBlockBuffer
@@ -26,6 +26,7 @@ from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     COORDINATOR_TOOL_IDS,
     MEMORY_CURATION_TOOL_PROFILE,
+    PI_PACKAGE_OWNED_CONTROL_TOOL_IDS,
 )
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 from .pi_runtime_protocols import resolve_protocol_manager
@@ -80,7 +81,6 @@ from .agent_runtime_driver import (
     SessionContextProvider,
 )
 from .agent_roles import PersonaManifest, agent_role
-from .agent_prompt_plans import compose_persona_layer
 from .agent_sessions import AgentSessionStore
 from .agent_templates import agent_template, progressive_capability_policy
 from .deepseek_config import load_deepseek_config
@@ -105,8 +105,6 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "models",
     "runtime",
     "agents",
-    "todo",
-    "agent_goal",
     "workspace_list",
     "workspace_lsp",
     "workspace_read",
@@ -172,9 +170,10 @@ def _session_mode_prompt(
     if template_id or str(session.get("mode") or "assistant") != "coordinator":
         return ""
     return """<session-mode kind="coordinator">
-这是普通 Agent Session 的协调模式，不是 Room，也没有 Room Dispatch。
-你可以直接完成当前工作；只有当一个子任务边界清楚、可独立验收并且并行确实有益时，
-才使用已披露的委派能力。保留主任务责任，核对返回证据，再向用户交付。
+这是 Agent Session 的协调模式。若本轮同时提供 <room-context>，以其中的 Room 身份、
+WorkItem 和 Room 协作工具为准；没有 <room-context> 时才按普通 Session 协调任务。
+只有当子任务边界清楚、可独立验收并且并行确实有益时才委派；保留主任务责任，
+核对返回证据，再向用户交付。
 </session-mode>"""
 
 
@@ -192,24 +191,47 @@ def _render_session_prompt(layers: list[tuple[str, str]]) -> str:
     return "".join(parts)
 
 
+def _project_context_bootstrap_prompt(
+    session: Mapping[str, object],
+) -> str:
+    if session.get("projectContextEnabled") is False:
+        return ""
+    roots = session.get("workspaceRoots")
+    if not isinstance(roots, list) or not roots:
+        return ""
+    try:
+        root = Path(str(roots[0])).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return ""
+    if not root.is_dir() or root.is_symlink():
+        return ""
+    guide = root / "AGENTS.md"
+    if guide.is_file() and not guide.is_symlink():
+        return ""
+    if guide.exists() or guide.is_symlink():
+        return (
+            "项目根的 AGENTS.md 不是普通文件。不要覆盖或绕过它；"
+            "先向用户报告这个项目上下文入口异常。"
+        )
+    return (
+        "当前项目根缺少 AGENTS.md。开始项目修改前，先调用 skill_load "
+        "加载 bootstrap-project-context，并按该 Skill 检查项目与 docs；"
+        "在授权允许时用 resourceRevision=missing 创建根 AGENTS.md。"
+        "AGENTS.md 只保存稳定入口与索引；当前 WorkItem、Session、审批和运行状态"
+        "继续由 Runtime 与 WorkDocument registry 管理。"
+    )
+
+
 def _tools_for_session(
     available: tuple[str, ...],
     session: Mapping[str, object],
 ) -> tuple[str, ...]:
     mode = str(session.get("mode") or "assistant")
-    profile = str(
-        session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE
+    selected = tuple(
+        tool for tool in available if tool not in PI_PACKAGE_OWNED_CONTROL_TOOL_IDS
     )
-    fixed_todo = (
-        str(session.get("sessionKind") or "conversation") == "conversation"
-        and profile == CONTROL_CENTER_TOOL_PROFILE
-        and mode in {"assistant", "coordinator"}
-    )
-    selected = available
     if str(session.get("toolAllowlistMode") or "profile") == "explicit":
         explicit = {str(value) for value in session.get("allowedTools") or []}
-        if fixed_todo:
-            explicit.add("todo")
         selected = tuple(tool for tool in selected if tool in explicit)
     if str(session.get("executionMode") or "").strip().lower() == "read_only":
         selected = tuple(
@@ -274,7 +296,7 @@ class PiRuntimeConfig:
     model_base_url: str = ""
     model_configured: bool = True
     model_configuration_error: str = ""
-    pi_version: str = "0.80.2"
+    pi_version: str = ""
     installation_error: str = ""
     protocol_version: str = "1"
     max_sessions: int = 8
@@ -310,7 +332,11 @@ class PiRuntimeConfig:
         extension_value = os.environ.get("RAG_IME_PI_EXTENSION", "").strip()
         debug_context_value = os.environ.get("RAG_IME_PI_DEBUG_CONTEXT_DIR", "").strip()
         node_value = os.environ.get("RAG_IME_PI_NODE", "").strip()
-        expected_pi_version = os.environ.get("RAG_IME_PI_VERSION", "0.80.7").strip() or "0.80.7"
+        # The active managed-runtime manifest owns the production Pi version.
+        # RAG_IME_PI_VERSION remains an explicit development/diagnostic pin,
+        # but an absent value must not freeze every future atomic activation to
+        # the version that happened to be current when this adapter was written.
+        expected_pi_version = os.environ.get("RAG_IME_PI_VERSION", "").strip()
         development_tools = tuple(
             item.strip()
             for item in os.environ.get(
@@ -515,18 +541,9 @@ class PiRuntimeConfig:
             return _VOICE_REFINEMENT_SYSTEM_PROMPT
         if tool_profile == MEMORY_CURATION_TOOL_PROFILE:
             return _MEMORY_CURATION_SYSTEM_PROMPT
-        role = self.role_resolver(
-            session.get("roleId") or "companion-present-v1",
-            session.get("roleVersion") or "1",
-        )
-        role_book_prompt = str(self.role_book_resolver(session) or "").strip()
         core_prompt = core_agent_policy_prompt(
-            role.safety_policy_prompt,
+            base_agent_safety_policy_prompt(),
             session,
-        )
-        persona_prompt = compose_persona_layer(
-            role.persona_prompt,
-            role_book_prompt,
         )
         template_id = str(session.get("agentTemplateId") or "").strip()
         template = None
@@ -549,10 +566,13 @@ class PiRuntimeConfig:
                 "当前 Session 没有额外任务模板。只使用运行时明确提供的能力，"
                 "按工具返回的真实结果回答。"
             )
-        layers = [
-            ("core_rails", core_prompt),
-            ("persona", persona_prompt),
-        ]
+        # Persona is an optional future Package. Role metadata may remain on
+        # historical Sessions, but the Runtime Host must not inject it unless a
+        # Package explicitly contributes context.
+        layers = [("core_rails", core_prompt)]
+        project_bootstrap_prompt = _project_context_bootstrap_prompt(session)
+        if project_bootstrap_prompt:
+            layers.append(("project_context_bootstrap", project_bootstrap_prompt))
         if session_mode_prompt:
             layers.append(("session_mode_policy", session_mode_prompt))
         layers.append(("agent_template_policy", capability_prompt))
@@ -1709,6 +1729,12 @@ class PiRuntimeManager:
                 }
             )
         return commands
+
+    def invoke_command(self, session_id: str, command: str) -> dict[str, object]:
+        _ = (session_id, command)
+        raise PiRuntimeError(
+            "Pi Package commands require the managed Runtime Host v2"
+        )
 
     def tool_catalog(self, session_id: str) -> list[dict[str, object]]:
         """Return the backend authority catalog used to configure Pi tools."""

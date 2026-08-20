@@ -43,6 +43,27 @@ struct NativeNavigationPolicyTests {
             ) == .cancel,
             "external URLs never load inside the WebView"
         )
+        expect(
+            policy.decision(
+                for: URL(string: "rag-ime-control://app/__paw_html_preview#fixture"),
+                isMainFrame: false
+            ) == .allow,
+            "isolated loopback previews load in child frames"
+        )
+        expect(
+            policy.decision(
+                for: URL(string: "rag-ime-control://app/__paw_html_preview#fixture"),
+                isMainFrame: true
+            ) == .cancel,
+            "loopback previews cannot replace the main document"
+        )
+        expect(
+            policy.decision(
+                for: URL(string: "http://127.0.0.1:8766/__paw_html_preview"),
+                isMainFrame: false
+            ) == .cancel,
+            "loopback preview bypasses stay blocked in the native host"
+        )
         print("NativeNavigationPolicyTests: OK")
     }
 }

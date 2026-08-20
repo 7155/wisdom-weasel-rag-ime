@@ -1,5 +1,6 @@
 import {
   roomActivityLaneIdentity,
+  roomExecutionLaneKey,
   type RoomActivityProjection,
   type RoomMessageProjection,
   type RoomProjectionState,
@@ -10,6 +11,8 @@ export interface RoomExecutionLane {
   key: string;
   rootId: string;
   dispatchId: string;
+  sourceTurnId: string;
+  sourceLoopId: string;
   waveId: string;
   phaseName: string;
   parallelIndex?: number;
@@ -43,7 +46,50 @@ export interface RoomExecutionOverviewItem {
 export function selectPublicRoomTurnOrder(
   projection: RoomProjectionState,
 ): string[] {
-  return projection.turnOrder.filter((turnId) => turnId !== 'unscoped');
+  const successorByRoot = new Map<string, string>();
+  const retryChildren = new Set<string>();
+  for (const turnId of projection.turnOrder) {
+    const retryOfRootId = projection.turnsById[turnId]?.retryOfRootId;
+    if (!retryOfRootId || !projection.turnsById[retryOfRootId]) continue;
+    successorByRoot.set(retryOfRootId, turnId);
+    retryChildren.add(turnId);
+  }
+  return projection.turnOrder.flatMap((turnId) => {
+    if (
+      turnId === 'unscoped'
+      || retryChildren.has(turnId)
+      || isDetachedIntercomTurn(projection, turnId)
+    ) return [];
+    let leaf = turnId;
+    const visited = new Set<string>([leaf]);
+    while (successorByRoot.has(leaf)) {
+      const next = successorByRoot.get(leaf)!;
+      if (visited.has(next)) break;
+      visited.add(next);
+      leaf = next;
+    }
+    return [leaf];
+  });
+}
+
+/**
+ * Intercom receipts are Room-wide relationship facts, not independent public
+ * conversation turns. Their delivery turn ids belong to the receiving Pi
+ * Session and do not receive a matching Room `turn_completed` event. Leaving
+ * them in the public order therefore makes a delivered message look like a
+ * permanently running Room turn.
+ */
+function isDetachedIntercomTurn(
+  projection: RoomProjectionState,
+  turnId: string,
+): boolean {
+  const turn = projection.turnsById[turnId];
+  if (!turn || turn.messageIds.length > 0 || turn.activityIds.length === 0) return false;
+  return turn.activityIds.every((activityId) => {
+    const activity = projection.activitiesById[activityId];
+    return activity?.kind === 'participant_activity'
+      && textValue(activity.payload.activityKind) === 'intercom';
+  });
 }
 
 /** Project real Pi Session dispatches into the Room task view.
@@ -123,6 +169,8 @@ export function selectRoomTurnExecution(
       key: identity.key,
       rootId: identity.rootId,
       dispatchId: identity.dispatchId,
+      sourceTurnId: identity.sourceTurnId,
+      sourceLoopId: identity.sourceLoopId,
       waveId: textValue(activity.payload.waveId),
       phaseName: textValue(activity.payload.phaseName),
       parallelIndex: numberValue(activity.payload.parallelIndex),
@@ -157,27 +205,39 @@ export function selectRoomTurnExecution(
     if (message.role === 'user') {
       continue;
     }
-    const exactKey = message.dispatchId
-      ? [
-          message.rootId || turn.rootId || turnId,
-          message.participantId || message.sourceSessionId || 'participant',
+    const messageRootId = message.rootId || turn.rootId || turnId;
+    const messageParticipantId = message.participantId
+      || message.sourceSessionId
+      || 'participant';
+    const messageLoopId = message.sourceLoopId || message.sourceTurnId || '';
+    const exactKey = message.dispatchId && messageLoopId
+      ? roomExecutionLaneKey(
+          messageRootId,
+          messageParticipantId,
           message.dispatchId,
-        ].join('\u001f')
+          messageLoopId,
+        )
       : '';
     const existingKey = exactKey && lanes.has(exactKey)
       ? exactKey
-      : participantLaneKeys
-          .get(participantKey(message.participantId, message.sourceSessionId))
-          ?.at(-1);
-    const laneKey = existingKey ?? [
-      turn.rootId || turnId,
-      message.participantId || message.sourceSessionId || 'participant',
+      : matchingParticipantLaneKey(
+          lanes,
+          participantLaneKeys,
+          projection,
+          message,
+        );
+    const laneKey = existingKey ?? roomExecutionLaneKey(
+      messageRootId,
+      messageParticipantId,
       message.dispatchId || message.id,
-    ].join('\u001f');
+      messageLoopId,
+    );
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
-      rootId: message.rootId || turn.rootId || turnId,
+      rootId: messageRootId,
       dispatchId: message.dispatchId || '',
+      sourceTurnId: message.sourceTurnId || '',
+      sourceLoopId: message.sourceLoopId || '',
       waveId: '',
       phaseName: '',
       participantId: message.participantId,
@@ -194,6 +254,8 @@ export function selectRoomTurnExecution(
       key: `${turnId}\u001frouter\u001fpending`,
       rootId: turn.rootId || turnId,
       dispatchId: '',
+      sourceTurnId: '',
+      sourceLoopId: '',
       waveId: '',
       phaseName: '',
       participantId: null,
@@ -232,6 +294,43 @@ export function selectRoomTurnExecution(
   };
 }
 
+function matchingParticipantLaneKey(
+  lanes: Map<string, RoomExecutionLane>,
+  participantLaneKeys: Map<string, string[]>,
+  projection: RoomProjectionState,
+  message: RoomMessageProjection,
+): string | undefined {
+  const candidates = (
+    participantLaneKeys.get(
+      participantKey(message.participantId, message.sourceSessionId),
+    ) ?? []
+  )
+    .map((key) => lanes.get(key))
+    .filter((lane): lane is RoomExecutionLane => Boolean(lane))
+    .filter((lane) => !message.dispatchId || lane.dispatchId === message.dispatchId);
+  if (candidates.length === 0) return undefined;
+
+  const messageSequence = message.chronology?.roomEventSequence ?? message.sequence;
+  if (messageSequence !== undefined) {
+    const earlier = candidates.filter(
+      (lane) => laneEarliestSequence(lane, projection) <= messageSequence,
+    );
+    if (earlier.length > 0) {
+      return earlier.reduce((latest, candidate) => (
+        laneEarliestSequence(candidate, projection)
+          >= laneEarliestSequence(latest, projection)
+          ? candidate
+          : latest
+      )).key;
+    }
+  }
+
+  const earlierByTime = candidates.filter(
+    (lane) => laneEarliestAtMs(lane, projection) <= message.createdAtMs,
+  );
+  return (earlierByTime.at(-1) ?? candidates.at(-1))?.key;
+}
+
 function compareExecutionLanes(
   left: RoomExecutionLane,
   right: RoomExecutionLane,
@@ -239,17 +338,36 @@ function compareExecutionLanes(
   leftIndex: number,
   rightIndex: number,
 ): number {
-  const earliestSequence = (lane: RoomExecutionLane): number => Math.min(
-    ...lane.activities.map((activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
+  const sequenceOrder = laneEarliestSequence(left, projection)
+    - laneEarliestSequence(right, projection);
+  if (Number.isFinite(sequenceOrder) && sequenceOrder !== 0) return sequenceOrder;
+  const timeOrder = laneEarliestAtMs(left, projection)
+    - laneEarliestAtMs(right, projection);
+  if (Number.isFinite(timeOrder) && timeOrder !== 0) return timeOrder;
+  return leftIndex - rightIndex || left.key.localeCompare(right.key);
+}
+
+function laneEarliestSequence(
+  lane: RoomExecutionLane,
+  projection: RoomProjectionState,
+): number {
+  return Math.min(
+    ...lane.activities.map(
+      (activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER,
+    ),
     ...lane.messageIds.map((messageId) => (
       projection.messagesById[messageId]?.chronology?.roomEventSequence
       ?? projection.messagesById[messageId]?.sequence
       ?? Number.MAX_SAFE_INTEGER
     )),
   );
-  const sequenceOrder = earliestSequence(left) - earliestSequence(right);
-  if (Number.isFinite(sequenceOrder) && sequenceOrder !== 0) return sequenceOrder;
-  const earliestAtMs = (lane: RoomExecutionLane): number => Math.min(
+}
+
+function laneEarliestAtMs(
+  lane: RoomExecutionLane,
+  projection: RoomProjectionState,
+): number {
+  return Math.min(
     ...lane.activities.map((activity) => activity.createdAtMs),
     ...lane.messageIds.map((messageId) => (
       projection.messagesById[messageId]?.chronology?.createdAtMs
@@ -257,16 +375,13 @@ function compareExecutionLanes(
       ?? Number.MAX_SAFE_INTEGER
     )),
   );
-  const timeOrder = earliestAtMs(left) - earliestAtMs(right);
-  if (Number.isFinite(timeOrder) && timeOrder !== 0) return timeOrder;
-  return leftIndex - rightIndex || left.key.localeCompare(right.key);
 }
 
 /**
- * A Provider retry or an intake helper turn may get its own Dispatch without
- * producing a public Post. Keep those records, but fold them into the next
- * visible step for the same partner so stale failures do not become competing
- * top-level status cards.
+ * Legacy events did not expose the Pi loop id. Preserve their old best-effort
+ * coalescing, but every factual sourceLoopId is a visible loop and must remain
+ * its own card even when it has no public Post yet. sourceTurnId remains a
+ * compatibility fallback for already persisted Room events.
  */
 function coalesceInternalAttemptLanes(
   source: RoomExecutionLane[],
@@ -284,7 +399,8 @@ function coalesceInternalAttemptLanes(
     for (let offset = indexes.length - 1; offset >= 0; offset -= 1) {
       const index = indexes[offset]!;
       const lane = source[index]!;
-      const isVisibleStep = Boolean(lane.waveId)
+      const isVisibleStep = Boolean(lane.sourceLoopId || lane.sourceTurnId)
+        || Boolean(lane.waveId)
         || lane.messageIds.length > 0
         || nextVisibleIndex === undefined;
       if (isVisibleStep) {

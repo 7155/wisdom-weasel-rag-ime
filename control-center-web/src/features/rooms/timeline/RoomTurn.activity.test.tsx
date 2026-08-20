@@ -98,6 +98,74 @@ describe('RoomTurn public activity detail', () => {
     expect(progress).toHaveTextContent('2 / 3');
   });
 
+  it('does not keep a policy-owned automatic approval in the running count', () => {
+    const projection = roomProjection();
+    projection.activitiesById['wait-a'] = {
+      ...projection.activitiesById['wait-a']!,
+      status: 'completed',
+    };
+    projection.activitiesById['approval-a'] = {
+      id: 'approval-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '安全策略已自动处理',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'approval_required',
+        approvalId: 'approval:auto-a',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'pending',
+      },
+      createdAtMs: 3_200,
+      updatedAtMs: 3_200,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'approval-a'],
+    };
+
+    const view = render(roomTurn(projection));
+    const progress = view.container.querySelector<HTMLElement>('.room-agent-lane__meter')!;
+
+    expect(progress).toHaveAttribute('aria-label', '运行记录已返回 3 / 3');
+    expect(progress).toHaveTextContent('3 / 3');
+    expect(view.container).toHaveTextContent('安全策略已自动处理这次操作');
+  });
+
+  it('renders a new card when the same partner starts a later Pi loop', () => {
+    const projection = roomProjection();
+    projection.activitiesById['wait-a'] = {
+      ...projection.activitiesById['wait-a']!,
+      payload: {
+        ...projection.activitiesById['wait-a']!.payload,
+        sourceTurnId: 'turn:partner',
+        sourceLoopId: 'loop:partner-work',
+      },
+    };
+    projection.activitiesById['tool-a'] = {
+      ...projection.activitiesById['tool-a']!,
+      summary: '澄·今正在收尾',
+      payload: {
+        ...projection.activitiesById['tool-a']!.payload,
+        sourceTurnId: 'turn:partner',
+        sourceLoopId: 'loop:partner-final',
+      },
+    };
+
+    const view = render(roomTurn(projection));
+    const cards = [...view.container.querySelectorAll('.room-agent-lane')];
+
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toHaveTextContent('等待上游服务恢复');
+    expect(cards[1]).toHaveTextContent('src/runtime.ts');
+    expect(cards[1]).not.toHaveTextContent('等待上游服务恢复');
+  });
+
   it('projects a Partner Tool child route as a host delegation', () => {
     const projection = roomProjection();
     projection.activitiesById['route-a'] = {

@@ -234,6 +234,12 @@ type ToolParams = {
   patternKind?: "literal" | "regex" | "glob";
   edits?: Array<{ oldText: string; newText: string }>;
   content?: string;
+  workDocument?: {
+    authorityKind: "session_goal" | "room_work_item";
+    authorityId: string;
+    authorityRevision: number;
+    title?: string;
+  };
   command?: string;
   cwd?: string;
   timeout?: number;
@@ -1679,6 +1685,21 @@ const coordinatorToolSpecs: ToolSpec[] = [
           pattern: "^(?:sha256:[0-9a-fA-F]{64}|missing)$",
         },
         content: { type: "string", maxLength: 2097152 },
+        workDocument: {
+          type: "object",
+          additionalProperties: false,
+          required: ["authorityKind", "authorityId", "authorityRevision"],
+          properties: {
+            authorityKind: {
+              type: "string",
+              enum: ["session_goal", "room_work_item"],
+            },
+            authorityId: { type: "string", minLength: 1, maxLength: 240 },
+            authorityRevision: { type: "integer", minimum: 0 },
+            title: { type: "string", maxLength: 240 },
+          },
+          description: "Explicit authority binding registered only after the write receipt hash matches.",
+        },
       },
     },
   },
@@ -1930,7 +1951,13 @@ function gatewayParamsFor(spec: ToolSpec, params: ToolParams): ToolParams {
     return { op, path: params.path, resourceRevision: params.resourceRevision, edits: params.edits };
   }
   if (spec.name === "write") {
-    return { op, path: params.path, resourceRevision: params.resourceRevision, content: params.content };
+    return {
+      op,
+      path: params.path,
+      resourceRevision: params.resourceRevision,
+      content: params.content,
+      workDocument: params.workDocument,
+    };
   }
   if (spec.name === "bash") {
     return {
@@ -1950,6 +1977,7 @@ async function callGateway(
   params: ToolParams,
   signal?: AbortSignal,
   runtimeContext?: TrustedRuntimeContext,
+  sourceLoopId = "",
 ) {
   if (!gatewayUrl || !gatewayToken || !sessionId) {
     throw new Error("RAG-IME tool gateway is not configured");
@@ -1966,6 +1994,7 @@ async function callGateway(
       tool,
       toolCallId,
       args: params,
+      ...(sourceLoopId ? { sourceLoopId } : {}),
       ...(runtimeContext ? { runtimeContext } : {}),
     }),
     signal,
@@ -2565,6 +2594,17 @@ function specsForToolProfile(specs: ToolSpec[]) {
 }
 
 export default function (pi: any) {
+  let activeSourceLoopId = "";
+  let sourceLoopOrdinal = 0;
+  pi.on?.("message_start", (event: any) => {
+    const message = event?.message;
+    if (!message || String(message.role ?? "").toLowerCase() !== "assistant") return;
+    sourceLoopOrdinal += 1;
+    const timestamp = Number(message.timestamp);
+    activeSourceLoopId = Number.isFinite(timestamp) && timestamp > 0
+      ? `pi:message:assistant:${Math.trunc(timestamp)}`
+      : `pi:loop:${sessionId}:${sourceLoopOrdinal}`;
+  });
   const modeSpecs = sessionMode === "coordinator"
     ? [...toolSpecs, ...coordinatorToolSpecs]
     : toolSpecs;
@@ -2742,6 +2782,7 @@ export default function (pi: any) {
             gatewayParams,
             signal,
             runtimeContext,
+            activeSourceLoopId,
           );
           recentNonRetryableFailures.delete(toolFailureKey(spec.name, params));
         } catch (error) {

@@ -100,7 +100,6 @@ const piCommandIcons: Record<Exclude<ComposerCommand['source'], 'product'>, Luci
 };
 
 export function AgentComposer({
-  assistantName = '澄',
   draft,
   attachments,
   session,
@@ -497,7 +496,7 @@ export function AgentComposer({
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          placeholder={composerPlaceholder(persona?.displayName ?? assistantName, imageSupport)}
+          placeholder={composerPlaceholder(persona?.displayName ?? 'Agent', imageSupport)}
           aria-label="消息"
           aria-autocomplete="list"
           aria-expanded={commandPanelVisible}

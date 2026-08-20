@@ -15,8 +15,6 @@ ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
 
 class RoomSessionHost(Protocol):
     rooms: Any
-    personas: Any
-    role_books: Any
     room_work: Any
     room_events: Any
     room_turns: RoomTurnRegistry
@@ -26,11 +24,6 @@ class RoomSessionHost(Protocol):
         self,
         room: Mapping[str, object],
     ) -> None: ...
-
-    def _ensure_session_role_book(
-        self,
-        session_id: str,
-    ) -> Mapping[str, object]: ...
 
     def _guard_room_session_route(
         self,
@@ -82,6 +75,7 @@ class RoomSessionDispatchService:
         *,
         message: str,
         client_message_id: str,
+        retry_of_root_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
@@ -95,6 +89,7 @@ class RoomSessionDispatchService:
             room_id,
             message=message,
             client_message_id=client_message_id,
+            retry_of_root_id=retry_of_root_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
             attachment_ids=attachment_ids,
@@ -107,6 +102,7 @@ class RoomSessionDispatchService:
         *,
         message: str,
         client_message_id: str,
+        retry_of_root_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
@@ -129,36 +125,15 @@ class RoomSessionDispatchService:
                 continue
             if str(value.get("status") or "") != "active":
                 continue
-            role = self.host.personas.resolve(value.get("roleId"), value.get("roleVersion") or "1")
-            session = self.host._ensure_session_role_book(str(value["sessionId"]))
-            try:
-                role_book_profile = self.host.role_books.routing_profile(
-                    role.role_id,
-                    role.version,
-                    str(session.get("roleBookRevisionId") or ""),
-                )
-            except (ValueError, RuntimeError):
-                role_book_profile = {}
-            capability_texts = _role_book_profile_texts(
-                role_book_profile.get("capabilities")
-            )
-            recent_work_texts = _role_book_profile_texts(
-                role_book_profile.get("recentWork")
-            )
+            # Room routing consumes only explicit mentions, collaboration
+            # responsibility and WorkItem ownership. Persona/Role Book is an
+            # optional Package and must not be loaded by the core Room path.
             profiles[str(value["id"])] = {
-                "tagline": role.tagline,
-                "summary": " ".join(
-                    [role.summary, *capability_texts[:4], *recent_work_texts[:3]]
-                ),
-                "traits": list(role.traits),
-                "routingTags": [
-                    *role.traits,
-                    *capability_texts[:8],
-                    *recent_work_texts[:4],
-                ],
-                "roleBookRevisionId": str(
-                    role_book_profile.get("revisionId") or ""
-                ),
+                "tagline": "",
+                "summary": "",
+                "traits": [],
+                "routingTags": [],
+                "roleBookRevisionId": "",
             }
         decisions = self.host.rooms.plan_routes(
             room_id,
@@ -251,6 +226,8 @@ class RoomSessionDispatchService:
             }
             if client_message_id:
                 user_event_payload["clientMessageId"] = client_message_id
+            if retry_of_root_id:
+                user_event_payload["retryOfRootId"] = retry_of_root_id
             if work_item_id:
                 user_event_payload["workItemId"] = work_item_id
             if attachment_receipts:
@@ -420,6 +397,7 @@ class RoomSessionDispatchService:
             "roomId": room_id,
             "roomTurnId": room_turn_id,
             "clientMessageId": client_message_id,
+            "retryOfRootId": retry_of_root_id,
             "participant": targets[primary_index],
             "participants": targets,
             "routeDecision": decisions[primary_index],
@@ -541,19 +519,6 @@ class RoomSessionDispatchService:
             }
         finally:
             self.host.room_turns.release_priority_session(session_id)
-
-def _role_book_profile_texts(value: object) -> list[str]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        return []
-    result: list[str] = []
-    for item in value:
-        if not isinstance(item, Mapping):
-            continue
-        text = " ".join(str(item.get("text") or "").split())[:280]
-        if text and text not in result:
-            result.append(text)
-    return result
-
 
 def _public_error(error: BaseException) -> str:
     text = " ".join(str(error).split())

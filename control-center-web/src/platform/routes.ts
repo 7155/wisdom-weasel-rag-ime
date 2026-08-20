@@ -486,6 +486,7 @@ export const CONTROL_ROUTES = {
     body: [
       'message',
       'clientMessageId',
+      'retryOfRootId',
       'participantIds',
       'workItemId',
       'attachmentIds',

@@ -61,27 +61,32 @@ export function buildCommandCatalog({
   busy: boolean;
   sending: boolean;
 }): ComposerCommand[] {
-  const productCommands = productCommandDefinitions.map((command): ProductCommand => ({
-    ...command,
-    ...productCommandAvailability(command.name, {
-      session,
-      catalog,
-      tools,
-      toolCatalogStatus,
-      busy,
-      sending,
-    }),
-  }));
+  const advertisedPiCommandNames = new Set(piCommands.map((command) => command.name));
+  const productCommands = productCommandDefinitions
+    .filter((command) => (
+      command.name !== 'subagents' || advertisedPiCommandNames.has('subagents')
+    ))
+    .map((command): ProductCommand => ({
+      ...command,
+      ...productCommandAvailability(command.name, {
+        session,
+        catalog,
+        tools,
+        toolCatalogStatus,
+        busy,
+        sending,
+      }),
+    }));
   const reserved = new Set(
     productCommands.map((command) => command.invocation.toLowerCase()),
   );
   const piAvailability = genericCommandAvailability({ session, busy, sending });
-  const resolvedPiCommands = piCommands.map((command): ResolvedPiCommand => ({
-    ...command,
-    ...(reserved.has(command.invocation.toLowerCase())
-      ? { enabled: false, disabledReason: '同名命令由控制中心接管' }
-      : piAvailability),
-  }));
+  const resolvedPiCommands = piCommands
+    .filter((command) => !reserved.has(command.invocation.toLowerCase()))
+    .map((command): ResolvedPiCommand => ({
+      ...command,
+      ...piAvailability,
+    }));
   return [...productCommands, ...resolvedPiCommands];
 }
 

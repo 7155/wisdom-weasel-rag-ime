@@ -1110,6 +1110,7 @@ class AgentDelegationTests(unittest.TestCase):
     def test_workspace_boundary_failures_are_tool_errors_not_transient_runtime(self) -> None:
         for message in (
             "path is outside the authorized workspace or does not exist",
+            "path does not exist in the authorized workspace; nearby entries: src/main.py",
             "outside the authorized workspace",
             "permission denied while reading workspace file",
         ):
