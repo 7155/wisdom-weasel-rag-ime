@@ -1,21 +1,26 @@
 import {
   Activity,
   AppWindow,
+  ArrowLeft,
+  ArrowRight,
+  Bot,
   Camera,
   Check,
   Clipboard,
   Eye,
   Globe2,
   KeyRound,
+  LockKeyhole,
   MonitorCog,
   MousePointer2,
   Octagon,
+  Plus,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
   SquareArrowOutUpRight,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Button,
   EmptyState,
@@ -76,6 +81,8 @@ export function BrowserFeature() {
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [selectedTabId, setSelectedTabId] = useState(0);
   const [view, setView] = useState<BrowserView>('copilot');
+  const [addressValue, setAddressValue] = useState('');
+  const [addressDirty, setAddressDirty] = useState(false);
   const [actionReceipt, setActionReceipt] = useState<BrowserActionReceipt | null>(null);
   const control = useBrowserControl(selectedDeviceId, selectedTabId);
   const status = asRecord(control.status.data);
@@ -97,6 +104,7 @@ export function BrowserFeature() {
   const screenshotUrl = pageSnapshot.hasScreenshot === true && snapshotId
     ? control.snapshotImageUrl(snapshotId)
     : '';
+  const currentPageUrl = stringValue(selectedTab?.url || pageSnapshot.url);
 
   useEffect(() => {
     if (!tabs.length) return;
@@ -107,6 +115,12 @@ export function BrowserFeature() {
     setSelectedDeviceId(stringValue(tabs[0].deviceId));
     setSelectedTabId(Number(tabs[0].tabId || 0));
   }, [selectedDeviceId, selectedTabId, tabs]);
+
+  useEffect(() => {
+    if (addressDirty && addressValue !== currentPageUrl) return;
+    setAddressValue(currentPageUrl);
+    setAddressDirty(false);
+  }, [addressDirty, addressValue, currentPageUrl]);
 
   const refresh = () => {
     void Promise.all([
@@ -230,6 +244,41 @@ export function BrowserFeature() {
         isPending={control.status.isPending}
         onRetry={refresh}
       >
+        <BrowserChrome
+          addressValue={addressValue}
+          mode={mode}
+          onAddressChange={(next) => {
+            setAddressValue(next);
+            setAddressDirty(true);
+          }}
+          onNavigate={(url) => void performBrowserAction({
+            area: 'global',
+            confirmed: (response) => (
+              stringValue(response.url) === url
+              || ['completed', 'succeeded'].includes(stringValue(response.status))
+            ),
+            confirmedDetail: '浏览器已在当前可见标签页打开新页面，页面快照正在刷新。',
+            label: '打开页面',
+            request: () => control.runCommand.mutateAsync({
+              action: 'navigate',
+              deviceId: selectedDeviceId,
+              tabId: selectedTabId,
+              url,
+              timeoutSeconds: 20,
+            }),
+            waitingDetail: '导航请求已送达；浏览器返回后会更新同一标签页。',
+          })}
+          onRefresh={() => void control.snapshot.refetch()}
+          onSelect={(deviceId, tabId) => {
+            setSelectedDeviceId(deviceId);
+            setSelectedTabId(tabId);
+            setAddressDirty(false);
+          }}
+          running={runningMutation}
+          selectedDeviceId={selectedDeviceId}
+          selectedTabId={selectedTabId}
+          tabs={tabs}
+        />
         <div className="browser-modebar">
           <div className="browser-modebar__status">
             <StatusBadge
@@ -362,6 +411,83 @@ export function BrowserFeature() {
         </Tabs>
       </QueryState>
     </ManagementPage>
+  );
+}
+
+function BrowserChrome({
+  addressValue,
+  mode,
+  onAddressChange,
+  onNavigate,
+  onRefresh,
+  onSelect,
+  running,
+  selectedDeviceId,
+  selectedTabId,
+  tabs,
+}: {
+  addressValue: string;
+  mode: BrowserMode;
+  onAddressChange: (value: string) => void;
+  onNavigate: (url: string) => void;
+  onRefresh: () => void;
+  onSelect: (deviceId: string, tabId: number) => void;
+  running: boolean;
+  selectedDeviceId: string;
+  selectedTabId: number;
+  tabs: Record<string, unknown>[];
+}) {
+  const submitAddress = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const url = addressValue.trim();
+    if (!url || !selectedDeviceId || !selectedTabId || running) return;
+    onNavigate(url);
+  };
+  return (
+    <section className="browser-native-chrome" aria-label="浏览器控制栏">
+      <div className="browser-native-chrome__tabs" role="tablist" aria-label="浏览器标签页">
+        {tabs.map((tab) => {
+          const deviceId = stringValue(tab.deviceId);
+          const tabId = Number(tab.tabId || 0);
+          const selected = deviceId === selectedDeviceId && tabId === selectedTabId;
+          return (
+            <button
+              aria-selected={selected}
+              className="browser-native-tab"
+              data-selected={selected || undefined}
+              key={`${deviceId}:${tabId}`}
+              onClick={() => onSelect(deviceId, tabId)}
+              role="tab"
+              type="button"
+            >
+              <Globe2 aria-hidden="true" size={13} />
+              <span>{stringValue(tab.title, '未命名页面')}</span>
+            </button>
+          );
+        })}
+        <button aria-label="新建标签页（即将支持）" className="browser-native-chrome__icon" disabled type="button">
+          <Plus aria-hidden="true" size={15} />
+        </button>
+        <span className="browser-native-chrome__agent"><Bot aria-hidden="true" size={14} />Agent 可控制</span>
+      </div>
+      <div className="browser-native-chrome__navigation">
+        <button aria-label="后退（即将支持）" disabled type="button"><ArrowLeft aria-hidden="true" size={15} /></button>
+        <button aria-label="前进（即将支持）" disabled type="button"><ArrowRight aria-hidden="true" size={15} /></button>
+        <button aria-label="刷新页面快照" onClick={onRefresh} type="button"><RefreshCw aria-hidden="true" size={15} /></button>
+        <form onSubmit={submitAddress}>
+          <LockKeyhole aria-hidden="true" size={13} />
+          <input
+            aria-label="页面地址"
+            autoCapitalize="none"
+            autoCorrect="off"
+            onChange={(event) => onAddressChange(event.target.value)}
+            spellCheck={false}
+            value={addressValue}
+          />
+        </form>
+        <span className="browser-native-chrome__mode" data-mode={mode}>{modeItems.find((item) => item.value === mode)?.label}</span>
+      </div>
+    </section>
   );
 }
 

@@ -21,7 +21,30 @@ describe('BrowserFeature', () => {
       'blob:browser-snap-docs',
     );
     expect(screen.getByLabelText('结构化页面快照')).toHaveTextContent('[0:e1] button "运行测试"');
+    expect(screen.getByRole('tablist', { name: '浏览器标签页' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '页面地址' })).toHaveValue('https://docs.example.com/runtime');
+    expect(screen.getByText('Agent 可控制')).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId.startsWith('memory.'))).toBe(false);
+  });
+
+  it('navigates the same visible tab through the governed browser command', async () => {
+    const user = userEvent.setup();
+    const transport = renderBrowser();
+
+    const address = await screen.findByRole('textbox', { name: '页面地址' });
+    await user.clear(address);
+    await user.type(address, 'https://example.com/new-page{Enter}');
+
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'browser.command'
+      && typeof call.request.body === 'object'
+      && call.request.body !== null
+      && !Array.isArray(call.request.body)
+      && call.request.body.action === 'navigate'
+      && call.request.body.deviceId === 'chrome-user'
+      && call.request.body.tabId === 17
+      && call.request.body.url === 'https://example.com/new-page'
+    ))).toBe(true));
   });
 
   it('changes co-drive mode and resolves a pending site permission', async () => {

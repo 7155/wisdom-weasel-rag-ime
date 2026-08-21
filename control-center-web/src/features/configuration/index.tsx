@@ -44,6 +44,7 @@ import {
   valueAt,
 } from '@/features/overview/management-ui';
 import { PiProviderCredentials } from './PiProviderCredentials';
+import { PawOsAppearanceSettings } from './PawOsAppearanceSettings';
 import { PortabilityWorkflows } from './PortabilityWorkflows';
 import {
   parsePiModelCatalogOptions,
@@ -170,6 +171,7 @@ export function ConfigurationFeature() {
       routeId="configuration"
       title="设置"
     >
+      <PawOsAppearanceSettings />
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <PiProviderCredentials />
         <SubagentSettingsPanel highlighted={searchParams.get('section') === 'subagents'} />

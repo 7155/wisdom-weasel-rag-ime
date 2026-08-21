@@ -30,6 +30,7 @@ import { AgentTimeline } from './timeline/AgentTimeline';
 import { AgentSendTimingTracker, monotonicNow } from './send-stage-timing';
 import { toolIntentPrompt } from './tool-presentation';
 import { useProductIdentity } from '@/features/identity/product-identity';
+import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import {
   capabilityScopeLabel,
   requireSessionCapabilityCatalog,
@@ -62,6 +63,7 @@ import {
   type ToolManifest,
 } from './types';
 import './agent.css';
+import { resolveAgentSurfaceLayout } from './surface-layout';
 
 export function AgentFeature() {
   return <AgentWorkspace />;
@@ -70,8 +72,16 @@ export function AgentFeature() {
 function AgentWorkspace() {
   const transport = useControlTransport();
   const identity = useProductIdentity();
-  const mobileViewport = useMediaQuery('(max-width: 760px)');
-  const statusOverlayViewport = useMediaQuery('(max-width: 1360px)');
+  const appSurface = usePawOsAppSurface();
+  const browserMobileViewport = useMediaQuery('(max-width: 760px)');
+  const browserStatusOverlayViewport = useMediaQuery('(max-width: 1360px)');
+  const surfaceLayout = resolveAgentSurfaceLayout({
+    browserMobile: browserMobileViewport,
+    browserStatusOverlay: browserStatusOverlayViewport,
+    surface: appSurface?.appId === 'agent' ? appSurface : null,
+  });
+  const mobileViewport = surfaceLayout.compact;
+  const statusOverlayViewport = surfaceLayout.overlayInspectors;
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const requestedDraft = searchParams.get('draft')?.trim().slice(0, 4_000) ?? '';
@@ -115,7 +125,7 @@ function AgentWorkspace() {
   const [timelineAtBottom, setTimelineAtBottom] = useState(true);
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [snapshotReadySessionId, setSnapshotReadySessionId] = useState('');
-  const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
+  const [railOpen, setRailOpen] = useState(() => !mobileViewport);
   const [statusOpen, setStatusOpen] = useState(shouldOpenTaskCenterByDefault);
   const [filesOpen, setFilesOpen] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(requestedSubagentsOpen);
@@ -2235,7 +2245,6 @@ function modelCatalogNotice(value: unknown, usingCachedCatalog = false): string 
   }
   return '模型目录暂时不可用，对话记录仍可查看。';
 }
-function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }
 function shouldOpenTaskCenterByDefault(): boolean {
   return typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'

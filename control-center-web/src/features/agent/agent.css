@@ -2524,6 +2524,192 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   }
 }
 
+/* ---------------------------------------------------------------- PAWOS --
+ * The legacy shell is page-responsive. A PAWOS App is a movable, resizable
+ * surface, so its presentation must respond to the window container instead
+ * of the browser viewport. Runtime ownership and Agent behavior stay above
+ * this layer; these rules only compose the rail, transcript, composer and
+ * inspectors inside the App window. */
+.paw-os-app-window[data-paw-os-app='agent'] .agent-feature {
+  --agent-rail-width: clamp(244px, 25cqw, 284px);
+  --agent-status-width: clamp(286px, 29cqw, 340px);
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: var(--agent-rail-width) minmax(0, 1fr) 0;
+  grid-template-rows: minmax(0, 1fr);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 78% 0%, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 30%),
+    var(--color-canvas);
+  transition: grid-template-columns var(--duration-panel) var(--ease-standard);
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-status-open='true'] {
+  grid-template-columns: var(--agent-rail-width) minmax(0, 1fr) var(--agent-status-width);
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='false'] {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='false'][data-status-open='true'] {
+  grid-template-columns: 0 minmax(0, 1fr) var(--agent-status-width);
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-session-rail {
+  background: color-mix(in srgb, var(--color-chrome) 94%, transparent);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--color-border-soft) 72%, transparent);
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-session-rail > header,
+.paw-os-app-window[data-paw-os-app='agent'] .agent-conversation__header {
+  background: color-mix(in srgb, var(--color-chrome) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-conversation {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-border-soft) 24%, transparent) 1px, transparent 1px),
+    var(--color-paper);
+  background-size: 64px 100%, auto;
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-conversation::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: radial-gradient(circle at 50% 14%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%);
+  content: '';
+  pointer-events: none;
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-composer-wrap {
+  padding-bottom: 18px;
+}
+
+.paw-os-app-window[data-paw-os-app='agent'] .agent-composer {
+  border-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-border-soft));
+  box-shadow:
+    0 18px 42px rgb(0 0 0 / 18%),
+    inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+
+@container paw-os-app (max-width: 1120px) {
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature,
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-status-open='true'] {
+    grid-template-columns: var(--agent-rail-width) minmax(0, 1fr) 0;
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='false'],
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='false'][data-status-open='true'] {
+    grid-template-columns: 0 minmax(0, 1fr) 0;
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-status-panel,
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-files-panel {
+    position: absolute;
+    z-index: 14;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 88cqw);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-status-panel:not([data-open='true']),
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-files-panel:not([data-open='true']) { display: none; }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-status-backdrop {
+    position: absolute;
+    z-index: 13;
+    inset: 0;
+    display: block;
+    padding: 0;
+    border: 0;
+    background: rgb(0 0 0 / 28%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-enter) var(--ease-standard);
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-status-open='true'] .agent-status-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-pane-resizer[data-side='status'] { display: none; }
+}
+
+@container paw-os-app (max-width: 760px) {
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature,
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-status-open='true'],
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='false'],
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='false'][data-status-open='true'] {
+    position: relative;
+    display: block;
+    height: 100%;
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-pane-resizer { display: none; }
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-conversation { width: 100%; height: 100%; }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-session-rail {
+    position: absolute;
+    z-index: 12;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(86cqw, 304px);
+    box-shadow: 22px 0 60px rgb(0 0 0 / 26%);
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='false'] .agent-session-rail {
+    border-right: 1px solid var(--color-border);
+    opacity: 1;
+    pointer-events: none;
+    transform: translateX(-102%);
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-session-rail__close { display: grid; }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-rail-backdrop {
+    position: absolute;
+    z-index: 11;
+    inset: 0;
+    display: block;
+    padding: 0;
+    border: 0;
+    background: rgb(0 0 0 / 30%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-enter) var(--ease-standard);
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-feature[data-rail-open='true'] .agent-rail-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-conversation__header {
+    min-height: var(--workspace-header-height);
+    padding-inline: 10px;
+  }
+
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-turn { padding: 12px 13px 4px; }
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-conversation-nav { display: none; }
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-composer-wrap { padding: 6px 10px 11px; }
+  .paw-os-app-window[data-paw-os-app='agent'] .agent-composer textarea { min-height: 70px; padding: 10px 12px 41px; }
+}
+
 :root[data-reduce-motion='true'] .agent-streaming-cursor,
 :root[data-reduce-motion='true'] .agent-context-snapshot-state[data-state='restoring']::before,
 :root[data-reduce-motion='true'] .agent-assistant-pending > svg,

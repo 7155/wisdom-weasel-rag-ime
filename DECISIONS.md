@@ -146,16 +146,29 @@ record ordinary implementation choices or live status.
   Packages without a visual surface remain background capabilities rather than
   fake windowed apps.
 
-## D-012 — PAW OS Reuses Tutti In An Independent Private Product Repository
+## D-012 — PAW OS Frontend Stays In The PAW Product Repository
 
 - **Status:** accepted
-- **Decision:** private `7155/paw-os` owns PAW OS composition on the neutral
-  Tutti Workbench. Tutti remotes are references only; PAW/Pi retain all Runtime
-  ownership.
-- **Why:** PAW can reuse real windows, Dock, Mission Control, and App Center
-  without copying Session, Room, approval, document, or Package state machines.
-- **Consequence:** only `7155/paw-os` receives product frontend pushes. Migrated
-  Apps use `paw.*` identities and versioned PAW transport. Layout snapshots are
-  product-partitioned presentation state. The bounded App trunk, Input Control,
-  Room main/satellite windows, and shared three-theme system are specified in
-  that private repository.
+- **Decision:** `7155/personal-agent-workbench` owns both the PAW Runtime and the
+  PAW OS frontend. The existing `control-center-web` remains available as a
+  selectable legacy fallback while the PAW OS shell is implemented in the same
+  repository. `7155/tutti` and upstream Tutti are reference sources only; they
+  are not PAW product or release repositories.
+- **Why:** one product repository keeps contracts, generated types, reducers,
+  Runtime adapters, installation, and frontend acceptance at one revision while
+  still allowing PAW to learn from proven Tutti window, Dock, Mission Control,
+  and App Center interaction patterns.
+- **Consequence:** PAW OS frontend code and product pushes go only to
+  `7155/personal-agent-workbench`. Tutti mechanisms are reimplemented or
+  selectively adapted behind PAW-owned seams; no absolute-path dependency,
+  cross-repository Runtime state, or wholesale Tutti product fork becomes a
+  release dependency. Migrated Apps use `paw.*` identities, layout persistence
+  stores presentation only, and the three themes are switched exclusively in
+  System Settings -> Appearance. Project Field / Wayfinder is the OS home rather
+  than an App. Route identity and App identity remain distinct so Overview,
+  Tasks, and WorkDocuments can share Project Workbench while Agent, Rooms,
+  Memory, Knowledge, Input Studio, App Center, System Monitor, System Settings,
+  Files, Browser, and Terminal retain bounded App surfaces. Browser chrome may
+  follow Tutti's interaction grammar, but the selected `deviceId + tabId`,
+  command queue, permissions, traces, and Stop remain PAW-owned so human and
+  Agent operate the same visible page.

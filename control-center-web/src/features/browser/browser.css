@@ -15,7 +15,143 @@
 
 .mgmt-page[data-route-id='browser'] > .mgmt-page__body {
   height: calc(100% - 104px);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.browser-native-chrome {
+  display: grid;
+  min-width: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-chrome) 92%, var(--color-surface));
+  grid-template-rows: 38px 40px;
+}
+
+.browser-native-chrome__tabs,
+.browser-native-chrome__navigation {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding-inline: 8px;
+}
+
+.browser-native-chrome__tabs {
+  border-bottom: 1px solid var(--color-border-soft);
+  overflow: hidden;
+}
+
+.browser-native-tab {
+  display: inline-flex;
+  min-width: 120px;
+  max-width: 230px;
+  height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.browser-native-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-native-tab[data-selected='true'] {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.browser-native-chrome__icon,
+.browser-native-chrome__navigation > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.browser-native-chrome__navigation > button:not(:disabled) { cursor: pointer; }
+.browser-native-chrome__navigation > button:disabled,
+.browser-native-chrome__icon:disabled { opacity: .34; }
+
+.browser-native-chrome__agent {
+  display: inline-flex;
+  margin-left: auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-accent-strong);
+  font-size: 11px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.browser-native-chrome__navigation form {
+  display: flex;
+  height: 30px;
+  min-width: 120px;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 7px;
+  padding-inline: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+}
+
+.browser-native-chrome__navigation form:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+.browser-native-chrome__navigation input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.browser-native-chrome__mode {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  padding-inline: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.paw-os-app-window[data-paw-os-app='browser'] .mgmt-page[data-route-id='browser'] {
+  height: 100%;
+  min-height: 0;
+}
+
+.paw-os-app-window[data-paw-os-app='browser'] .mgmt-page[data-route-id='browser'] > .mgmt-page__header {
+  display: none;
+}
+
+.paw-os-app-window[data-paw-os-app='browser'] .mgmt-page[data-route-id='browser'] > .mgmt-page__body {
+  height: 100%;
 }
 
 .browser-modebar {
@@ -501,6 +637,9 @@
   .mgmt-page[data-route-id='browser'] { height: auto; min-height: calc(100dvh - var(--topbar-height)); overflow: visible; }
   .mgmt-page[data-route-id='browser'] > .mgmt-page__body { height: auto; }
   .browser-modebar { align-items: stretch; flex-direction: column; padding-inline: 16px; }
+  .browser-native-chrome__agent,
+  .browser-native-chrome__mode { display: none; }
+  .browser-native-tab { min-width: 104px; max-width: 170px; }
   .browser-modebar__status { align-items: flex-start; flex-direction: column; gap: 5px; }
   .browser-modebar .ui-segmented { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .browser-modebar > .browser-action-receipt { width: 100%; flex: 0 0 auto; }
