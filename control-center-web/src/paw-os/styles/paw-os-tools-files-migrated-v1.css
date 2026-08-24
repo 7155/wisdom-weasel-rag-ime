@@ -313,6 +313,18 @@
   animation: paw-browser-start-breathe 4.4s ease-in-out infinite;
 }
 
+/* One comet rides a thin orbit around the halo. */
+.paw-desktop-root .paw-browser-start-halo::after {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 76%, rgb(20 143 158 / 55%) 90%, transparent 100%);
+  content: '';
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+  animation: paw-browser-start-orbit 7s linear infinite;
+}
+
 .paw-desktop-root .paw-browser-start > strong {
   color: var(--paw-browser-ink);
   font-size: 19px;
@@ -522,6 +534,12 @@
   border-color: var(--paw-browser-line);
   border-radius: 11px;
   background: #fff;
+  transition: border-color 150ms ease, box-shadow 200ms ease;
+}
+
+.paw-desktop-root .paw-browser-find:focus-within {
+  border-color: color-mix(in srgb, var(--paw-browser-accent) 55%, transparent);
+  box-shadow: 0 0 0 3px var(--paw-browser-glow), 0 14px 36px rgb(15 23 42 / 16%);
 }
 
 /* History and Settings: one calm sheet over the page. */
@@ -934,6 +952,10 @@
   50% { box-shadow: 0 16px 40px rgb(15 84 93 / 22%), inset 0 1px 0 rgb(255 255 255 / 85%), 0 0 0 7px rgb(20 143 158 / 7%); }
 }
 
+@keyframes paw-browser-start-orbit {
+  to { transform: rotate(360deg); }
+}
+
 /* --------------------------------------------------------------------------
    Responsive and interaction polish
    -------------------------------------------------------------------------- */
@@ -1007,6 +1029,7 @@
   .paw-desktop-root .paw-browser-agent-stream,
   .paw-desktop-root .paw-browser-agent-stream article,
   .paw-desktop-root .paw-browser-start-halo,
+  .paw-desktop-root .paw-browser-start-halo::after,
   .paw-desktop-root .paw-browser-history,
   .paw-desktop-root .paw-browser-settings,
   .paw-desktop-root .paw-browser-tab {
