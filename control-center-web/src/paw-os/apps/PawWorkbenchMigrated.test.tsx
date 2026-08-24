@@ -54,6 +54,27 @@ describe('PawWorkbenchMigrated', () => {
     expect(screen.queryByLabelText('当前最需要处理的工作')).not.toBeInTheDocument();
   });
 
+  it('shows one honest completion ring derived from real tasks and hides it without tasks', () => {
+    const { rerender } = renderWorkbench({
+      pageId: 'overview',
+      planning: { tasks: [
+        { id: 'done-1', title: '完成迁移 A', status: 'done' },
+        { id: 'done-2', title: '完成迁移 B', status: 'completed' },
+        { id: 'active-1', title: '推进重构', status: 'active' },
+        { id: 'blocked-1', title: '修复门禁', status: 'blocked' },
+      ] },
+    });
+
+    const gauge = screen.getByRole('img', { name: '整体完成 50%：2 / 4 项任务已完成' });
+    expect(gauge).toHaveTextContent('50%');
+    expect(gauge).toHaveTextContent('2 / 4 已完成');
+    expect(gauge.style.getPropertyValue('--paw-wb-gauge-angle')).toBe('180deg');
+
+    rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'overview', planning: { tasks: [] } })} />);
+    expect(screen.getByLabelText('当前最需要处理的工作')).toHaveAttribute('data-state', 'empty');
+    expect(screen.queryByRole('img', { name: /整体完成/ })).not.toBeInTheDocument();
+  });
+
   it('keeps repository facts secondary behind an explicit disclosure', () => {
     renderWorkbench({
       pageId: 'overview',
