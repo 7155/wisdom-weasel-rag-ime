@@ -5,6 +5,8 @@ import {
   crashReasonText,
   formatBytes,
   historyDateTime,
+  historyDayKey,
+  historyDayLabel,
   hostTab,
   initialHostTab,
   isTextEntry,
@@ -16,6 +18,17 @@ import {
 } from './paw-browser-model';
 
 describe('PAW Browser guest model', () => {
+  it('labels history days relative to a fixed now without inventing dates', () => {
+    const now = new Date(2026, 7, 24, 15, 30).getTime();
+    expect(historyDayKey(now)).toBe('2026-08-24');
+    expect(historyDayLabel(new Date(2026, 7, 24, 1, 0).getTime(), now)).toBe('今天');
+    expect(historyDayLabel(new Date(2026, 7, 23, 23, 59).getTime(), now)).toBe('昨天');
+    const older = historyDayLabel(new Date(2026, 7, 20, 8, 0).getTime(), now);
+    expect(older).toContain('8月20日');
+    const lastYear = historyDayLabel(new Date(2025, 11, 31, 8, 0).getTime(), now);
+    expect(lastYear).toContain('2025');
+  });
+
   it('normalizes addresses into real navigations or one search', () => {
     expect(normalizedAddress('   ')).toBe('');
     expect(normalizedAddress('about:blank')).toBe('about:blank');

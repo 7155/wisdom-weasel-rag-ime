@@ -143,6 +143,22 @@ export function historyDateTime(value: number): string {
   return new Date(value).toISOString();
 }
 
+export function historyDayKey(value: number): string {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+export function historyDayLabel(value: number, now = Date.now()): string {
+  const key = historyDayKey(value);
+  if (key === historyDayKey(now)) return '今天';
+  if (key === historyDayKey(now - 86_400_000)) return '昨天';
+  return new Intl.DateTimeFormat('zh-CN', { year: new Date(value).getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(value);
+}
+
+export function historyClock(value: number): string {
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(value);
+}
+
 export function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
