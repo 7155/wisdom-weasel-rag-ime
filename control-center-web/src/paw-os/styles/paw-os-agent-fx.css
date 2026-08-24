@@ -193,7 +193,7 @@
 .paw-desktop-root .paw-chatfx .agent-turn-work__chevron {
   flex: 0 0 auto;
   color: var(--paw-chat-text-tertiary);
-  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform 180ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1));
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work[data-expanded] .agent-turn-work__chevron {
@@ -211,8 +211,8 @@
 .paw-desktop-root .paw-chatfx .agent-turn-work__reveal {
   min-width: 0;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+    height 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)),
+    opacity 150ms ease;
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work__process {
@@ -340,7 +340,7 @@
   flex: 0 0 auto;
   place-items: center;
   color: var(--paw-chat-text-tertiary);
-  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform 180ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1));
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity[aria-expanded='true'] .paw-chevron {
@@ -373,7 +373,8 @@
   background: var(--paw-chat-accent);
   transform: scaleX(var(--paw-activity-progress, 0));
   transform-origin: left center;
-  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  /* Same truth rule as .fx-track: settle onto the real ratio, no overshoot. */
+  transition: transform 500ms cubic-bezier(.22, 1, .36, 1);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity__progress[data-state='completed'] .paw-activity__progress-track > i {
@@ -395,9 +396,9 @@
   color: var(--paw-chat-text-secondary);
   font-size: 13px;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
-    margin 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    height 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)),
+    opacity 150ms ease,
+    margin 200ms ease;
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity__detail > .fx-inner {
@@ -554,7 +555,7 @@
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 120ms ease, background-color 100ms ease;
+  transition: transform 150ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)), background-color 100ms ease;
 }
 
 .paw-desktop-root .paw-chatfx .fx-btn:active { transform: scale(.96); }
@@ -585,8 +586,10 @@
   width: 0;
   height: 100%;
   border-radius: inherit;
+  /* Real-ratio fills never overshoot: an eager spring would briefly claim
+     more progress than the reducer reported. */
   background: var(--paw-chat-accent);
-  transition: width 420ms cubic-bezier(.22, 1, .36, 1);
+  transition: width 500ms cubic-bezier(.22, 1, .36, 1);
 }
 
 .paw-desktop-root .paw-chatfx .fx-runrow { display: flex; align-items: center; gap: 10px; }
@@ -657,6 +660,55 @@
   background: color-mix(in srgb, var(--paw-chat-danger) 7%, transparent);
 }
 
+/* ================= Conversation-tree craft (baseline alignment) =================
+   Rail geometry, keyboard affordance and live-state presence for the step tree.
+   Only projects real reducer state; no synthetic markers. */
+
+/* The step rail spans dot-to-dot. Without the trim the first node carried a
+   floating line stub above its dot up to the group's top edge. */
+.paw-desktop-root .paw-chatfx .paw-activity-node:first-child::before {
+  top: 14px;
+}
+
+.paw-desktop-root .paw-chatfx .agent-turn-work__process > .agent-turn-work__step:first-child::before {
+  top: 12px;
+}
+
+/* Activity rows and the turn-work toggle are real buttons: keyboard readers
+   get the same ring the composer controls use, and a press answers in kind. */
+.paw-desktop-root .paw-chatfx .paw-activity:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--paw-chat-accent) 66%, transparent);
+  outline-offset: 2px;
+}
+
+.paw-desktop-root .paw-chatfx .agent-turn-work__toggle:active,
+.paw-desktop-root .paw-chatfx .paw-activity:active .paw-activity__row {
+  transform: scale(.985);
+}
+
+.paw-desktop-root .paw-chatfx .agent-turn-work__toggle,
+.paw-desktop-root .paw-chatfx .paw-activity__row {
+  transform-origin: left center;
+  transition: transform 150ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)), background-color 140ms ease, color 140ms ease;
+}
+
+/* Inline diff/code disclosures inside the tree answer with the same spring
+   as the step chevrons, so every fold in the conversation shares one voice. */
+.paw-desktop-root .paw-chatfx .agent-rich-collapsible__chevron {
+  transition: transform 180ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1));
+}
+
+/* A running step's dot breathes a soft accent ring, so the live position in
+   the tree is findable at a glance even while collapsed rows stay quiet. */
+.paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after {
+  animation: paw-agent-fx-dot-breathe 1.9s ease-in-out infinite;
+}
+
+@keyframes paw-agent-fx-dot-breathe {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-chat-accent) 14%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--paw-chat-accent) 5%, transparent); }
+}
+
 @container paw-session-workspace (max-width: 520px) {
   .paw-desktop-root .paw-chatfx .paw-user-message {
     max-width: calc(100% - 18px);
@@ -692,11 +744,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .paw-desktop-root .paw-chatfx :is(.paw-chevron, .paw-activity__detail, .paw-activity__progress-track > i, .fx-btn, .fx-track .fill) {
+  .paw-desktop-root .paw-chatfx :is(.paw-chevron, .paw-activity__detail, .paw-activity__progress-track > i, .fx-btn, .fx-track .fill, .agent-turn-work__toggle, .paw-activity__row, .agent-rich-collapsible__chevron) {
     transition: none;
   }
 
-  .paw-desktop-root .paw-chatfx .fx-pill.run i {
+  .paw-desktop-root .paw-chatfx :is(.agent-turn-work__toggle:active, .paw-activity:active .paw-activity__row) {
+    transform: none;
+  }
+
+  .paw-desktop-root .paw-chatfx .fx-pill.run i,
+  .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after {
     animation: none;
   }
 
@@ -717,9 +774,22 @@
   .agent-turn-work__chevron,
   .agent-turn-work__reveal,
   .paw-chevron,
-  .paw-activity__detail
+  .paw-activity__detail,
+  .agent-turn-work__toggle,
+  .paw-activity__row
 ) {
   transition: none;
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx :is(
+  .agent-turn-work__toggle:active,
+  .paw-activity:active .paw-activity__row
+) {
+  transform: none;
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after {
+  animation: none;
 }
 
 @media (forced-colors: active) {
