@@ -44,15 +44,19 @@ const responseTailBlockTypes = new Set([
  *
  * A PAW turn has an authoritative terminal status but no separate final-text
  * marker. We therefore use the final non-empty assistant text only after the
- * turn itself is completed. If that evidence is absent, the model fails open.
- * Files, diffs, media, code, and other response-tail results remain visible
- * even when the surrounding process work is collapsed.
+ * turn itself has settled. A completed turn without that evidence fails open;
+ * a failed or aborted turn still collapses its process work because its header
+ * and failure surface already state the outcome, while any last partial
+ * narrative stays visible as the reader's anchor. Files, diffs, media, code,
+ * and other response-tail results remain visible even when the surrounding
+ * process work is collapsed.
  */
 export function buildAgentTurnWorkModel(
   status: AgentTurnStatus,
   entries: AgentTurnSequenceEntry[],
 ): AgentTurnWorkModel {
-  const finalMessageId = status === 'completed' ? finalNarrativeMessageId(entries) : '';
+  const settled = status === 'completed' || status === 'failed' || status === 'aborted';
+  const finalMessageId = settled ? finalNarrativeMessageId(entries) : '';
   const visibleResultIds = new Set<string>();
   if (finalMessageId) visibleResultIds.add(finalMessageId);
   for (const entry of entries) {
@@ -73,7 +77,9 @@ export function buildAgentTurnWorkModel(
   const resultCount = items.filter((item) => item.role === 'result').length;
 
   return {
-    canCollapse: status === 'completed' && Boolean(finalMessageId) && hiddenEntries.length > 0,
+    canCollapse: settled
+      && hiddenEntries.length > 0
+      && (status !== 'completed' || Boolean(finalMessageId)),
     finalMessageId,
     hiddenActivityCount: hiddenActivities.length,
     hiddenMessageCount,
