@@ -1,13 +1,16 @@
 /*
  * Browser feature chrome states.
  *
- * Owns the new state elements of the real Browser surface: the tab icon slot
- * (loading / favicon / failure), the truthful omnibox security icon, the page
- * failure overlay, the find-in-page match counter, day-grouped history, the
+ * Owns the state elements of the real Browser surface: the tab icon slot
+ * (loading / favicon / failure), per-tab close reveal, the truthful omnibox
+ * (security icon, resting URL emphasis, Enter commit preview), the page
+ * failure surface, the find-in-page match counter, day-grouped history, the
  * in-App destructive confirmations, and the dismissible action receipt.
- * Tab strip, toolbar, and omnibox layout plus their surface colours remain
- * owned by paw-apps.css and paw-os-tools-files-migrated-v1.css.
+ * Tab strip, toolbar, and omnibox base layout plus their surface colours
+ * remain owned by paw-apps.css and paw-os-tools-files-migrated-v1.css.
  */
+
+/* 1. Tab identity: icon slot and close reveal */
 
 .paw-browser-tab-icon {
   display: grid;
@@ -26,6 +29,24 @@
   color: var(--paw-danger, #ef4444);
 }
 
+/* Background tabs keep exactly one resting close affordance in the strip:
+   theirs appears only on hover or keyboard focus inside the tab. */
+.paw-browser-tab:not([data-active]) .paw-browser-tab-close {
+  opacity: 0;
+  animation: none;
+}
+
+.paw-browser-tab:not([data-active]):hover .paw-browser-tab-close,
+.paw-browser-tab:not([data-active]):focus-within .paw-browser-tab-close {
+  opacity: 1;
+}
+
+/* 2. Truthful omnibox */
+
+.paw-omnibox-form {
+  position: relative;
+}
+
 .paw-omnibox-icon {
   display: grid;
   flex-shrink: 0;
@@ -40,63 +61,256 @@
   color: var(--paw-warning, #b45309);
 }
 
+.paw-omnibox-field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  align-self: stretch;
+}
+
+/* At rest the styled URL replaces the raw field text; the field value itself
+   never changes, so focus always reveals the exact committed address. */
+.paw-omnibox-field[data-presenting] > input {
+  color: transparent;
+}
+
+.paw-omnibox-presentation {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  overflow: hidden;
+  color: var(--paw-muted, #64748b);
+  font-size: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.paw-desktop-root .paw-omnibox-presentation {
+  font-size: 13px;
+}
+
+.paw-omnibox-url-scheme,
+.paw-omnibox-url-rest {
+  color: color-mix(in srgb, var(--paw-muted, #64748b) 78%, transparent);
+}
+
+.paw-omnibox-url-host {
+  color: var(--paw-ink, #0f172a);
+  font-weight: 560;
+}
+
+.paw-omnibox-clear {
+  color: var(--paw-muted, #64748b);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+/* One truthful commit preview: exactly what Enter will open or search. */
+.paw-omnibox-commit-hint {
+  position: absolute;
+  z-index: 24;
+  top: calc(100% + 6px);
+  right: -1px;
+  left: -1px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--paw-line, rgb(15 23 42 / 12%)) 82%, transparent);
+  border-radius: 12px;
+  background: var(--paw-panel-strong, #fff);
+  box-shadow: 0 16px 42px rgb(15 23 42 / 16%), 0 1px 0 rgb(255 255 255 / 62%) inset;
+  animation: paw-omnibox-commit-hint-in 150ms var(--paw-ease-out, ease-out) both;
+}
+
+.paw-omnibox-commit-hint > button {
+  width: 100%;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--paw-ink, #0f172a);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paw-omnibox-commit-hint > button:hover {
+  background: color-mix(in srgb, var(--paw-accent, #0ea5b7) 9%, transparent);
+}
+
+.paw-omnibox-commit-icon {
+  display: grid;
+  place-items: center;
+  color: var(--paw-muted, #64748b);
+}
+
+.paw-omnibox-commit-text {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.paw-omnibox-commit-text b {
+  flex-shrink: 0;
+  font-weight: 640;
+}
+
+.paw-omnibox-commit-text > span {
+  overflow: hidden;
+  color: var(--paw-muted, #64748b);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.paw-omnibox-commit-text small {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--paw-muted, #64748b) 76%, transparent);
+  font-size: 11px;
+}
+
+.paw-omnibox-commit-hint kbd {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--paw-line, rgb(15 23 42 / 12%)) 88%, transparent);
+  border-radius: 6px;
+  background: var(--paw-panel-soft, #f1f5fa);
+  color: var(--paw-muted, #64748b);
+  font-family: inherit;
+  font-size: 11px;
+}
+
+/* 3. Page failure surface */
+
 .paw-browser-page-status {
   position: absolute;
   z-index: 8;
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 16px;
-  background: color-mix(in srgb, var(--paw-app-surface, #fff) 94%, transparent);
+  padding: 24px 16px;
+  background: color-mix(in srgb, var(--paw-app-surface, #fff) 96%, transparent);
   animation: paw-browser-page-status-in 180ms ease-out both;
 }
 
 .paw-browser-page-card {
-  width: min(480px, 100%);
+  width: min(440px, 100%);
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--paw-danger, #ef4444) 22%, transparent);
-  border-radius: 12px;
+  gap: 6px;
+  justify-items: center;
+  padding: 26px 26px 20px;
+  border: 1px solid color-mix(in srgb, var(--paw-line, rgb(15 23 42 / 12%)) 86%, transparent);
+  border-radius: 18px;
   background: var(--paw-panel-strong, #fff);
   color: var(--paw-muted, #64748b);
-  box-shadow: 0 12px 32px rgb(15 23 42 / 10%);
+  text-align: center;
+  box-shadow: 0 24px 64px rgb(15 23 42 / 12%);
 }
 
-.paw-browser-page-card > svg {
-  color: var(--paw-danger, #ef4444);
-}
-
-.paw-browser-page-card > span {
+.paw-browser-page-mark {
+  width: 46px;
+  height: 46px;
   display: grid;
-  gap: 3px;
-  min-width: 0;
+  place-items: center;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--paw-danger, #ef4444) 10%, transparent);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--paw-danger, #ef4444) 4%, transparent);
+  color: var(--paw-danger, #ef4444);
 }
 
 .paw-browser-page-card strong {
   color: var(--paw-ink, #0f172a);
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.4;
 }
 
-.paw-browser-page-card small {
+.paw-browser-page-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.paw-browser-page-card-url {
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--paw-panel-soft, #f1f5fa);
+  color: color-mix(in srgb, var(--paw-ink, #0f172a) 78%, var(--paw-muted, #64748b));
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.paw-browser-page-card button {
-  min-height: 30px;
-  padding-inline: 11px;
-  border: 1px solid var(--paw-line, rgb(0 0 0 / 8%));
-  border-radius: 8px;
+.paw-browser-page-evidence {
+  color: color-mix(in srgb, var(--paw-muted, #64748b) 78%, transparent);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+}
+
+.paw-browser-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.paw-browser-page-actions button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 14px;
+  border: 1px solid var(--paw-line, rgb(15 23 42 / 10%));
+  border-radius: 9px;
   background: var(--paw-panel-soft, #f1f5fa);
   color: var(--paw-ink, #0f172a);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
+  transition: background-color 130ms ease, border-color 130ms ease, color 130ms ease, transform 130ms ease;
+}
+
+.paw-browser-page-actions button:hover {
+  border-color: color-mix(in srgb, var(--paw-accent, #0ea5b7) 26%, var(--paw-line, rgb(15 23 42 / 10%)));
+}
+
+.paw-browser-page-actions button:active {
+  transform: translateY(1px);
+}
+
+.paw-browser-page-actions .paw-browser-page-retry {
+  border-color: transparent;
+  background: var(--paw-accent, #0ea5b7);
+  color: #fff;
+}
+
+.paw-browser-page-actions .paw-browser-page-retry:hover {
+  background: color-mix(in srgb, var(--paw-accent, #0ea5b7) 88%, var(--paw-ink, #0f172a));
+}
+
+.paw-browser-page-actions button[data-copied] {
+  border-color: color-mix(in srgb, var(--paw-success, #16a34a) 34%, transparent);
+  color: var(--paw-success, #16a34a);
+}
+
+.paw-browser-page-guest-note {
+  margin-top: 10px;
+  color: color-mix(in srgb, var(--paw-muted, #64748b) 74%, transparent);
+  font-size: 11.5px;
 }
 
 /* Find-in-page additions: the leading icon and the guest-reported counter.
@@ -234,6 +448,10 @@
   from { opacity: 0; transform: translate3d(4px, 0, 0); }
 }
 
+@keyframes paw-omnibox-commit-hint-in {
+  from { opacity: 0.4; transform: translateY(-4px); }
+}
+
 @media (hover: hover) and (pointer: fine) {
   .paw-browser-menu-zoom .paw-browser-menu-zoom-reset:hover:not(:disabled),
   .paw-browser-action-receipt button:hover {
@@ -252,7 +470,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-browser-page-status,
-  .paw-browser-confirm {
+  .paw-browser-confirm,
+  .paw-omnibox-commit-hint {
     animation: none;
+  }
+
+  .paw-browser-page-actions button {
+    transition-duration: 1ms;
   }
 }
