@@ -1,5 +1,5 @@
 import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
@@ -378,12 +378,32 @@ function Wayfinder({ onOpen, onSelect, selectedApps }: {
   selectedApps: ReadonlySet<PawAppId>;
 }) {
   const desktopApps: PawAppId[] = ['project-workbench', 'agent', 'files', 'browser', 'terminal'];
+  const shortcutsRef = useRef<HTMLDivElement>(null);
+  // Roving arrows walk the shortcut column like a real desktop: focus moves
+  // between identities without tabbing out of the Wayfinder, and Enter on the
+  // focused identity still opens it (owned by the per-button handler below).
+  const walkShortcuts = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const host = shortcutsRef.current;
+    if (!host) return;
+    const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>('button[data-desktop-app]'));
+    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (current === -1) return;
+    event.preventDefault();
+    const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
+    const next = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+      ? buttons.length - 1
+      : Math.min(Math.max(current + (forward ? 1 : -1), 0), buttons.length - 1);
+    buttons[next]?.focus();
+  };
   return (
     <section className="paw-wayfinder" aria-label="Project Field">
       <div aria-hidden="true" className="paw-field-media">
         <PawCompositionField effects />
       </div>
-      <div className="paw-desktop-shortcuts" aria-label="桌面 App">
+      <div className="paw-desktop-shortcuts" aria-label="桌面 App" onKeyDown={walkShortcuts} ref={shortcutsRef}>
         {desktopApps.map((id) => (
           <button
             aria-selected={selectedApps.has(id) || undefined}
@@ -458,12 +478,16 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
   );
 }
 
-/* Dock proximity magnification. A rAF-throttled pointer stream feeds the pure
- * cosine-falloff geometry in dock-magnification.ts and lands as two custom
- * properties per shelf child, driving transform-only styles: layout is read
- * (offsetLeft) but never written, nothing repaints, dragging cannot flicker.
- * Coarse pointers, the narrow scrolling Dock and both reduced-motion signals
- * opt out entirely, leaving the resting shelf untouched. */
+/* Magnetic Dock conduction. A rAF-throttled pointer stream feeds the pure
+ * magnet geometry in dock-magnification.ts (cosine grow, neighbour push and
+ * the sine gather toward the pointer) and lands as two custom properties per
+ * shelf child, driving transform-only styles. The shelf is measured once per
+ * hover on pointerenter — the resting layout cannot change while the pointer
+ * conducts, because every response below is a transform — so the per-frame
+ * path is pure math plus style writes: no layout reads, no repaints, and
+ * dragging a window across the Dock cannot flicker. Coarse pointers, the
+ * narrow scrolling Dock and both reduced-motion signals opt out entirely,
+ * leaving the resting shelf untouched. */
 function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
   useEffect(() => {
     const dock = dockRef.current;
@@ -473,10 +497,17 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
     const wideShelf = window.matchMedia('(min-width: 821px)');
     let frame = 0;
     let pointerX = 0;
+    let shelf: { items: HTMLElement[]; centers: number[] } | null = null;
     const children = () => Array.from(dock.children).filter((child): child is HTMLElement => child instanceof HTMLElement);
+    const measure = () => {
+      const items = children();
+      const dockLeft = dock.getBoundingClientRect().left;
+      shelf = { items, centers: items.map((item) => dockLeft + item.offsetLeft + item.offsetWidth / 2) };
+    };
     const rest = () => {
       if (frame) window.cancelAnimationFrame(frame);
       frame = 0;
+      shelf = null;
       delete dock.dataset.magnify;
       for (const child of children()) {
         child.style.removeProperty('--paw-dock-mag');
@@ -485,28 +516,33 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
     };
     const apply = () => {
       frame = 0;
-      const items = children();
-      const dockLeft = dock.getBoundingClientRect().left;
-      const { mag, shift } = dockMagnetics(
-        items.map((item) => dockLeft + item.offsetLeft + item.offsetWidth / 2),
-        pointerX,
-      );
+      if (!shelf) measure();
+      const { items, centers } = shelf!;
+      const { mag, shift } = dockMagnetics(centers, pointerX);
       items.forEach((item, index) => {
         item.style.setProperty('--paw-dock-mag', mag[index].toFixed(4));
         item.style.setProperty('--paw-dock-shift', shift[index].toFixed(2));
       });
     };
+    const conducting = () => {
+      if (!finePointer.matches || !wideShelf.matches || reducedMotion.matches) return false;
+      return document.documentElement.getAttribute('data-reduce-motion') !== 'true';
+    };
+    const enter = () => {
+      if (conducting()) measure();
+    };
     const move = (event: PointerEvent) => {
-      if (!finePointer.matches || !wideShelf.matches || reducedMotion.matches) return;
-      if (document.documentElement.getAttribute('data-reduce-motion') === 'true') return;
+      if (!conducting()) return;
       pointerX = event.clientX;
       dock.dataset.magnify = 'true';
       if (!frame) frame = window.requestAnimationFrame(apply);
     };
+    dock.addEventListener('pointerenter', enter);
     dock.addEventListener('pointermove', move);
     dock.addEventListener('pointerleave', rest);
     dock.addEventListener('pointercancel', rest);
     return () => {
+      dock.removeEventListener('pointerenter', enter);
       dock.removeEventListener('pointermove', move);
       dock.removeEventListener('pointerleave', rest);
       dock.removeEventListener('pointercancel', rest);
@@ -526,13 +562,14 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
     });
   }, [query]);
   const groups = useMemo(() => {
-    // A running index across groups drives the cascade arrival: every tile
-    // knows its own beat, so the archive opens as one choreography.
+    // A running index across groups drives the cascade arrival: each group
+    // header takes its own beat and its tiles follow, so the archive opens as
+    // one choreography that reads in document order — section, then contents.
     let order = 0;
     return LAUNCHPAD_KIND_ORDER.flatMap((kind) => {
       const apps = filtered.filter((app) => launchpadKind(app) === kind);
       return apps.length
-        ? [{ kind, label: LAUNCHPAD_KIND_LABEL[kind], apps: apps.map((app) => ({ app, order: order++ })) }]
+        ? [{ kind, label: LAUNCHPAD_KIND_LABEL[kind], order: order++, apps: apps.map((app) => ({ app, order: order++ })) }]
         : [];
     });
   }, [filtered]);
@@ -576,7 +613,7 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
             <p className="paw-launchpad-empty">没有匹配的 App</p>
           ) : groups.map((group) => (
             <Fragment key={group.kind}>
-              <h2 className="paw-launchpad-group">{group.label}</h2>
+              <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': group.order } as CSSProperties}>{group.label}</h2>
               {group.apps.map(({ app, order }) => (
                 <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} style={{ '--paw-tile-i': order } as CSSProperties} type="button">
                   <span><PawAppIcon appId={app.id} size={48} /></span>
