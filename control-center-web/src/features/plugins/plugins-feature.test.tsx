@@ -72,16 +72,135 @@ describe('PluginsFeature', () => {
           proposalId: 'proposal-disable',
           previewToken: 'preview-disable',
           payloadSha256: 'b'.repeat(64),
-          summary: { action: 'disable', pluginId: 'session-review', displayName: 'Session Review' },
+          summary: { action: 'disable', pluginId: 'session-review', displayName: 'Session Review', version: '1.1.0', permissions: ['session.read'] },
         }],
       },
     }, '/plugins?view=proposals', true);
 
     expect(await screen.findByRole('heading', { name: /的建议/ })).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: /对话复盘/ })).toBeInTheDocument();
+    const proposal = await screen.findByRole('button', { name: /对话复盘/ });
+    expect(proposal).toHaveTextContent('停用插件 · v1.1.0 · 1 项权限');
     expect(screen.queryByText('能力概览')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Pi Package 来源')).not.toBeInTheDocument();
     expect(document.querySelector('.mgmt-page__header')).not.toBeInTheDocument();
+    expect(document.querySelector('.mgmt-section')).not.toBeInTheDocument();
+  });
+
+  it('composes the native installed page as capability, Package and curation consoles without duplicated chrome', async () => {
+    renderPlugins({
+      'agent.extensions.list': {
+        schemaVersion: 'rag-ime.plugin-inventory.v1',
+        ok: true,
+        runtimeAvailable: true,
+        items: [{
+          id: '@paw/pi-session-workflow',
+          displayName: 'Session Workflow',
+          version: '1.0.0',
+          enabled: true,
+          installed: true,
+          rollbackAvailable: false,
+          permissions: ['session.read'],
+          resources: { skills: ['skills/session-workflow/SKILL.md'], prompts: ['prompts/workflow.md'] },
+          source: { kind: 'npm', requested: 'npm:@paw/pi-session-workflow@1.0.0' },
+        }],
+      },
+    }, '/plugins', true);
+
+    // The capability browser and the curation hooks are now reachable in the
+    // native App Center instead of remaining web-only functions.
+    const capabilities = await screen.findByRole('region', { name: '能力与可见范围' });
+    expect(await within(capabilities).findByRole('group', { name: '能力列表' })).toBeInTheDocument();
+    expect(within(capabilities).getByRole('textbox', { name: '搜索' })).toBeInTheDocument();
+
+    const packages = await screen.findByRole('region', { name: 'Pi Package' });
+    const packageCard = await within(packages).findByRole('article', { name: 'Session Workflow Package' });
+    expect(packageCard).toHaveTextContent('读取对话内容');
+    expect(packageCard).toHaveTextContent('2 项资源');
+    expect(packageCard).toHaveTextContent('npm 包');
+    expect(packageCard).toHaveTextContent('没有可恢复的历史版本');
+    expect(within(packages).getByRole('textbox', { name: 'Pi Package 来源' })).toBeInTheDocument();
+
+    const curation = await screen.findByRole('region', { name: '自动整理与提醒' });
+    expect(await within(curation).findByRole('switch', { name: '任务完成：已启用' })).toBeInTheDocument();
+
+    // Redundant chrome stays out: no management-sheet header/sections, no
+    // maintenance toggle, and no catalog rows duplicating the 目录 page.
+    expect(document.querySelector('.mgmt-page__header')).not.toBeInTheDocument();
+    expect(document.querySelector('.mgmt-section')).not.toBeInTheDocument();
+    expect(screen.queryByText('能力概览')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '管理扩展与自动整理' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看安装内容' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Session Review')).not.toBeInTheDocument();
+  });
+
+  it('offers a guarded update on an installed Package when the catalog reports a newer version', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins({
+      'agent.extensions.list': {
+        schemaVersion: 'rag-ime.plugin-inventory.v1',
+        ok: true,
+        runtimeAvailable: true,
+        items: [{
+          id: 'session-review',
+          displayName: 'Session Review',
+          version: '1.0.0',
+          enabled: true,
+          installed: true,
+          rollbackAvailable: false,
+          permissions: ['session.read'],
+          resources: { skills: ['skills/session-review/SKILL.md'] },
+          source: { kind: 'bundled', requested: 'session-review' },
+        }],
+      },
+      'agent.extensions.catalog': {
+        ok: true,
+        items: [{
+          id: 'session-review',
+          displayName: 'Session Review',
+          description: '基于事实审阅会话结果',
+          publisher: 'Personal Agent Workbench',
+          source: { kind: 'bundled', label: 'Product bundle' },
+          permissions: ['session.read'],
+          security: { notes: '只读会话权限' },
+          versions: [{ version: '1.1.0' }, { version: '1.0.0' }],
+          latestVersion: '1.1.0',
+          installed: true,
+          updateAvailable: true,
+          actionable: true,
+        }],
+      },
+      'agent.extensions.preview': {
+        ok: true,
+        previewToken: 'preview-update-token',
+        payloadSha256: 'd'.repeat(64),
+        summary: { action: 'update', pluginId: 'session-review', displayName: 'Session Review', version: '1.1.0' },
+      },
+    }, '/plugins', true);
+
+    const packageCard = await screen.findByRole('article', { name: '对话复盘 Package' });
+    expect(within(packageCard).getByText('有更新')).toBeInTheDocument();
+
+    await user.click(within(packageCard).getByRole('button', { name: '更新到 v1.1.0' }));
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.extensions.validate'
+    ))).toBe(true));
+    expect(transport.requests.find((call) => (
+      call.request.pathId === 'agent.extensions.validate'
+    ))?.request.body).toEqual({ catalogId: 'session-review', catalogVersion: '1.1.0' });
+    expect(transport.requests.find((call) => (
+      call.request.pathId === 'agent.extensions.preview'
+    ))?.request.body).toEqual({ action: 'update', validationToken: 'validation-token', enable: true });
+
+    const approval = await screen.findByRole('region', { name: '待确认的插件更改' });
+    expect(within(approval).getByText('更新插件：对话复盘')).toBeVisible();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.extensions.apply')).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: '确认更改' }));
+    await waitFor(() => expect(transport.requests.filter((call) => (
+      call.request.pathId === 'agent.extensions.apply'
+    ))).toHaveLength(1));
+    expect(await screen.findByText('更改已应用')).toBeVisible();
+    expect(screen.getByText('更新插件：对话复盘')).toBeVisible();
   });
 
   it('keeps a stable catalog split while opening and closing capability details', async () => {
@@ -582,6 +701,8 @@ describe('PluginsFeature', () => {
 
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
     await screen.findByText('时间线检查');
+    expect(screen.getByText('可恢复到 v0.9.0')).toBeInTheDocument();
+    expect(screen.getByText('1 项资源')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '停用' }));
     expect(await screen.findByText('等待你的批准')).toBeVisible();
@@ -599,6 +720,7 @@ describe('PluginsFeature', () => {
 
     expect(await screen.findByText('v0.9.0')).toBeVisible();
     expect(screen.getByRole('button', { name: '恢复上一版本' })).toBeDisabled();
+    expect(screen.getByText('没有可恢复的历史版本')).toBeInTheDocument();
   });
 
   it('previews uninstall in App Center, states retained data, and removes only after confirmation', async () => {
