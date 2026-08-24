@@ -776,7 +776,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       <section className="paw-browser-workspace" data-show-agent={showTrace || undefined}>
         <div className="paw-browser-viewport" data-agent-state={agentExecutionState || undefined}>
           {selectedGuestLoading ? (
-            <span aria-hidden="true" className="paw-browser-loadbar" data-testid="paw-browser-loadbar" />
+            <span aria-hidden="true" className="paw-browser-loadbar" />
           ) : null}
           {electronHost && showFind ? (
             <BrowserFindBar
