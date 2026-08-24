@@ -174,6 +174,41 @@
 .paw-desktop-root .paw-room-focus-overview__handoffs li[data-state='completed'] > i { background: var(--focus-green); }
 .paw-desktop-root .paw-room-focus-overview__handoffs li[data-state='failed'] > i { background: var(--focus-red); }
 
+/* Chronological flow ledger: every packet is a real public message, an
+ * authoritative transfer or a WorkItem revision, in true event order. */
+.paw-desktop-root .paw-room-focus-overview__flow-window { display: inline-flex; min-width: 0; align-items: center; gap: 7px; }
+.paw-desktop-root .paw-room-focus-overview__flow-window > small { color: #9197a1; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__flow-window > button { border: 0; border-radius: 5px; color: #206fae; background: transparent; font: 620 12px/16px inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.paw-desktop-root .paw-room-focus-overview__flow-window > button:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: 2px; }
+
+.paw-desktop-root .paw-room-focus-overview__packets { display: grid; max-height: 320px; margin: 0; padding: 5px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; list-style: none; }
+.paw-desktop-root .paw-room-focus-overview__packets > li { min-width: 0; }
+.paw-desktop-root .paw-room-focus-overview__packets button { width: 100%; min-width: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 7px; padding: 7px; border: 0; border-radius: 8px; color: inherit; background: transparent; text-align: left; cursor: pointer; transition: background-color 120ms ease, transform 100ms ease; }
+.paw-desktop-root .paw-room-focus-overview__packets button:hover { background: rgb(42 45 52 / .035); }
+.paw-desktop-root .paw-room-focus-overview__packets button:active { transform: scale(.994); }
+.paw-desktop-root .paw-room-focus-overview__packets button[aria-current='true'] { background: rgb(39 131 222 / .075); box-shadow: inset 0 0 0 1px rgb(39 131 222 / .09); }
+.paw-desktop-root .paw-room-focus-overview__packet-icon { display: grid; width: 20px; height: 20px; place-items: center; color: #7a8290; }
+.paw-desktop-root .paw-room-focus-overview__packets [data-kind='request'] .paw-room-focus-overview__packet-icon,
+.paw-desktop-root .paw-room-focus-overview__packets [data-kind='dispatch'] .paw-room-focus-overview__packet-icon { color: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__packets [data-kind='question'] .paw-room-focus-overview__packet-icon,
+.paw-desktop-root .paw-room-focus-overview__packets [data-kind='approval'] .paw-room-focus-overview__packet-icon { color: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__packets [data-kind='result'] .paw-room-focus-overview__packet-icon,
+.paw-desktop-root .paw-room-focus-overview__packets [data-kind='answer'] .paw-room-focus-overview__packet-icon { color: var(--focus-green); }
+.paw-desktop-root .paw-room-focus-overview__packet-copy { min-width: 0; display: grid; gap: 1px; }
+.paw-desktop-root .paw-room-focus-overview__packet-copy strong { font-size: 12px; font-weight: 640; }
+.paw-desktop-root .paw-room-focus-overview__packet-copy p { margin: 0; overflow: hidden; color: #59616e; font-size: 12.5px; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__packet-copy small { overflow: hidden; color: #9197a1; font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+
+.paw-desktop-root .paw-room-focus-overview__packet-detail { display: grid; gap: 5px; padding: 9px 11px 10px; border-top: 1px solid rgb(42 45 52 / .07); background: rgb(250 250 250 / .8); }
+.paw-desktop-root .paw-room-focus-overview__packet-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.paw-desktop-root .paw-room-focus-overview__packet-detail > header strong { font-size: 12px; font-weight: 650; }
+.paw-desktop-root .paw-room-focus-overview__packet-detail > header span { color: #737a86; font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__packet-detail > header span[data-status='failed'] { color: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview__packet-detail > p { max-height: 76px; margin: 0; overflow: auto; color: #4c545f; font-size: 12.5px; line-height: 18px; }
+.paw-desktop-root .paw-room-focus-overview__packet-detail dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 0; font-size: 12px; line-height: 16px; }
+.paw-desktop-root .paw-room-focus-overview__packet-detail dt { color: #949aa4; }
+.paw-desktop-root .paw-room-focus-overview__packet-detail dd { min-width: 0; margin: 0; overflow: hidden; color: #5e6673; font-family: var(--font-mono); text-overflow: ellipsis; white-space: pre-line; }
+
 .paw-desktop-root .paw-room-focus-overview__inspector { min-width: 0; display: grid; align-content: start; overflow: hidden; border: 1px solid rgb(39 131 222 / .14); border-radius: 13px; background: #fff; box-shadow: 0 10px 28px rgb(42 45 52 / .055); animation: paw-room-focus-inspector-enter 180ms cubic-bezier(.23, 1, .32, 1) both; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy { display: grid; gap: 3px; padding: 10px 11px 8px; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy > small { color: #8b929d; font-size: 12px; }
@@ -183,6 +218,12 @@
 .paw-desktop-root .paw-room-focus-overview__inspector dl > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 7px; font-size: 12px; line-height: 16px; }
 .paw-desktop-root .paw-room-focus-overview__inspector dt { color: #949aa4; }
 .paw-desktop-root .paw-room-focus-overview__inspector dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #5e6673; }
+.paw-desktop-root .paw-room-focus-overview__expected { display: grid; gap: 2px; margin: 0 11px 8px; color: #59616e; font-size: 12px; line-height: 16px; }
+.paw-desktop-root .paw-room-focus-overview__expected > span { color: #949aa4; }
+.paw-desktop-root .paw-room-focus-overview__acceptance { margin: 0 11px 8px; color: #59616e; font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__acceptance > summary { width: fit-content; cursor: pointer; color: #737a86; line-height: 17px; }
+.paw-desktop-root .paw-room-focus-overview__acceptance ul { display: grid; max-height: min(220px, 30vh); gap: 3px; margin: 5px 0 0; padding-left: 17px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.paw-desktop-root .paw-room-focus-overview__acceptance li { color: #666e7a; line-height: 17px; }
 .paw-desktop-root .paw-room-focus-overview__blocker { display: grid; gap: 2px; margin: 0 10px 8px; padding: 8px 9px; border-radius: 8px; color: #8c3636; background: rgb(198 71 71 / .07); }
 .paw-desktop-root .paw-room-focus-overview__blocker strong { font-size: 12px; }
 .paw-desktop-root .paw-room-focus-overview__blocker span { font-size: 12px; line-height: 16px; }

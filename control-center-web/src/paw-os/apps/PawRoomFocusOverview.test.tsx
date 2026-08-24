@@ -98,6 +98,42 @@ const focus: RoomFocusProjection = {
     state: 'dispatched',
     createdAtMs: 22,
   }],
+  flow: [
+    {
+      id: 'message:request',
+      sourceParticipantId: 'root',
+      targetParticipantIds: ['p-earth'],
+      kind: 'request',
+      summary: '请并行实现任务图交互与依赖投影',
+      status: 'completed',
+      createdAtMs: 10,
+      sequence: 1,
+      refs: [],
+    },
+    {
+      id: 'activity:dispatch-mars',
+      sourceParticipantId: 'p-earth',
+      targetParticipantIds: ['p-mars'],
+      kind: 'dispatch',
+      summary: '分派依赖投影支线',
+      status: 'completed',
+      createdAtMs: 22,
+      sequence: 2,
+      dispatchId: 'mars',
+      refs: ['context://room/brief'],
+    },
+    {
+      id: 'message:result-earth',
+      sourceParticipantId: 'p-earth',
+      targetParticipantIds: ['root'],
+      kind: 'result',
+      summary: '任务图交互已通过测试',
+      status: 'completed',
+      createdAtMs: 30,
+      sequence: 3,
+      refs: [],
+    },
+  ],
   rootEvidence: [{ ref: 'test:room-focus', kind: 'evidence' }],
   counts: { active: 1, review: 1, blocked: 0, completed: 1 },
 };
@@ -125,5 +161,61 @@ describe('PawRoomFocusOverview', () => {
     fireEvent.click(screen.getByRole('button', { name: '打开 Earth 伙伴窗口' }));
 
     expect(onOpenParticipant).toHaveBeenCalledWith('p-earth');
+  });
+
+  it('keeps the chronological flow ledger inside the console with celestial actor names and packet detail', () => {
+    render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+
+    const ledger = screen.getByRole('region', { name: '消息与上下文流' });
+    expect(within(ledger).getByText('最近 3 / 共 3 条')).toBeInTheDocument();
+    const packets = within(ledger).getByRole('list', { name: '流转事件' });
+    expect(packets).toHaveTextContent('Sol → Earth');
+    expect(packets).toHaveTextContent('Earth → Mars');
+
+    // The latest packet is pre-selected; picking the dispatch reveals its refs.
+    expect(within(ledger).getByRole('button', { name: /任务图交互已通过测试/ })).toHaveAttribute('aria-current', 'true');
+    fireEvent.click(within(ledger).getByRole('button', { name: /分派依赖投影支线/ }));
+    const detail = ledger.querySelector('.paw-room-focus-overview__packet-detail')!;
+    expect(detail).toHaveTextContent('任务分派');
+    expect(detail).toHaveTextContent('context://room/brief');
+    expect(detail).toHaveTextContent('mars');
+  });
+
+  it('windows a long ledger to the recent slice until the reader asks for everything', () => {
+    const longFlow = Array.from({ length: 21 }, (_, index) => ({
+      id: `packet-${index}`,
+      sourceParticipantId: 'root',
+      targetParticipantIds: ['p-earth'],
+      kind: 'dispatch' as const,
+      summary: `分派 ${index}`,
+      status: 'completed',
+      createdAtMs: index,
+      sequence: index,
+      refs: [],
+    }));
+    render(<PawRoomFocusOverview focus={{ ...focus, flow: longFlow }} onOpenParticipant={vi.fn()} />);
+
+    expect(screen.getByText('最近 18 / 共 21 条')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '显示全部' }));
+    expect(screen.getByText('最近 21 / 共 21 条')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '显示全部' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the full acceptance checklist reachable through the inspector disclosure', () => {
+    const acceptance = Array.from({ length: 18 }, (_, index) => `验收项 ${index + 1}`);
+    const withAcceptance = {
+      ...focus,
+      workItems: focus.workItems.map((item) => item.id === 'work-root'
+        ? { ...item, acceptanceCriteria: acceptance }
+        : item),
+    };
+    render(<PawRoomFocusOverview focus={withAcceptance} onOpenParticipant={vi.fn()} />);
+
+    const summary = screen.getByText('验收条件 · 18').closest('summary')!;
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(summary);
+    expect(summary).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('验收项 18')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '协作检查器' })).toHaveTextContent('可复查的整合版本');
   });
 });

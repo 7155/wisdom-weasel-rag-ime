@@ -84,6 +84,7 @@ describe('starfield feed', () => {
     const focus: RoomFocusProjection = {
       goal: { title: '目标', description: '', rootId: 'root', state: 'running' },
       workItems: [],
+      flow: [],
       partners: [
         {
           participantId: 'p-earth',

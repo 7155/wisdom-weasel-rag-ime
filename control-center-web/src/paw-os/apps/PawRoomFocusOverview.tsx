@@ -1,13 +1,23 @@
 import {
   ArrowRight,
+  CircleHelp,
   ExternalLink,
   FileCheck2,
+  FileText,
+  GitBranch,
   GitCommitHorizontal,
+  MessageCircle,
   Orbit,
+  Route,
+  Send,
+  ShieldCheck,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Disclosure } from '@/components/primitives';
 import {
   roomFocusStateLabel,
+  type RoomFocusPacket,
+  type RoomFocusPacketKind,
   type RoomFocusPartner,
   type RoomFocusProjection,
   type RoomFocusState,
@@ -30,6 +40,14 @@ const selectionPriority: RoomFocusState[] = [
   'disconnected',
 ];
 
+const FLOW_PACKET_WINDOW = 18;
+
+/**
+ * Sol collaboration console — the single Room 态势 surface. Mission,
+ * WorkItem tree, planet partners, handoffs, the chronological flow ledger and
+ * the inspector all project the same real Room data; there is no separate
+ * flow/execution panel to keep in sync anymore.
+ */
 export function PawRoomFocusOverview({
   focus,
   hideMission = false,
@@ -160,11 +178,90 @@ export function PawRoomFocusOverview({
         ) : <p className="paw-room-focus-overview__empty">当前没有待追踪的交接。</p>}
       </section>
 
+      <FocusFlowLedger flow={focus.flow} partners={focus.partners} rootId={focus.goal.rootId} />
+
       <FocusInspector
         onOpenParticipant={onOpenParticipant}
         partner={selectedPartner}
         work={selectedWork}
       />
+    </section>
+  );
+}
+
+/** Chronological ledger of what really moved between Sol and the planets:
+ * public messages, approvals, dispatches, context transfers and WorkItem
+ * revisions, in real event order. */
+function FocusFlowLedger({
+  flow,
+  partners,
+  rootId,
+}: {
+  flow: RoomFocusPacket[];
+  partners: RoomFocusPartner[];
+  rootId: string;
+}) {
+  const [selectedPacketId, setSelectedPacketId] = useState('');
+  const [showAllPackets, setShowAllPackets] = useState(false);
+  useEffect(() => {
+    setShowAllPackets(false);
+    setSelectedPacketId('');
+  }, [rootId]);
+  const selectedPacket = flow.find((packet) => packet.id === selectedPacketId) ?? flow.at(-1);
+  const visiblePackets = showAllPackets ? flow : flow.slice(-FLOW_PACKET_WINDOW);
+  const actorName = (actorId: string) => actorId === 'root'
+    ? 'Sol'
+    : partners.find((partner) => partner.participantId === actorId)?.celestialName ?? actorId;
+
+  return (
+    <section aria-label="消息与上下文流" className="paw-room-focus-overview__section paw-room-focus-overview__flow">
+      <header>
+        <span><GitBranch aria-hidden="true" size={14} /><strong>消息与上下文流</strong></span>
+        <span className="paw-room-focus-overview__flow-window">
+          <small>最近 {visiblePackets.length} / 共 {flow.length} 条</small>
+          {flow.length > visiblePackets.length ? <button onClick={() => setShowAllPackets(true)} type="button">显示全部</button> : null}
+        </span>
+      </header>
+      {flow.length ? (
+        <ol aria-label="流转事件" className="paw-room-focus-overview__packets">
+          {visiblePackets.map((packet, index) => (
+            <li data-kind={packet.kind} data-status={packet.status} key={packet.id}>
+              <button
+                aria-current={packet.id === selectedPacket?.id || undefined}
+                onClick={() => setSelectedPacketId(packet.id)}
+                type="button"
+              >
+                <span aria-hidden="true" className="paw-room-focus-overview__packet-icon">{packetIcon(packet.kind)}</span>
+                <span className="paw-room-focus-overview__packet-copy">
+                  <strong>{packetKindLabel(packet.kind)}</strong>
+                  <p>{packet.summary}</p>
+                  <small>
+                    #{flow.length - visiblePackets.length + index + 1}
+                    {' · '}{actorName(packet.sourceParticipantId)} → {packet.targetParticipantIds.map(actorName).join('、') || 'Room'}
+                    {packet.createdAtMs ? ` · ${packetClock(packet.createdAtMs)}` : ''}
+                  </small>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      ) : <p className="paw-room-focus-overview__empty">还没有可投影的公开消息、分派或上下文流转。</p>}
+      {selectedPacket ? (
+        <div className="paw-room-focus-overview__packet-detail">
+          <header>
+            <strong>{packetKindLabel(selectedPacket.kind)}</strong>
+            <span data-status={selectedPacket.status}>{flowStatusLabel(selectedPacket.status)}</span>
+          </header>
+          <p>{selectedPacket.summary}</p>
+          {selectedPacket.dispatchId || selectedPacket.workItemId || selectedPacket.refs.length ? (
+            <dl>
+              {selectedPacket.dispatchId ? <><dt>Dispatch</dt><dd>{selectedPacket.dispatchId}</dd></> : null}
+              {selectedPacket.workItemId ? <><dt>WorkItem</dt><dd>{selectedPacket.workItemId}</dd></> : null}
+              {selectedPacket.refs.length ? <><dt>上下文 / 文档</dt><dd>{selectedPacket.refs.join('\n')}</dd></> : null}
+            </dl>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -198,6 +295,17 @@ function FocusInspector({
           {partner.latestReceipt ? <div><dt>最近回执</dt><dd>{partner.latestReceipt}</dd></div> : null}
         </dl>
       ) : null}
+      {work?.expectedOutput ? (
+        <p className="paw-room-focus-overview__expected"><span>期望交付</span>{work.expectedOutput}</p>
+      ) : null}
+      {work?.acceptanceCriteria.length ? (
+        <Disclosure
+          className="paw-room-focus-overview__acceptance"
+          summary={`验收条件 · ${work.acceptanceCriteria.length}`}
+        >
+          <ul>{work.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul>
+        </Disclosure>
+      ) : null}
       {work?.blocker ? (
         <div className="paw-room-focus-overview__blocker">
           <strong>{work.blocker.reason}</strong>
@@ -217,6 +325,49 @@ function FocusInspector({
       ) : null}
     </section>
   );
+}
+
+function packetIcon(kind: RoomFocusPacketKind): ReactNode {
+  if (kind === 'approval') return <ShieldCheck size={13} />;
+  if (kind === 'question') return <CircleHelp size={13} />;
+  if (kind === 'plan') return <GitBranch size={13} />;
+  if (kind === 'document' || kind === 'context') return <FileText size={13} />;
+  if (kind === 'result' || kind === 'answer') return <MessageCircle size={13} />;
+  if (kind === 'dispatch') return <Route size={13} />;
+  return <Send size={13} />;
+}
+
+function packetKindLabel(kind: RoomFocusPacketKind): string {
+  return ({
+    request: '需求',
+    question: '问题',
+    answer: '答复',
+    plan: 'Plan / WorkItem',
+    document: '文档',
+    context: '上下文',
+    result: '公开结果',
+    dispatch: '任务分派',
+    approval: '审批',
+  } satisfies Record<RoomFocusPacketKind, string>)[kind];
+}
+
+function flowStatusLabel(status: string): string {
+  return ({
+    queued: '等待送达',
+    running: '传递中',
+    waiting: '等待批准',
+    active: '进行中',
+    review: '待复核',
+    completed: '已送达',
+    done: '已完成',
+    failed: '失败',
+    aborted: '已停止',
+    blocked: '受阻',
+  } as Record<string, string>)[status] ?? status;
+}
+
+function packetClock(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp));
 }
 
 function roomFocusHandoffStateLabel(state: RoomFocusProjection['handoffs'][number]['state']): string {

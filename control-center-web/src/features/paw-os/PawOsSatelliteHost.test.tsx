@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
-import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import { PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
 import { createRoomProjection } from '@/contracts/room-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
@@ -403,11 +403,10 @@ describe('PawOsSatelliteHost', () => {
   it('shows a RoomPanel missing state when a successful response has another Room id', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.room.get': { room: { ...participantRoom(), id: 'room-other' } },
-      'agent.roles.list': { ok: true, items: [] },
     } });
 
     renderSatellite(transport, {
-      kind: 'room', id: 'room-live', panel: 'flow', title: '产品协作室',
+      kind: 'room', id: 'room-live', panel: 'focus', title: '产品协作室',
     });
 
     expect(await screen.findByText('找不到这个 Room')).toBeInTheDocument();
@@ -415,11 +414,12 @@ describe('PawOsSatelliteHost', () => {
     expect(screen.getByRole('button', { name: '回到 Room' })).toBeInTheDocument();
   });
 
-  it('projects the execution satellite as a compact WorkItem flow instead of the full Room cockpit', async () => {
+  it('projects the consolidated Sol console into the focus satellite and opens real participant targets', async () => {
+    const openWindow = vi.fn();
     const room = {
       ...participantRoom(),
       workItems: [{
-        id: 'work-a', roomId: 'room-participant', topicId: '', rootTurnId: 'root-a', rootWorkId: 'work-a', parentWorkId: '',
+        id: 'work-a', roomId: 'room-live', topicId: '', rootTurnId: 'root-a', rootWorkId: 'work-a', parentWorkId: '',
         objective: '实现 Room 任务图交互', expectedOutput: '可复查的任务图交互', acceptanceCriteria: ['保持真实依赖关系'],
         accountableParticipantId: 'participant-a', currentOwnerParticipantId: 'participant-a', offeredToParticipantId: '',
         createdByParticipantId: 'participant-a', clientMessageId: '', state: 'review' as const, depth: 0, revision: 2,
@@ -429,20 +429,26 @@ describe('PawOsSatelliteHost', () => {
     };
     const transport = new MockControlTransport({ routes: {
       'agent.room.get': { room },
-      'agent.roles.list': { ok: true, items: [] },
     } });
 
     const { container } = renderSatellite(transport, {
-      kind: 'room', id: room.id, panel: 'execution', title: room.title,
-    });
+      kind: 'room', id: room.id, panel: 'focus', title: room.title,
+    }, { openWindow });
 
-    const flow = await screen.findByRole('list', { name: 'Room WorkItem 任务流' });
-    expect(flow).toHaveTextContent('实现 Room 任务图交互');
-    expect(flow).toHaveTextContent('实现伙伴');
-    expect(flow).toHaveTextContent('WorkItem r2');
-    expect(screen.getByText('等待独立复核')).toBeVisible();
+    const console = await screen.findByRole('region', { name: 'Sol 协作态势' });
+    expect(within(console).getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现 Room 任务图交互');
+    expect(within(console).getByLabelText('流转事件')).toHaveTextContent('实现 Room 任务图交互');
+    expect(within(console).getByText('验收条件 · 1')).toBeInTheDocument();
+    expect(within(console).getByText('等待独立复核')).toBeVisible();
     expect(container.querySelector('.room-cockpit')).not.toBeInTheDocument();
     expect(container.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
+
+    fireEvent.click(within(console).getByRole('button', { name: '打开 Mars 伙伴窗口' }));
+
+    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
+      appId: 'agent',
+      target: expect.objectContaining({ kind: 'participant', id: 'participant-a', roomId: 'room-live', title: 'Mars' }),
+    }));
   });
 
   it('follows participant updates only while the reader is near the latest entry', async () => {
@@ -638,7 +644,7 @@ describe('PawOsSatelliteHost', () => {
 function renderSatellite(
   transport: MockControlTransport,
   target: Parameters<typeof PawOsSatelliteHost>[0]['target'],
-  desktop?: { openRoute?: (route: string) => void },
+  desktop?: { openRoute?: (route: string) => void; openWindow?: (request: PawOsWindowRequest) => void },
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const host = (
@@ -649,7 +655,7 @@ function renderSatellite(
     </ControlTransportProvider>
   );
   const rendered = render(desktop
-    ? <PawOsDesktopProvider openRoute={desktop.openRoute} openWindow={() => undefined}>{host}</PawOsDesktopProvider>
+    ? <PawOsDesktopProvider openRoute={desktop.openRoute} openWindow={desktop.openWindow ?? (() => undefined)}>{host}</PawOsDesktopProvider>
     : host);
   return { ...rendered, queryClient };
 }

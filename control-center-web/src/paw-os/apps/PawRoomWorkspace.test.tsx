@@ -18,7 +18,7 @@ describe('PAWOS Room collaboration tools', () => {
   it('opens one purpose-built Sol collaboration view instead of four duplicate summaries', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
-    const { container } = renderRoom(900, openWindow);
+    const { container, room } = renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
@@ -45,6 +45,13 @@ describe('PAWOS Room collaboration tools', () => {
       expect(request).toMatchObject({ background: true, target: expect.objectContaining({ kind: 'participant' }) });
     }
     expect(new Set(openWindow.mock.calls.map(([request]) => request.target.id)).size).toBe(openWindow.mock.calls.length);
+
+    /* PF-CM-013/PF-CM-020：态势弹出是真实可达的卫星入口，指向 focus 面板。 */
+    await user.click(within(tools).getByRole('button', { name: '在卫星窗中打开协作态势' }));
+    expect(openWindow).toHaveBeenLastCalledWith(expect.objectContaining({
+      appId: 'agent',
+      target: expect.objectContaining({ kind: 'room', id: room.id, panel: 'focus' }),
+    }));
 
     await user.click(within(tools).getByRole('button', { name: '关闭协作态势' }));
 

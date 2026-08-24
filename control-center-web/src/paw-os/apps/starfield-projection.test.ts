@@ -84,6 +84,7 @@ function roomFocus(): RoomFocusProjection {
   return {
     goal: { title: '交付星空模式', description: '', rootId: 'root-1', state: 'running' },
     workItems: [],
+    flow: [],
     partners: [
       partner('participant-earth', 'Earth', 'running'),
       partner('participant-mars', 'Mars', 'completed'),

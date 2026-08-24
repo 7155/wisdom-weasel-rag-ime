@@ -3,6 +3,7 @@ import {
   Archive,
   CircleAlert,
   CheckCircle2,
+  ExternalLink,
   Focus,
   GitBranch,
   LoaderCircle,
@@ -353,6 +354,20 @@ export function PawRoomWorkspace({
     const request = roomProcessWindowRequest(activity, recordId);
     if (request) desktop?.openWindow({ ...request, background: false });
   }, [desktop, recordId]);
+  /* PF-CM-013：协作态势可以弹出成一扇卫星窗，主 Room 留给公开对话。 */
+  const openFocusSatellite = useCallback(() => {
+    if (!record) return;
+    desktop?.openWindow({
+      appId: 'agent',
+      target: {
+        kind: 'room',
+        id: recordId,
+        title: `${record.title} · 协作态势`,
+        subtitle: 'Sol 协作态势 · WorkItem、伙伴与流转的实时投影',
+        panel: 'focus',
+      },
+    });
+  }, [desktop, record, recordId]);
   useEffect(() => {
     if (!desktop || !record) return;
     desktop.bindRoomMain?.({ kind: 'room', id: record.id, title: record.title, subtitle: record.description });
@@ -453,6 +468,7 @@ export function PawRoomWorkspace({
           onError={setError}
           onOpenParticipant={openParticipantById}
           onPanelChange={setPanel}
+          {...(desktop ? { onPopout: openFocusSatellite } : {})}
           onRefresh={async () => { retrySnapshot(); }}
           onRoomUpdated={onRoomUpdated}
           panel={panel}
@@ -471,6 +487,7 @@ function PawRoomToolWorkspace({
   onError,
   onOpenParticipant,
   onPanelChange,
+  onPopout,
   onRefresh,
   onRoomUpdated,
   panel,
@@ -482,6 +499,7 @@ function PawRoomToolWorkspace({
   onError: (message: string) => void;
   onOpenParticipant: (participantId: string) => void;
   onPanelChange: (panel: RoomToolPanel) => void;
+  onPopout?: () => void;
   onRefresh: () => Promise<void>;
   onRoomUpdated: (room: RoomSummary) => void;
   panel: RoomToolPanel;
@@ -493,7 +511,10 @@ function PawRoomToolWorkspace({
   return <aside aria-label="Room 协作态势" className="paw-room-tools">
     <header className="paw-room-tools__header">
       <span><Focus aria-hidden="true" size={15} /><strong>协作态势</strong></span>
-      <button aria-label="关闭协作态势" onClick={onClose} type="button"><X aria-hidden="true" size={15} /></button>
+      <div className="paw-room-tools__actions">
+        {onPopout ? <button aria-label="在卫星窗中打开协作态势" onClick={onPopout} type="button"><ExternalLink aria-hidden="true" size={14} /></button> : null}
+        <button aria-label="关闭协作态势" onClick={onClose} type="button"><X aria-hidden="true" size={15} /></button>
+      </div>
     </header>
     <nav aria-label="协作工具视图" className="paw-room-tools__tabs" role="tablist">
       {(Object.keys(roomToolPanelLabels) as RoomToolPanel[]).map((item) => {

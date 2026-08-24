@@ -902,8 +902,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-room-workspace__identity small,
   .paw-room-workspace__header nav button,
   .paw-room-workspace__runtime > span,
-  .paw-room-flow__packets small,
-  .paw-room-flow__detail dl,
   .paw-room-governance small,
   .paw-files-tree small,
   .paw-files-preview > header small,
