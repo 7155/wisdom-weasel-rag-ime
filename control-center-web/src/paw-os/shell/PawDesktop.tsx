@@ -443,12 +443,13 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
             type="button"
           >
             <PawAppIcon appId={appId} size={32} />
+            <span aria-hidden="true" className="paw-dock-tip">{minimizedOnly ? `${pawApp(appId).label} · 已最小化` : pawApp(appId).label}</span>
           </button>
         );
       })}
       <i aria-hidden="true" />
-      <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /></button>
-      <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /></button>
+      <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /><span aria-hidden="true" className="paw-dock-tip">窗口总览</span></button>
+      <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
     </nav>
   );
 }
@@ -524,7 +525,14 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
 }
 
 function timeLabel(): string {
-  return new Intl.DateTimeFormat('zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
 }
 
 function launchpadKind(app: PawAppDefinition): (typeof LAUNCHPAD_KIND_ORDER)[number] {
