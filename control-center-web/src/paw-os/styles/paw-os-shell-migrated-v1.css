@@ -115,73 +115,76 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The original raster is provenance, not the visible identity of the desktop. */
+/* Wayfinder daybreak field. The wallpaper is deterministic SVG weather in the
+   shell's own glacial palette: a cold-light sky, one warm signal beacon on a
+   meridian track, translucent ridge terrain and sparse survey marks. Colour
+   discipline: graphite hairlines, cobalt/teal waypoints, a single measured
+   gold — no raster, no glow soup, quiet enough to sit behind real chrome. */
 .paw-desktop-root .paw-wayfinder .paw-composition-field {
-  opacity: .88;
+  opacity: 1;
   filter: none;
-  animation: paw-shell-field-arrive 620ms var(--paw-ease-out) both;
+  animation: paw-field-arrive 640ms var(--paw-ease-out) both;
 }
-.paw-desktop-root .paw-composition__background {
-  opacity: .018;
-  filter: saturate(.32) contrast(.82) brightness(1.25);
+.paw-desktop-root .paw-field__daycore {
+  opacity: calc(.5 + var(--paw-composition-energy, 0) * .3);
+  transition: opacity 640ms var(--paw-ease-out);
 }
-.paw-desktop-root .paw-composition__mist { opacity: .78; }
-.paw-desktop-root .paw-composition__geometry { color: #171a21; }
-.paw-desktop-root .paw-composition__ring { fill: none; stroke: currentColor; }
-.paw-desktop-root .paw-composition__ring--outer { stroke-width: 2.6; opacity: .16; }
-.paw-desktop-root .paw-composition__ring--inner { stroke-width: 1.2; opacity: .08; }
-.paw-desktop-root .paw-composition__blue-arc { stroke: #2f6bff; stroke-width: 10; opacity: .55; }
-.paw-desktop-root .paw-composition__violet-orbit { stroke: #7a5af8; stroke-width: 1.6; stroke-dasharray: 2 8; opacity: .42; }
-.paw-desktop-root :is(.paw-composition__diagonal, .paw-composition__agent-orbit, .paw-composition__agent-core, .paw-composition__triangle, .paw-composition__cross, .paw-composition__registration-ring, .paw-composition__rule) { stroke: currentColor; }
-.paw-desktop-root .paw-composition__diagonal { stroke-width: 1.5; opacity: .11; }
-.paw-desktop-root .paw-composition__agent-orbit { stroke-width: 1.4; opacity: .14; }
-.paw-desktop-root .paw-composition__agent-core { stroke-width: 1.4; opacity: .12; }
-.paw-desktop-root .paw-composition__triangle { stroke-width: 1.7; opacity: .14; }
-.paw-desktop-root .paw-composition__cross { stroke-width: 1.7; opacity: .16; }
-.paw-desktop-root .paw-composition__registration-ring { stroke-width: 1.4; opacity: .13; }
-.paw-desktop-root .paw-composition__rule { stroke-width: 1; opacity: .08; }
-.paw-desktop-root .paw-composition__node,
-.paw-desktop-root .paw-composition__registration-dot { stroke: none; }
-.paw-desktop-root .paw-composition__node--blue { fill: #2f6bff; opacity: .6; }
-.paw-desktop-root .paw-composition__node--mint { fill: #18a999; opacity: .55; }
-.paw-desktop-root .paw-composition__node--red { fill: #f04438; opacity: .45; }
-.paw-desktop-root .paw-composition__registration-dot { fill: currentColor; }
-.paw-desktop-root .paw-composition__registration-dot--one { opacity: .22; }
-.paw-desktop-root .paw-composition__registration-dot--two { opacity: .13; }
-.paw-desktop-root .paw-composition__registration-dot--three { opacity: .07; }
-
-.paw-desktop-root .paw-comp8-orbit {
-  fill: none;
+.paw-desktop-root .paw-field__cloud--one { opacity: .5; animation: paw-field-drift 150s ease-in-out infinite alternate; }
+.paw-desktop-root .paw-field__cloud--two { opacity: .4; animation: paw-field-drift 180s ease-in-out infinite alternate-reverse; }
+.paw-desktop-root .paw-field__cloud--haze { opacity: .32; }
+.paw-desktop-root .paw-field__meridian { stroke: #171a21; }
+.paw-desktop-root .paw-field__meridian--track { stroke-width: 1.2; opacity: .1; }
+.paw-desktop-root .paw-field__meridian--high { stroke-width: 1; stroke-dasharray: 2 10; opacity: .07; }
+.paw-desktop-root .paw-field__orbit {
+  stroke: rgb(224 165 63 / .32);
+  stroke-width: 1.2;
+  stroke-dasharray: 2 10;
   transform-box: fill-box;
   transform-origin: center;
+  animation: paw-field-orbit 140s linear infinite;
 }
-.paw-desktop-root .paw-comp8-orbit--violet { stroke: rgb(122 90 248 / .2); stroke-width: 1.4; stroke-dasharray: 2 10; animation: paw-shell-orbit 96s linear infinite; }
-.paw-desktop-root .paw-comp8-orbit--ink { stroke: rgb(23 26 33 / .1); stroke-width: 1.1; stroke-dasharray: 1 11; animation: paw-shell-orbit 120s linear infinite reverse; }
-.paw-desktop-root .paw-comp8-orbit--blue { stroke: rgb(47 107 255 / .16); stroke-width: 1.2; stroke-dasharray: 2 12; animation: paw-shell-orbit 108s linear infinite; }
-.paw-desktop-root .paw-comp8-scan { opacity: 0; animation: none; }
-.paw-desktop-root .paw-comp8-packet {
-  opacity: 0;
-  offset-path: path('M1040 300C995 236 855 238 752 296');
-  transform-box: fill-box;
-}
-.paw-desktop-root .paw-comp8-packet--red { fill: #7a5af8; }
-.paw-desktop-root .paw-comp8-packet--cobalt { fill: #2f6bff; }
-.paw-desktop-root .paw-comp8-packet--yellow { fill: #18a999; }
-.paw-desktop-root .paw-composition__event-layer {
-  fill: none;
-  stroke: #7a5af8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2;
-  opacity: .12;
-}
-.paw-desktop-root .paw-composition__event-layer--grid { stroke-width: 1.5; opacity: .08; }
+.paw-desktop-root .paw-field__waypoint { stroke: none; }
+.paw-desktop-root .paw-field__waypoint--cobalt { fill: #2f6bff; opacity: .55; }
+.paw-desktop-root .paw-field__waypoint--teal { fill: #18a999; opacity: .5; }
+.paw-desktop-root .paw-field__beacon-ring { fill: none; stroke: rgb(23 26 33 / .12); stroke-width: 1.1; }
+.paw-desktop-root .paw-field__beacon-halo { animation: paw-field-breathe 14s ease-in-out infinite alternate; }
+.paw-desktop-root .paw-field__beacon-core { stroke: rgb(255 255 255 / .8); stroke-width: 1; }
+.paw-desktop-root .paw-field__signal { stroke: #eebd62; stroke-width: 2; }
+.paw-desktop-root .paw-field__mark { stroke: #171a21; }
+.paw-desktop-root .paw-field__mark--cross { stroke-width: 1.6; opacity: .2; }
+.paw-desktop-root .paw-field__mark--station { stroke-width: 1.4; opacity: .16; }
+.paw-desktop-root .paw-field__mark--ticks { stroke-width: 1.2; opacity: .14; }
+.paw-desktop-root .paw-field__ridge--far { opacity: .92; }
+.paw-desktop-root .paw-field__ridge--mid { opacity: .94; }
+.paw-desktop-root .paw-field__ridge--close { opacity: .96; }
+.paw-desktop-root .paw-field__ridge--near { opacity: .98; }
+/* Daylight catches the ridge crests from the beacon side; pulses briefly lift
+   this whole group, so the terrain visibly answers real Runtime activity. */
+.paw-desktop-root .paw-field__crest-lights { opacity: .55; }
+.paw-desktop-root .paw-field__crest { stroke: url(#paw-field-crestlight); }
+.paw-desktop-root .paw-field__crest--far { stroke-width: 1.4; }
+.paw-desktop-root .paw-field__crest--mid { stroke-width: 1.2; }
+.paw-desktop-root .paw-field__crest--close { stroke-width: 1; }
+.paw-desktop-root .paw-field__contour { stroke: rgb(23 26 33 / .12); stroke-width: 1; stroke-dasharray: 1 7; }
+.paw-desktop-root .paw-field__contour--near { stroke: rgb(255 255 255 / .38); }
+.paw-desktop-root .paw-field__packet { offset-path: path('M -80 486 C 300 356 720 256 1520 318'); }
+.paw-desktop-root .paw-field__packet--cobalt { fill: #2f6bff; }
+.paw-desktop-root .paw-field__packet--teal { fill: #18a999; }
+.paw-desktop-root .paw-field__packet--gold { fill: #e0a53f; }
 
-@keyframes paw-shell-field-arrive {
-  from { opacity: .68; transform: scale(1.012); }
-  to { opacity: .88; transform: scale(1); }
+@keyframes paw-field-arrive {
+  from { opacity: .62; transform: scale(1.012); }
+  to { opacity: 1; transform: scale(1); }
 }
-@keyframes paw-shell-orbit { to { transform: rotate(1turn); } }
+@keyframes paw-field-orbit { to { transform: rotate(1turn); } }
+@keyframes paw-field-drift {
+  from { transform: translate3d(-48px, 0, 0); }
+  to { transform: translate3d(48px, 0, 0); }
+}
+@keyframes paw-field-breathe {
+  from { opacity: .78; }
+  to { opacity: 1; }
+}
 
 /* Full-colour identities remain unframed at every real placement. */
 .paw-desktop-root .paw-desktop-shortcuts {
@@ -449,7 +452,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-wayfinder .paw-composition-field,
-  .paw-desktop-root .paw-comp8-orbit,
+  .paw-desktop-root .paw-field__orbit,
+  .paw-desktop-root .paw-field__cloud,
+  .paw-desktop-root .paw-field__beacon-halo,
   .paw-desktop-root .paw-launchpad,
   .paw-desktop-root .paw-launchpad > section,
   .paw-desktop-root .paw-dock button,
@@ -458,7 +463,7 @@
     transition-duration: .01ms !important;
     transform: none !important;
   }
-  .paw-desktop-root .paw-comp8-packet { display: none; }
+  .paw-desktop-root .paw-field__packet { display: none; }
 }
 
 @media (forced-colors: active) {

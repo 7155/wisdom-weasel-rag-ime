@@ -152,6 +152,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   pointer-events: none;
 }
 .paw-composition-field {
+  --paw-composition-energy: 0;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -162,8 +163,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   opacity: 1;
   transition: opacity 220ms var(--paw-ease-out), filter 220ms var(--paw-ease-out);
 }
-.paw-composition__background { display: block; }
-.paw-composition__event-layer { opacity: 1; fill: none; transform-box: fill-box; transform-origin: center; }
+/* Pulse-driven field elements rest invisible; the field JS animates them only
+   on real Runtime signals, so a quiet desktop stays a quiet picture. */
+.paw-field__signal { opacity: 0; fill: none; transform-box: fill-box; transform-origin: center; }
+.paw-field__packet { opacity: 0; transform-box: fill-box; }
 .paw-desktop[data-collaboration-focus] .paw-composition-field {
   opacity: .7;
   filter: brightness(.76) saturate(.58);
@@ -815,7 +818,16 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
     animation: none !important;
     transform: none !important;
   }
+  .paw-field__packet { display: none; }
 }
+/* The explicit reduce-motion setting quiets the wallpaper exactly like the
+   system preference: no ambient drift, no pulse choreography. */
+:root[data-reduce-motion='true'] .paw-composition-field,
+:root[data-reduce-motion='true'] .paw-composition-field * {
+  animation: none !important;
+  transform: none !important;
+}
+:root[data-reduce-motion='true'] .paw-field__packet { display: none; }
 @keyframes paw-window-flow-reduced-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* ---------------------------------------------------------------- Typography
