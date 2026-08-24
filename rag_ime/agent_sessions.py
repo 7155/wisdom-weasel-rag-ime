@@ -37,6 +37,18 @@ class AgentApprovalNotFound(KeyError):
     pass
 
 
+class AgentGoalExecutionBlocked(ValueError):
+    """A configured Goal state rejects new cost-incurring work.
+
+    The typed ``error_code`` lets command receipts and Room terminal events
+    project the real goal cause instead of a generic delivery failure.
+    """
+
+    def __init__(self, message: str, *, error_code: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
 _SESSION_SELECT = """
 SELECT
     s.*,
@@ -1938,16 +1950,19 @@ class AgentSessionStore:
             return state
         status = str(goal.get("status") or "")
         if status == "paused":
-            raise ValueError(
-                "Goal execution blocked (goal_paused): 当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。"
+            raise AgentGoalExecutionBlocked(
+                "Goal execution blocked (goal_paused): 当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。",
+                error_code="GOAL_PAUSED",
             )
         if status == "cancelled":
-            raise ValueError(
-                "Goal execution blocked (goal_cancelled): 当前 Goal 已取消，不能继续调用模型或委派任务。"
+            raise AgentGoalExecutionBlocked(
+                "Goal execution blocked (goal_cancelled): 当前 Goal 已取消，不能继续调用模型或委派任务。",
+                error_code="GOAL_CANCELLED",
             )
         if goal.get("budgetExceeded") is True:
-            raise ValueError(
-                "Goal execution blocked (goal_budget_exhausted): Goal 的 Token 或时间预算已经耗尽。"
+            raise AgentGoalExecutionBlocked(
+                "Goal execution blocked (goal_budget_exhausted): Goal 的 Token 或时间预算已经耗尽。",
+                error_code="GOAL_BUDGET_EXHAUSTED",
             )
         return state
 

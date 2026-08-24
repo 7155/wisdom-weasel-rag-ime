@@ -2097,6 +2097,11 @@ class AgentService:
                 scope_id=room_id,
                 client_message_id=client_message_id,
                 error=exc,
+                cause_code=str(
+                    getattr(exc, "cause_code", "")
+                    or getattr(exc, "error_code", "")
+                    or ""
+                ),
             )
             raise
         return self.command_receipts.complete(
@@ -3498,6 +3503,24 @@ class AgentService:
             return True
         finally:
             self.room_turns.release_priority_session(session_id)
+
+    def _resume_room_goal_if_paused(self, session_id: str) -> None:
+        """Resume a paused participant Goal for an explicit user Room message.
+
+        The Room conversation entry is the only continue control a returning
+        user has, so the user's message carries the resume intent. Wake,
+        partner and Tool Agent paths never call this.
+        """
+
+        goal = self.sessions.agent_goal(session_id)
+        if str(goal.get("status") or "") != "paused":
+            return
+        self.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "resume", "expectedRevision": int(goal["revision"])},
+            actor="room-user-message",
+        )
+        self.publish_workflow_state(session_id, reason="goal:resume")
 
     def _recover_faulted_room_session(self, session_id: str) -> None:
         """Re-open one recoverable Pi Session without replacing Room identity."""
