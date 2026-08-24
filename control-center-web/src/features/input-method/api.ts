@@ -19,8 +19,8 @@ export type LexiconReviewEntry = {
   reviewSource: string;
   reviewReason: string;
   selected: boolean;
-  defaultSelected?: boolean;
-  riskLabel?: string;
+  defaultSelected: boolean;
+  riskLabel: string;
 };
 
 export type LexiconOrganizationRun = {
@@ -301,6 +301,10 @@ function parseLexiconEntry(value: unknown): LexiconReviewEntry {
     reviewSource: stringValue(entry.reviewSource),
     reviewReason: stringValue(entry.reviewReason),
     selected: entry.selected === true,
+    // 后端对每条候选给出真实的风险归类与默认勾选建议；丢掉它们会让
+    // 审阅页把模型建议词和真实选词反馈混成同一种"待你判断"。
+    defaultSelected: entry.defaultSelected === true,
+    riskLabel: stringValue(entry.riskLabel),
   };
 }
 
