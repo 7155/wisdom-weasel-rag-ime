@@ -1,8 +1,11 @@
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   File,
   FileCode2,
+  FileSymlink,
   Folder,
   FolderOpen,
   LoaderCircle,
@@ -18,6 +21,7 @@ import { RichHtmlPreview } from '@/features/agent/file-preview/RichHtmlPreview';
 import '@/features/agent/file-preview/file-preview.css';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '@/paw-os/shell/PawWindowChrome';
+import { writeClipboardText } from '@/platform/clipboard';
 import './paw-os-files-app.css';
 
 interface WorkspaceEntry {
@@ -57,7 +61,12 @@ export function PawOsFilesApp() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [treeFocusPath, setTreeFocusPath] = useState('');
+  const [copiedPathFor, setCopiedPathFor] = useState('');
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const treeRef = useRef<HTMLElement | null>(null);
+  const backButtonRef = useRef<HTMLButtonElement | null>(null);
+  const returnFocusPathRef = useRef('');
+  const typeaheadRef = useRef({ text: '', at: 0 });
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
   const roots = useMemo(() => authorizedRoots(selectedSession), [selectedSession]);
   const visibleTreeNodes = useMemo(
@@ -190,10 +199,62 @@ export function PawOsFilesApp() {
     treeItemRefs.current.get(path)?.focus();
   }
 
+  function treeHidden(): boolean {
+    const tree = treeRef.current;
+    return Boolean(tree) && window.getComputedStyle(tree).display === 'none';
+  }
+
+  function goBackToTree(): void {
+    if (!selectedFile) return;
+    returnFocusPathRef.current = selectedFile.path;
+    setSelectedFile(null);
+  }
+
+  async function copySelectedPath(): Promise<void> {
+    if (!selectedFile) return;
+    try {
+      await writeClipboardText(selectedFile.path);
+      setCopiedPathFor(selectedFile.path);
+      window.setTimeout(() => setCopiedPathFor((current) => current === selectedFile.path ? '' : current), 1_500);
+    } catch {
+      // The full path remains available through the row/header title when the
+      // clipboard is denied; the inspection flow is never blocked by copy.
+    }
+  }
+
+  // When the narrow layout swaps the tree for the reader, focus travels with
+  // the content; going back restores focus to the row that opened the file.
+  useEffect(() => {
+    if (selectedFile && treeHidden()) backButtonRef.current?.focus();
+  }, [selectedFile]);
+
+  useEffect(() => {
+    if (selectedFile) return;
+    const path = returnFocusPathRef.current;
+    if (!path) return;
+    returnFocusPathRef.current = '';
+    focusTreeItem(path);
+  });
+
   function onTreeKeyDown(event: KeyboardEvent<HTMLButtonElement>, path: string): void {
     const index = visibleTreeNodes.findIndex((node) => node.path === path);
     const node = visibleTreeNodes[index];
     if (!node) return;
+
+    if (event.key.length === 1 && event.key !== ' ' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const now = Date.now();
+      const buffer = now - typeaheadRef.current.at < 700 ? typeaheadRef.current.text + event.key : event.key;
+      typeaheadRef.current = { text: buffer, at: now };
+      const query = (/^(.)\1+$/.test(buffer) ? buffer.charAt(0) : buffer).toLowerCase();
+      const ordered = [...visibleTreeNodes.slice(index + 1), ...visibleTreeNodes.slice(0, index + 1)];
+      const match = ordered.find((candidate) => pathName(candidate.path).toLowerCase().startsWith(query));
+      if (match) {
+        event.preventDefault();
+        focusTreeItem(match.path);
+      }
+      return;
+    }
+
     let nextPath = '';
 
     if (event.key === 'ArrowDown') nextPath = visibleTreeNodes[Math.min(index + 1, visibleTreeNodes.length - 1)]?.path ?? '';
@@ -224,16 +285,18 @@ export function PawOsFilesApp() {
       <ul role="group">
         {entries[parent].map((entry) => {
           const directory = entry.kind === 'directory';
+          const symlink = entry.kind === 'symlink';
           const open = directory && expanded.has(entry.path);
           return (
             <li key={entry.path} role="none">
               <button
                 aria-expanded={directory ? open : undefined}
-                aria-label={directory ? `${open ? '收起' : '展开'}目录 ${entry.name}` : `打开文件 ${entry.name}`}
+                aria-label={directory ? `${open ? '收起' : '展开'}目录 ${entry.name}` : symlink ? `打开符号链接 ${entry.name}` : `打开文件 ${entry.name}`}
                 aria-level={depth + 1}
                 aria-selected={!directory ? entry.path === selectedFile?.path : undefined}
                 className="paw-files-tree__row"
                 data-ext={directory ? undefined : fileExtension(entry.name) || undefined}
+                data-kind={symlink ? 'symlink' : undefined}
                 data-selected={!directory && entry.path === selectedFile?.path || undefined}
                 onClick={() => directory ? toggleDirectory(entry.path) : setSelectedFile(entry)}
                 onFocus={() => setTreeFocusPath(entry.path)}
@@ -249,7 +312,7 @@ export function PawOsFilesApp() {
                 type="button"
               >
                 {directory ? <ChevronRight data-open={open || undefined} size={14} /> : <span />}
-                {directory ? (open ? <FolderOpen size={16} /> : <Folder size={16} />) : fileIcon(entry.name)}
+                {directory ? (open ? <FolderOpen size={16} /> : <Folder size={16} />) : symlink ? <FileSymlink size={16} /> : fileIcon(entry.name)}
                 <span>{entry.name}</span>
                 {entry.byteSize !== undefined ? <small>{formatBytes(entry.byteSize)}</small> : null}
               </button>
@@ -286,7 +349,7 @@ export function PawOsFilesApp() {
         {windowChromeTarget ? null : filesTools}
         {sessionError ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionError}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}
         <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined}>
-        <aside className="paw-files-tree" aria-label="Session 授权工作区">
+        <aside className="paw-files-tree" aria-label="Session 授权工作区" ref={treeRef}>
           {sessionsLoading ? <TreeState loading>正在读取 Session…</TreeState> : null}
           {!sessionsLoading && !roots.length ? <TreeState>这个 Session 还没有绑定工作区。</TreeState> : null}
           {roots.length ? (
@@ -320,17 +383,31 @@ export function PawOsFilesApp() {
             </ul></nav>
           ) : null}
         </aside>
-        <main className="paw-files-preview">
+        <main className="paw-files-preview" onKeyDown={(event) => { if (event.key === 'Escape' && treeHidden()) goBackToTree(); }}>
           {!selectedFile ? (
-            <div className="paw-files-preview__empty"><FileCode2 size={30} /><strong>选择文件</strong></div>
+            <div className="paw-files-preview__empty">
+              <FileCode2 size={30} />
+              <strong>选择文件</strong>
+              <span>从目录树选择一个文件，在这里阅读代码、Markdown、diff 或网页。</span>
+            </div>
           ) : (
             <>
               <header key={`header:${selectedFile.path}`}>
-                <button aria-label="返回文件列表" className="paw-files-preview__back" onClick={() => setSelectedFile(null)} type="button"><ChevronLeft size={15} /></button>
+                <button aria-label="返回文件列表" className="paw-files-preview__back" onClick={goBackToTree} ref={backButtonRef} type="button"><ChevronLeft size={15} /></button>
                 <div>
                   <h2 title={pathName(selectedFile.path)}>{pathName(selectedFile.path)}</h2>
                   <small title={selectedFile.path}>{fileExtension(selectedFile.name).toUpperCase() || '文件'}{selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''} · {selectedFile.path}</small>
                 </div>
+                <button
+                  aria-label={copiedPathFor === selectedFile.path ? '已复制文件路径' : '复制文件路径'}
+                  className="paw-files-preview__copy"
+                  data-copied={copiedPathFor === selectedFile.path || undefined}
+                  onClick={() => void copySelectedPath()}
+                  title={copiedPathFor === selectedFile.path ? '已复制完整路径' : '复制完整路径'}
+                  type="button"
+                >
+                  {copiedPathFor === selectedFile.path ? <Check size={14} /> : <Copy size={14} />}
+                </button>
                 {preview?.truncated ? <em>前 64 KB</em> : null}
               </header>
               <div className="paw-files-preview__body" key={`body:${selectedFile.path}`}>

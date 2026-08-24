@@ -297,6 +297,8 @@ function referenceStatusLabel(status: string, kind: MemoryReferenceKind): string
     approved: '已确认',
     archived: '已归档',
     superseded: '历史版本',
+    conflict: '有冲突',
+    conflicted: '有冲突',
     tombstoned: '已移除',
     not_for_memory: '已遗忘',
     forgotten: '已遗忘',

@@ -945,6 +945,12 @@ function formatStatus(status: string): string {
     active: '使用中',
     approved: '已确认',
     archived: '已归档',
+    hidden: '历史保留',
+    superseded: '已合并',
+    conflict: '有冲突',
+    conflicted: '有冲突',
+    not_for_memory: '已遗忘',
+    forgotten: '已遗忘',
     disabled: '已暂停',
     suppressed: '已抑制',
   }[status] ?? '状态未知';

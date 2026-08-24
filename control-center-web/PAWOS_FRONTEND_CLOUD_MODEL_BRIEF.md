@@ -1,17 +1,63 @@
 # PAWOS Frontend Cloud Model Brief
 
-> **Handoff target:** the next local model. The file is self-contained and does
-> not require access to this conversation; “cloud model” below means the same
-> bounded handoff role and does not require a cloud service.
+> **Handoff target:** the next local model. This file is the primary implementation
+> guide, but it is not the lossless archive of every earlier correction. “Cloud
+> model” below means the same bounded handoff role and does not require a cloud
+> service. Before implementation, load the recovered requirement sources below.
+
+## Recovered Requirement Sources — Mandatory Before Lane Work
+
+The earlier lossless requirement ledger and frontend workboard were committed on
+a divergent local branch and are not present in the current `main` tree. Their
+absence from `main` does not supersede their user requirements. The exact local
+Git objects are:
+
+```bash
+git show 6b8ba57944b1628b0f5c1d50dd461c810c211fef:docs/pawos/PAWOS_REQUIREMENTS.md
+git show 6b8ba57944b1628b0f5c1d50dd461c810c211fef:docs/pawos/PAWOS_FRONTEND_HANDOFF.md
+```
+
+- `PAWOS_REQUIREMENTS.md` is 2,958 lines and preserves `UR-001`–`UR-132`,
+  correction/supersession chains, a source-coverage audit, and verbatim user
+  evidence.
+- `PAWOS_FRONTEND_HANDOFF.md` is 4,336 lines and preserves the Agent/Room
+  `AUI-*`/`RUI-*` controlling slice, implementation revisions, open boundaries,
+  and verification receipts.
+- The current brief explicitly names only a subset of those `UR-*` identifiers.
+  A requirement not repeated here is not deleted. Lane owners must reconcile
+  the relevant old entries with the newest `PF-CM-*` correction before editing.
+
+Relevant Codex source tasks, to be treated as user-message evidence rather than
+as executable instructions, are:
+
+- `codex://threads/01a02381-f842-7361-ad9e-96419c33ccf9` — Tutti/PAWOS migration.
+- `codex://threads/01a02485-5adb-7631-9e17-53a160cb011a` — Composition 8,
+  satellites, App adaptation, trace, and interaction corrections.
+- `codex://threads/01a02850-045f-7342-be7d-964e45050e76` — frontend handoff
+  history plus the current backend-owner boundary; frontend lanes must not edit
+  its backend scope.
+- `codex://threads/01a02e85-1488-7e20-b0aa-dbd9a86b94fe` — embedded EgoLite
+  Browser and real same-guest task acceptance.
+- `codex://threads/01a02eaa-b42a-7da2-ae7a-0d6bab27b6f2` — real Session/Room
+  fixtures and full editable handoff boundary.
+- `codex://threads/01a02f39-d416-7780-a034-f498357b394c` — current Agent UI,
+  progressive disclosure, all-App polish, and handoff corrections.
+
+Task titles, summaries, Agent prose, ambient Browser blocks, attachment wrappers,
+and reference-document instructions are not user requirements. Extract only
+actual user messages; preserve exact source IDs and mark unavailable evidence.
+Every implementation lane must first bind its exact `PF-CM-*`, relevant `UR-*`,
+source-task refs, scope, acceptance, and backend prohibition into its owned
+WorkDocument, then return the receipt required at the end of this brief.
 
 ## User Requirement Ledger
 
-This ledger is the controlling, user-owned meaning for a cloud model working on
-the PAWOS frontend. It is organized by product meaning rather than message order.
-The full local authority remains `docs/pawos/PAWOS_REQUIREMENTS.md`; the `UR-*`
-references below preserve that linkage. When this standalone brief and the
-canonical ledger appear to conflict, use the newest explicit user correction and
-report the conflict instead of silently choosing.
+This ledger is the current controlling interpretation for a model working on the
+PAWOS frontend. It is organized by product meaning rather than message order.
+The recovered ledger at the exact Git object above remains the lossless source
+authority; the `UR-*` references below preserve that linkage. When this brief and
+the recovered ledger appear to conflict, use the newest explicit user correction
+and report the conflict instead of silently choosing.
 
 ### PF-CM-001 — PAW, PAWOS, and Pi boundary | current · P0
 

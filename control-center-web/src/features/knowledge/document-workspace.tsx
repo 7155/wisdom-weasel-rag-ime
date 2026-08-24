@@ -123,7 +123,7 @@ export function KnowledgeMaterialsPanel({
               )}
             />
           </div>
-          <DocumentSummary detail={detail} document={selected} error={detailError} loading={detailLoading} />
+          <DocumentSummary detail={detail} document={selected} error={detailError} loading={detailLoading} onReparse={onReparse} reparsePending={Boolean(selected && pendingDocumentId === selected.id)} />
         </div>
       ) : (
         <EmptyState action={<Button leadingIcon={<Upload size={15} />} loading={importing} onClick={onImport}>导入文件</Button>} description="导入后，文件会在这里排队解析并进入可检索目录。" icon={FileText} title="还没有资料" />
@@ -153,11 +153,12 @@ function UploadQueue({ items, onClear, onRetry }: { items: readonly KnowledgeUpl
   );
 }
 
-function DocumentSummary({ detail, document, error, loading }: { detail: KnowledgeDocumentDetail | null; document: KnowledgeDocument | null; error: Error | null; loading: boolean }) {
+function DocumentSummary({ detail, document, error, loading, onReparse, reparsePending }: { detail: KnowledgeDocumentDetail | null; document: KnowledgeDocument | null; error: Error | null; loading: boolean; onReparse: (document: KnowledgeDocument, trigger: HTMLElement) => void; reparsePending: boolean }) {
   if (!document) return null;
   return (
     <aside className="knowledge-document-summary" aria-label={`${document.name} 元数据`}>
       <header><FileText size={17} /><div><strong>{document.name}</strong><span>{fileFormatLabel(document.mimeType)}</span></div></header>
+      <DocumentPipeline document={document} onReparse={onReparse} reparsePending={reparsePending} />
       {loading ? <p className="knowledge-detail-loading">正在读取材料详情…</p> : null}
       {error ? <InlineNotice title="详情暂不可用" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}
       <dl>
@@ -169,13 +170,122 @@ function DocumentSummary({ detail, document, error, loading }: { detail: Knowled
         <div><dt>更新时间</dt><dd>{formatTime(document.updatedAtMs)}</dd></div>
       </dl>
       <Disclosure className="knowledge-document-summary__advanced" summary="高级：材料详情"><dl><div><dt>文件格式</dt><dd>{document.mimeType || '未提供'}</dd></div><div><dt>解析版本</dt><dd>{document.parserVersion || '未提供'}</dd></div><div><dt>内容容量</dt><dd>{document.tokenCount || '未提供'}</dd></div><div><dt>内容指纹</dt><dd>{shortHash(document.sha256)}</dd></div></dl></Disclosure>
-      {document.error ? <p className="knowledge-document-summary__error">{document.error}</p> : null}
       <div className="knowledge-document-summary__counts">
         <span><FileImage size={13} />{detail?.assets.length ?? 0} 个图片/附件</span>
         <span><Table2 size={13} />{detail?.tables.length ?? 0} 个表格</span>
       </div>
     </aside>
   );
+}
+
+type PipelineStageState = 'done' | 'active' | 'waiting' | 'failed' | 'stale';
+
+interface PipelineStage {
+  id: 'received' | 'parse' | 'chunk' | 'index' | 'ready';
+  label: string;
+  state: PipelineStageState;
+}
+
+function DocumentPipeline({
+  document,
+  onReparse,
+  reparsePending,
+}: {
+  document: KnowledgeDocument;
+  onReparse: (document: KnowledgeDocument, trigger: HTMLElement) => void;
+  reparsePending: boolean;
+}) {
+  const stages = pipelineStages(document);
+  const activeStage = stages.find((stage) => stage.state === 'active');
+  const progressPercent = activeStage && document.progress > 0 && document.progress < 1
+    ? Math.round(document.progress * 100)
+    : null;
+  const recoverable = document.status === 'failed' || document.status === 'stale';
+  return (
+    <div className="knowledge-pipeline" data-status={document.status}>
+      <ol aria-label={`${document.name} 处理流水线`} className="knowledge-pipeline__stages">
+        {stages.map((stage, index) => (
+          <li aria-current={stage.state === 'active' ? 'step' : undefined} data-state={stage.state} key={stage.id}>
+            {index > 0 ? <i aria-hidden="true" className="knowledge-pipeline__link" /> : null}
+            <span aria-hidden="true" className="knowledge-pipeline__dot" />
+            <span className="knowledge-pipeline__label">
+              {stage.label}
+              {stage === activeStage && progressPercent !== null ? <b>{progressPercent}%</b> : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <p className="knowledge-pipeline__note">{pipelineNote(document)}</p>
+      {recoverable ? (
+        <div className="knowledge-pipeline__recovery">
+          {document.status === 'failed' && document.error ? (
+            <span className="knowledge-document-summary__error" role="alert">{document.error}</span>
+          ) : null}
+          <Button
+            disabled={reparsePending}
+            leadingIcon={<RotateCcw size={13} />}
+            loading={reparsePending}
+            onClick={(event) => onReparse(document, event.currentTarget)}
+            size="small"
+            variant="quiet"
+          >
+            {document.status === 'stale' ? '重新解析以重建' : '重新解析'}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function pipelineStages(document: KnowledgeDocument): PipelineStage[] {
+  const base: PipelineStage[] = [
+    { id: 'received', label: '接收', state: 'done' },
+    { id: 'parse', label: '解析', state: 'waiting' },
+    { id: 'chunk', label: '切分', state: 'waiting' },
+    { id: 'index', label: '索引', state: 'waiting' },
+    { id: 'ready', label: '可检索', state: 'waiting' },
+  ];
+  const set = (states: Partial<Record<PipelineStage['id'], PipelineStageState>>) => (
+    base.map((stage) => ({ ...stage, state: states[stage.id] ?? stage.state }))
+  );
+  const stageText = (document.stage || document.status).toLowerCase();
+  const reachedIndex = stageText.includes('index') || stageText.includes('embed') || document.chunkCount > 0;
+  switch (document.status) {
+    case 'ready':
+      return set({ parse: 'done', chunk: 'done', index: 'done', ready: 'done' });
+    case 'stale':
+      return set({ parse: 'done', chunk: 'done', index: 'stale', ready: 'stale' });
+    case 'failed':
+      return reachedIndex
+        ? set({ parse: 'done', chunk: 'done', index: 'failed' })
+        : set({ parse: 'failed' });
+    case 'indexing':
+      return set({ parse: 'done', chunk: 'done', index: 'active' });
+    case 'parsing':
+      return set({ parse: 'active' });
+    default:
+      return set({});
+  }
+}
+
+function pipelineNote(document: KnowledgeDocument): string {
+  const percent = document.progress > 0 && document.progress < 1 ? `，已完成 ${Math.round(document.progress * 100)}%` : '';
+  switch (document.status) {
+    case 'ready':
+      return '解析与索引已完成，这份材料可以检索。';
+    case 'stale':
+      return '内容已解析；切分或检索配置已更新，重建完成前检索仍使用现有索引。';
+    case 'failed':
+      return (document.stage || '').toLowerCase().includes('index') || document.chunkCount > 0
+        ? '索引没有完成；重新解析会重新生成段落与索引。'
+        : '解析没有完成；重新解析会从现有文件重新开始。';
+    case 'indexing':
+      return `正在写入检索索引${percent}。`;
+    case 'parsing':
+      return `正在解析内容${percent}。`;
+    default:
+      return '已接收，排队等待解析。';
+  }
 }
 
 export function KnowledgeDocumentViewer({

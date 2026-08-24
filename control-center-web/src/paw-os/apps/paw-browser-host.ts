@@ -60,6 +60,8 @@ export type PawBrowserWebview = HTMLElement & {
   getZoomFactor(): number;
   goBack(): void;
   goForward(): void;
+  isCrashed(): boolean;
+  isLoading(): boolean;
   findInPage(text: string, options?: { findNext?: boolean; forward?: boolean }): number;
   loadURL(url: string): Promise<void>;
   print(): void;
@@ -68,6 +70,21 @@ export type PawBrowserWebview = HTMLElement & {
   stop(): void;
   stopFindInPage(action: 'clearSelection' | 'keepSelection' | 'activateSelection'): void;
 };
+
+export type PawBrowserGuestFailLoadEvent = Event & {
+  errorCode: number;
+  errorDescription: string;
+  validatedURL: string;
+  isMainFrame: boolean;
+};
+
+export type PawBrowserGuestFoundInPageEvent = Event & {
+  result?: { activeMatchOrdinal?: number; matches?: number; finalUpdate?: boolean };
+};
+
+export type PawBrowserGuestProcessGoneEvent = Event & { reason?: string };
+
+export type PawBrowserGuestFaviconEvent = Event & { favicons?: string[] };
 
 export function pawBrowserHost(): PawBrowserHost | null {
   const host = window.pawBrowserHost;

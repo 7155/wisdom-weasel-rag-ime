@@ -1027,7 +1027,7 @@
   font-weight: 650;
 }
 
-.memory-curation__verified-batch {
+.memory-curation__batch-bound {
   display: flex;
   width: 100%;
   min-height: 34px;
@@ -2107,7 +2107,7 @@
   .memory-curation__actions { flex-wrap: wrap; }
   .memory-curation__progress-card { align-items: stretch; grid-template-columns: 1fr; }
   .memory-curation__runner { grid-column: auto; grid-template-columns: 1fr; }
-  .memory-curation__verified-batch { min-height: 44px; }
+  .memory-curation__batch-bound { min-height: 44px; }
   .memory-curation__progress-dates { align-items: flex-start; flex-direction: column; }
   .memory-curation__days li > button { grid-template-columns: minmax(104px, .8fr) auto; }
   .memory-curation__day-apps { grid-column: 1 / -1; grid-row: 2; }

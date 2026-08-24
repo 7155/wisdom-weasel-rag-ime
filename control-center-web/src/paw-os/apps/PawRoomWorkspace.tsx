@@ -111,6 +111,9 @@ export function PawRoomWorkspace({
     () => record ? buildRoomFocusProjection(record, projection) : undefined,
     [projection, record],
   );
+  const participantAliases = useMemo(() => Object.fromEntries(
+    focusProjection?.partners.map((partner) => [partner.participantId, partner.celestialName]) ?? [],
+  ), [focusProjection]);
   const turnOrder = useRoomLiveStore(useShallow((state) => {
     const current = state.projections[recordId];
     return current ? selectPublicRoomTurnOrder(current) : [];
@@ -176,9 +179,15 @@ export function PawRoomWorkspace({
       return false;
     }
     const clientMessageId = `paw-room-${crypto.randomUUID()}`;
+    /* The composer writes the visible planet name (@Mars); resolving it back
+     * through the same alias map is what submits the stable Runtime ID. */
     const addressed = answersQuestion
       ? []
-      : roomMentionedParticipants(record.participants.filter((item) => item.status === 'active'), message);
+      : roomMentionedParticipants(
+        record.participants.filter((item) => item.status === 'active'),
+        message,
+        participantAliases,
+      );
     const selectedAttachments = answersQuestion ? [] : attachments;
     setSending(true);
     if (!options.preserveDraft) setDraft('');
@@ -311,9 +320,6 @@ export function PawRoomWorkspace({
 
   const title = record?.title || '未命名 Room';
   const activeParticipants = record?.participants.filter((participant) => participant.status === 'active') ?? [];
-  const participantAliases = useMemo(() => Object.fromEntries(
-    focusProjection?.partners.map((partner) => [partner.participantId, partner.celestialName]) ?? [],
-  ), [focusProjection]);
   const activeTopic = record?.topics?.find((topic) => topic.id === record.activeTopicId)
     ?? record?.topics?.find((topic) => topic.status === 'active');
   const activeRootId = activeTurn?.rootId ?? activeTurn?.id ?? '';
@@ -371,6 +377,7 @@ export function PawRoomWorkspace({
           <span data-tone="active"><i />{focusProjection.counts.active} 进行</span>
           <span data-tone="review"><i />{focusProjection.counts.review} 复核</span>
           <span data-tone="blocked"><i />{focusProjection.counts.blocked} 受阻</span>
+          <span data-tone="complete"><i />{focusProjection.counts.completed} 完成</span>
         </div> : null}
       </section>
 
@@ -1003,11 +1010,6 @@ function asWorkItem(value: unknown): RoomWorkItem | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-/** WorkItem 状态条短词：状态点颜色 + 文字双编码，不只靠颜色。 */
-function roomWorkItemStateLabel(state: string): string {
-  return ({ queued: '排队', active: '进行中', review: '复核', blocked: '阻塞', done: '完成' } as Record<string, string>)[state] || state;
 }
 
 function participantName(room: RoomSummary | undefined, participantId: string): string {

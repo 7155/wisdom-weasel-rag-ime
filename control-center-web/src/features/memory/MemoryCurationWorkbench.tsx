@@ -160,8 +160,8 @@ export function MemoryCurationWorkbench({
                 </div>
                 <div className="memory-curation__runner">
                   <label>
-                    <span>本轮来源数</span>
-                    <strong className="memory-curation__verified-batch">4 条 · 已验证</strong>
+                    <span>每轮整理上限</span>
+                    <strong className="memory-curation__batch-bound">每轮最多 {batchSize} 条来源</strong>
                   </label>
                   <Button
                     disabled={startBlocked}

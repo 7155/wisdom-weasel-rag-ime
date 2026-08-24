@@ -1354,6 +1354,7 @@ function memoryStatusOptions(kind: MemoryKind) {
     { value: 'archived', label: '已归档' },
     { value: 'hidden', label: '历史保留' },
     { value: 'superseded', label: '已合并' },
+    { value: 'conflict', label: '有冲突' },
     { value: 'source_archive', label: '碎片证据' },
     { value: 'disabled', label: '已暂停' },
     { value: 'suppressed', label: '已抑制' },
@@ -1376,8 +1377,12 @@ function statusLabel(status: string): string {
     pending: '待整理',
     remember: '值得保留',
     not_for_memory: '已遗忘',
+    forgotten: '已遗忘',
     needs_review: '待判断',
     consolidated: '已整理为记忆',
+    conflict: '有冲突',
+    conflicted: '有冲突',
+    redacted: '已脱敏',
     expired: '已过期',
   }[status] ?? '状态未知';
 }
@@ -1394,8 +1399,8 @@ function catalogStatusTone(kind: MemoryKind, status: string): 'success' | 'warni
 
 function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (status === 'active' || status === 'current' || status === 'approved' || status === 'consolidated') return 'success';
-  if (status === 'archived' || status === 'hidden' || status === 'source_archive' || status === 'inactive' || status === 'not_for_memory' || status === 'expired') return 'info';
-  if (status === 'disabled' || status === 'suppressed' || status === 'pending' || status === 'needs_review' || status === 'remember') return 'warning';
+  if (status === 'archived' || status === 'hidden' || status === 'source_archive' || status === 'inactive' || status === 'not_for_memory' || status === 'forgotten' || status === 'expired') return 'info';
+  if (status === 'disabled' || status === 'suppressed' || status === 'pending' || status === 'needs_review' || status === 'remember' || status === 'redacted' || status === 'conflict' || status === 'conflicted') return 'warning';
   if (status === 'tombstoned') return 'danger';
   return 'neutral';
 }

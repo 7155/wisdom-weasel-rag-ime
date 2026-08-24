@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  ArrowRight,
   BookOpen,
   Database,
   ExternalLink,
@@ -772,6 +773,44 @@ function relevanceLabel(score: number | null, detailed = true): string {
   return detailed ? '较低' : '较低';
 }
 
+interface SettingsDraftChange {
+  label: string;
+  current: string;
+  proposed: string;
+}
+
+function SettingsDraftDiff({ changes, effect }: { changes: readonly SettingsDraftChange[]; effect?: string }) {
+  if (!changes.length) return null;
+  return (
+    <div className="knowledge-settings__draft" role="status">
+      <strong>未保存的更改</strong>
+      <ul>
+        {changes.map((change) => (
+          <li key={change.label}>
+            <span>{change.label}</span>
+            <span className="knowledge-settings__draft-values">
+              <s>{change.current}</s>
+              <ArrowRight aria-hidden size={12} />
+              <b>{change.proposed}</b>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {effect ? <p>{effect}</p> : null}
+    </div>
+  );
+}
+
+function settingsDraftChanges(entries: readonly [string, string, string][]): SettingsDraftChange[] {
+  return entries
+    .filter(([, current, proposed]) => current !== proposed)
+    .map(([label, current, proposed]) => ({ label, current, proposed }));
+}
+
+function yesNoLabel(value: boolean): string {
+  return value ? '开启' : '关闭';
+}
+
 function KnowledgeSettingsPanel({
   base,
   chunkPreview,
@@ -853,6 +892,31 @@ function KnowledgeSettingsPanel({
     }
   }, [documents, previewDocumentId]);
   const visibleChunkPreview = chunkPreview?.documentId === previewDocumentId ? chunkPreview : null;
+  const infoChanges = settingsDraftChanges([
+    ['名称', base.name, name.trim()],
+    ['说明', base.description || '无', description.trim() || '无'],
+  ]);
+  const chunkingChanges = settingsDraftChanges([
+    ['策略', chunkingStrategyLabel(base.chunkingConfig.strategy), chunkingStrategyLabel(chunking.strategy)],
+    ['大小', String(base.chunkingConfig.size), String(chunking.size)],
+    ['重叠', String(base.chunkingConfig.overlap), String(chunking.overlap)],
+    ...(chunking.strategy === 'separator' || base.chunkingConfig.strategy === 'separator'
+      ? [['分隔符', base.chunkingConfig.separator || '未设置', chunking.separator || '未设置'] as [string, string, string]]
+      : []),
+    ['保留标题边界', yesNoLabel(base.chunkingConfig.respectHeadings), yesNoLabel(chunking.respectHeadings)],
+    ['保留页面边界', yesNoLabel(base.chunkingConfig.respectPageBoundaries), yesNoLabel(chunking.respectPageBoundaries)],
+  ]);
+  const retrievalChanges = settingsDraftChanges([
+    ['模式', retrievalModeLabel(base.retrievalConfig.mode), retrievalModeLabel(retrieval.mode)],
+    ['返回数量', String(base.retrievalConfig.topK), String(retrieval.topK)],
+    ['最低相关度', base.retrievalConfig.threshold.toFixed(2), retrieval.threshold.toFixed(2)],
+    ['关键词权重', String(base.retrievalConfig.lexicalWeight), String(retrieval.lexicalWeight)],
+    ['向量权重', String(base.retrievalConfig.denseWeight), String(retrieval.denseWeight)],
+    ['图谱增强', yesNoLabel(base.retrievalConfig.graphEnabled), yesNoLabel(retrieval.graphEnabled)],
+    ['关系权重', String(base.retrievalConfig.graphWeight), String(retrieval.graphWeight)],
+    ['融合系数', String(base.retrievalConfig.rrfK), String(retrieval.rrfK)],
+    ['候选范围', String(base.retrievalConfig.candidateMultiplier), String(retrieval.candidateMultiplier)],
+  ]);
   return (
     <div className="knowledge-panel knowledge-settings">
       {updateError ? <InlineNotice title="设置没有保存" tone="warning">{publicErrorText(updateError, '知识库仍使用保存前的配置。')}</InlineNotice> : null}
@@ -862,6 +926,7 @@ function KnowledgeSettingsPanel({
           <Field htmlFor="knowledge-base-settings-name" label="名称"><Input id="knowledge-base-settings-name" maxLength={120} onChange={(event) => setName(event.target.value)} value={name} /></Field>
           <Field htmlFor="knowledge-base-settings-description" label="说明"><Input id="knowledge-base-settings-description" maxLength={1_000} onChange={(event) => setDescription(event.target.value)} value={description} /></Field>
         </div>
+        <SettingsDraftDiff changes={infoChanges} />
         <div className="knowledge-settings__actions"><Button disabled={pending || !name.trim() || (name.trim() === base.name && description.trim() === base.description)} loading={pending} onClick={() => onSaveInfo(name.trim(), description.trim())} size="small" variant="primary">保存基本信息</Button></div>
       </section>
       <div className="knowledge-settings-grid">
@@ -895,6 +960,7 @@ function KnowledgeSettingsPanel({
         </div>
         {chunkPreviewError ? <InlineNotice title="切分预览失败" tone="warning">{publicErrorText(chunkPreviewError, '请确认材料已经完成解析。')}</InlineNotice> : null}
         {visibleChunkPreview ? <div className="knowledge-chunk-preview"><header><strong>{visibleChunkPreview.total} 个段落</strong><span>显示前 {visibleChunkPreview.chunks.length} 个</span></header><div>{visibleChunkPreview.chunks.map((chunk) => <article key={chunk.id}><b>#{chunk.ordinal + 1}{chunk.page ? ` · 第 ${chunk.page} 页` : ''}</b><p>{publicKnowledgeText(chunk.content)}</p></article>)}</div></div> : null}
+        <SettingsDraftDiff changes={chunkingChanges} effect="保存后，新导入的材料按新切分处理；已有材料进入待重建，重建完成前检索仍使用现有段落。" />
         <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(chunkingError) || equalConfig(chunking, base.chunkingConfig)} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button></div>
       </section>
       <section>
@@ -919,6 +985,7 @@ function KnowledgeSettingsPanel({
           </div>
         </Disclosure>
         {retrievalError ? <p className="knowledge-inline-error" role="alert">{retrievalError}</p> : null}
+        <SettingsDraftDiff changes={retrievalChanges} effect="保存后从下一次检索开始生效，不需要重建索引。" />
         <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button></div>
       </section>
       <KnowledgeEmbeddingSettings

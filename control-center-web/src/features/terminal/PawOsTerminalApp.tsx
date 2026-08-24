@@ -55,7 +55,10 @@ export function PawOsTerminalApp() {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Xterm | null>(null);
   const terminalTabRefs = useRef(new Map<string, HTMLButtonElement>());
-  const autoCreated = useRef(false);
+  const emptyCreateRef = useRef<HTMLButtonElement | null>(null);
+  const initialLoadHandled = useRef(false);
+  const restoreTabFocusRef = useRef(false);
+  const selectedStatusRef = useRef<TerminalState>('running');
 
   const sessionsQuery = useQuery({
     queryKey: terminalKeys.root,
@@ -85,18 +88,34 @@ export function PawOsTerminalApp() {
     onSuccess: invalidate,
   });
 
+  // A shell is created only when the very first load finds no sessions at all.
+  // Refetches, reconnects, and tab closes never invent a new session identity.
   useEffect(() => {
-    if (autoCreated.current) return;
-    if (!sessionsQuery.isPending && !sessions.some((item) => item.status === 'running')) {
-      autoCreated.current = true;
-      void create.mutateAsync();
-    }
+    if (sessionsQuery.isPending || initialLoadHandled.current) return;
+    initialLoadHandled.current = true;
+    if (!sessions.length) create.mutate();
   }, [create, sessions, sessionsQuery.isPending]);
 
   useEffect(() => {
     if (!sessions.length) return;
     setSelectedId((current) => sessions.some((item) => item.terminalId === current) ? current : sessions.at(-1)?.terminalId ?? '');
   }, [sessions]);
+
+  useEffect(() => {
+    selectedStatusRef.current = selected?.status ?? 'running';
+  }, [selected?.status]);
+
+  // Closing a tab unmounts the focused control; hand focus to the surviving
+  // selected tab, or to the empty-state create action when none survive.
+  useEffect(() => {
+    if (!restoreTabFocusRef.current) return;
+    restoreTabFocusRef.current = false;
+    if (!selectedId) {
+      emptyCreateRef.current?.focus();
+      return;
+    }
+    terminalTabRefs.current.get(selectedId)?.focus();
+  }, [selectedId, sessions]);
 
   useEffect(() => {
     setCursor(0);
@@ -117,7 +136,7 @@ export function PawOsTerminalApp() {
       lineHeight: 1.2,
       scrollback: 20_000,
       theme: {
-        background: '#111214', foreground: '#e6e7ea', cursor: '#f4f4f5', selectionBackground: '#3b82f655',
+        background: '#101216', foreground: '#d7dbe2', cursor: '#f4f4f5', selectionBackground: '#79c56e3d',
         black: '#27272a', red: '#f87171', green: '#34d399', yellow: '#fbbf24', blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#f4f4f5',
         brightBlack: '#71717a', brightRed: '#fca5a5', brightGreen: '#6ee7b7', brightYellow: '#fde68a', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#ffffff',
       },
@@ -135,7 +154,12 @@ export function PawOsTerminalApp() {
       const text = pendingInput;
       pendingInput = '';
       if (!text) return;
+      if (selectedStatusRef.current !== 'running') {
+        setInteractionError('这个终端已退出，输入没有发送。');
+        return;
+      }
       void transport.request({ pathId: 'terminal.session.write', body: { terminalId: selectedId, text } })
+        .then(() => setInteractionError(''))
         .catch((error: unknown) => setInteractionError(publicError(error)));
     };
     const dataSubscription = terminal.onData((data) => {
@@ -242,7 +266,10 @@ export function PawOsTerminalApp() {
                 aria-label={`结束终端会话 ${title}`}
                 className="paw-tab-close"
                 disabled={close.isPending}
-                onClick={() => void close.mutateAsync(terminal.terminalId)}
+                onClick={() => {
+                  restoreTabFocusRef.current = true;
+                  void close.mutateAsync(terminal.terminalId);
+                }}
                 title={`结束终端会话 ${title}`}
                 type="button"
               >
@@ -267,7 +294,13 @@ export function PawOsTerminalApp() {
         <h1 className="sr-only">Terminal</h1>
         {windowChromeTarget ? null : terminalTabs}
 
-        {error || interactionError ? <div className="paw-terminal-error" role="alert"><TriangleAlert size={15} /><span>{interactionError || publicError(error)}</span></div> : null}
+        {error || interactionError ? (
+          <div className="paw-terminal-error" role="alert">
+            <TriangleAlert size={15} />
+            <span>{interactionError || publicError(error)}</span>
+            {interactionError ? <button aria-label="关闭错误提示" onClick={() => setInteractionError('')} type="button"><X size={13} /></button> : null}
+          </div>
+        ) : null}
 
         <div className="paw-terminal-app__workspace">
           <main
@@ -277,7 +310,13 @@ export function PawOsTerminalApp() {
             id={terminalPanelId}
             role={selected ? 'tabpanel' : undefined}
           >
-            {selected ? <div aria-label="终端输入输出" className="paw-terminal-xterm" onClick={() => terminalRef.current?.focus()} ref={terminalHostRef} /> : <div className="paw-terminal-console__empty"><p>还没有终端会话</p><button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate()} type="button">{create.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Plus size={14} />}{create.isPending ? '正在创建' : '新建终端'}</button></div>}
+            {sessionsQuery.isPending ? (
+              <div className="paw-terminal-console__empty" data-loading role="status"><LoaderCircle className="ui-spin" size={15} /><p>正在读取终端会话…</p></div>
+            ) : selected ? (
+              <div aria-label="终端输入输出" className="paw-terminal-xterm" onClick={() => terminalRef.current?.focus()} ref={terminalHostRef} />
+            ) : (
+              <div className="paw-terminal-console__empty"><p>还没有终端会话</p><button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate()} ref={emptyCreateRef} type="button">{create.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Plus size={14} />}{create.isPending ? '正在创建' : '新建终端'}</button></div>
+            )}
             {selected ? (
               <footer className="paw-terminal-statusbar">
                 <span className="paw-terminal-cwd" title={selected.cwd}><Folder size={11} />{selected.cwd}</span>
@@ -292,7 +331,7 @@ export function PawOsTerminalApp() {
                 <span className="paw-terminal-state-tag">
                   {selected.status === 'running'
                     ? <span className="paw-terminal-running-badge"><i aria-hidden="true" />运行中</span>
-                    : <span className="paw-terminal-exited-badge">已退出 ({selected.exitCode ?? 0})</span>}
+                    : <span className="paw-terminal-exited-badge">{selected.status === 'closed' ? '已关闭' : `已退出${selected.exitCode !== null ? ` (${selected.exitCode})` : ''}`}</span>}
                 </span>
               </footer>
             ) : null}

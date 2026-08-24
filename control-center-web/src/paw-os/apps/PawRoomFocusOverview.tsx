@@ -152,7 +152,7 @@ export function PawRoomFocusOverview({
               return (
                 <li data-state={handoff.state} key={handoff.id}>
                   <span><strong>{source?.celestialName ?? 'Sol'} → {target?.celestialName ?? '伙伴'}</strong><small>{handoff.task || handoff.artifactOrContract || '工作项交接'}</small></span>
-                  <i aria-hidden="true" />
+                  <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusHandoffStateLabel(handoff.state)}</span>
                 </li>
               );
             })}
@@ -217,6 +217,16 @@ function FocusInspector({
       ) : null}
     </section>
   );
+}
+
+function roomFocusHandoffStateLabel(state: RoomFocusProjection['handoffs'][number]['state']): string {
+  return ({
+    offered: '待接收',
+    dispatched: '已分派',
+    completed: '已交付',
+    failed: '需要关注',
+    stopped: '已停止',
+  } as const)[state];
 }
 
 function defaultFocusSelection(focus: RoomFocusProjection): FocusSelection {

@@ -7,12 +7,17 @@
  */
 
 .paw-desktop-root .paw-room-workspace--migrated-v1 {
-  --room-violet: #2783de;
-  --room-violet-soft: rgb(39 131 222 / .1);
-  --room-blue: #2783de;
-  --room-green: #1f9d4d;
-  --room-amber: #b26a00;
-  --room-red: #cd3c3a;
+  /* Sol identity accent, then the shared Room status language: queued
+   * grey-blue, running blue, waiting amber, review violet, complete green,
+   * failed red. Every state below pairs these with a text label. */
+  --room-accent: #2783de;
+  --room-accent-soft: rgb(39 131 222 / .1);
+  --room-queued: #7d8ba1;
+  --room-running: #2783de;
+  --room-waiting: #b26a00;
+  --room-review: #7956e8;
+  --room-complete: #1f9d4d;
+  --room-failed: #cd3c3a;
   grid-template-rows: 44px auto minmax(0, 1fr);
   color: #2c2c2b;
   background: #f9f8f7;
@@ -53,9 +58,10 @@
 }
 
 .paw-desktop-root .paw-room-window-chrome {
-  --room-violet: #2783de;
-  --room-blue: #2783de;
-  --room-amber: #b26a00;
+  /* The chrome portals into the shared titlebar, outside the workspace
+   * element, so it redeclares the two status tokens it consumes. */
+  --room-running: #2783de;
+  --room-waiting: #b26a00;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -68,8 +74,8 @@
 }
 
 .paw-desktop-root .paw-room-window-chrome .paw-room-workspace__runtime > span { font-size: 12px; }
-.paw-desktop-root .paw-room-window-chrome[data-status='busy'] .paw-room-workspace__runtime i { background: var(--room-blue, #1677d2); animation: paw-live-pulse 1.2s ease-in-out infinite; }
-.paw-desktop-root .paw-room-window-chrome[data-status='stopping'] .paw-room-workspace__runtime i { background: var(--room-amber, #b56808); animation: none; }
+.paw-desktop-root .paw-room-window-chrome[data-status='busy'] .paw-room-workspace__runtime i { background: var(--room-running, #1677d2); animation: paw-live-pulse 1.2s ease-in-out infinite; }
+.paw-desktop-root .paw-room-window-chrome[data-status='stopping'] .paw-room-workspace__runtime i { background: var(--room-waiting, #b56808); animation: none; }
 
 .paw-desktop-root .paw-room-workspace__header > .paw-room-window-chrome {
   justify-content: flex-start;
@@ -169,11 +175,12 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #9aa3b2;
+  background: var(--room-queued);
 }
-.paw-desktop-root .paw-room-workspace__signal-status [data-tone='active'] i { background: var(--room-blue); }
-.paw-desktop-root .paw-room-workspace__signal-status [data-tone='review'] i { background: var(--room-amber); }
-.paw-desktop-root .paw-room-workspace__signal-status [data-tone='blocked'] i { background: var(--room-red); }
+.paw-desktop-root .paw-room-workspace__signal-status [data-tone='active'] i { background: var(--room-running); }
+.paw-desktop-root .paw-room-workspace__signal-status [data-tone='review'] i { background: var(--room-review); }
+.paw-desktop-root .paw-room-workspace__signal-status [data-tone='blocked'] i { background: var(--room-failed); }
+.paw-desktop-root .paw-room-workspace__signal-status [data-tone='complete'] i { background: var(--room-complete); }
 
 .paw-desktop-root .paw-room-workspace__objective {
   min-width: 0;
