@@ -2,10 +2,14 @@
    Files App — one coherent stylesheet.
 
    Files is the Session workspace inspector: a chrome scope bar, a directory
-   rail, and a paper reading pane. The design language derives everything from
-   the shell-provided App palette (work-document family: blue accent, amber
-   support) via color-mix, so one window repaint recolours the whole App while
-   the standalone fallbacks stay a readable light theme.
+   rail, and a paper reading pane, both built as inspection instruments. The
+   rail carries a scan readout and sticky workspace authority plates; the
+   reader names its active renderer and loaded lines, and the bounded-read
+   gauge is a real scale with 64 KB ticks and a 512 KB cap marker. The design
+   language derives everything from the shell-provided App palette
+   (work-document family: blue accent, amber support) via color-mix, so one
+   window repaint recolours the whole App while the standalone fallbacks stay
+   a readable light theme.
 
    Cross-owner contracts pinned by tests (do not "clean up"):
    - `--color-canvas: #f4f6f8` stays a literal light fallback.
