@@ -561,7 +561,14 @@ function PawPackageCatalog() {
           {validation.validationToken && pendingChange.previewToken ? (
             <InlineNotice title="等待你的确认" tone="warning">
               <div className="paw-system-package-approval">
-                <span><strong>{packageActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</strong><small>{stringArray(pendingSummary.permissions).length ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}` : '无额外权限'}</small></span>
+                <span>
+                  <strong>{packageActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</strong>
+                  <small>
+                    {stringValue(pendingSummary.version) ? `v${stringValue(pendingSummary.version)} · ` : ''}
+                    {stringArray(pendingSummary.permissions).length ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}` : '无额外权限'}
+                    {' · 确认后才会写入本机'}
+                  </small>
+                </span>
                 <div><Button disabled={busy} onClick={() => { setPendingChange({}); setValidation({}); }} size="small" variant="quiet">取消</Button><Button disabled={busy} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button></div>
               </div>
             </InlineNotice>
