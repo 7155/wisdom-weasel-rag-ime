@@ -230,6 +230,9 @@ describe('PawOsFilesApp', () => {
     await user.click(await screen.findByRole('treeitem', { name: '打开文件 a-very-long-preview-file-name.png' }));
 
     expect(await screen.findByText('二进制文件不能作为文本预览。')).toBeInTheDocument();
+    // The reader names its active lens and points at the real escape hatch.
+    expect(screen.getByText('二进制')).toBeInTheDocument();
+    expect(screen.getByText('可从上方复制完整路径，用 Terminal 或 Agent 工具检查原始内容。')).toBeInTheDocument();
     const heading = screen.getByRole('heading', { name: 'a-very-long-preview-file-name.png', level: 2 });
     expect(heading).toHaveAttribute('title', 'a-very-long-preview-file-name.png');
     expect(heading.parentElement?.querySelector('small')).toHaveAttribute('title', binaryPath);
@@ -341,6 +344,9 @@ describe('PawOsFilesApp', () => {
     expect(await screen.findByText('已显示前 64 KB · 共 128 KB')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /继续读取/ })).toBeInTheDocument();
     expect(screen.getByText(/已选 big\.log · 128 KB/)).toBeInTheDocument();
+    // Loaded-line and renderer readouts stay honest about the partial window.
+    expect(screen.getByText('已载 2 行')).toBeInTheDocument();
+    expect(screen.getByText('纯文本')).toBeInTheDocument();
   });
 
   it('continues a bounded read from the served nextOffset and retires the bar when complete', async () => {
@@ -393,6 +399,106 @@ describe('PawOsFilesApp', () => {
     expect(screen.getByText(/chunk one/)).toBeInTheDocument();
     expect(screen.queryByText(/已显示前/)).not.toBeInTheDocument();
     expect(readOffsets).toEqual([0, 65_536]);
+  });
+
+  it('marks the 512 KB reading cap on the gauge scale of an oversized file', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/trace.log', name: 'trace.log', kind: 'file', byteSize: 2_097_152 }],
+        },
+        'agent.session.workspace.read': {
+          ok: true,
+          path: '/workspace/paw/trace.log',
+          content: 'first window\n',
+          byteSize: 2_097_152,
+          offset: 0,
+          nextOffset: 65_536,
+          truncated: true,
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 trace.log' }));
+
+    const gauge = await screen.findByRole('progressbar', { name: '已读取 64 KB，共 2 MB' });
+    // The printed percentage never claims more than the bytes on screen.
+    expect(gauge).toHaveAttribute('aria-valuenow', '3');
+    expect(screen.getByText('3%')).toBeInTheDocument();
+    // 64 KB ticks would blur into noise on a 2 MB scale, so they retire.
+    expect(gauge.style.getPropertyValue('--paw-files-tick')).toBe('');
+    // The in-App reading cap sits at its true position on this file's scale.
+    expect(gauge.style.getPropertyValue('--paw-files-cap')).toBe('25%');
+    expect(gauge.querySelector('b')).toHaveAttribute('title', '512 KB 预览上限');
+  });
+
+  it('reads out the active renderer, loaded lines, and the rail scan coverage', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [
+            { path: '/workspace/paw/docs', name: 'docs', kind: 'directory' },
+            { path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 38 },
+          ],
+        },
+        'agent.session.workspace.read': {
+          ok: true,
+          path: '/workspace/paw/AGENTS.md',
+          content: '# Project guide\nRead docs before work.',
+          byteSize: 38,
+          truncated: false,
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+
+    // The rail head reports exactly what has been scanned: one listed
+    // directory (the root) holding two entries.
+    expect(await screen.findByText('1 目录 · 2 项')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('treeitem', { name: '打开文件 AGENTS.md' }));
+    expect(await screen.findByRole('heading', { name: 'AGENTS.md', level: 2 })).toBeInTheDocument();
+    // A complete two-line Markdown file names its lens and its full extent.
+    expect(await screen.findByText('Markdown')).toBeInTheDocument();
+    expect(screen.getByText('2 行')).toBeInTheDocument();
+  });
+
+  it('teaches the real keyboard path on the empty reading desk', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [] },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+
+    expect(await screen.findByText('选择要检查的文件')).toBeInTheDocument();
+    expect(screen.getByText('Enter')).toBeInTheDocument();
+    expect(screen.getByText('打开')).toBeInTheDocument();
+    expect(screen.getByText('展开目录')).toBeInTheDocument();
   });
 
   it('reports an honest display limit when a directory listing is truncated by the route', async () => {
@@ -496,7 +602,7 @@ describe('PawOsFilesApp', () => {
     const narrowEmulation = document.createElement('style');
     narrowEmulation.textContent = `
       .paw-files-app__workspace[data-file-open] .paw-files-tree { display: none; }
-      .paw-files-preview__back { display: grid; }
+      .paw-files-preview__back { display: inline-flex; }
     `;
     document.head.append(narrowEmulation);
 
@@ -538,6 +644,8 @@ describe('PawOsFilesApp', () => {
       expect(await screen.findByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
 
       const back = screen.getByRole('button', { name: '返回文件列表' });
+      // The narrow return path is a labelled pill, not a bare icon.
+      expect(back).toHaveTextContent('返回');
       await waitFor(() => expect(back).toHaveFocus());
       await user.click(back);
 
@@ -735,11 +843,15 @@ describe('PawOsFilesApp', () => {
     await screen.findByRole('treeitem', { name: '打开文件 guide.md' });
     expect(screen.getByRole('treeitem', { name: '收起目录 docs' })).toHaveTextContent('1 项');
 
-    // The bounded-read meter mirrors the stated byte range: 64 KB of 128 KB.
+    // The bounded-read meter mirrors the stated byte range: 64 KB of 128 KB,
+    // with one gauge tick per 64 KB request and no cap marker below 512 KB.
     await user.click(screen.getByRole('treeitem', { name: '打开文件 big.log' }));
     expect(await screen.findByText('已显示前 64 KB · 共 128 KB')).toBeInTheDocument();
     const meter = container.querySelector('.paw-files-preview__meter') as HTMLElement | null;
     expect(meter?.style.getPropertyValue('--paw-files-loaded')).toBe('50%');
+    expect(meter?.style.getPropertyValue('--paw-files-tick')).toBe('50%');
+    expect(meter?.querySelector('b')).toBeNull();
+    expect(screen.getByText('50%')).toBeInTheDocument();
 
     // The filter chip repeats the truthful match count beside the query.
     await user.type(screen.getByRole('searchbox', { name: '筛选已加载的文件' }), 'guide');

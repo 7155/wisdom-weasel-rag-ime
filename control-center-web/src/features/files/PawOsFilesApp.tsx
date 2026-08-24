@@ -16,6 +16,7 @@ import {
   FolderTree,
   LoaderCircle,
   RefreshCw,
+  ScanSearch,
   Search,
   TriangleAlert,
 } from 'lucide-react';
@@ -153,6 +154,16 @@ export function PawOsFilesApp() {
     () => (selectedFile ? pathCrumbs(selectedFile.path, roots) : []),
     [roots, selectedFile],
   );
+  const previewReady = Boolean(preview && !previewLoading && !previewError);
+  // Loaded-line readout: honest for exactly the bytes on screen, never a
+  // whole-file claim while the read window is still partial.
+  const previewLineCount = useMemo(() => {
+    if (!preview?.content || previewIsBinary) return 0;
+    const lines = preview.content.split('\n').length;
+    return preview.content.endsWith('\n') ? lines - 1 : lines;
+  }, [preview?.content, previewIsBinary]);
+  const previewRenderer = previewReady && preview ? rendererLabel(preview) : '';
+  const directoriesRead = Object.keys(entries).length;
 
   const loadSessions = useCallback(async () => {
     setSessionsLoading(true);
@@ -469,7 +480,7 @@ export function PawOsFilesApp() {
                   <i aria-hidden="true" className="paw-files-tree__glyph">
                     {directory ? (open ? <FolderOpen size={14} /> : <Folder size={14} />) : symlink ? <FileSymlink size={14} /> : fileGlyph(entry.name)}
                   </i>
-                  <span className="paw-files-tree__label"><span>{entry.name}</span></span>
+                  <span className="paw-files-tree__label"><span>{directory ? entry.name : entryLabel(entry.name)}</span></span>
                   {directory && childListing
                     ? <small>{childListing.items.length}{childListing.limited ? '+' : ''} 项</small>
                     : !directory && entry.byteSize !== undefined
@@ -537,6 +548,19 @@ export function PawOsFilesApp() {
         {sessionError ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionError}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}
         <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined}>
         <aside className="paw-files-tree" aria-label="Session 授权工作区" ref={treeRef}>
+          {roots.length ? (
+            <header className="paw-files-tree__head">
+              <strong>目录</strong>
+              {loadingPaths.size ? (
+                <span className="paw-files-tree__head-scan">
+                  <LoaderCircle aria-hidden="true" className="ui-spin" size={11} />
+                  正在读取 {loadingPaths.size} 个目录
+                </span>
+              ) : (
+                <span className="paw-files-tree__head-count">{directoriesRead} 目录 · {visibleEntryCount} 项</span>
+              )}
+            </header>
+          ) : null}
           <div className="paw-files-tree__scroll">
             {sessionsLoading ? <TreeState loading>正在读取 Session…</TreeState> : null}
             {!sessionsLoading && !sessionError && !sessions.length ? <TreeState>还没有可浏览的 Session。</TreeState> : null}
@@ -622,15 +646,20 @@ export function PawOsFilesApp() {
               <div aria-hidden="true" className="paw-files-preview__empty-art">
                 <i />
                 <i />
-                <span><FileCode2 size={22} /></span>
+                <span><ScanSearch size={17} /></span>
               </div>
-              <strong>选择文件</strong>
-              <span>从目录树选择一个文件，在这里阅读代码、Markdown、diff、SVG 或网页。</span>
+              <strong>选择要检查的文件</strong>
+              <span>从目录树打开一个文件，在这里阅读代码、Markdown、diff、SVG 或网页。</span>
+              <span className="paw-files-preview__empty-keys">
+                <span><kbd>↑</kbd><kbd>↓</kbd><span>移动</span></span>
+                <span><kbd>→</kbd><span>展开目录</span></span>
+                <span><kbd>Enter</kbd><span>打开</span></span>
+              </span>
             </div>
           ) : (
             <>
               <header key={`header:${selectedFile.path}`}>
-                <button aria-label="返回文件列表" className="paw-files-preview__back" onClick={goBackToTree} ref={backButtonRef} type="button"><ChevronLeft size={15} /></button>
+                <button aria-label="返回文件列表" className="paw-files-preview__back" onClick={goBackToTree} ref={backButtonRef} title="返回文件列表（Esc）" type="button"><ChevronLeft size={15} /><span>返回</span></button>
                 <span aria-hidden="true" className="paw-files-preview__badge" data-family={entryFamily(selectedFile)}>
                   {fileExtension(selectedFile.name)
                     ? fileExtension(selectedFile.name).slice(0, 4).toUpperCase()
@@ -653,8 +682,13 @@ export function PawOsFilesApp() {
                       </button>
                     )) : <span className="paw-files-crumbs__plain">{selectedFile.path}</span>}
                     <span className="paw-files-crumbs__meta">
-                      {fileExtension(selectedFile.name).toUpperCase() || '文件'}
-                      {selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''}
+                      {previewRenderer
+                        ? <b className="paw-files-renderer" data-family={entryFamily(selectedFile)}>{previewRenderer}</b>
+                        : <span>{fileExtension(selectedFile.name).toUpperCase() || '文件'}</span>}
+                      {selectedFile.byteSize !== undefined ? <span>{formatBytes(selectedFile.byteSize)}</span> : null}
+                      {previewReady && previewLineCount > 0
+                        ? <span>{preview?.truncated ? `已载 ${previewLineCount} 行` : `${previewLineCount} 行`}</span>
+                        : null}
                     </span>
                   </small>
                 </div>
@@ -695,13 +729,22 @@ export function PawOsFilesApp() {
               {preview && !previewLoading && !previewError && preview.truncated && !previewIsBinary ? (
                 <footer className="paw-files-preview__more">
                   <div className="paw-files-preview__range">
-                    <span>已显示前 {formatBytes(preview.loadedBytes)} · 共 {formatBytes(preview.byteSize)}</span>
+                    <span className="paw-files-preview__range-readout">
+                      <span>已显示前 {formatBytes(preview.loadedBytes)} · 共 {formatBytes(preview.byteSize)}</span>
+                      <em aria-hidden="true">{honestShare(preview)}%</em>
+                    </span>
                     <span
-                      aria-hidden="true"
+                      aria-label={`已读取 ${formatBytes(preview.loadedBytes)}，共 ${formatBytes(preview.byteSize)}`}
+                      aria-valuemax={100}
+                      aria-valuemin={0}
+                      aria-valuenow={honestShare(preview)}
                       className="paw-files-preview__meter"
-                      style={{ '--paw-files-loaded': `${loadedShare(preview)}%` } as CSSProperties}
+                      data-busy={previewMoreLoading || undefined}
+                      role="progressbar"
+                      style={meterStyle(preview)}
                     >
                       <i />
+                      {capMarkerShare(preview) ? <b aria-hidden="true" title={`${formatBytes(PREVIEW_MAX_BYTES)} 预览上限`} /> : null}
                     </span>
                   </div>
                   {previewMoreError ? <em role="alert">{previewMoreError}</em> : null}
@@ -759,6 +802,7 @@ function renderPreview(file: WorkspacePreview): ReactNode {
       <div className="paw-files-preview__state paw-files-preview__state--binary" role="status">
         <i aria-hidden="true" className="paw-files-preview__state-mark"><FileImage size={17} /></i>
         <span>二进制文件不能作为文本预览。</span>
+        <small>可从上方复制完整路径，用 Terminal 或 Agent 工具检查原始内容。</small>
       </div>
     );
   }
@@ -902,6 +946,58 @@ function fileLanguage(name: string): string {
 function loadedShare(preview: WorkspacePreview): number {
   if (preview.byteSize <= 0) return 0;
   return Math.max(2, Math.min(100, Math.floor((preview.loadedBytes / preview.byteSize) * 100)));
+}
+
+/** Numeric readout share: plain floored percentage without the visual floor,
+    so the printed number never claims more than the bytes on screen. */
+function honestShare(preview: WorkspacePreview): number {
+  if (preview.byteSize <= 0) return 0;
+  return Math.min(100, Math.floor((preview.loadedBytes / preview.byteSize) * 100));
+}
+
+/** One gauge tick per 64 KB read request. Ticks disappear when the file is so
+    large they would blur into noise (below a 4% pitch). */
+function chunkTickShare(preview: WorkspacePreview): number {
+  if (preview.byteSize <= 0) return 0;
+  const share = (PREVIEW_CHUNK_BYTES / preview.byteSize) * 100;
+  return share >= 4 && share < 100 ? share : 0;
+}
+
+/** Position of the 512 KB in-App reading cap on the gauge scale; zero when
+    the whole file fits inside the cap and no marker is needed. */
+function capMarkerShare(preview: WorkspacePreview): number {
+  if (preview.byteSize <= PREVIEW_MAX_BYTES) return 0;
+  return Math.min(98, (PREVIEW_MAX_BYTES / preview.byteSize) * 100);
+}
+
+function meterStyle(preview: WorkspacePreview): CSSProperties {
+  const tick = chunkTickShare(preview);
+  const cap = capMarkerShare(preview);
+  return {
+    '--paw-files-loaded': `${loadedShare(preview)}%`,
+    ...(tick ? { '--paw-files-tick': `${tick}%` } : {}),
+    ...(cap ? { '--paw-files-cap': `${cap}%` } : {}),
+  } as CSSProperties;
+}
+
+/** Which renderer is actually on screen — the reader names its own lens. */
+function rendererLabel(preview: WorkspacePreview): string {
+  if (!preview.content && !preview.truncated) return '空文件';
+  if (isProbablyBinary(preview.content)) return '二进制';
+  const extension = fileExtension(pathName(preview.path));
+  if (extension === 'svg' && !preview.truncated) return 'SVG';
+  if (['md', 'mdx', 'markdown'].includes(extension)) return 'Markdown';
+  if (['html', 'htm'].includes(extension)) return '网页';
+  if (['diff', 'patch'].includes(extension)) return 'Diff';
+  return FILE_FAMILY[extension] === 'code' ? '代码' : '纯文本';
+}
+
+/** File names read base-first: the extension keeps its own quieter span so a
+    column of names scans by stem. Dotfiles stay whole. */
+function entryLabel(name: string): ReactNode {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot === name.length - 1) return name;
+  return <>{name.slice(0, dot)}<i aria-hidden="true">{name.slice(dot)}</i></>;
 }
 
 function flattenVisibleTree(roots: string[], entries: Record<string, WorkspaceListing>, expanded: Set<string>): VisibleTreeNode[] {
