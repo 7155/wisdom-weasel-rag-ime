@@ -113,6 +113,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-menu-status { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 
 .paw-desktop-viewport { position: absolute; left: 0; top: var(--paw-menu-h); right: 0; bottom: 0; overflow: hidden; }
+/* The snap preview updates while a window is being dragged. Animating its
+   inset would run a layout invalidation on every preview change in the middle
+   of that drag, so the region snaps instantly and only its opacity fades. */
 .paw-desktop-viewport::after {
   position: absolute;
   z-index: 74;
@@ -123,7 +126,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 62%, transparent);
   opacity: 0;
   content: '';
-  transition: inset 100ms ease, opacity 100ms ease;
+  transition: opacity 100ms ease;
 }
 .paw-desktop-root[data-snap-preview='maximized'] .paw-desktop-viewport::after { opacity: 1; }
 .paw-desktop-root[data-snap-preview='left'] .paw-desktop-viewport::after { right: calc(50% + 5px); opacity: 1; }
@@ -405,7 +408,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   user-select: none; cursor: grab;
 }
 .paw-window-titlebar > * { pointer-events: auto; }
-.paw-window-shell[data-interaction] .paw-window-title { visibility: hidden; opacity: 0; }
+/* Resizing re-measures the ellipsized title every frame, so it hides while the
+   width changes. Dragging is transform-only and must not blink the chrome. */
+.paw-window-shell[data-interaction='resizing'] .paw-window-title { visibility: hidden; opacity: 0; }
 .paw-window-titlebar:active { cursor: grabbing; }
 
 .paw-traffic-lights { display: flex; align-items: center; gap: 7px; }

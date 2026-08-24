@@ -111,6 +111,34 @@ describe('PAWOS desktop', () => {
     expect(document.querySelector('[data-paw-window-id="agent"]')).toBeNull();
   });
 
+  it('marks a Dock App that only has minimized windows and restores it on click', () => {
+    // 减少动态效果让最小化退出路径同步完成，测试关注 Dock 状态而非动画。
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    renderDesktop('agent');
+    const dock = screen.getByRole('navigation', { name: 'PAWOS 工具架' });
+    const agentDockButton = within(dock).getByRole('button', { name: 'Agent' });
+    expect(agentDockButton).toHaveAttribute('data-open');
+    expect(agentDockButton).not.toHaveAttribute('data-minimized');
+
+    fireEvent.click(screen.getByRole('button', { name: '最小化窗口' }));
+    expect(agentDockButton).toHaveAttribute('data-open');
+    expect(agentDockButton).toHaveAttribute('data-minimized');
+    expect(agentDockButton).toHaveAttribute('title', 'Agent 已最小化，点击恢复');
+
+    fireEvent.click(agentDockButton);
+    expect(agentDockButton).not.toHaveAttribute('data-minimized');
+    expect(document.querySelector('[data-paw-window-id="agent"]')).toBeInTheDocument();
+  });
+
   it('closes all PAWOS windows from the desktop menu in one projection-only action', () => {
     renderDesktop('agent');
     const desktop = screen.getByRole('main');

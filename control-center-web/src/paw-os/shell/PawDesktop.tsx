@@ -344,17 +344,43 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
   onOverview: () => void;
   overviewOpen: boolean;
 }) {
-  const openAppSignature = usePawDesktopStore((state) => Object.values(state.windows)
-    .map((node) => node.appId)
+  // 运行状态必须诚实：某个 App 只剩最小化窗口时，Dock 不再显示与
+  // 可见窗口相同的实心圆点，而是空心圆点表示“仍在运行，已收起”。
+  const dockStateSignature = usePawDesktopStore((state) => Object.values(state.windows)
+    .map((node) => `${node.appId}\u0001${node.minimized ? '1' : '0'}`)
     .sort()
     .join('\u0000'));
-  const openIds = useMemo(
-    () => new Set(openAppSignature.split('\u0000').filter(Boolean) as PawAppId[]),
-    [openAppSignature],
-  );
+  const dockState = useMemo(() => {
+    const open = new Set<PawAppId>();
+    const visible = new Set<PawAppId>();
+    for (const item of dockStateSignature.split('\u0000').filter(Boolean)) {
+      const [appId, minimized] = item.split('\u0001') as [PawAppId, string];
+      open.add(appId);
+      if (minimized === '0') visible.add(appId);
+    }
+    return { open, visible };
+  }, [dockStateSignature]);
   return (
     <nav aria-label="PAWOS 工具架" className="paw-dock">
-      {pawDockAppIds.map((appId) => <button aria-current={activeAppId === appId ? 'page' : undefined} aria-label={pawApp(appId).label} data-app={appId} data-desktop-app={appId} data-open={openIds.has(appId) || undefined} key={appId} onClick={() => onOpen(appId)} type="button"><PawAppIcon appId={appId} size={32} /></button>)}
+      {pawDockAppIds.map((appId) => {
+        const minimizedOnly = dockState.open.has(appId) && !dockState.visible.has(appId);
+        return (
+          <button
+            aria-current={activeAppId === appId ? 'page' : undefined}
+            aria-label={pawApp(appId).label}
+            data-app={appId}
+            data-desktop-app={appId}
+            data-minimized={minimizedOnly || undefined}
+            data-open={dockState.open.has(appId) || undefined}
+            key={appId}
+            onClick={() => onOpen(appId)}
+            title={minimizedOnly ? `${pawApp(appId).label} 已最小化，点击恢复` : undefined}
+            type="button"
+          >
+            <PawAppIcon appId={appId} size={32} />
+          </button>
+        );
+      })}
       <i aria-hidden="true" />
       <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /></button>
       <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /></button>

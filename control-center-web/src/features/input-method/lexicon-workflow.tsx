@@ -82,6 +82,25 @@ export function LexiconWorkflow({
     <div className="mgmt-stack">
       <div className="mgmt-toolbar">
         <span className="mgmt-muted">待审 {review.entryCount} 条 · 已选 {selectedEntries.length} 条</span>
+        {stage === 'select' ? (
+          <span className="input-lexicon-review__bulk">
+            <Button
+              disabled={selectedKeys.size === review.entries.length}
+              onClick={() => setSelectedKeys(new Set(review.entries.map((entry) => entry.reviewKey)))}
+              size="small"
+              variant="quiet"
+            >
+              全选
+            </Button>
+            <Button
+              onClick={() => setSelectedKeys(defaultSelection(review))}
+              size="small"
+              variant="quiet"
+            >
+              恢复默认建议
+            </Button>
+          </span>
+        ) : null}
       </div>
 
       <InlineNotice title="筛选规则" tone="info">
@@ -93,6 +112,7 @@ export function LexiconWorkflow({
         <div className="mgmt-list input-lexicon-review__list">
           {review.entries.map((entry) => {
             const detail = reviewEntryDetail(entry);
+            const risk = reviewRisk(entry);
             return (
               <label className="mgmt-list__row input-lexicon-review__row" data-input-lexicon-row="true" key={entry.reviewKey}>
                 <input
@@ -105,7 +125,10 @@ export function LexiconWorkflow({
                   <strong title={entry.text}>{entry.text}</strong>
                   <span title={detail}>{detail}</span>
                 </span>
-                <StatusBadge label={reviewSourceLabel(entry.reviewSource)} tone="info" />
+                <span className="input-lexicon-review__badges">
+                  <StatusBadge label={reviewSourceLabel(entry.reviewSource)} tone="info" />
+                  <StatusBadge label={risk.label} tone={risk.tone} />
+                </span>
               </label>
             );
           })}
@@ -172,8 +195,12 @@ function LexiconReceipt({ receipt, rolledBack }: { receipt: TimedReceipt; rolled
   );
 }
 
+/* 默认勾选跟随后端的真实建议：重复使用的真实选词反馈默认勾选，
+ * 模型批量建议保持未选，等待人工确认。 */
 function defaultSelection(review: LexiconReview): Set<string> {
-  return new Set(review.entries.filter((entry) => entry.selected).map((entry) => entry.reviewKey));
+  return new Set(review.entries
+    .filter((entry) => entry.selected || entry.defaultSelected)
+    .map((entry) => entry.reviewKey));
 }
 
 function toggled(current: Set<string>, key: string, selected: boolean): Set<string> {
@@ -195,6 +222,18 @@ function reviewSourceLabel(value: string): string {
   return ({ usage: '输入记录', local_feedback: '本机选词反馈', manual: '手动添加', imported: '已导入' } as Record<string, string>)[value] ?? '待审词条';
 }
 
+/* riskLabel 是后端给出的真实归类：模型批量建议必须与真实选词反馈在
+ * 视觉上分开，缺失时如实说“风险未标注”，不冒充已判定。 */
+function reviewRisk(entry: LexiconReview['entries'][number]): {
+  label: string;
+  tone: 'success' | 'warning' | 'neutral';
+} {
+  if (!entry.riskLabel) return { label: '风险未标注', tone: 'neutral' };
+  if (entry.riskLabel.includes('模型建议')) return { label: entry.riskLabel, tone: 'warning' };
+  if (entry.riskLabel.includes('真实选词')) return { label: entry.riskLabel, tone: 'success' };
+  return { label: entry.riskLabel, tone: 'neutral' };
+}
+
 function reviewEntryDetail(entry: LexiconReview['entries'][number]): string {
-  return `${entry.pinyin || '无拼音'} · 被采用 ${entry.positiveCount} 次 · 被跳过 ${entry.negativeCount} 次 · ${entry.riskLabel || '待你判断'}`;
+  return `${entry.pinyin || '无拼音'} · 被采用 ${entry.positiveCount} 次 · 被跳过 ${entry.negativeCount} 次`;
 }

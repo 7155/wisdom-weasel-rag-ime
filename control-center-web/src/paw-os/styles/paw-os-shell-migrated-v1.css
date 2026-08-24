@@ -229,6 +229,12 @@
   background: #2f6bff;
   box-shadow: 0 0 0 3px rgb(47 107 255 / .1);
 }
+/* Running with only minimized windows: hollow dot, so "parked" and "visible"
+   are two honest states instead of one. */
+.paw-desktop-root .paw-dock button[data-minimized]::after {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgb(47 107 255 / .85);
+}
 .paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview) { color: #4c5868; }
 
 @media (hover: hover) and (pointer: fine) {
@@ -318,9 +324,11 @@
 }
 
 @keyframes paw-shell-launchpad-backdrop { from { opacity: 0; } to { opacity: 1; } }
+/* Entrance stays on opacity/transform only: animating blur over the App grid
+   smears its labels for the whole entrance, which reads as flicker. */
 @keyframes paw-shell-launchpad-arrive {
-  from { opacity: .72; transform: translateY(18px) scale(.97); filter: blur(5px); }
-  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  from { opacity: .72; transform: translateY(18px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Window material: opaque white working surfaces. Focus reads through border,

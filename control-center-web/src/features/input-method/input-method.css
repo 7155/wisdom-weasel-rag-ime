@@ -116,10 +116,98 @@ main[data-route-id='input'] .input-mode-choice > span {
   line-height: 1.45;
 }
 
-main[data-route-id='input'] .input-mode-choice .ui-segmented {
-  width: 100%;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+/* 四种使用方式是并列的真实预设：每张卡片写清它会改动什么，
+   选择状态用边框与圆点表达，不再挤进一条分段控件。 */
+main[data-route-id='input'] .input-mode-cards {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+main[data-route-id='input'] .input-mode-card {
+  display: grid;
+  min-width: 0;
+  min-height: 72px;
+  align-content: start;
+  align-items: start;
+  gap: 10px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  padding: 11px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-surface);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  touch-action: manipulation;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-mode-card:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+main[data-route-id='input'] .input-mode-card[data-state='checked'] {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-accent-border);
+}
+
+main[data-route-id='input'] .input-mode-card:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+main[data-route-id='input'] .input-mode-card__dot {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: 50%;
+  background: var(--color-surface);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__dot {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 3.5px var(--color-accent);
+}
+
+main[data-route-id='input'] .input-mode-card__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+main[data-route-id='input'] .input-mode-card__copy strong {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+main[data-route-id='input'] .input-mode-card__copy small {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='input'] .input-mode-card:not(:disabled):hover {
+    border-color: var(--color-accent-border);
+    background: var(--color-surface-subtle);
+  }
+}
+
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card,
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card__dot { transition: none; }
 
 main[data-route-id='input'] .input-settings-layout {
   display: grid;
@@ -479,10 +567,26 @@ main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review_
   align-self: start;
 }
 
-main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-status {
+main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
   grid-area: status;
   align-self: start;
   justify-self: start;
+}
+
+/* 每条候选带两枚徽章：来源（输入记录/选词反馈）与风险归类。宽窗口里
+   纵向叠放占住状态列，窄窗口换到内容下方后再横向排开。 */
+main[data-route-id='input-lexicon'] .input-lexicon-review__badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+main[data-route-id='input-lexicon'] .input-lexicon-review__bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-inline-start: auto;
 }
 
 main[data-route-id='input-lexicon'] label.mgmt-list__row > input {
@@ -553,9 +657,8 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'] .input-setting-row { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='input'] .input-setting-row dd { justify-items: start; text-align: left; }
 
-  main[data-route-id='input'] .input-mode-choice .ui-segmented {
-    grid-auto-flow: row;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  main[data-route-id='input'] .input-mode-cards {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   main[data-route-id='input'] .input-setting-editor-row .ui-field {
@@ -589,7 +692,7 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'] .ui-button,
   main[data-route-id='input'] .ui-input,
   main[data-route-id='input'] .ui-select__trigger,
-  main[data-route-id='input'] .ui-segmented__item {
+  main[data-route-id='input'] .input-mode-card {
     min-height: 44px;
   }
 }
@@ -628,7 +731,9 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
     min-height: 78px;
   }
 
-  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-status {
+  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
+    flex-direction: row;
+    flex-wrap: wrap;
     justify-self: start;
   }
 }

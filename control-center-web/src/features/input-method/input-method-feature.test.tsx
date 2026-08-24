@@ -1066,6 +1066,63 @@ describe('InputMethodFeature', () => {
     expect(await screen.findByText('词库审阅已变化，请刷新后重新选择。')).toBeInTheDocument();
     expect(screen.queryByText('已加入 · 等待重载')).not.toBeInTheDocument();
   });
+
+  it('keeps model batch suggestions unchecked with a visible risk badge until a person opts in', async () => {
+    const user = userEvent.setup();
+    renderLexiconFeature(new MockControlTransport({
+      routes: {
+        'input.lexicon.review': {
+          ...emptyReview,
+          entryCount: 2,
+          entries: [
+            {
+              reviewKey: '表情包\tbiao qing bao',
+              text: '表情包',
+              pinyin: 'biao qing bao',
+              weight: 180,
+              positiveCount: 3,
+              negativeCount: 0,
+              reasons: ['accepted'],
+              reviewSource: 'usage',
+              reviewReason: '来自真实选词反馈',
+              selected: true,
+              defaultSelected: true,
+              riskLabel: '真实选词反馈',
+            },
+            {
+              reviewKey: '云原生\tyun yuan sheng',
+              text: '云原生',
+              pinyin: 'yun yuan sheng',
+              weight: 120,
+              positiveCount: 0,
+              negativeCount: 0,
+              reasons: ['model_candidate'],
+              reviewSource: 'usage',
+              reviewReason: '模型批量建议',
+              selected: false,
+              defaultSelected: false,
+              riskLabel: '模型建议，需人工确认',
+            },
+          ],
+        },
+      },
+    }));
+
+    // 后端的 defaultSelected 是唯一的默认勾选来源：真实反馈默认选中，模型建议留给人。
+    expect(await screen.findByRole('checkbox', { name: '选择 表情包' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: '选择 云原生' })).not.toBeChecked();
+    expect(screen.getByText(/待审 2 条 · 已选 1 条/)).toBeInTheDocument();
+    expect(screen.getByText('真实选词反馈')).toBeInTheDocument();
+    expect(screen.getByText('模型建议，需人工确认')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '全选' }));
+    expect(screen.getByText(/待审 2 条 · 已选 2 条/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '全选' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '恢复默认建议' }));
+    expect(screen.getByText(/待审 2 条 · 已选 1 条/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '选择 云原生' })).not.toBeChecked();
+  });
 });
 
 describe('inferInputMode', () => {
