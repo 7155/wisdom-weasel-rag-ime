@@ -81,15 +81,6 @@ export function resetActivityDisclosureOverrides(): void {
   activityDisclosureOverrides.clear();
 }
 
-function persistActivityDisclosureOverride(key: string, value: boolean): void {
-  if (activityDisclosureOverrides.size >= activityDisclosureOverrideLimit
-    && !activityDisclosureOverrides.has(key)) {
-    const oldest = activityDisclosureOverrides.keys().next().value;
-    if (typeof oldest === 'string') activityDisclosureOverrides.delete(oldest);
-  }
-  activityDisclosureOverrides.set(key, value);
-}
-
 function useActivityDisclosure(
   key: string,
   initiallyOpen: boolean,
@@ -98,28 +89,12 @@ function useActivityDisclosure(
   const setOpen = useCallback<Dispatch<SetStateAction<boolean>>>((nextValue) => {
     setOpenState((current) => {
       const next = typeof nextValue === 'function' ? nextValue(current) : nextValue;
-      persistActivityDisclosureOverride(key, next);
-      return next;
-    });
-  }, [key]);
-  return [open, setOpen];
-}
-
-/** Attention states (running/waiting/failed) open automatically, but a human
- * choice always wins afterwards: closing a live row keeps it closed and the
- * choice survives virtualization remounts on the stable activity id. */
-function useAttentionActivityDisclosure(
-  key: string,
-  autoOpen: boolean,
-): [boolean, Dispatch<SetStateAction<boolean>>] {
-  const [override, setOverride] = useState<boolean | undefined>(() => activityDisclosureOverrides.get(key));
-  const open = override ?? autoOpen;
-  const openRef = useRef(open);
-  openRef.current = open;
-  const setOpen = useCallback<Dispatch<SetStateAction<boolean>>>((nextValue) => {
-    setOverride(() => {
-      const next = typeof nextValue === 'function' ? nextValue(openRef.current) : nextValue;
-      persistActivityDisclosureOverride(key, next);
+      if (activityDisclosureOverrides.size >= activityDisclosureOverrideLimit
+        && !activityDisclosureOverrides.has(key)) {
+        const oldest = activityDisclosureOverrides.keys().next().value;
+        if (typeof oldest === 'string') activityDisclosureOverrides.delete(oldest);
+      }
+      activityDisclosureOverrides.set(key, next);
       return next;
     });
   }, [key]);
@@ -1416,8 +1391,8 @@ function finiteCount(value: unknown): number {
 }
 
 /** FX 签收稿的活动栈：一次真实活动一行安静披露（UR-016 原子顺序）。
- *  运行/失败/等待自动展开以保住真实进度与恢复入口，但人工收起后
- *  以人的选择为准；只投影真实 reducer 活动，不合并、不重排、不发明状态。 */
+ *  运行/失败/等待自动展开以保住真实进度与恢复入口，其余点击展开；
+ *  只投影真实 reducer 活动，不合并、不重排、不发明状态。 */
 export function FxActivityStack({
   activities,
   onApprovalDecision,
@@ -1465,15 +1440,27 @@ function FxActivityDisclosure({
   const failed = activity.status === 'failed';
   const waiting = activity.status === 'waiting';
   const running = activity.status === 'running';
-  const [open, setOpen] = useAttentionActivityDisclosure(
-    `fx:${activity.id}`,
-    running || failed || waiting,
-  );
+  /* Live states stay force-open so progress and approvals cannot be hidden.
+   * A failure opens by default (initially or on a live transition) but stays
+   * a real disclosure: a human can fold historical failures back down. */
+  const [manuallyOpen, setManuallyOpen] = useActivityDisclosure(`fx:${activity.id}`, failed);
+  const open = manuallyOpen || running || waiting;
+  const previousStatusRef = useRef(activity.status);
+  useEffect(() => {
+    const previous = previousStatusRef.current;
+    previousStatusRef.current = activity.status;
+    if (activity.status === 'failed' && previous !== 'failed') setManuallyOpen(true);
+  }, [activity.status, setManuallyOpen]);
   const detailId = `paw-activity-detail-${useId().replace(/:/gu, '')}`;
   const label = fxActivityLabel(activity);
-  const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : 'ok';
-  const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : '完成';
+  /* Subagent receipts land after background work; the violet tone separates
+     "another Agent finished this for you" from the parent's own tool calls. */
+  const subagent = isSubagentActivity(activity);
+  const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : subagent ? 'vio' : 'ok';
+  const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : subagent ? '后台完成' : '完成';
   const nowMs = useActivityClock(running);
+  // A Tool receipt with an explicit duration stays authoritative; otherwise a
+  // live row shows its real elapsed clock and a settled row its measured span.
   const meta = fxActivityMeta(activity) || activityDuration(activity, nowMs);
   const progress = activityProgressView(activity);
   return (
@@ -1491,8 +1478,8 @@ function FxActivityDisclosure({
         aria-label={`${label}，${statusText}${meta ? `，${meta}` : ''}`}
         className="paw-activity"
         data-state={activity.status}
-        onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
-        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
+        onClick={(event) => toggleDisclosurePreservingAnchor(event, setManuallyOpen)}
+        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setManuallyOpen)}
         type="button"
       >
         <span className="paw-activity__row">
@@ -1534,6 +1521,11 @@ function FxActivityDisclosure({
       </div></SmoothDisclosureReveal>
     </div>
   );
+}
+
+function isSubagentActivity(activity: AgentActivityProjection): boolean {
+  return activity.kind.includes('subagent')
+    || text(activity.payload.toolId ?? activity.payload.toolName).toLowerCase().includes('subagent');
 }
 
 function fxActivityLabel(activity: AgentActivityProjection): string {

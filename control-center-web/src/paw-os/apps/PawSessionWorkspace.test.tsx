@@ -63,8 +63,8 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(window.querySelector('.agent-conversation-nav')).toBeNull();
   });
 
-  it('orients the transcript with real workspace and permission context chips', async () => {
-    render(
+  it('opens the conversation with truthful workspace and permission context chips', async () => {
+    const { container } = render(
       <ControlTransportProvider transport={createPreviewTransport()}>
         <TooltipProvider>
           <PawSessionWorkspace
@@ -79,13 +79,11 @@ describe('PAWOS Agent Session structural migration', () => {
     );
 
     await screen.findByRole('textbox', { name: '消息' });
-    const chips = await screen.findByRole('list', { name: '会话上下文' });
-    const labels = within(chips).getAllByRole('listitem').map((chip) => chip.textContent);
-    expect(labels).toEqual(['personal-agent-workbench', '写入与命令确认']);
-    expect(within(chips).getByText('personal-agent-workbench')).toHaveAttribute(
-      'title',
-      '/Volumes/undo 4t/git/personal-agent-workbench',
-    );
+    const lead = await screen.findByRole('note', { name: 'Session 上下文' });
+    expect(lead).toHaveTextContent('personal-agent-workbench · 工作区');
+    expect(lead).toHaveTextContent('权限 · 按风险确认');
+    // fx keeps message side as identity: no repeated "Agent/状态" caption row.
+    expect(container.querySelector('.agent-assistant-turn__body > header')).toBeNull();
   });
 
   it('keeps one real composer mounted while switching between conversation and trace', async () => {

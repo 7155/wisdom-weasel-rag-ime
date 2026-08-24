@@ -26,7 +26,7 @@ describe('Agent turn work projection', () => {
   });
 
   it.each(['queued', 'running', 'waiting'] as const)(
-    'fails open while a turn is still %s',
+    'fails open while a turn is %s',
     (status) => {
       const model = buildAgentTurnWorkModel(status, [
         activityGroup(activity('tool-read', 'tool_finished')),
@@ -39,40 +39,50 @@ describe('Agent turn work projection', () => {
   );
 
   it.each(['failed', 'aborted'] as const)(
-    'collapses %s process work while keeping the last narrative visible',
+    'collapses %s process work while the last partial narrative stays visible',
     (status) => {
       const model = buildAgentTurnWorkModel(status, [
+        message('draft', '先检查项目。'),
         activityGroup(activity('tool-read', 'tool_finished')),
-        message('partial', '中断前的部分结果'),
+        message('answer', '暂时结果'),
       ]);
 
       expect(model.canCollapse).toBe(true);
-      expect(model.finalMessageId).toBe('partial');
-      expect(model.items.map((item) => item.role)).toEqual(['work', 'result']);
+      expect(model.finalMessageId).toBe('answer');
+      expect(model.items.map((item) => item.role)).toEqual(['work', 'work', 'result']);
+    },
+  );
+
+  it.each(['failed', 'aborted'] as const)(
+    'collapses %s tool work even when no narrative result exists',
+    (status) => {
+      const model = buildAgentTurnWorkModel(status, [
+        activityGroup(activity('tool-read', 'tool_finished')),
+      ]);
+
+      expect(model.canCollapse).toBe(true);
+      expect(model.finalMessageId).toBe('');
       expect(model.hiddenActivityCount).toBe(1);
     },
   );
 
-  it('collapses evidence-free settled work behind the compact summary', () => {
-    const model = buildAgentTurnWorkModel('failed', [
-      activityGroup(activity('tool-read', 'tool_finished')),
-      activityGroup(activity('turn-failed', 'turn_failed')),
-    ]);
+  it('fails open when a failed turn holds only its narrative', () => {
+    const model = buildAgentTurnWorkModel('failed', [message('answer', '暂时结果')]);
 
-    expect(model.canCollapse).toBe(true);
-    expect(model.finalMessageId).toBe('');
-    expect(model.hiddenActivityCount).toBe(2);
+    expect(model.canCollapse).toBe(false);
+    expect(model.finalMessageId).toBe('answer');
+    expect(model.items).toHaveLength(1);
+    expect(model.items[0]).toMatchObject({ role: 'result' });
   });
 
-  it('collapses completed tool work behind a response-tail result without narrative text', () => {
+  it('fails open when a completed turn has no narrative final response', () => {
     const model = buildAgentTurnWorkModel('completed', [
       activityGroup(activity('tool-read', 'tool_finished')),
       structuredMessage('artifact-only', 'artifact'),
     ]);
 
-    expect(model.canCollapse).toBe(true);
+    expect(model.canCollapse).toBe(false);
     expect(model.finalMessageId).toBe('');
-    expect(model.items[0]).toMatchObject({ role: 'work' });
     expect(model.items[1]).toMatchObject({ role: 'result' });
   });
 

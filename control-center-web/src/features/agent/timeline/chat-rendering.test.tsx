@@ -37,7 +37,6 @@ afterEach(() => {
   useAgentLiveStore.getState().clear('session-failed-snapshot');
   useAgentLiveStore.getState().clear('session-1');
   useAgentLiveStore.getState().clear('session-empty-timeline');
-  useAgentLiveStore.getState().clear('session-fx-failed');
 });
 
 describe('Agent chat rendering', () => {
@@ -351,6 +350,10 @@ describe('Agent chat rendering', () => {
       <AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
     );
 
+    // Message side is the fx identity (UR-075): the repeated "Agent/状态"
+    // caption row must not exist in the DOM, not merely be hidden by CSS.
+    expect(document.querySelector('.agent-assistant-turn__body > header')).toBeNull();
+
     const toggle = screen.getByRole('button', { name: /展开 2 个步骤/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(toggle).toHaveTextContent('2 个步骤');
@@ -412,60 +415,88 @@ describe('Agent chat rendering', () => {
     expect(document.querySelector('.paw-activity-stack')).toBeInTheDocument();
   });
 
-  it('collapses a settled failed FX turn to a failed summary while keeping recovery visible', () => {
-    const sessionId = 'session-fx-failed';
-    const turnId = 'turn-fx-failed';
+  it('collapses failed FX work behind the partial narrative with truthful controls', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
-      messages: [userMessage(sessionId, turnId), failedAssistantMessage(sessionId, turnId)],
-      liveEvents: [{
-        ...agentEventFixture(9, 'turn_failed', {
-          error: '503 upstream request failed',
-          retryExhausted: true,
-          providerRetryAttempts: 6,
-          providerRetryMaxAttempts: 6,
-        }),
-        eventId: `${sessionId}:9`,
-        sessionId,
-        turnId,
-      }],
-      lastSequence: 9,
-      resumeToken: `${sessionId}:9`,
-      status: 'faulted',
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'responding',
     });
-    const continueTurn = vi.fn(() => true);
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'message_completed', {
+        message: assistantMessage(sessionId, turnId, '我先读取运行状态。', 10),
+      }),
+      agentEventFixture(2, 'tool_finished', {
+        toolCallId: 'call-failed-turn-overview',
+        toolName: 'overview',
+        result: { details: { ok: true, operation: 'status', result: { summary: '运行状态正常' } } },
+      }),
+      agentEventFixture(3, 'turn_failed', { error: '503 upstream request failed' }),
+    ]);
 
     render(
-      <TooltipProvider>
-        <AgentTurn
-          presentation="fx"
-          sessionId={sessionId}
-          turnId={turnId}
-          modelSelectionAvailable
-          onApprovalDecision={() => {}}
-          onContinueTurn={continueTurn}
-          onRetryTurn={() => true}
-          onSwitchModel={() => {}}
-        />
-      </TooltipProvider>,
+      <AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
     );
 
-    const toggle = screen.getByRole('button', { name: '展开 1 个步骤，本轮未完成' });
+    const toggle = screen.getByRole('button', { name: /展开 2 个步骤/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(toggle).toHaveAttribute('data-status', 'failed');
-    expect(document.querySelector('.paw-activity')).not.toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('模型服务请求失败');
-    expect(screen.getByRole('button', { name: '继续' })).toBeEnabled();
+    expect(toggle).toHaveTextContent('未完成');
+    expect(screen.getByText('我先读取运行状态。')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(document.querySelector('.paw-activity')).toBeNull();
+    const controlledIds = (toggle.getAttribute('aria-controls') ?? '').split(' ').filter(Boolean);
+    expect(controlledIds.length).toBeGreaterThan(0);
+    for (const id of controlledIds) {
+      expect(document.getElementById(id)).not.toBeNull();
+    }
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    const failedRow = document.querySelector<HTMLButtonElement>('.paw-activity')!;
-    expect(failedRow).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('已自动重试 6 次，模型服务仍未恢复；请稍后重试或切换模型。')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '继续' }));
-    expect(continueTurn).toHaveBeenCalledWith(turnId);
+    const failedActivity = document.querySelector<HTMLButtonElement>('.paw-activity[data-state="failed"]')!;
+    expect(failedActivity).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(failedActivity);
+    expect(failedActivity).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('lets a human collapse an auto-opened live FX activity and shows its real elapsed time', () => {
+  it('folds stopped FX work while the toggle states the stopped outcome', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'responding',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'tool_finished', {
+        toolCallId: 'call-stopped-overview',
+        toolName: 'overview',
+        result: { details: { ok: true, operation: 'status', result: { summary: '运行状态正常' } } },
+      }),
+      agentEventFixture(2, 'turn_completed', { status: 'aborted' }),
+    ]);
+
+    render(
+      <AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    const toggle = screen.getByRole('button', { name: /展开 1 个步骤/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('data-status', 'aborted');
+    expect(toggle).toHaveTextContent('已停止');
+    expect(screen.queryByText('运行状态正常')).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelector('.paw-activity')).not.toBeNull();
+  });
+
+  it('shows the real elapsed clock on a live FX activity row', () => {
     vi.useFakeTimers();
     vi.setSystemTime(60_000);
     const sessionId = 'session-1';
@@ -478,21 +509,18 @@ describe('Agent chat rendering', () => {
       status: 'responding',
     });
     useAgentLiveStore.getState().applyEvents(sessionId, [
-      agentEventFixture(1, 'tool_started', { toolCallId: 'call-live-collapse', toolName: 'overview' }),
+      agentEventFixture(1, 'tool_started', { toolCallId: 'call-live-elapsed', toolName: 'overview' }),
     ]);
 
     render(<AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
 
     const row = document.querySelector<HTMLButtonElement>('.paw-activity')!;
     expect(row).toHaveAttribute('aria-expanded', 'true');
-    expect(row.querySelector('.fx-meta')).toHaveTextContent(/秒/);
-
-    fireEvent.click(row);
-    expect(row).toHaveAttribute('aria-expanded', 'false');
+    expect(row.querySelector('.fx-meta')).toHaveTextContent(/60 秒/);
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
-    expect(row).toHaveAttribute('aria-expanded', 'false');
+    expect(row.querySelector('.fx-meta')).toHaveTextContent(/1 分/);
   });
 
   it('aggregates Provider usage once after the whole Tool Loop settles', () => {

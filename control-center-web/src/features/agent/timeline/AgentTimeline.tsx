@@ -1,5 +1,5 @@
 import { BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, TriangleAlert } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Virtuoso,
   type ScrollSeekConfiguration,
@@ -191,16 +191,6 @@ function fxClock(atMs: number): string {
   return atMs ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(atMs)) : '';
 }
 
-export type AgentTimelineContextChip = {
-  id: string;
-  label: string;
-  hint?: string;
-};
-
-type AgentTimelineListContext = {
-  contextChips: AgentTimelineContextChip[];
-};
-
 export function AgentTimeline({
   sessionId,
   persona,
@@ -221,9 +211,9 @@ export function AgentTimeline({
   onForkFromMessage,
   onEditMessage,
   activityPresentation = 'grouped',
-  contextChips = emptyContextChips,
   presentation = 'default',
   showConversationNavigation = true,
+  leadingContent,
 }: {
   assistantName?: string;
   sessionId: string;
@@ -248,9 +238,11 @@ export function AgentTimeline({
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
   activityPresentation?: 'grouped' | 'atomic';
-  contextChips?: AgentTimelineContextChip[];
   presentation?: 'default' | 'fx';
   showConversationNavigation?: boolean;
+  /** Conversation lead-in (e.g. Session context chips) rendered once above the
+   * first turn. It scrolls with the transcript instead of stealing viewport. */
+  leadingContent?: ReactNode;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const liveFollowIntentRef = useRef(true);
@@ -315,9 +307,9 @@ export function AgentTimeline({
     Header: AgentTimelineScrollHeader,
     Footer: AgentTimelineScrollFooter,
   }), []);
-  const timelineContext = useMemo<AgentTimelineListContext>(
-    () => ({ contextChips }),
-    [contextChips],
+  const timelineContext = useMemo<AgentTimelineContext>(
+    () => ({ leadingContent }),
+    [leadingContent],
   );
   useEffect(() => {
     liveFollowIntentRef.current = true;
@@ -470,7 +462,6 @@ export function AgentTimeline({
       <Virtuoso
         ref={virtuosoRef}
         key={sessionId}
-        context={timelineContext}
         data={turnOrder}
         computeItemKey={(_index, turnId) => turnId}
         // Open the latest turn below the workspace header, not against the
@@ -481,6 +472,7 @@ export function AgentTimeline({
         initialTopMostItemIndex={{ index: 'LAST', align: 'start' }}
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
+        context={timelineContext}
         scrollerRef={handleScrollerRef}
         rangeChanged={setVisibleRange}
         atBottomStateChange={handleAtBottomChange}
@@ -592,26 +584,20 @@ export const agentScrollSeekConfiguration = {
   exit: (velocity) => Math.abs(velocity) < 120,
 } satisfies ScrollSeekConfiguration;
 
+interface AgentTimelineContext {
+  leadingContent?: ReactNode;
+}
+
 function AgentTimelineScrollFooter() {
   return <div className="agent-timeline__footer-space" aria-hidden="true" />;
 }
 
-/** Session context (project binding, permission mode) scrolls with the
- * transcript above the first turn, mirroring the conversation baseline: it
- * orients a reader at the top of history without pinning another toolbar. */
-function AgentTimelineScrollHeader({ context }: { context?: AgentTimelineListContext }) {
-  const chips = context?.contextChips ?? [];
-  if (chips.length === 0) return <div className="agent-timeline__header-space" aria-hidden="true" />;
+function AgentTimelineScrollHeader({ context }: { context?: AgentTimelineContext }) {
   return (
-    <div className="agent-timeline__header-space">
-      <div aria-label="会话上下文" className="agent-context-chips" role="list">
-        {chips.map((chip) => (
-          <span className="agent-context-chip" key={chip.id} role="listitem" title={chip.hint || undefined}>
-            {chip.label}
-          </span>
-        ))}
-      </div>
-    </div>
+    <>
+      <div className="agent-timeline__header-space" aria-hidden="true" />
+      {context?.leadingContent ?? null}
+    </>
   );
 }
 
@@ -817,7 +803,12 @@ export function AgentTurn({
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <div className="agent-assistant-turn__body">
-            <header><strong>Agent</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
+            {/* fx keeps message side as identity (UR-075): no repeated
+                "Agent/状态" caption row; working/settled state is carried by
+                the pending strip and work disclosure below. */}
+            {presentation === 'fx' ? null : (
+              <header><strong>Agent</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
+            )}
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
             {presentation === 'fx' ? (
               <AgentTurnWorkDisclosure
@@ -825,8 +816,8 @@ export function AgentTurn({
                 model={turnWorkModel}
                 renderEntry={renderTimelineEntry}
                 sessionId={sessionId}
-                status={turn.status}
                 turnId={turnId}
+                turnStatus={turn.status}
                 updatedAtMs={turn.updatedAtMs}
               />
             ) : (
@@ -1418,8 +1409,6 @@ function messagePreview(message?: AgentMessageProjection): string {
 }
 
 const emptyIds: string[] = [];
-
-const emptyContextChips: AgentTimelineContextChip[] = [];
 
 function scrollerIsAtBottom(scroller: HTMLElement): boolean {
   return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 120;

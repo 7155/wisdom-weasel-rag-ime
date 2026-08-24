@@ -34,16 +34,16 @@ export function AgentTurnWorkDisclosure({
   model,
   renderEntry,
   sessionId,
-  status = 'completed',
   turnId,
+  turnStatus,
   updatedAtMs,
 }: {
   createdAtMs: number;
   model: AgentTurnWorkModel;
   renderEntry: (entry: AgentTurnSequenceEntry) => ReactNode;
   sessionId: string;
-  status?: AgentTurnStatus;
   turnId: string;
+  turnStatus?: AgentTurnStatus;
   updatedAtMs: number;
 }) {
   const disclosureKey = `${sessionId}:${turnId}`;
@@ -89,16 +89,22 @@ export function AgentTurnWorkDisclosure({
   const segments = groupPresentationItems(model.items);
   const stepCount = model.hiddenActivityCount + model.hiddenMessageCount;
   const elapsed = formatElapsed(Math.max(0, updatedAtMs - createdAtMs));
-  const statusNote = status === 'failed' ? '本轮未完成' : status === 'aborted' ? '已停止' : '';
+  const statusNote = turnStatus === 'failed' ? '未完成' : turnStatus === 'aborted' ? '已停止' : '';
+  const StateIcon = turnStatus === 'failed'
+    ? TriangleAlert
+    : turnStatus === 'aborted'
+      ? CircleSlash
+      : Check;
   const detail = [
-    statusNote,
     model.toolCount ? `${model.toolCount} 个工具` : '',
     elapsed,
+    statusNote,
   ].filter(Boolean).join(' · ');
-  const StateIcon = status === 'failed' ? TriangleAlert : status === 'aborted' ? CircleSlash : Check;
+  // Each collapsed work segment keeps its position inside the full segment
+  // list, so aria-controls must use the same indexes as the rendered reveals.
   const workSegmentIds = segments
-    .filter((segment) => segment.role === 'work')
-    .map((_segment, index) => `${contentId}-${index}`)
+    .map((segment, index) => (segment.role === 'work' ? `${contentId}-${index}` : ''))
+    .filter(Boolean)
     .join(' ');
 
   return (
@@ -106,7 +112,7 @@ export function AgentTurnWorkDisclosure({
       className="agent-turn-sequence agent-turn-work"
       data-collapsible={model.canCollapse || undefined}
       data-expanded={shownExpanded || undefined}
-      data-turn-status={status}
+      data-status={turnStatus}
       onPointerDownCapture={() => { if (!model.canCollapse) userReadWorkRef.current = true; }}
       onWheelCapture={() => { if (!model.canCollapse) userReadWorkRef.current = true; }}
       ref={rootRef}
@@ -117,7 +123,7 @@ export function AgentTurnWorkDisclosure({
           aria-expanded={shownExpanded}
           aria-label={`${shownExpanded ? '收起' : '展开'} ${stepCount} 个步骤${detail ? `，${detail}` : ''}`}
           className="agent-turn-work__toggle"
-          data-status={status}
+          data-status={turnStatus}
           onClick={(event) => toggleDisclosurePreservingAnchor(event, setExpandedPersisted)}
           onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setExpandedPersisted)}
           type="button"

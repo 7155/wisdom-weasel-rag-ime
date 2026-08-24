@@ -379,6 +379,28 @@ describe('Agent tool activity details', () => {
     expect(within(row).getByLabelText('完整工具返回')).toBeInTheDocument();
   });
 
+  it('marks a settled background subagent receipt with the violet completion tone', () => {
+    const subagent = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-subagent-vio',
+      toolName: 'subagent',
+      result: { details: { results: [{ status: 'completed', output: '后台只读检查已完成。' }] } },
+    });
+    const ordinary = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-ordinary-ok',
+      toolName: 'overview',
+      result: { details: { ok: true, operation: 'status', result: { summary: '运行状态已读取' } } },
+    });
+
+    const { container } = render(<FxActivityStack activities={[subagent, ordinary]} />);
+
+    const pills = [...container.querySelectorAll('.fx-pill')];
+    expect(pills).toHaveLength(2);
+    expect(pills[0]).toHaveClass('vio');
+    expect(pills[0]).toHaveTextContent('后台完成');
+    expect(pills[1]).toHaveClass('ok');
+    expect(pills[1]).toHaveTextContent('完成');
+  });
+
   it('explains a completed subagent with no child output instead of showing an empty receipt', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-subagent-empty-return',
