@@ -123,9 +123,9 @@ describe('MemoryFeature composition', () => {
     const transport = catalogTransport();
     renderMemory(transport);
 
-    await screen.findByRole('list', { name: '记忆内容分类' });
+    const search = await screen.findByRole('textbox', { name: '搜索' });
     expect(screen.queryByRole('button', { name: '筛选' })).not.toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: '搜索' }), '偏好');
+    await user.type(search, '偏好');
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.query?.query === '偏好'
     ))).toBe(true));
