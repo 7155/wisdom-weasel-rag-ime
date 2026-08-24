@@ -655,13 +655,17 @@
   line-height: 1.45;
 }
 
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.configuration-destinations, .configuration-editor, .governance-columns, .approvals-list) {
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.configuration-destinations, .configuration-editor, .governance-columns) {
   border-color: var(--paw-system-line);
 }
 
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .approvals-list > li {
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.approvals-queue__list > li > button, .approvals-decision__card) {
   border-color: var(--paw-system-line);
-  border-radius: 11px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .approvals-queue__list > li[data-active] > button {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 42%, var(--paw-system-line));
+  background: var(--paw-system-accent-soft);
 }
 
 /* Responsive composition -------------------------------------------------- */

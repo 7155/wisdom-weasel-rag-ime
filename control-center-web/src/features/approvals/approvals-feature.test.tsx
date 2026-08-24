@@ -30,7 +30,7 @@ describe('ApprovalsFeature', () => {
 
     expect(await screen.findByRole('heading', { name: '审批中心', level: 1 })).toBeInTheDocument();
 
-    const pulse = screen.getByRole('region', { name: '审批现状' });
+    const pulse = await screen.findByRole('region', { name: '审批现状' });
     expect(within(pulse).getByText('2 项操作在等你决定')).toBeVisible();
     expect(within(pulse).getByText(/1 项高风险需要二次确认/)).toBeVisible();
     expect(within(pulse).getByText(/1 项将在 5 分钟内过期/)).toBeVisible();
@@ -54,7 +54,7 @@ describe('ApprovalsFeature', () => {
     const transport = renderApprovals();
 
     expect(await screen.findByRole('heading', { name: '审批中心', level: 1 })).toBeInTheDocument();
-    const panel = screen.getByRole('region', { name: '审批详情' });
+    const panel = await screen.findByRole('region', { name: '审批详情' });
     await within(panel).findByRole('heading', { level: 3, name: '构建并安装 Control Center 开发版本' });
 
     const listRequest = transport.requests.find((call) => call.request.pathId === 'agent.approvals.list');
