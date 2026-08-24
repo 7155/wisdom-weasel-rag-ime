@@ -1,0 +1,110 @@
+/*
+ * Browser feature chrome states.
+ *
+ * Owns only the new state elements of the real Browser surface: the tab icon
+ * slot (loading / favicon / failure), the truthful omnibox security icon, and
+ * the page failure overlay. Tab strip, toolbar, and omnibox layout plus their
+ * surface colours remain owned by paw-apps.css and
+ * paw-os-tools-files-migrated-v1.css.
+ */
+
+.paw-browser-tab-icon {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+}
+
+.paw-browser-tab-icon img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.paw-browser-tab[data-failed] .paw-browser-tab-icon {
+  color: var(--paw-danger, #ef4444);
+}
+
+.paw-omnibox-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+}
+
+.paw-omnibox-icon[data-kind='search'] {
+  color: var(--paw-muted, #64748b);
+}
+
+.paw-omnibox-icon[data-kind='info'] {
+  color: var(--paw-warning, #b45309);
+}
+
+.paw-browser-page-status {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--paw-app-surface, #fff) 94%, transparent);
+  animation: paw-browser-page-status-in 180ms ease-out both;
+}
+
+.paw-browser-page-card {
+  width: min(480px, 100%);
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--paw-danger, #ef4444) 22%, transparent);
+  border-radius: 12px;
+  background: var(--paw-panel-strong, #fff);
+  color: var(--paw-muted, #64748b);
+  box-shadow: 0 12px 32px rgb(15 23 42 / 10%);
+}
+
+.paw-browser-page-card > svg {
+  color: var(--paw-danger, #ef4444);
+}
+
+.paw-browser-page-card > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.paw-browser-page-card strong {
+  color: var(--paw-ink, #0f172a);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paw-browser-page-card small {
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.paw-browser-page-card button {
+  min-height: 30px;
+  padding-inline: 11px;
+  border: 1px solid var(--paw-line, rgb(0 0 0 / 8%));
+  border-radius: 8px;
+  background: var(--paw-panel-soft, #f1f5fa);
+  color: var(--paw-ink, #0f172a);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+@keyframes paw-browser-page-status-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-browser-page-status {
+    animation: none;
+  }
+}
