@@ -125,10 +125,13 @@ export function LexiconWorkflow({
                   <strong title={entry.text}>{entry.text}</strong>
                   <span title={detail}>{detail}</span>
                 </span>
-                <StatusBadge
-                  label={reviewSourceLabel(entry.reviewSource)}
-                  tone={entry.reviewSource.includes('dsv4') ? 'warning' : 'info'}
-                />
+                <span className="input-lexicon-review__badges">
+                  <StatusBadge
+                    label={reviewSourceLabel(entry.reviewSource)}
+                    tone={entry.reviewSource.includes('dsv4') ? 'warning' : 'info'}
+                  />
+                  <StatusBadge label={entry.riskLabel || '待你判断'} tone="neutral" />
+                </span>
               </label>
             );
           })}
@@ -248,6 +251,13 @@ function reviewSourceLabel(value: string): string {
   return parts.length ? parts.join('+') : '待审词条';
 }
 
+/* 风险归类移入独立徽章后，详情行只保留拼音与真实使用记录；
+ * 零次数不再逐项罗列成噪声，而是如实合并为"尚无使用记录"。 */
 function reviewEntryDetail(entry: LexiconReview['entries'][number]): string {
-  return `${entry.pinyin || '无拼音'} · 被采用 ${entry.positiveCount} 次 · 被跳过 ${entry.negativeCount} 次 · ${entry.riskLabel || '待你判断'}`;
+  const usage = entry.positiveCount > 0
+    ? `被采用 ${entry.positiveCount} 次${entry.negativeCount > 0 ? ` · 被跳过 ${entry.negativeCount} 次` : ''}`
+    : entry.negativeCount > 0
+      ? `被跳过 ${entry.negativeCount} 次`
+      : '尚无使用记录';
+  return `${entry.pinyin || '无拼音'} · ${usage}`;
 }

@@ -170,6 +170,36 @@ export function VoiceFeature() {
     && typeof queries.transport.runVoiceAction === 'function';
   const agentRunning = booleanValue(voiceAgent.ok) || booleanValue(valueAt(voiceControl, 'agent.running'));
   const runtimeStatusUnavailable = Boolean(queries.runtime.error);
+  const runtimePending = queries.runtime.isPending;
+  /* 准备情况的说明按真实状态改写：服务没在运行时不承诺"随时可以听写"，
+   * 授权已确认时不再挂着"需要授权"的旧要求。 */
+  const agentDetail = runtimeStatusUnavailable
+    ? '暂时无法读取本机听写服务状态'
+    : runtimePending
+      ? '正在读取听写服务状态'
+      : stringValue(valueAt(voiceControl, 'agent.statusText'))
+        || (agentRunning ? '随时按住快捷键开始听写' : '启动听写服务后才能开始听写');
+  const microphoneDetail = runtimeStatusUnavailable
+    ? '暂时无法读取系统授权'
+    : runtimePending
+      ? '正在读取系统授权'
+      : booleanValue(microphone.ok)
+        ? '系统授权已确认'
+        : '需要系统授权';
+  const accessibilityDetail = runtimeStatusUnavailable
+    ? '暂时无法读取系统授权'
+    : runtimePending
+      ? '正在读取系统授权'
+      : booleanValue(accessibility.ok)
+        ? '已授权把文字写回当前应用'
+        : '需要授权才能把文字写回当前应用';
+  const pushToTalkStatus: { label: string; tone: VoiceStatusTone } = runtimeStatusUnavailable
+    ? { label: '状态未知', tone: 'warning' }
+    : runtimePending
+      ? { label: '正在检查', tone: 'neutral' }
+      : agentRunning
+        ? { label: '已就绪', tone: 'success' }
+        : { label: '未运行', tone: 'warning' };
   const error = queries.capabilities.error as Error | null;
   const pending = queries.capabilities.isPending
     || (queries.modelCatalogSupported && queries.modelCatalog.isPending);
@@ -252,9 +282,9 @@ export function VoiceFeature() {
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection title="准备情况">
           <MetricStrip items={[
-            { label: '听写服务', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : agentRunning ? '运行中' : '未运行', detail: runtimeStatusUnavailable ? '暂时无法读取本机听写服务状态' : stringValue(valueAt(voiceControl, 'agent.statusText')) || '随时按住快捷键开始听写', icon: Waves, tone: agentRunning && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(microphone), detail: runtimeStatusUnavailable ? '暂时无法读取系统授权' : '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(accessibility), detail: runtimeStatusUnavailable ? '暂时无法读取系统授权' : '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
+            { label: '听写服务', value: runtimePending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : agentRunning ? '运行中' : '未运行', detail: agentDetail, icon: Waves, tone: agentRunning && !runtimeStatusUnavailable ? 'success' : runtimePending ? 'neutral' : 'warning' },
+            { label: '麦克风', value: runtimePending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(microphone), detail: microphoneDetail, icon: Mic, tone: booleanValue(microphone.ok) && !runtimeStatusUnavailable ? 'success' : runtimePending ? 'neutral' : 'warning' },
+            { label: '辅助功能', value: runtimePending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(accessibility), detail: accessibilityDetail, icon: Shield, tone: booleanValue(accessibility.ok) && !runtimeStatusUnavailable ? 'success' : runtimePending ? 'neutral' : 'warning' },
             { label: '连接信息', value: credentialState.label, detail: '按转写服务分别保存在钥匙串', icon: KeyRound, tone: credentialState.tone },
           ]} />
           <InlineNotice title="隐私保护" tone="info">页面不会显示已保存的密钥或请求头。没有取得明确状态时，相关操作保持关闭。</InlineNotice>
@@ -399,7 +429,7 @@ export function VoiceFeature() {
         <ManagementSection title="按住说话与专有词" description="在这里设置按住说话和常用专有词。词表会留在本机；只有当前服务支持时才会用于听写。">
           <div className="mgmt-grid-2">
             <OperationalList items={[
-              { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开后形成最终文字', meta: hotkeyLabel(stringValue(valueAt(voiceControl, 'agent.hotkeyMode'), stringValue(voiceSettings.hotkey))), status: <StatusBadge label={booleanValue(voiceAgent.ok) ? '已就绪' : '待检查'} tone={booleanValue(voiceAgent.ok) ? 'success' : 'warning'} /> },
+              { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开后形成最终文字', meta: hotkeyLabel(stringValue(valueAt(voiceControl, 'agent.hotkeyMode'), stringValue(voiceSettings.hotkey))), status: <StatusBadge label={pushToTalkStatus.label} tone={pushToTalkStatus.tone} /> },
               { id: 'hotwords', title: '当前词表', detail: '控制中心与语音输入使用同一份本地词表', meta: `${savedHotwords.length} 条`, status: <StatusBadge label={hotwordApplyLabel(hotwordControl)} tone={hotwordApplyTone(hotwordControl)} /> },
             ]} />
             <div className="mgmt-stack">
@@ -765,9 +795,12 @@ function currentProviderStatus(pending: boolean, failed: boolean, value: string)
   return '当前设置未提供';
 }
 
+/* 只有明确的 ok=false 才说"未允许"；收到了状态但缺少明确结论时如实
+ * 报"未确认"，不把未知当成拒绝。 */
 function permissionLabel(value: Record<string, unknown>): string {
   if (value.ok === true) return '已允许';
-  if (value.ok === false || Object.keys(value).length > 0) return '未允许';
+  if (value.ok === false) return '未允许';
+  if (Object.keys(value).length > 0) return '未确认';
   return '未检查';
 }
 

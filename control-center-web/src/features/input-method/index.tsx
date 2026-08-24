@@ -12,7 +12,7 @@ import {
   TextCursorInput,
   type LucideIcon,
 } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Button, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
 import {
   inputSettingsMutationPathIds,
@@ -57,7 +57,6 @@ import {
   parseManagementWorkReceipt,
 } from '@/features/overview/management-mutation';
 import {
-  DataTable,
   InlineNotice,
   ManagementPage,
   ManagementSection,
@@ -174,18 +173,24 @@ export function InputMethodFeature() {
       commonInputSettingKeys.has(key) && !Object.is(valueAt(settings, key), next)
     )),
   ) as Record<string, DraftValue>, [changes, settings]);
+  /* 队列按修改顺序排列（changes 的插入顺序），每行带上所属分组，方便
+   * 回到对应设置卡修正。 */
   const diffRows = useMemo(() => Object.entries(pendingChanges).map(([key, next]) => {
-    const field = fields.find((item) => stringValue(item.key) === key) ?? {};
+    const section = settingsGroups.find((group) => (
+      group.fields.some((item) => stringValue(item.key) === key)
+    ));
+    const field = section?.fields.find((item) => stringValue(item.key) === key) ?? {};
     const applyMode = stringValue(field.applyMode, 'live');
     return {
       id: key,
       key: inputFieldFallback(key),
+      group: section ? sectionLabel(section.id) : '输入设置',
       before: formatSetting(valueAt(settings, key), key),
       after: formatSetting(next, key),
       applyMode: applyModeLabel(applyMode),
       requiresReload: applyMode !== 'live',
     };
-  }), [fields, pendingChanges, settings]);
+  }), [settingsGroups, pendingChanges, settings]);
   const hasInvalidChanges = Object.entries(pendingChanges).some(([key, value]) => {
     const field = fields.find((item) => stringValue(item.key) === key) ?? {};
     return !validInputSettingValue(field, value);
@@ -591,7 +596,7 @@ export function InputMethodFeature() {
                 <div className="input-settings-save__heading">
                   <div>
                     <h3 className="input-settings-diff-title">待保存更改</h3>
-                    <p>{diffRows.length ? '核对下表后保存。' : '下方的修改会先在这里列出。'}</p>
+                    <p>{diffRows.length ? '按修改顺序排队；核对每行的当前 → 目标后一次保存。' : '下方的修改会按顺序在这里排队。'}</p>
                   </div>
                   <StatusBadge
                     label={hasInvalidChanges ? '需要修正' : diffRows.length ? `${diffRows.length} 项待保存` : '尚未修改'}
@@ -599,16 +604,26 @@ export function InputMethodFeature() {
                   />
                 </div>
                 {diffRows.length ? (
-                  <DataTable
-                    caption="输入设置待保存更改"
-                    columns={[
-                      { key: 'key', label: '设置项', width: '34%' },
-                      { key: 'before', label: '当前' },
-                      { key: 'after', label: '目标' },
-                      { key: 'applyMode', label: '生效方式', width: '20%' },
-                    ]}
-                    rows={diffRows}
-                  />
+                  <ol aria-label="待保存的输入设置队列" className="input-queue">
+                    {diffRows.map((row) => (
+                      <li
+                        className="input-queue__row"
+                        data-requires-reload={row.requiresReload || undefined}
+                        key={row.id}
+                      >
+                        <span className="input-queue__name">
+                          <strong>{row.key}</strong>
+                          <small>{row.group}</small>
+                        </span>
+                        <span className="input-queue__delta">
+                          <span className="input-queue__before">{row.before}</span>
+                          <i aria-hidden="true" />
+                          <span className="input-queue__after">{row.after}</span>
+                        </span>
+                        <span className="input-queue__apply">{row.applyMode}</span>
+                      </li>
+                    ))}
+                  </ol>
                 ) : null}
                 <ManagementMutationWorkflow
                   availability={queries.settingsMutationAvailability(
@@ -1209,7 +1224,21 @@ function SuggestionPanelPreview({ panel }: { panel: SuggestionPanel }) {
         </span>
         {panel.hints.length ? (
           <span aria-label="采纳方式" className="input-suggest-preview__hints" role="list">
-            {panel.hints.map((hint) => <span key={hint} role="listitem">{hint}</span>)}
+            {panel.hints.map((hint) => (
+              <span
+                data-kind={hint.keys.length ? 'key' : 'timing'}
+                key={`${hint.keys.join('+')}|${hint.text}`}
+                role="listitem"
+              >
+                {hint.keys.map((keyName, index) => (
+                  <Fragment key={keyName}>
+                    {index > 0 ? <i aria-hidden="true">+</i> : null}
+                    <kbd>{keyName}</kbd>
+                  </Fragment>
+                ))}
+                {hint.text}
+              </span>
+            ))}
           </span>
         ) : null}
       </figcaption>

@@ -125,6 +125,13 @@ export function componentStatus(
  * 编造候选正文或运行结果。示意图是"当前配置长什么样"，不是运行证据。
  * ------------------------------------------------------------------------- */
 
+/* 采纳提示分成"按键"与"动作"两段：按键渲染成键帽、动作保持人话。
+ * keys 为空表示这是时间性说明（如自动收起），不冒充键盘操作。 */
+export type SuggestionHint = {
+  keys: readonly string[];
+  text: string;
+};
+
 export type SuggestionPanel = {
   /** 上屏后是否生成智能候选；只有明确写为 false 才算关闭。 */
   enabled: boolean;
@@ -133,7 +140,7 @@ export type SuggestionPanel = {
   /** 候选界面：紧凑单行或展开列表。 */
   expanded: boolean;
   /** 已配置的采纳方式与停留时长，逐条可扫读。 */
-  hints: readonly string[];
+  hints: readonly SuggestionHint[];
 };
 
 export function suggestionPanel(settings: Record<string, unknown>): SuggestionPanel {
@@ -142,17 +149,17 @@ export function suggestionPanel(settings: Record<string, unknown>): SuggestionPa
   const candidateCount = typeof rawCount === 'number' && Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= 8
     ? rawCount
     : 0;
-  const hints: string[] = [];
+  const hints: SuggestionHint[] = [];
   const tabAction = stringValue(valueAt(settings, 'interaction.postCommit.tabAction'));
-  if (tabAction === 'accept_top_prediction') hints.push('Tab 采纳第 1 条');
-  if (tabAction === 'rime_default') hints.push('Tab 保留给输入法');
+  if (tabAction === 'accept_top_prediction') hints.push({ keys: ['Tab'], text: '采纳第 1 条' });
+  if (tabAction === 'rime_default') hints.push({ keys: ['Tab'], text: '保留给输入法' });
   const optionNumber = stringValue(valueAt(settings, 'interaction.postCommit.optionNumber'));
   if (optionNumber === 'select_prediction_by_ordinal' || optionNumber === 'select_prediction') {
-    hints.push('Option+数字 选对应候选');
+    hints.push({ keys: ['Option', '数字'], text: '选对应候选' });
   }
   const ttl = valueAt(settings, 'interaction.postCommit.panelTtlMs');
   if (typeof ttl === 'number' && Number.isFinite(ttl) && ttl > 0) {
-    hints.push(`约 ${secondsLabel(ttl)}后自动收起`);
+    hints.push({ keys: [], text: `约 ${secondsLabel(ttl)}后自动收起` });
   }
   return {
     enabled,

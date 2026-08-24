@@ -564,6 +564,22 @@ describe('InputMethodFeature', () => {
     const candidateCount = screen.getByLabelText('联想候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');
+
+    // 待保存队列按修改顺序排队，逐行给出所属分组、当前 → 目标与生效方式。
+    const queueRows = within(screen.getByRole('list', { name: '待保存的输入设置队列' }))
+      .getAllByRole('listitem');
+    expect(queueRows).toHaveLength(2);
+    expect(queueRows[0]).toHaveTextContent('Option+数字行为');
+    expect(queueRows[0]).toHaveTextContent('输入体验');
+    expect(queueRows[0]).toHaveTextContent('按序号选择智能候选');
+    expect(queueRows[0]).toHaveTextContent('关闭');
+    expect(queueRows[0]).toHaveTextContent('立即生效');
+    expect(queueRows[0]).not.toHaveAttribute('data-requires-reload');
+    expect(queueRows[1]).toHaveTextContent('联想候选数量');
+    expect(queueRows[1]).toHaveTextContent('候选界面');
+    expect(queueRows[1]).toHaveTextContent('重新载入输入法');
+    expect(queueRows[1]).toHaveAttribute('data-requires-reload');
+
     await user.click(screen.getByRole('button', { name: '保存输入体验设置' }));
 
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(true));
@@ -1049,10 +1065,14 @@ describe('InputMethodFeature', () => {
 
     // 真实的风险归类与后端策略原文都要到达用户，而不是统一的"待你判断"。
     expect(await screen.findByText('待审 2 条 · 已选 1 条')).toBeInTheDocument();
-    expect(screen.getByText(/模型建议，需人工确认/)).toBeInTheDocument();
-    expect(screen.getByText(/真实选词反馈/)).toBeInTheDocument();
+    // 风险归类是独立徽章，而不是挤在详情行里的一段文字。
+    expect(screen.getByText(/模型建议，需人工确认/).closest('.mgmt-status')).not.toBeNull();
+    expect(screen.getByText(/真实选词反馈/).closest('.mgmt-status')).not.toBeNull();
     expect(screen.getByText('模型整理')).toBeInTheDocument();
     expect(screen.getByText(/只默认选择有至少 3 次真实反馈的常用词/)).toBeInTheDocument();
+    // 零使用记录如实合并为一句话，而不是罗列"被采用 0 次 · 被跳过 0 次"。
+    expect(screen.getByText(/尚无使用记录/)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('被采用 0 次');
     expect(screen.getByRole('checkbox', { name: '选择 知识蒸馏' })).not.toBeChecked();
 
     await user.click(screen.getByRole('button', { name: '全选' }));
@@ -1148,10 +1168,16 @@ describe('InputMethodFeature', () => {
     expect(figure).toHaveAttribute('data-panel', 'compact');
     expect(figure.querySelectorAll('.input-suggest-preview__slot')).toHaveLength(5);
     expect(figure).toHaveTextContent('与原生候选并排出现、样式可见区分');
+    // 采纳提示的按键渲染成键帽；自动收起是时间性说明，不冒充键盘操作。
     const hints = within(figure).getByRole('list', { name: '采纳方式' });
-    expect(within(hints).getByText('Tab 采纳第 1 条')).toBeInTheDocument();
-    expect(within(hints).getByText('Option+数字 选对应候选')).toBeInTheDocument();
-    expect(within(hints).getByText('约 4 秒后自动收起')).toBeInTheDocument();
+    const tabHint = within(hints).getByText('采纳第 1 条');
+    expect(within(tabHint).getByText('Tab', { selector: 'kbd' })).toBeInTheDocument();
+    const ordinalHint = within(hints).getByText('选对应候选');
+    expect(within(ordinalHint).getByText('Option', { selector: 'kbd' })).toBeInTheDocument();
+    expect(within(ordinalHint).getByText('数字', { selector: 'kbd' })).toBeInTheDocument();
+    const timingHint = within(hints).getByText('约 4 秒后自动收起');
+    expect(timingHint).toHaveAttribute('data-kind', 'timing');
+    expect(timingHint.querySelector('kbd')).toBeNull();
 
     // 三条车道按管线顺序展示：上下文获取 → 记忆召回 → 本机联想。
     const steps = screen.getByRole('list', { name: '智能候选的生成步骤' });
@@ -1421,6 +1447,11 @@ describe('InputMethodFeature', () => {
     expect(row?.querySelector('.mgmt-status')).toBeInTheDocument();
     expect(row?.querySelector('.mgmt-list__content strong')).toHaveAttribute('title', '表情包');
     expect(row?.querySelector('.mgmt-list__content span')).toHaveAttribute('title', expect.stringContaining('被采用 3 次'));
+    // 状态列固定两枚徽章：来源与风险归类；后端没给风险结论时如实回落到"待你判断"。
+    const badges = row?.querySelector('.input-lexicon-review__badges');
+    expect(badges).toBeInTheDocument();
+    expect(badges?.querySelectorAll('.mgmt-status')).toHaveLength(2);
+    expect(within(badges as HTMLElement).getByText('待你判断')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '刷新审阅' })).toHaveLength(1);
     expect(transport.requests.some(({ request }) => [
       'input.source.get',
@@ -1540,7 +1571,12 @@ describe('generation stage presentation', () => {
       enabled: true,
       candidateCount: 6,
       expanded: true,
-      hints: ['Tab 采纳第 1 条', 'Option+数字 选对应候选', '约 1.5 秒后自动收起'],
+      // 按键与动作分开：keys 渲染成键帽；时间性说明的 keys 为空。
+      hints: [
+        { keys: ['Tab'], text: '采纳第 1 条' },
+        { keys: ['Option', '数字'], text: '选对应候选' },
+        { keys: [], text: '约 1.5 秒后自动收起' },
+      ],
     });
     // 关闭后不再宣称任何采纳方式。
     expect(suggestionPanel({ interaction: { postCommit: { enabled: false, panelTtlMs: 4000 } } })).toEqual({

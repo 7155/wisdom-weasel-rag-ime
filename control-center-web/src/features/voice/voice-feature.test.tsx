@@ -106,15 +106,48 @@ describe('VoiceFeature', () => {
     const transport = renderVoice(false, 'native_streaming', ['澄助手'], true);
 
     expect(await screen.findByText('听写状态读取失败')).toBeInTheDocument();
-    expect(screen.getAllByText('状态未知')).toHaveLength(3);
+    // 三项准备指标加"按住说话"徽章一起如实报状态未知，而不是假装待检查。
+    expect(screen.getAllByText('状态未知')).toHaveLength(4);
     expect(screen.queryByText('未运行')).not.toBeInTheDocument();
     expect(screen.queryByText('未允许')).not.toBeInTheDocument();
+    expect(screen.queryByText('已就绪')).not.toBeInTheDocument();
 
     const before = transport.requests.filter(({ request }) => request.pathId === 'diagnostics.runtime').length;
     await user.click(screen.getByRole('button', { name: '重试听写状态' }));
     await waitFor(() => expect(
       transport.requests.filter(({ request }) => request.pathId === 'diagnostics.runtime').length,
     ).toBeGreaterThan(before));
+  });
+
+  it('confirms granted permissions instead of repeating an outstanding demand', async () => {
+    renderVoice(true);
+
+    await screen.findByRole('heading', { name: '语音输入', level: 1 });
+    expect(await screen.findByText('运行中')).toBeInTheDocument();
+    // 服务在运行、授权已确认时，说明文字与真实状态一致。
+    expect(screen.getByText('随时按住快捷键开始听写')).toBeInTheDocument();
+    expect(screen.getByText('系统授权已确认')).toBeInTheDocument();
+    expect(screen.getByText('已授权把文字写回当前应用')).toBeInTheDocument();
+    expect(screen.queryByText('需要系统授权')).not.toBeInTheDocument();
+    expect(screen.getByText('已就绪')).toBeInTheDocument();
+  });
+
+  it('reports a stopped dictation service without promising push-to-talk readiness', async () => {
+    renderVoice(false, 'native_streaming', ['澄助手'], false, {
+      voiceAgent: { ok: false },
+      microphone: { ok: false },
+      accessibility: { status: 'unknown' },
+    });
+
+    await screen.findByRole('heading', { name: '语音输入', level: 1 });
+    // 服务未运行时不承诺"随时可以听写"，按住说话也如实报未运行。
+    expect((await screen.findAllByText('未运行')).length).toBe(2);
+    expect(screen.getByText('启动听写服务后才能开始听写')).toBeInTheDocument();
+    expect(screen.queryByText('随时按住快捷键开始听写')).not.toBeInTheDocument();
+    expect(screen.queryByText('已就绪')).not.toBeInTheDocument();
+    // 明确拒绝才是"未允许"；有状态但没有结论时如实报"未确认"。
+    expect(screen.getByText('未允许')).toBeInTheDocument();
+    expect(screen.getByText('未确认')).toBeInTheDocument();
   });
 
   it('offers only hotwords that are not already in the current draft', async () => {
@@ -211,6 +244,11 @@ function renderVoice(
   provider: VoiceProviderId = 'native_streaming',
   savedHotwords: string[] = ['澄助手'],
   runtimeFailure = false,
+  runtimeComponents: Record<string, unknown> = {
+    voiceAgent: { ok: true },
+    microphone: { ok: true },
+    accessibility: { ok: true },
+  },
 ): MockControlTransport {
   const routeIds = [
     'configuration.settings',
@@ -239,14 +277,7 @@ function renderVoice(
       'configuration.schema': { ok: true, sections: [] },
       'diagnostics.runtime': runtimeFailure
         ? () => { throw new Error('runtime probe unavailable'); }
-        : {
-            ok: true,
-            components: {
-              voiceAgent: { ok: true },
-              microphone: { ok: true },
-              accessibility: { ok: true },
-            },
-          },
+        : { ok: true, components: runtimeComponents },
       'agent.tools.list': {
         ok: true,
         items: toolAvailable ? [{

@@ -162,6 +162,7 @@ main[data-route-id='input'] .input-suggest-preview__hints {
 main[data-route-id='input'] .input-suggest-preview__hints > span {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   padding: 2px 8px;
   border: 1px solid var(--color-border);
   border-radius: 5px;
@@ -169,6 +170,36 @@ main[data-route-id='input'] .input-suggest-preview__hints > span {
   color: var(--color-text-secondary);
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* 键盘采纳提示：按键渲染成键帽，与动作文字可见区分；时间性说明
+   （自动收起）没有按键，用虚线边界表明它不是键盘操作。 */
+main[data-route-id='input'] .input-suggest-preview__hints > span[data-kind='timing'] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='input'] .input-suggest-preview__hints kbd {
+  display: inline-flex;
+  min-width: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid var(--color-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+main[data-route-id='input'] .input-suggest-preview__hints > span > i {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-style: normal;
 }
 
 /* 三步生成管线：一块表面、内部分隔线加流向箭头，而不是三张漂浮卡片。 */
@@ -671,6 +702,140 @@ main[data-route-id='input'] .input-settings-save__heading p {
   line-height: 1.45;
 }
 
+/* ---------------------------------------------------------------------------
+ * 待保存队列
+ *
+ * 一行一项、按修改顺序编号；"当前 → 目标"由箭头连接，需要重载的行在
+ * 生效方式芯片上提高警示。每行都标注所属分组，方便回到对应设置卡。
+ * ------------------------------------------------------------------------- */
+main[data-route-id='input'] .input-queue {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: clip;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  counter-reset: input-queue;
+  list-style: none;
+}
+
+main[data-route-id='input'] .input-queue__row {
+  counter-increment: input-queue;
+  display: grid;
+  min-width: 0;
+  min-height: 46px;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 7px 12px 7px 10px;
+  border-bottom: 1px solid var(--color-border);
+  grid-template-columns: 20px minmax(0, 0.9fr) minmax(0, 1.1fr) max-content;
+}
+
+main[data-route-id='input'] .input-queue__row:last-child { border-bottom: 0; }
+
+main[data-route-id='input'] .input-queue__row::before {
+  content: counter(input-queue);
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='input'] .input-queue__name {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+main[data-route-id='input'] .input-queue__name strong {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-queue__name small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-queue__delta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+main[data-route-id='input'] .input-queue__before {
+  color: var(--color-text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='input'] .input-queue__after {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+/* 箭头由线段加箭头头部画出，读作"从当前流向目标"。 */
+main[data-route-id='input'] .input-queue__delta > i {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 1.5px;
+  background: var(--color-border-strong);
+}
+
+main[data-route-id='input'] .input-queue__delta > i::after {
+  content: '';
+  position: absolute;
+  top: -2.5px;
+  right: 0.5px;
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid var(--color-border-strong);
+  border-right: 1.5px solid var(--color-border-strong);
+  transform: rotate(45deg);
+}
+
+main[data-route-id='input'] .input-queue__apply {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-queue__row[data-requires-reload] .input-queue__apply {
+  border-color: color-mix(in srgb, var(--color-warning) 35%, var(--color-border));
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-weight: var(--font-weight-semibold);
+}
+
 main[data-route-id='input'] .input-settings-group {
   min-width: 0;
   overflow: clip;
@@ -966,37 +1131,40 @@ main[data-route-id='input-lexicon'] label.mgmt-list__row {
 /* The shared management grammar collapses its first row below 860px so
    generic title/meta/status rows can breathe. Lexicon review rows have a
    fixed leading control, however; restoring that track keeps the checkbox
-   out of the candidate title and leaves the status chip in its own column. */
+   out of the candidate title and leaves the status chips in their own
+   column. Rows stay one scan line tall: word + detail flow inline and the
+   badges sit flush right, so a long review batch reads like a ledger. */
 main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
   grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) max-content;
   grid-template-areas: 'check content status';
-  align-items: start;
-  min-height: 58px;
-  row-gap: 6px;
+  align-items: center;
+  min-height: 44px;
+  row-gap: 4px;
 }
 
 main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > input {
   grid-area: check;
-  margin-top: 3px;
+  margin-top: 0;
 }
 
 main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-list__content {
   grid-area: content;
-  align-self: start;
+  align-self: center;
 }
 
 main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
   grid-area: status;
-  align-self: start;
-  justify-self: start;
+  align-self: center;
+  justify-self: end;
 }
 
-/* 每条候选带两枚徽章：来源（输入记录/选词反馈）与风险归类。宽窗口里
-   纵向叠放占住状态列，窄窗口换到内容下方后再横向排开。 */
+/* 每条候选带两枚徽章：来源（输入记录/选词反馈/模型整理）与风险归类。
+   横向排开保持行高紧凑；窄窗口换到内容下方后继续横排。 */
 main[data-route-id='input-lexicon'] .input-lexicon-review__badges {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 4px;
 }
 
@@ -1014,29 +1182,34 @@ main[data-route-id='input-lexicon'] label.mgmt-list__row > input {
   accent-color: var(--color-accent);
 }
 
+/* 词条与详情在同一条基线上流动：词在前、拼音与使用记录随后，宽窗口
+   一行读完；空间不足时详情自然换到词条下方。 */
 main[data-route-id='input-lexicon'] .mgmt-list__content {
-  display: grid;
+  display: flex;
   min-width: 0;
-  gap: 3px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
 }
 
 main[data-route-id='input-lexicon'] .mgmt-list__content strong {
   overflow: hidden;
-  font-size: 13px;
+  max-width: 100%;
+  font-size: 14px;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 main[data-route-id='input-lexicon'] .mgmt-list__content span {
-  display: -webkit-box;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  min-width: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   line-height: 1.4;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 980px) {
@@ -1098,6 +1271,16 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-select__trigger {
     grid-column: 1;
     grid-row: auto;
+  }
+
+  main[data-route-id='input'] .input-queue__row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  main[data-route-id='input'] .input-queue__delta,
+  main[data-route-id='input'] .input-queue__apply {
+    grid-column: 2;
+    justify-self: start;
   }
 
   main[data-route-id='input'] .input-settings-save__heading,
@@ -1163,6 +1346,16 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'][data-paw-os-app] .input-setting-row dd { justify-items: start; text-align: left; }
   main[data-route-id='input'][data-paw-os-app] .input-settings-save__heading { display: grid; }
 
+  main[data-route-id='input'][data-paw-os-app] .input-queue__row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  main[data-route-id='input'][data-paw-os-app] .input-queue__delta,
+  main[data-route-id='input'][data-paw-os-app] .input-queue__apply {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   main[data-route-id='input-lexicon'][data-paw-os-app] .input-inline-action {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1172,12 +1365,28 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
     grid-template-areas:
       'check content'
       '. status';
-    min-height: 78px;
+    align-items: start;
+    min-height: 64px;
+  }
+
+  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > input {
+    margin-top: 3px;
   }
 
   main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
     flex-direction: row;
     flex-wrap: wrap;
+    justify-content: flex-start;
     justify-self: start;
+  }
+
+  /* 窄窗口里详情行允许折两行，保留完整的使用记录。 */
+  main[data-route-id='input-lexicon'][data-paw-os-app] .mgmt-list__content span {
+    display: -webkit-box;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 }
