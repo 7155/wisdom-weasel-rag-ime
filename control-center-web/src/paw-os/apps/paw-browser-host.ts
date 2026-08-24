@@ -102,3 +102,17 @@ export function loadPawBrowserUrl(
   void webview.loadURL(rawUrl);
   return true;
 }
+
+/**
+ * Reads real history availability from the guest. The `<webview>` element only
+ * gains its navigation methods once Electron attaches the guest, so this reads
+ * defensively instead of trusting the type at mount time.
+ */
+export function guestNavigationState(
+  webview: PawBrowserWebview | null,
+): { canGoBack: boolean; canGoForward: boolean } {
+  return {
+    canGoBack: typeof webview?.canGoBack === 'function' ? webview.canGoBack() : false,
+    canGoForward: typeof webview?.canGoForward === 'function' ? webview.canGoForward() : false,
+  };
+}

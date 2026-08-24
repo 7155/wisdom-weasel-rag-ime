@@ -69,6 +69,12 @@ export function omniboxIconKind(address: string, currentUrl: string): PawOmnibox
   return 'search';
 }
 
+export function omniboxIconTitle(kind: PawOmniboxIcon): string {
+  if (kind === 'lock') return '连接已加密';
+  if (kind === 'info') return '连接未加密';
+  return '搜索或输入网址';
+}
+
 const knownFailLoadCodes: Record<string, string> = {
   '-7': '连接超时',
   '-100': '连接已关闭',

@@ -12,10 +12,8 @@ import {
   Globe2,
   History,
   Home,
-  LockKeyhole,
   PanelRightClose,
   PanelRightOpen,
-  Plus,
   Printer,
   RefreshCw,
   Search,
@@ -26,20 +24,45 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type FormEvent, type WheelEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type WheelEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
+import { BrowserOmnibox } from '@/features/browser/BrowserOmnibox';
+import { BrowserPageStatus } from '@/features/browser/BrowserPageStatus';
+import { BrowserTabStrip, type BrowserTabItem } from '@/features/browser/BrowserTabStrip';
 import {
   PAW_BROWSER_PARTITION,
+  guestNavigationState,
   loadPawBrowserUrl,
   pawBrowserHost,
+  type PawBrowserGuestFailLoadEvent,
+  type PawBrowserGuestFaviconEvent,
+  type PawBrowserGuestProcessGoneEvent,
   type PawBrowserHistoryEntry,
   type PawBrowserWebview,
   type PawBrowserSettings,
 } from './paw-browser-host';
+import {
+  browserActionLabel,
+  browserElement,
+  errorText,
+  formatBytes,
+  historyDateTime,
+  historyTime,
+  hostTab,
+  initialHostTab,
+  isTextEntry,
+  knownCount,
+  normalizedAddress,
+  number,
+  record,
+  rows,
+  text,
+  type BrowserElement,
+  type BrowserRecord,
+  type HostBrowserTab,
+} from './paw-browser-model';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
-
-type BrowserRecord = Record<string, unknown>;
 
 export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, { kind: 'browser-target' }> } = {}) {
   const transport = useControlTransport();
@@ -77,12 +100,6 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const selectedTab = tabs.find((tab) => number(tab.tabId) === selectedTabId) ?? tabs[0];
   const selectedHostTab = hostTabs.find((tab) => tab.id === selectedHostTabId) ?? hostTabs[0];
   const selectedTabUrl = electronHost ? selectedHostTab?.url ?? 'about:blank' : text(selectedTab?.url);
-  const displayedTabs = electronHost
-    ? hostTabs.map((tab, index) => ({ ...tab, tabId: index + 1 }))
-    : tabs;
-  const displayedSelectedTabId = electronHost
-    ? Math.max(1, hostTabs.findIndex((tab) => tab.id === selectedHostTabId) + 1)
-    : selectedTabId;
 
   const refreshShell = useCallback(async () => {
     const [tabsValue, tracesValue] = await Promise.all([
@@ -341,11 +358,6 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     void run(action);
   };
 
-  const submitAddress = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    navigateTo(address);
-  };
-
   const isStartPage = !currentUrl || currentUrl === 'about:blank' || currentUrl === 'paw://home';
   const snapshotId = text(snapshot.snapshotId);
   const snapshotImageUrl = snapshotId && snapshot.hasScreenshot && transport.browserSnapshotImageUrl
@@ -526,57 +538,59 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     }
   };
 
+  const retryPage = () => {
+    const webview = selectedWebview();
+    const tab = selectedHostTab;
+    if (!webview || !tab) return;
+    const failedUrl = tab.failure?.url;
+    updateHostTab(tab.id, { crashedReason: undefined, failure: null, loading: true });
+    if (failedUrl) void webview.loadURL(failedUrl);
+    else webview.reload();
+  };
+
   const visibleHistory = history.filter((entry) => {
     const query = historyQuery.trim().toLocaleLowerCase();
     return !query || entry.title.toLocaleLowerCase().includes(query) || entry.url.toLocaleLowerCase().includes(query);
   });
 
+  const selectedTabLoading = Boolean(electronHost && selectedHostTab?.loading);
+  const selectedPageFailure = electronHost ? selectedHostTab?.failure ?? null : null;
+  const selectedPageCrash = electronHost ? selectedHostTab?.crashedReason : undefined;
+  const tabItems: BrowserTabItem[] = electronHost
+    ? hostTabs.map((tab) => ({
+      id: tab.id,
+      title: tab.title || '新标签页',
+      active: tab.id === selectedHostTabId,
+      loading: tab.loading,
+      favicon: tab.favicon,
+      failed: Boolean(tab.failure || tab.crashedReason),
+    }))
+    : tabs.map((tab) => ({
+      id: String(number(tab.tabId)),
+      title: text(tab.title) || '新标签页',
+      active: number(tab.tabId) === selectedTabId,
+      loading: Boolean(tab.loading) || undefined,
+      favicon: text(tab.favicon) || undefined,
+    }));
+
   const browserTabs = (
-    <div className="paw-browser-tabstrip" data-window-chrome={windowChromeTarget ? true : undefined}>
-      <div className="paw-browser-tabs-live" role="tablist" aria-label="PAW Browser 标签页">
-        {displayedTabs.map((tab) => {
-          const tabId = number(tab.tabId);
-          const hostTabId = text(tab.id);
-          const isTabActive = tabId === displayedSelectedTabId;
-          return (
-            <div className="paw-browser-tab" data-active={isTabActive || undefined} key={hostTabId || tabId} role="presentation">
-              <button
-                aria-selected={isTabActive}
-                className="paw-browser-tab-main"
-                onClick={() => electronHost && hostTabId ? setSelectedHostTabId(hostTabId) : setSelectedTabId(tabId)}
-                role="tab"
-                type="button"
-              >
-                <Globe2 size={13} />
-                <span>{text(tab.title) || '新标签页'}</span>
-              </button>
-              {isTabActive ? (
-                <button
-                  aria-label="关闭标签页"
-                  className="paw-browser-tab-close"
-                  onClick={() => {
-                    if (electronHost && hostTabId) closeHostTab(hostTabId);
-                    else void run('close_tab');
-                  }}
-                  type="button"
-                >
-                  <X size={12} />
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-        <button
-          aria-label="新建标签页"
-          className="paw-browser-new-tab"
-          disabled={Boolean(busy)}
-          onClick={() => electronHost ? addHostTab() : void run('new_tab', { url: 'about:blank' })}
-          type="button"
-        >
-          <Plus size={14} />
-        </button>
-      </div>
-    </div>
+    <BrowserTabStrip
+      inWindowChrome={Boolean(windowChromeTarget)}
+      newTabDisabled={Boolean(busy)}
+      onClose={(tabId) => {
+        if (electronHost) closeHostTab(tabId);
+        else void run('close_tab');
+      }}
+      onNewTab={() => {
+        if (electronHost) addHostTab();
+        else void run('new_tab', { url: 'about:blank' });
+      }}
+      onSelect={(tabId) => {
+        if (electronHost) setSelectedHostTabId(tabId);
+        else setSelectedTabId(Number(tabId));
+      }}
+      tabs={tabItems}
+    />
   );
 
   return (
@@ -587,40 +601,44 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
 
       <section className="paw-browser-toolbar">
         <div className="paw-nav-buttons">
-          <button aria-label="后退" disabled={electronHost ? !selectedHostTab : !selectedTabId || Boolean(busy)} onClick={() => runNavigation('back')} type="button">
+          <button
+            aria-label="后退"
+            disabled={electronHost ? !selectedHostTab?.canGoBack : !selectedTabId || Boolean(busy)}
+            onClick={() => runNavigation('back')}
+            type="button"
+          >
             <ArrowLeft size={15} />
           </button>
-          <button aria-label="前进" disabled={electronHost ? !selectedHostTab : !selectedTabId || Boolean(busy)} onClick={() => runNavigation('forward')} type="button">
+          <button
+            aria-label="前进"
+            disabled={electronHost ? !selectedHostTab?.canGoForward : !selectedTabId || Boolean(busy)}
+            onClick={() => runNavigation('forward')}
+            type="button"
+          >
             <ArrowRight size={15} />
           </button>
           <button
-            aria-label="刷新网页"
+            aria-label={selectedTabLoading ? '停止加载' : '刷新网页'}
             disabled={electronHost ? !selectedHostTab : !selectedTabId || Boolean(busy)}
-            onClick={() => runNavigation('reload')}
+            onClick={() => {
+              if (selectedTabLoading) selectedWebview()?.stop();
+              else runNavigation('reload');
+            }}
             type="button"
           >
-            <RefreshCw className={busy === 'reload' ? 'ui-spin' : ''} size={14} />
+            {selectedTabLoading ? <X size={14} /> : <RefreshCw className={busy === 'reload' ? 'ui-spin' : ''} size={14} />}
           </button>
           <button aria-label="空白页" className="paw-browser-home" onClick={() => navigateTo('about:blank')} type="button">
             <Home size={14} />
           </button>
         </div>
 
-        <form className="paw-omnibox-form" onSubmit={submitAddress}>
-          <LockKeyhole className="paw-lock-icon" size={13} />
-          <input
-            aria-label="页面地址"
-            onChange={(event) => setAddress(event.target.value)}
-            placeholder="输入网址或搜索内容…"
-            spellCheck={false}
-            value={address}
-          />
-          {address ? (
-            <button className="paw-omnibox-clear" onClick={() => setAddress('')} type="button">
-              <X size={12} />
-            </button>
-          ) : null}
-        </form>
+        <BrowserOmnibox
+          address={address}
+          currentUrl={currentUrl}
+          onAddressChange={setAddress}
+          onNavigate={navigateTo}
+        />
 
         <div className="paw-toolbar-actions">
           <button
@@ -709,7 +727,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
                         <button onClick={() => { setShowHistory(false); navigateTo(entry.url); }} type="button">
                           <Globe2 size={14} />
                           <span><strong>{entry.title || entry.url}</strong><small>{entry.url}</small></span>
-                          <time>{historyTime(entry.visitedAt)}</time>
+                          <time dateTime={historyDateTime(entry.visitedAt)}>{historyTime(entry.visitedAt)}</time>
                         </button>
                         <button aria-label={`删除 ${entry.title || entry.url}`} onClick={() => void removeHistoryEntry(entry.id)} type="button"><X size={13} /></button>
                       </li>
@@ -745,6 +763,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
                   electronHost.activate({ title, url, webContentsId });
                 }
               }}
+              onGuestState={(update) => updateHostTab(tab.id, update)}
               onIdentity={(webContentsId) => {
                 updateHostTab(tab.id, { webContentsId });
                 electronHost.register({ commandId: tab.commandId, tabId: tab.id, webContentsId });
@@ -756,6 +775,13 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
               tab={tab}
             />
           )) : null}
+          {electronHost && (selectedPageFailure || selectedPageCrash) && !showHistory && !showSettings ? (
+            <BrowserPageStatus
+              crashedReason={selectedPageCrash}
+              failure={selectedPageFailure}
+              onRetry={retryPage}
+            />
+          ) : null}
           {!electronHost && error && !isStartPage ? (
             <div className="paw-browser-error" role="alert">
               <CircleAlert size={16} />
@@ -876,59 +902,6 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   );
 }
 
-function normalizedAddress(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  if (trimmed === 'about:blank') return trimmed;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (/^[\w.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(trimmed)) return `https://${trimmed}`;
-  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-}
-
-function record(value: unknown): BrowserRecord { return value && typeof value === 'object' && !Array.isArray(value) ? value as BrowserRecord : {}; }
-function rows(value: unknown): BrowserRecord[] { return Array.isArray(value) ? value.map(record) : []; }
-function text(value: unknown): string { return typeof value === 'string' ? value : ''; }
-function number(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? value : 0; }
-function errorText(value: unknown): string { return value instanceof Error && value.message ? value.message : '本机浏览器服务没有返回结果。'; }
-
-type BrowserElement = {
-  refId: string;
-  tag: string;
-  role: string;
-  label: string;
-  inputType: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-function browserElement(value: BrowserRecord): BrowserElement | null {
-  const refId = text(value.refId);
-  const width = number(value.width);
-  const height = number(value.height);
-  if (!refId || width <= 0 || height <= 0) return null;
-  return {
-    refId,
-    tag: text(value.tag),
-    role: text(value.role),
-    label: text(value.label),
-    inputType: text(value.inputType),
-    x: number(value.x),
-    y: number(value.y),
-    width,
-    height,
-  };
-}
-
-function isTextEntry(element: BrowserElement): boolean {
-  return element.tag === 'input'
-    || element.tag === 'textarea'
-    || element.tag === 'select'
-    || element.role === 'textbox'
-    || element.role === 'searchbox';
-}
-
 function BrowserTraceRow({ trace }: { trace: BrowserRecord }) {
   const [showAllSteps, setShowAllSteps] = useState(false);
   const action = text(trace.action);
@@ -995,51 +968,17 @@ function BrowserTraceRow({ trace }: { trace: BrowserRecord }) {
   );
 }
 
-type HostBrowserTab = {
-  commandId?: string;
-  id: string;
-  title: string;
-  url: string;
-  webContentsId?: number;
-};
-
-function historyTime(value: number): string {
-  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(value);
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function initialHostTab(): HostBrowserTab {
-  return { id: 'paw-tab-1', title: '新标签页', url: 'about:blank' };
-}
-
-function hostTab(url: string, commandId?: string): HostBrowserTab {
-  const id = typeof crypto.randomUUID === 'function'
-    ? `paw-tab-${crypto.randomUUID()}`
-    : `paw-tab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return { commandId, id, title: url === 'about:blank' ? '新标签页' : url, url };
-}
-
-function knownCount(...values: unknown[]): number | null {
-  for (const value of values) {
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value);
-  }
-  return null;
-}
-
 function NativeBrowserWebview({
   active,
   onChange,
+  onGuestState,
   onIdentity,
   onWebview,
   tab,
 }: {
   active: boolean;
   onChange(value: { title: string; url: string; webContentsId: number }): void;
+  onGuestState(update: Partial<HostBrowserTab>): void;
   onIdentity(webContentsId: number): void;
   onWebview(value: PawBrowserWebview | null): void;
   tab: HostBrowserTab;
@@ -1054,27 +993,63 @@ function NativeBrowserWebview({
     const webview = ref.current;
     if (!webview) return;
     onWebview(webview);
-    const publish = () => onChange({
-      title: webview.getTitle() || (webview.getURL() === 'about:blank' ? '新标签页' : tab.title),
-      url: webview.getURL() || tab.url,
-      webContentsId: webview.getWebContentsId(),
-    });
+    const publish = () => {
+      onChange({
+        title: webview.getTitle() || (webview.getURL() === 'about:blank' ? '新标签页' : tab.title),
+        url: webview.getURL() || tab.url,
+        webContentsId: webview.getWebContentsId(),
+      });
+      onGuestState(guestNavigationState(webview));
+    };
     const ready = () => {
       onIdentity(webview.getWebContentsId());
       publish();
+    };
+    const startLoading = () => onGuestState({ crashedReason: undefined, failure: null, loading: true });
+    const stopLoading = () => onGuestState({ loading: false, ...guestNavigationState(webview) });
+    const failLoad = (event: Event) => {
+      const failure = event as PawBrowserGuestFailLoadEvent;
+      // -3 is ERR_ABORTED: the person or a newer navigation cancelled the load.
+      if (!failure.isMainFrame || failure.errorCode === -3) return;
+      onGuestState({
+        failure: {
+          code: failure.errorCode,
+          description: failure.errorDescription ?? '',
+          url: failure.validatedURL ?? '',
+        },
+        loading: false,
+      });
+    };
+    const processGone = (event: Event) => onGuestState({
+      crashedReason: (event as PawBrowserGuestProcessGoneEvent).reason || 'crashed',
+      loading: false,
+    });
+    const faviconUpdated = (event: Event) => {
+      const favicon = (event as PawBrowserGuestFaviconEvent).favicons?.[0];
+      if (favicon) onGuestState({ favicon });
     };
     webview.addEventListener('dom-ready', ready);
     webview.addEventListener('did-navigate', publish);
     webview.addEventListener('did-navigate-in-page', publish);
     webview.addEventListener('page-title-updated', publish);
+    webview.addEventListener('did-start-loading', startLoading);
+    webview.addEventListener('did-stop-loading', stopLoading);
+    webview.addEventListener('did-fail-load', failLoad);
+    webview.addEventListener('render-process-gone', processGone);
+    webview.addEventListener('page-favicon-updated', faviconUpdated);
     return () => {
       webview.removeEventListener('dom-ready', ready);
       webview.removeEventListener('did-navigate', publish);
       webview.removeEventListener('did-navigate-in-page', publish);
       webview.removeEventListener('page-title-updated', publish);
+      webview.removeEventListener('did-start-loading', startLoading);
+      webview.removeEventListener('did-stop-loading', stopLoading);
+      webview.removeEventListener('did-fail-load', failLoad);
+      webview.removeEventListener('render-process-gone', processGone);
+      webview.removeEventListener('page-favicon-updated', faviconUpdated);
       onWebview(null);
     };
-  }, [onChange, onIdentity, onWebview, tab.title, tab.url]);
+  }, [onChange, onGuestState, onIdentity, onWebview, tab.title, tab.url]);
 
   return (
     <webview
@@ -1086,36 +1061,4 @@ function NativeBrowserWebview({
       src={tab.url}
     />
   );
-}
-
-function browserActionLabel(action: string): string {
-  return ({
-    run: '执行网页任务',
-    navigate: '打开页面',
-    new_tab: '新建标签页',
-    close_tab: '关闭标签页',
-    reload: '刷新页面',
-    back: '后退',
-    forward: '前进',
-    click: '点击',
-    type: '输入',
-    scroll: '滚动',
-    wait: '等待页面',
-    snapshot: '读取页面',
-    screenshot: '截取页面',
-    read_page: '读取页面',
-    hover: '指向',
-    drag: '拖动',
-    press: '按键',
-    select: '选择',
-    check: '勾选',
-    uncheck: '取消勾选',
-    upload: '上传文件',
-    switch_tab: '切换标签页',
-    task_space: '进入任务空间',
-    task_complete: '完成任务空间',
-    hand_off: '交给你操作',
-    take_over: '接管页面',
-    wait_for_control: '等待接管',
-  } as Record<string, string>)[action] ?? action;
 }
