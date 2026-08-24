@@ -53,9 +53,10 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(window.querySelector('.paw-window-body .paw-session-workspace__header')).toBeNull();
     expect(within(titlebar).getByRole('button', { name: '对话' })).toBeInTheDocument();
     expect(within(titlebar).getByRole('button', { name: 'Agent 轨迹' })).toBeInTheDocument();
+    expect(within(titlebar).getByRole('button', { name: '星空' })).toBeInTheDocument();
     expect(within(titlebar).getByRole('button', { name: 'Session 工具' })).toBeInTheDocument();
     const sessionHeader = titlebar.querySelector('.paw-session-workspace__header') as HTMLElement;
-    expect(within(sessionHeader).getAllByRole('button')).toHaveLength(3);
+    expect(within(sessionHeader).getAllByRole('button')).toHaveLength(4);
     expect(within(titlebar).queryByRole('button', { name: '打开 Session 文件' })).not.toBeInTheDocument();
     expect(within(titlebar).queryByRole('button', { name: '打开子 Agent 工作台' })).not.toBeInTheDocument();
     expect(within(titlebar).queryByRole('button', { name: '打开 Session 任务中心' })).not.toBeInTheDocument();
@@ -115,6 +116,41 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(conversation).toHaveAttribute('inert');
     expect(trace).not.toHaveAttribute('inert');
     expect(screen.getByRole('textbox', { name: '消息' })).toBe(composer);
+  });
+
+  it('opens the 星空 view with the Session planet and its real subagent moons', async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <ControlTransportProvider transport={createPreviewTransport()}>
+          <TooltipProvider>
+            <PawSessionWorkspace
+              record={liveSession()}
+              recordId="session-live"
+              onNewWork={vi.fn()}
+              onSessionCreated={vi.fn()}
+              onSessionUpdated={vi.fn()}
+            />
+          </TooltipProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole('textbox', { name: '消息' });
+    // Not watched → not mounted: the sky never polls behind the conversation.
+    expect(screen.queryByRole('region', { name: 'Session 星空' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '星空' }));
+    const sky = await screen.findByRole('region', { name: 'Session 星空' });
+    await within(sky).findByRole('button', { name: /研究员 卫星/ });
+    expect(within(sky).getByRole('button', { name: /审阅者 卫星/ })).toBeInTheDocument();
+    expect(container.querySelector('.paw-session-workspace__conversation')).toHaveAttribute('inert');
+    expect(container.querySelector('.paw-session-workspace__starfield')).not.toHaveAttribute('inert');
+
+    await user.click(screen.getByRole('button', { name: '对话' }));
+    expect(screen.queryByRole('region', { name: 'Session 星空' })).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-session-workspace__conversation')).not.toHaveAttribute('inert');
   });
 
   it('opens every secondary tool from one menu into one mutually exclusive sidebar', async () => {

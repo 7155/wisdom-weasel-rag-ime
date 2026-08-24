@@ -41,6 +41,7 @@ import type { RoomSummary } from '@/features/rooms/room-types';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { pawBrowserHost } from './paw-browser-host';
+import { PawGalaxyStarfield } from './PawStarfield';
 import { PawAppIcon } from '../shell/PawAppIcon';
 
 type WorkMode = 'session' | 'room';
@@ -538,6 +539,14 @@ export function PawAgentHome({
                   </button>
                 ))}
               </div>
+            </div>
+          ) : null}
+
+          {rooms.length ? (
+            <div className="an-home-section an-home-galaxy">
+              <h2>Room 星系</h2>
+              {/* 每颗恒星是一间真实 Room；点击进入该星系（打开 Room）。 */}
+              <PawGalaxyStarfield rooms={rooms} onOpenRoom={onOpenRoom} />
             </div>
           ) : null}
 

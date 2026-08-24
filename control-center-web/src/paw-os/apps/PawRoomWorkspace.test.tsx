@@ -22,9 +22,10 @@ describe('PAWOS Room collaboration tools', () => {
     await screen.findByRole('textbox', { name: '协作消息' });
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
-    expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(2);
+    expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(3);
     expect(within(primaryNavigation).getByRole('button', { name: '公开对话' })).toHaveAttribute('aria-pressed', 'false');
     expect(within(primaryNavigation).getByRole('button', { name: '协作态势' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(primaryNavigation).getByRole('button', { name: '星空' })).toHaveAttribute('aria-pressed', 'false');
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'focus');
 
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
@@ -51,6 +52,33 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
+  });
+
+  it('turns the whole Room into one clickable solar system in 星空 mode', async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.fn();
+    const { container } = renderRoom(900, openWindow);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    await user.click(screen.getByRole('button', { name: '星空' }));
+
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'starfield');
+    const sky = screen.getByRole('region', { name: 'Room 星空' });
+    expect(within(sky).getByText('Sol')).toBeInTheDocument();
+    // The composer stays live: the starfield is a view, not a modal detour.
+    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
+
+    await user.click(within(sky).getByRole('button', { name: /^Mars，/ }));
+
+    const foregroundCalls = openWindow.mock.calls.filter(([request]) => request.background === false);
+    expect(foregroundCalls).toHaveLength(1);
+    expect(foregroundCalls[0]?.[0]).toMatchObject({
+      target: expect.objectContaining({
+        kind: 'participant',
+        id: 'participant-firstlight',
+        title: 'Mars',
+      }),
+    });
   });
 
   it('fronts a partner satellite only when the user explicitly clicks that planet', async () => {

@@ -14,6 +14,7 @@ import './styles/paw-os-agent-migrated-v1.css';
 import './styles/paw-os-agent-fx.css';
 import './styles/paw-os-room-migrated-v1.css';
 import './styles/paw-os-room-focus.css';
+import './styles/paw-os-starfield.css';
 import './styles/paw-os-sys-apps-migrated-v1.css';
 import './styles/paw-os-tools-files-migrated-v1.css';
 
