@@ -1,5 +1,5 @@
 import { BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, TriangleAlert } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Virtuoso,
   type ScrollSeekConfiguration,
@@ -213,6 +213,7 @@ export function AgentTimeline({
   activityPresentation = 'grouped',
   presentation = 'default',
   showConversationNavigation = true,
+  leadingContent,
 }: {
   assistantName?: string;
   sessionId: string;
@@ -239,6 +240,9 @@ export function AgentTimeline({
   activityPresentation?: 'grouped' | 'atomic';
   presentation?: 'default' | 'fx';
   showConversationNavigation?: boolean;
+  /** Conversation lead-in (e.g. Session context chips) rendered once above the
+   * first turn. It scrolls with the transcript instead of stealing viewport. */
+  leadingContent?: ReactNode;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const liveFollowIntentRef = useRef(true);
@@ -303,6 +307,10 @@ export function AgentTimeline({
     Header: AgentTimelineScrollHeader,
     Footer: AgentTimelineScrollFooter,
   }), []);
+  const timelineContext = useMemo<AgentTimelineContext>(
+    () => ({ leadingContent }),
+    [leadingContent],
+  );
   useEffect(() => {
     liveFollowIntentRef.current = true;
     const lastIndex = Math.max(0, turnOrder.length - 1);
@@ -464,6 +472,7 @@ export function AgentTimeline({
         initialTopMostItemIndex={{ index: 'LAST', align: 'start' }}
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
+        context={timelineContext}
         scrollerRef={handleScrollerRef}
         rangeChanged={setVisibleRange}
         atBottomStateChange={handleAtBottomChange}
@@ -575,12 +584,21 @@ export const agentScrollSeekConfiguration = {
   exit: (velocity) => Math.abs(velocity) < 120,
 } satisfies ScrollSeekConfiguration;
 
+interface AgentTimelineContext {
+  leadingContent?: ReactNode;
+}
+
 function AgentTimelineScrollFooter() {
   return <div className="agent-timeline__footer-space" aria-hidden="true" />;
 }
 
-function AgentTimelineScrollHeader() {
-  return <div className="agent-timeline__header-space" aria-hidden="true" />;
+function AgentTimelineScrollHeader({ context }: { context?: AgentTimelineContext }) {
+  return (
+    <>
+      <div className="agent-timeline__header-space" aria-hidden="true" />
+      {context?.leadingContent ?? null}
+    </>
+  );
 }
 
 function AgentTurnTombstone({
@@ -785,7 +803,12 @@ export function AgentTurn({
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <div className="agent-assistant-turn__body">
-            <header><strong>Agent</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
+            {/* fx keeps message side as identity (UR-075): no repeated
+                "Agent/状态" caption row; working/settled state is carried by
+                the pending strip and work disclosure below. */}
+            {presentation === 'fx' ? null : (
+              <header><strong>Agent</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
+            )}
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
             {presentation === 'fx' ? (
               <AgentTurnWorkDisclosure

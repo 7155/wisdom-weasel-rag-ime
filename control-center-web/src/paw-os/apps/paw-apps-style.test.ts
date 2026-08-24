@@ -419,7 +419,13 @@ describe('PAWOS semantic type roles', () => {
 
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .paw-user-message');
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-pill.danger');
+    expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-pill.vio');
+    expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-context-chip');
     expect(agentFxCss).not.toMatch(/(^|})\s*(?::root|html|body|\*)\s*\{/m);
+    // The repeated "Agent/状态" caption row left the fx DOM entirely; no owner
+    // may keep styling (or hiding) it inside the separated conversation.
+    expect(agentMigratedCss).not.toContain(".agent-assistant-turn__body > header");
+    expect(webmodelCss).not.toContain(".agent-assistant-turn__body > header");
   });
 
   it('keeps dead Agent status and Composition 8 selectors out of live owners', () => {

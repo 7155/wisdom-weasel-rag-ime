@@ -502,9 +502,13 @@ export function PawAgentHome({
             </div>
           ) : null}
 
+          {/* 页脚只陈述可核验的机器事实：模型目录是否已从 Pi 返回。
+              连接性声明必须来自真实数据，而不是硬编码文案（UR-011）。 */}
           <div className="an-home-foot">
-            <span><span className="an-dot is-ok" />Pi Runtime 已连接</span>
-            {models.length ? <span>{models.length} 个可用模型</span> : null}
+            <span>
+              <span className={`an-dot ${models.length ? 'is-ok' : ''}`} />
+              {models.length ? `模型目录已就绪 · ${models.length} 个可用模型` : '模型目录尚未就绪'}
+            </span>
             {defaultModel ? <span>默认模型 {defaultModel.split('/').pop()}</span> : null}
           </div>
         </div>

@@ -349,9 +349,8 @@
   gap: 18px;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body > header {
-  display: none;
-}
+/* The fx timeline no longer emits the repeated "Agent/状态" caption row
+   (UR-075): message side is the identity, so no hide rule is needed here. */
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn-sequence {
   gap: 18px;

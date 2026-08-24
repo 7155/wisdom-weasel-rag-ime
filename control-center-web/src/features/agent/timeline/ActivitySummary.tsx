@@ -1437,8 +1437,11 @@ function FxActivityDisclosure({
   const open = manuallyOpen || running || failed || waiting;
   const detailId = `paw-activity-detail-${useId().replace(/:/gu, '')}`;
   const label = fxActivityLabel(activity);
-  const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : 'ok';
-  const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : '完成';
+  /* Subagent receipts land after background work; the violet tone separates
+     "another Agent finished this for you" from the parent's own tool calls. */
+  const subagent = isSubagentActivity(activity);
+  const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : subagent ? 'vio' : 'ok';
+  const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : subagent ? '后台完成' : '完成';
   const meta = fxActivityMeta(activity);
   const progress = activityProgressView(activity);
   return (
@@ -1499,6 +1502,11 @@ function FxActivityDisclosure({
       </div></SmoothDisclosureReveal>
     </div>
   );
+}
+
+function isSubagentActivity(activity: AgentActivityProjection): boolean {
+  return activity.kind.includes('subagent')
+    || text(activity.payload.toolId ?? activity.payload.toolName).toLowerCase().includes('subagent');
 }
 
 function fxActivityLabel(activity: AgentActivityProjection): string {
