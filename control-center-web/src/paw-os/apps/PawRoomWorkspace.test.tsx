@@ -37,7 +37,13 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();
     const earthMessage = screen.getByText('我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。').closest('article');
     expect(within(earthMessage!).getByText('Earth')).toBeInTheDocument();
-    expect(openWindow).not.toHaveBeenCalled();
+    /* UR-054：进入 Room 只自动展开后台伙伴卫星窗，主 Room 保持焦点，
+       不会有任何前台窗口调用。 */
+    expect(openWindow.mock.calls.length).toBeGreaterThan(0);
+    for (const [request] of openWindow.mock.calls) {
+      expect(request).toMatchObject({ background: true, target: expect.objectContaining({ kind: 'participant' }) });
+    }
+    expect(new Set(openWindow.mock.calls.map(([request]) => request.target.id)).size).toBe(openWindow.mock.calls.length);
 
     await user.click(within(tools).getByRole('button', { name: '关闭协作态势' }));
 
@@ -47,7 +53,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
   });
 
-  it('opens only the selected real planet participant and never铺开 every partner', async () => {
+  it('fronts a partner satellite only when the user explicitly clicks that planet', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
     renderRoom(900, openWindow);
@@ -60,14 +66,16 @@ describe('PAWOS Room collaboration tools', () => {
 
     expect(screen.queryByRole('button', { name: /铺开 .* 位/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
-    expect(openWindow).toHaveBeenCalledTimes(1);
-    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
+    /* 自动展开只允许 background 调用；唯一的前台调用来自用户点击 Mars。 */
+    const foregroundCalls = openWindow.mock.calls.filter(([request]) => request.background === false);
+    expect(foregroundCalls).toHaveLength(1);
+    expect(foregroundCalls[0]?.[0]).toMatchObject({
       target: expect.objectContaining({
         id: 'participant-firstlight',
         title: 'Mars',
         subtitle: expect.stringContaining('Agent 2'),
       }),
-    }));
+    });
   });
 });
 
