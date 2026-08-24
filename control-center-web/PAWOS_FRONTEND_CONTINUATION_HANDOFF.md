@@ -29,17 +29,16 @@ This checkpoint commit sits on top of two local backend WIP commits that were re
 
 Do not revert those unless the backend owner says so. Do not commit `integrations/ego-browser/` (vendor tree / `node_modules`).
 
-## Requirement authority
+## Requirement authority (all on GitHub `main`)
 
-Read in this order:
+Root `/docs/` is gitignored. A cloud model must read the tracked copies:
 
-1. `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` — current `PF-CM-001`–`023`, eleven-App specs, completion gate, receipt template.
-2. Recovered lossless ledger (not in the `main` tree; exact objects):
-
-```bash
-git show 6b8ba57944b1628b0f5c1d50dd461c810c211fef:docs/pawos/PAWOS_REQUIREMENTS.md
-git show 6b8ba57944b1628b0f5c1d50dd461c810c211fef:docs/pawos/PAWOS_FRONTEND_HANDOFF.md
-```
+1. `control-center-web/docs/README.md` — index
+2. `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` — complete `UR-001`–`UR-132`
+3. `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` — `PF-CM-001`–`023` and App specs
+4. this file — latest checkpoint
+5. `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` — earlier receipts
+6. `control-center-web/docs/handoffs/` — function map and privacy-safe fixtures
 
 Newest explicit user correction wins. Do not silently drop a `UR-*` that the brief only links.
 

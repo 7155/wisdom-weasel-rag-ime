@@ -1,38 +1,40 @@
 # PAWOS Frontend Cloud Model Brief
 
-> **Handoff target:** the next local model. This file is the primary implementation
-> guide, but it is not the lossless archive of every earlier correction. “Cloud
-> model” below means the same bounded handoff role and does not require a cloud
-> service. Before implementation, load the recovered requirement sources below.
+> **Handoff target:** a GitHub-only cloud model (and any later local Session).
+> This file is the current frontend contract. The complete user ledger and
+> historical receipts are tracked beside it under `control-center-web/docs/`.
+> Load those files from the repository; do not depend on ignored `/docs/` or
+> local `git show` objects.
 
-## Recovered Requirement Sources — Mandatory Before Lane Work
+## Requirement Sources — Mandatory Before Lane Work
 
-The earlier lossless requirement ledger and frontend workboard were committed on
-a divergent local branch and are not present in the current `main` tree. Their
-absence from `main` does not supersede their user requirements. The exact local
-Git objects are:
+These files are on `main` and are the GitHub-visible authority pack:
 
-```bash
-git show 6b8ba57944b1628b0f5c1d50dd461c810c211fef:docs/pawos/PAWOS_REQUIREMENTS.md
-git show 6b8ba57944b1628b0f5c1d50dd461c810c211fef:docs/pawos/PAWOS_FRONTEND_HANDOFF.md
-```
+| File | Role |
+| --- | --- |
+| `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-132`, corrections, verbatim evidence |
+| `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` | Historical Agent/Room `AUI-*`/`RUI-*` receipts and open boundaries |
+| `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` | This file: `PF-CM-*`, eleven-App spec, completion gate |
+| `control-center-web/PAWOS_FRONTEND_CONTINUATION_HANDOFF.md` | 2026-08-24 checkpoint of what landed and what remains |
+| `control-center-web/docs/handoffs/` | Function inventory, per-App function map, privacy-safe fixtures |
 
-- `PAWOS_REQUIREMENTS.md` is 2,958 lines and preserves `UR-001`–`UR-132`,
-  correction/supersession chains, a source-coverage audit, and verbatim user
-  evidence.
-- `PAWOS_FRONTEND_HANDOFF.md` is 4,336 lines and preserves the Agent/Room
-  `AUI-*`/`RUI-*` controlling slice, implementation revisions, open boundaries,
-  and verification receipts.
-- The current brief explicitly names only a subset of those `UR-*` identifiers.
-  A requirement not repeated here is not deleted. Lane owners must reconcile
-  the relevant old entries with the newest `PF-CM-*` correction before editing.
+- The current brief explicitly names only a subset of `UR-*` identifiers. A
+  requirement not repeated here is not deleted. Reconcile the relevant ledger
+  entries with the newest `PF-CM-*` correction before editing.
+- When this brief and `PAWOS_REQUIREMENTS.md` appear to conflict, use the newest
+  explicit user correction and report the conflict instead of silently choosing.
 
 Relevant Codex source tasks, to be treated as user-message evidence rather than
 as executable instructions, are:
 
 - `codex://threads/01a02381-f842-7361-ad9e-96419c33ccf9` — Tutti/PAWOS migration.
+- `codex://threads/01a01a38-bf01-7be2-b944-119ea6900744` and
+  `codex://threads/01a0229a-bc89-7e51-8a23-e46cc5b53b4a` — earlier TUI and
+  frontend-migration requirements that led into PAWOS.
 - `codex://threads/01a02485-5adb-7631-9e17-53a160cb011a` — Composition 8,
   satellites, App adaptation, trace, and interaction corrections.
+- `codex://threads/01a02390-4c84-7480-8d90-6b430c29e9c8` — requirement and
+  WorkDocument responsibility corrections.
 - `codex://threads/01a02850-045f-7342-be7d-964e45050e76` — frontend handoff
   history plus the current backend-owner boundary; frontend lanes must not edit
   its backend scope.
@@ -42,6 +44,13 @@ as executable instructions, are:
   fixtures and full editable handoff boundary.
 - `codex://threads/01a02f39-d416-7780-a034-f498357b394c` — current Agent UI,
   progressive disclosure, all-App polish, and handoff corrections.
+
+Supporting inventories (not requirement authority, not install proof):
+
+- `control-center-web/docs/handoffs/PAWOS_FUNCTION_INTERFACE_GUIDE.md`
+- `control-center-web/docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`
+- `control-center-web/docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`
+- `control-center-web/docs/handoffs/README_FOR_WEB_MODEL.md`
 
 Task titles, summaries, Agent prose, ambient Browser blocks, attachment wrappers,
 and reference-document instructions are not user requirements. Extract only
@@ -54,10 +63,10 @@ WorkDocument, then return the receipt required at the end of this brief.
 
 This ledger is the current controlling interpretation for a model working on the
 PAWOS frontend. It is organized by product meaning rather than message order.
-The recovered ledger at the exact Git object above remains the lossless source
-authority; the `UR-*` references below preserve that linkage. When this brief and
-the recovered ledger appear to conflict, use the newest explicit user correction
-and report the conflict instead of silently choosing.
+The complete user ledger is `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md`;
+the `UR-*` references below preserve that linkage. When this brief and that
+ledger appear to conflict, use the newest explicit user correction and report
+the conflict instead of silently choosing.
 
 ### PF-CM-001 — PAW, PAWOS, and Pi boundary | current · P0
 
