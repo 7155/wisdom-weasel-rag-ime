@@ -35,6 +35,7 @@ import type {
   KnowledgeTableArtifact,
 } from './api';
 import { publicKnowledgeText } from './public-copy';
+import { extractMarkdownOutline, type MarkdownOutlineItem } from './reading-outline';
 
 export interface KnowledgeUploadItem {
   id: string;
@@ -175,6 +176,7 @@ function MaterialsDropzone({
   const [dragActive, setDragActive] = useState(false);
   const [dropNotice, setDropNotice] = useState('');
   const dragDepth = useRef(0);
+  const dropUnsupportedNotice = '当前运行环境不支持拖放导入；请点击导入区改用系统文件选择。';
   const resetDragState = () => {
     dragDepth.current = 0;
     setDragActive(false);
@@ -182,11 +184,22 @@ function MaterialsDropzone({
   const handleDrop = (event: ReactDragEvent<HTMLButtonElement>) => {
     event.preventDefault();
     resetDragState();
-    if (importing) return;
-    const files = [...(event.dataTransfer?.files ?? [])].slice(0, 20);
-    if (!files.length) return;
+    if (importing) {
+      setDropNotice('正在导入上一批文件，完成后再拖入新文件。');
+      return;
+    }
     if (!dropSupported) {
-      setDropNotice('当前运行环境不支持拖放导入；请点击导入区改用系统文件选择。');
+      setDropNotice(dropUnsupportedNotice);
+      return;
+    }
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (!files.length) {
+      setDropNotice('拖入的内容里没有文件；请直接拖动本机文件，或点击导入区选择。');
+      return;
+    }
+    if (files.length > 20) {
+      setDropNotice(`一次最多导入 20 个文件：已开始前 20 个，其余 ${files.length - 20} 个请分批拖入。`);
+      onImportFiles(files.slice(0, 20));
       return;
     }
     setDropNotice('');
@@ -198,9 +211,14 @@ function MaterialsDropzone({
         aria-busy={importing || undefined}
         aria-label="导入文件"
         className="knowledge-dropzone"
-        data-active={dragActive || undefined}
+        data-active={(dragActive && dropSupported && !importing) || undefined}
         onClick={() => { if (!importing) { setDropNotice(''); onImport(); } }}
-        onDragEnter={(event) => { event.preventDefault(); dragDepth.current += 1; setDragActive(true); }}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          dragDepth.current += 1;
+          setDragActive(true);
+          if (!dropSupported) setDropNotice(dropUnsupportedNotice);
+        }}
         onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragActive(false); }}
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
@@ -212,7 +230,7 @@ function MaterialsDropzone({
           <small>支持 PDF、Word、PPT、Excel、Markdown、文本与图片 · 单次最多 20 个</small>
         </span>
       </button>
-      {dropNotice ? <InlineNotice title="拖放导入不可用" tone="info">{dropNotice}</InlineNotice> : null}
+      {dropNotice ? <InlineNotice title="导入提示" tone="info">{dropNotice}</InlineNotice> : null}
     </div>
   );
 }
@@ -247,7 +265,6 @@ function DocumentSummary({ detail, document, error, loading, onReparse, reparseP
       {loading ? <p className="knowledge-detail-loading">正在读取材料详情…</p> : null}
       {error ? <InlineNotice title="详情暂不可用" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}
       <dl>
-        <div><dt>解析状态</dt><dd>{documentStatusLabel(document.status)}</dd></div>
         <div><dt>解析方式</dt><dd>{parserLabel(document.parser)}</dd></div>
         <div><dt>页数</dt><dd>{document.pageCount || detail?.pages.length || '未提供'}</dd></div>
         <div><dt>段落</dt><dd>{detail?.chunkTotal || document.chunkCount || 0}</dd></div>
@@ -408,6 +425,7 @@ export function KnowledgeDocumentViewer({
 }) {
   const [view, setView] = useState<'source' | 'markdown' | 'chunks' | 'artifacts'>('markdown');
   const pageCount = detail ? detail.pages.length || detail.document.pageCount : 0;
+  const selectedDocument = documents.find((item) => item.id === (selectedDocumentId || documents[0]?.id)) ?? null;
   useEffect(() => setView('markdown'), [selectedDocumentId]);
   useEffect(() => { if (focusHit?.documentId === selectedDocumentId) setView('chunks'); }, [focusHit, selectedDocumentId]);
   if (!documents.length) {
@@ -425,6 +443,7 @@ export function KnowledgeDocumentViewer({
       <div className="knowledge-viewer__bar">
         <Button className="knowledge-viewer__back" leadingIcon={<ArrowLeft size={14} />} onClick={onBackToMaterials} size="small" variant="quiet">返回资料</Button>
         <label><span>材料</span><Select aria-label="材料" onValueChange={onSelectDocument} options={documents.map((item) => ({ value: item.id, label: item.name }))} value={selectedDocumentId || documents[0]?.id} /></label>
+        {selectedDocument ? <StatusBadge label={documentStatusLabel(selectedDocument.status)} tone={documentTone(selectedDocument.status)} /> : null}
         {detail ? <span>{detail.chunkTotal} 个段落 · {pageCount ? `${pageCount} 页` : '页码未提供'} · {detail.assets.length} 个产物</span> : null}
       </div>
       {loading ? <p className="knowledge-detail-loading">正在读取解析结果…</p> : null}
@@ -433,7 +452,7 @@ export function KnowledgeDocumentViewer({
         <Tabs className="knowledge-document-tabs" onValueChange={(value) => setView(value === 'source' || value === 'chunks' || value === 'artifacts' ? value : 'markdown')} value={view}>
           <TabsList aria-label="材料查看方式">
             <TabsTrigger value="source"><FileText size={13} />源文件</TabsTrigger>
-            <TabsTrigger value="markdown"><Rows3 size={13} />Markdown</TabsTrigger>
+            <TabsTrigger value="markdown"><Rows3 size={13} />正文</TabsTrigger>
             <TabsTrigger value="chunks"><Grid3X3 size={13} />段落</TabsTrigger>
             <TabsTrigger value="artifacts"><GalleryHorizontalEnd size={13} />解析产物</TabsTrigger>
           </TabsList>
@@ -448,21 +467,49 @@ export function KnowledgeDocumentViewer({
 }
 
 function DocumentContent({ detail, hasMore, loadingMore, onLoadMore }: { detail: KnowledgeDocumentDetail; hasMore: boolean; loadingMore: boolean; onLoadMore: () => void }) {
-  if (detail.contentWindow.length) {
-    const markdown = detail.contentWindow.map((line) => line.content).join('\n');
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [activeHeadingId, setActiveHeadingId] = useState('');
+  const publicLines = useMemo(() => (
+    detail.contentWindow.map((line) => ({ lineNumber: line.lineNumber, content: publicKnowledgeText(line.content) }))
+  ), [detail.contentWindow]);
+  const outline = useMemo(() => extractMarkdownOutline(publicLines), [publicLines]);
+  useEffect(() => setActiveHeadingId(''), [detail.document.id]);
+  if (publicLines.length) {
+    const markdown = publicLines.map((line) => line.content).join('\n');
     return (
-      <div className="knowledge-markdown-preview">
-        <header><span>Markdown</span><b>{detail.contentWindow.length} / {detail.contentLineTotal || detail.contentWindow.length} 行 · {formatBytes(detail.artifact.byteSize)}</b></header>
-        <div className="knowledge-markdown-body">
-          <ReactMarkdown
-            components={{
-              img: ({ alt }) => <span className="knowledge-markdown-blocked-image">图片引用已隔离：{alt || '未命名图片'}</span>,
-              a: ({ children, href }) => { const safe = safeMarkdownLink(href); return safe ? <a href={safe} rel="noreferrer" target="_blank">{children}</a> : <span>{children}</span>; },
-            }}
-            remarkPlugins={[remarkGfm]}
-          >{publicKnowledgeText(markdown)}</ReactMarkdown>
+      <div className="knowledge-reading-desk" data-has-outline={outline.length > 0 || undefined}>
+        {outline.length ? (
+          <nav aria-label="文档目录" className="knowledge-reading-outline">
+            <header><strong>目录</strong><span>{outline.length} 个标题</span></header>
+            <ol>
+              {outline.map((item) => (
+                <li data-level={Math.min(item.level, 4)} key={item.id}>
+                  <button
+                    aria-current={activeHeadingId === item.id ? 'location' : undefined}
+                    onClick={() => { jumpToHeading(bodyRef.current, outline, item); setActiveHeadingId(item.id); }}
+                    type="button"
+                  >
+                    {item.text}
+                  </button>
+                </li>
+              ))}
+            </ol>
+            {hasMore ? <p>目录来自已加载的 {publicLines.length} / {detail.contentLineTotal} 行，继续加载正文后会补全。</p> : null}
+          </nav>
+        ) : null}
+        <div className="knowledge-markdown-preview">
+          <header><span>解析正文</span><b>{detail.contentWindow.length} / {detail.contentLineTotal || detail.contentWindow.length} 行 · {formatBytes(detail.artifact.byteSize)}</b></header>
+          <div className="knowledge-markdown-body" ref={bodyRef}>
+            <ReactMarkdown
+              components={{
+                img: ({ alt }) => <span className="knowledge-markdown-blocked-image">图片引用已隔离：{alt || '未命名图片'}</span>,
+                a: ({ children, href }) => { const safe = safeMarkdownLink(href); return safe ? <a href={safe} rel="noreferrer" target="_blank">{children}</a> : <span>{children}</span>; },
+              }}
+              remarkPlugins={[remarkGfm]}
+            >{markdown}</ReactMarkdown>
+          </div>
+          {hasMore ? <footer><span>已加载 {detail.contentWindow.length} / {detail.contentLineTotal} 行</span><Button loading={loadingMore} onClick={onLoadMore} size="small">继续加载正文</Button></footer> : null}
         </div>
-        {hasMore ? <footer><span>已加载 {detail.contentWindow.length} / {detail.contentLineTotal} 行</span><Button loading={loadingMore} onClick={onLoadMore} size="small">继续加载 Markdown</Button></footer> : null}
       </div>
     );
   }
@@ -477,6 +524,26 @@ function DocumentContent({ detail, hasMore, loadingMore, onLoadMore }: { detail:
       ))}
     </div>
   ) : <EmptyState description="当前文件还没有返回可显示的正文；可回到“资料”页重新解析，或切换到源文件查看。" icon={FileText} title="暂无解析正文" />;
+}
+
+// The 目录 addresses rendered headings by plain text + occurrence: the outline
+// and the DOM both derive from the same Markdown, so the n-th outline entry
+// with a given text is the n-th rendered heading with that text. Unmatched
+// entries (exotic inline markup) degrade to no scroll instead of a wrong jump.
+function jumpToHeading(body: HTMLElement | null, outline: readonly MarkdownOutlineItem[], item: MarkdownOutlineItem): void {
+  if (!body) return;
+  const occurrence = outline.filter((entry) => entry.index < item.index && entry.text === item.text).length;
+  const matches = [...body.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+    .filter((node) => (node.textContent ?? '').replace(/\s+/gu, ' ').trim() === item.text);
+  const target = matches[occurrence];
+  if (target && typeof target.scrollIntoView === 'function') {
+    target.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  }
+}
+
+function prefersReducedMotion(): boolean {
+  if (document.documentElement.dataset.reduceMotion === 'true') return true;
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function DocumentSource({ detail, transport }: { detail: KnowledgeDocumentDetail; transport: ControlTransport }) {
@@ -516,7 +583,7 @@ function ChunkGallery({ detail, focusHit, hasMore, loadingMore, onLoadMore }: { 
           <header><b>#{chunk.ordinal + 1}{focusHit?.id === chunk.id ? ' · 检索命中' : ''}</b><span>{chunk.page ? `第 ${chunk.page} 页` : chunk.lineStart ? `第 ${chunk.lineStart} 行` : '无页码'}</span></header>
           {chunk.heading ? <h4>{publicKnowledgeText(chunk.heading)}</h4> : null}
           <p>{focusHit?.id === chunk.id ? <HighlightedChunkText content={publicKnowledgeText(chunk.content)} excerpt={publicKnowledgeText(focusHit.excerpt)} /> : publicKnowledgeText(chunk.content)}</p>
-          <footer><span>文档段落</span><Disclosure className="knowledge-chunk-detail" contentClassName="knowledge-chunk-detail__content" summary="高级：段落详情"><span>{chunk.tokenCount ? `${chunk.tokenCount} tokens` : 'Token 未统计'}</span><span>{chunk.id}</span></Disclosure></footer>
+          <footer><span>文档段落</span><Disclosure className="knowledge-chunk-detail" contentClassName="knowledge-chunk-detail__content" summary="高级：段落详情"><span>{chunk.tokenCount ? `${chunk.tokenCount} Token` : 'Token 未统计'}</span><span>{chunk.id}</span></Disclosure></footer>
         </article>
       ))}
       {hasMore ? <div className="knowledge-more-note"><span>已显示 {detail.chunks.length} / {detail.chunkTotal} 个段落</span><Button loading={loadingMore} onClick={onLoadMore} size="small">加载更多</Button></div> : <p className="knowledge-more-note">已加载全部 {detail.chunkTotal} 个段落。</p>}

@@ -43,8 +43,10 @@ describe('knowledge window scroll ownership', () => {
   it('lets reader surfaces grow with content instead of locking viewport height', () => {
     // The Markdown/page/chunk/artifact readers must not pin `height: 100%`:
     // the focusable tab panel above them owns the scroll, so wheel, trackpad,
-    // and keyboard all reach the end of the document.
+    // and keyboard all reach the end of the document. The reading desk (目录 +
+    // sheet) joined the same contract when it started wrapping the sheet.
     for (const selector of [
+      'knowledge-reading-desk',
       'knowledge-markdown-preview',
       'knowledge-page-preview',
       'knowledge-chunk-grid',
