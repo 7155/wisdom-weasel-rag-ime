@@ -156,32 +156,30 @@ main[data-route-id='configuration'] .configuration-editor {
   grid-template-columns: minmax(184px, .42fr) minmax(360px, 1.58fr);
 }
 
+/* The group rail is a set of quiet rounded destinations, not a bordered
+   table: the selected group reads as one soft filled pill. */
 main[data-route-id='configuration'] .configuration-section-nav {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  gap: 2px;
   align-self: start;
-  border-block: 1px solid var(--color-border);
 }
 
 main[data-route-id='configuration'] .configuration-section-nav button {
   display: grid;
   min-width: 0;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: start;
   gap: 9px;
-  padding: 10px 8px;
+  padding: 9px 10px;
   border: 0;
-  border-bottom: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
   background: transparent;
   color: var(--color-text-tertiary);
   text-align: left;
   cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
-}
-
-main[data-route-id='configuration'] .configuration-section-nav button:last-child {
-  border-bottom: 0;
 }
 
 main[data-route-id='configuration'] .configuration-section-nav button:focus-visible {
@@ -191,8 +189,29 @@ main[data-route-id='configuration'] .configuration-section-nav button:focus-visi
 
 main[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] {
   background: var(--color-accent-soft);
-  box-shadow: inset 3px 0 0 var(--color-accent);
   color: var(--color-accent);
+}
+
+main[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] strong {
+  color: var(--color-accent);
+}
+
+/* Unsaved drafts stay visible from the rail so no edit is silently parked
+   in a group the person has already left. */
+main[data-route-id='configuration'] .configuration-section-nav__pending {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  padding-inline: 5px;
+  place-items: center;
+  align-self: center;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 main[data-route-id='configuration'] .configuration-section-nav span,
@@ -228,33 +247,41 @@ main[data-route-id='configuration'] .configuration-editor__heading strong {
   font-size: 14px;
 }
 
+/* Feature destinations are rounded cards on the bright sheet; each one names
+   the page it opens and what lives there. */
 main[data-route-id='configuration'] .configuration-destinations {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-block: 1px solid var(--color-border);
+  gap: var(--space-2);
 }
 
 main[data-route-id='configuration'] .configuration-destinations button {
   display: grid;
   min-width: 0;
+  min-height: 60px;
   grid-template-columns: 20px minmax(0, 1fr) 16px;
   align-items: center;
   gap: var(--space-3);
-  padding: 13px var(--space-2);
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  background: transparent;
+  padding: 11px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-surface);
   color: var(--color-text-secondary);
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+  transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='configuration'] .configuration-destinations button:nth-child(odd) {
-  border-right: 1px solid var(--color-border);
+main[data-route-id='configuration'] .configuration-destinations button > svg:first-child {
+  color: var(--color-accent);
+}
+
+main[data-route-id='configuration'] .configuration-destinations button > svg:last-child {
+  color: var(--color-text-tertiary);
 }
 
 main[data-route-id='configuration'] .configuration-destinations button:focus-visible {
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
   background: var(--color-surface-subtle);
   color: var(--color-text-primary);
 }
@@ -405,6 +432,49 @@ main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__ro
   display: block;
   min-height: 0;
   padding: 11px 8px;
+  border-radius: var(--radius-2);
+  transition: background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+/* An edited field carries its own quiet marker so a draft is visible where it
+   was made, not only in the review table below. */
+main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row[data-changed] {
+  background: color-mix(in srgb, var(--color-accent-soft) 44%, var(--color-surface));
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+/* Consequence-first: each field states what saving it will do, in the same
+   breath as its description. */
+main[data-route-id='configuration'] .configuration-field-consequence {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+main[data-route-id='configuration'] .configuration-editor__review-heading {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+main[data-route-id='configuration'] .configuration-review-consequence {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-2);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 main[data-route-id='configuration'] .configuration-editor__review .ui-empty-state {
@@ -504,7 +574,8 @@ main[data-route-id='configuration'] .configuration-transfer > summary svg {
   }
 
   main[data-route-id='configuration'] .configuration-destinations button:hover {
-    background: var(--color-surface-subtle);
+    border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
+    background: color-mix(in srgb, var(--color-accent-soft) 40%, var(--color-surface));
     color: var(--color-text-primary);
   }
 }
@@ -524,10 +595,6 @@ main[data-route-id='configuration'] .configuration-transfer[open] > summary svg 
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='configuration'] .configuration-destinations button:nth-child(odd) {
-    border-right: 0;
-  }
-
   main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
@@ -542,21 +609,17 @@ main[data-route-id='configuration'] .configuration-transfer[open] > summary svg 
   main[data-route-id='configuration'] .configuration-section-nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  main[data-route-id='configuration'] .configuration-section-nav button,
-  main[data-route-id='configuration'] .configuration-section-nav button:last-child {
-    border-right: 1px solid var(--color-border);
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  main[data-route-id='configuration'] .configuration-section-nav button:nth-child(even) {
-    border-right: 0;
+    gap: 4px;
   }
 
   main[data-route-id='configuration'] .configuration-section-nav button {
     min-height: 48px;
     align-items: center;
+    border: 1px solid var(--color-border);
+  }
+
+  main[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
   }
 
   main[data-route-id='configuration'] .configuration-section-nav small { display: none; }
@@ -585,12 +648,12 @@ main[data-route-id='configuration'] .configuration-transfer[open] > summary svg 
 @media (prefers-reduced-motion: reduce) {
   main[data-route-id='configuration'] .configuration-section-nav button,
   main[data-route-id='configuration'] .configuration-destinations button,
+  main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row,
   main[data-route-id='configuration'] .configuration-transfer > summary svg { transition: none; }
 }
 
 @container paw-window (max-width: 860px) {
   main[data-route-id='configuration'][data-paw-os-app] .configuration-destinations { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-destinations button:nth-child(odd) { border-right: 0; }
   main[data-route-id='configuration'][data-paw-os-app] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
@@ -599,9 +662,9 @@ main[data-route-id='configuration'] .configuration-transfer[open] > summary svg 
 
 @container paw-window (max-width: 620px) {
   main[data-route-id='configuration'][data-paw-os-app] .configuration-editor { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button { min-height: 44px; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button:nth-child(even) { border-right: 0; }
+  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button { min-height: 44px; align-items: center; border: 1px solid var(--color-border); }
+  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button[aria-current='page'] { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
 }
 
 /* UR-102 settings-configuration semantic typography */
@@ -629,5 +692,5 @@ main[data-route-id='configuration'][data-paw-os-app] :is(
   .configuration-subagents__rules small,
   .configuration-transfer > summary small,
   .paw-os-theme-option__copy small
-) { font-size: 15px; }
+) { font-size: 13px; }
 /* UR-102 settings-configuration semantic typography end */

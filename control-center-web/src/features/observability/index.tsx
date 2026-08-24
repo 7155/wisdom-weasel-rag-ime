@@ -109,6 +109,8 @@ export function ObservabilityFeature() {
   const scoped = Boolean(filters.sessionId || filters.roomId || filters.traceId);
   const snapshotTotal = Math.max(feed.items.length, feed.snapshot?.counts.total ?? 0);
   const snapshotTruncated = Boolean(feed.snapshot?.truncated || snapshotTotal > feed.items.length);
+  const snapshotGeneratedAtMs = feed.snapshot?.generatedAtMs ?? 0;
+  const showSnapshotAge = feed.connection !== 'live' && snapshotGeneratedAtMs > 0;
   const timelineCountLabel = needle.trim()
     ? `${visibleItems.length} / 已载入 ${feed.items.length}`
     : snapshotTruncated
@@ -171,11 +173,16 @@ export function ObservabilityFeature() {
         ) : null}
 
         <section aria-label="运行记录工作台" className="observation-console">
-          <header aria-label="实时概况" className="observation-pulse">
+          <header aria-label="实时概况" className="observation-pulse" data-connection={feed.connection}>
             <StatusBadge
               label={connectionLabel(feed.connection)}
               tone={connectionTone(feed.connection)}
             />
+            {showSnapshotAge ? (
+              <span className="observation-pulse__stat" data-role="snapshot-age">
+                快照生成于 {formatTime(snapshotGeneratedAtMs)}
+              </span>
+            ) : null}
             <span className="observation-pulse__stat">
               <GitBranch aria-hidden="true" size={14} />
               {traceCount} 次流程 · {visibleItems.length} 条事件
@@ -274,7 +281,7 @@ export function ObservabilityFeature() {
                   </header>
                   <ol className="observation-trace">
                     {selectedTrace.map((item, index) => (
-                      <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} key={`${item.eventId}:trace`}>
+                      <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} data-status={item.status} key={`${item.eventId}:trace`}>
                         <article className="observation-trace__card">
                           <button className="observation-trace__summary" onClick={() => setSelectedEventId(item.eventId)} type="button">
                             <span className="observation-trace__index">{index + 1}</span>
@@ -282,6 +289,9 @@ export function ObservabilityFeature() {
                               <strong>{publicObservationSummary(item)}</strong>
                               <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
                             </span>
+                            <time dateTime={new Date(item.createdAtMs).toISOString()}>
+                              {formatTime(item.createdAtMs)}
+                            </time>
                           </button>
                           <ObservationFacts item={item} />
                         </article>
@@ -531,10 +541,16 @@ function statusLabel(status: ObservationEventV1['status']): string {
   }[status];
 }
 
-function statusTone(status: ObservationEventV1['status']): 'success' | 'warning' | 'danger' | 'neutral' {
+/**
+ * Shared PAWOS status language: queued stays neutral, running uses the active
+ * blue, waiting alone is amber, completed is quiet green, failed is red.
+ * Folding queued/running into amber would overstate how much needs attention.
+ */
+function statusTone(status: ObservationEventV1['status']): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (status === 'completed') return 'success';
   if (status === 'failed') return 'danger';
-  if (status === 'queued' || status === 'running' || status === 'waiting') return 'warning';
+  if (status === 'running') return 'info';
+  if (status === 'waiting') return 'warning';
   return 'neutral';
 }
 
