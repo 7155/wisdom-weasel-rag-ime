@@ -1,7 +1,7 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { pawApps } from '../runtime/app-registry';
-import { PawAppIcon } from './PawAppIcon';
+import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 
 afterEach(cleanup);
 
@@ -77,6 +77,27 @@ describe('PAWOS App identity icons', () => {
         expect(icon.querySelector('.paw-app-icon__tile, [data-paw-icon-sheen]')).toBeNull();
       }
     }
+  });
+
+  it('gives Room the solar orbit identity and Agent a connection node instead of a face', () => {
+    const { container } = render(<><PawAppIcon appId="room" /><PawAppIcon appId="agent" /></>);
+    const room = container.querySelector('[data-paw-icon-silhouette="room"]');
+    expect(room?.querySelector('ellipse.paw-app-icon__ring')).toBeInTheDocument();
+    expect(room?.querySelectorAll('circle')).toHaveLength(2);
+    const agent = container.querySelector('[data-paw-icon-silhouette="agent"]');
+    expect(agent?.querySelector('circle.paw-app-icon__secondary')).toBeInTheDocument();
+    expect(agent?.querySelector('[class*="face"], [class*="avatar"]')).toBeNull();
+  });
+
+  it('ships the monochrome paw-print system mark outside the App colour system', () => {
+    const { container, getByRole, rerender } = render(<PawBrandMark />);
+    const mark = container.querySelector('svg.paw-brand-mark');
+    expect(mark).toHaveAttribute('aria-hidden', 'true');
+    expect(mark).toHaveAttribute('fill', 'currentColor');
+    expect(mark?.querySelectorAll('ellipse, path')).toHaveLength(4);
+    expect(mark?.hasAttribute('data-paw-app-icon')).toBe(false);
+    rerender(<PawBrandMark title="PAW" />);
+    expect(getByRole('img', { name: 'PAW' })).toBeInTheDocument();
   });
 
   it('stays decorative inside a disabled owner while preserving the App identity', () => {
