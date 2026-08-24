@@ -242,6 +242,9 @@ describe('PawOsFilesApp', () => {
     // light colour, leaving the shared light code text unreadable in the plain
     // fallback reader. The Files owner must not restyle the code surface paint.
     expect(filesCss).not.toMatch(/\.agent-file-code[^{}]*\{[^}]*background/s);
+    // The Files header owns the filename and the copy actions, so the shared
+    // reader's duplicate filename strip stays hidden inside this App.
+    expect(filesCss).toMatch(/\.agent-file-code figcaption[^{]*\{[^}]*display:\s*none/s);
 
     const user = userEvent.setup();
     const transport = new MockControlTransport({
@@ -324,6 +327,8 @@ describe('PawOsFilesApp', () => {
           path: '/workspace/paw/big.log',
           content: 'line 1\nline 2\n',
           byteSize: 131_072,
+          offset: 0,
+          nextOffset: 65_536,
           truncated: true,
         },
       },
@@ -333,8 +338,122 @@ describe('PawOsFilesApp', () => {
     expect(await screen.findByText('已加载 1 项')).toBeInTheDocument();
     await user.click(screen.getByRole('treeitem', { name: '打开文件 big.log' }));
 
-    expect(await screen.findByText('前 64 KB')).toBeInTheDocument();
+    expect(await screen.findByText('已显示前 64 KB · 共 128 KB')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /继续读取/ })).toBeInTheDocument();
     expect(screen.getByText(/已选 big\.log · 128 KB/)).toBeInTheDocument();
+  });
+
+  it('continues a bounded read from the served nextOffset and retires the bar when complete', async () => {
+    const user = userEvent.setup();
+    const readOffsets: number[] = [];
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/big.log', name: 'big.log', kind: 'file', byteSize: 131_072 }],
+        },
+        'agent.session.workspace.read': (request: ControlRequest) => {
+          const offset = Number(request.query?.offset ?? 0);
+          readOffsets.push(offset);
+          if (offset === 0) return {
+            ok: true,
+            path: '/workspace/paw/big.log',
+            content: 'chunk one\n',
+            byteSize: 131_072,
+            offset: 0,
+            nextOffset: 65_536,
+            truncated: true,
+          };
+          return {
+            ok: true,
+            path: '/workspace/paw/big.log',
+            content: 'chunk two\n',
+            byteSize: 131_072,
+            offset,
+            nextOffset: 131_072,
+            truncated: false,
+          };
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 big.log' }));
+
+    expect(await screen.findByText('已显示前 64 KB · 共 128 KB')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /继续读取/ }));
+
+    expect(await screen.findByText(/chunk two/)).toBeInTheDocument();
+    expect(screen.getByText(/chunk one/)).toBeInTheDocument();
+    expect(screen.queryByText(/已显示前/)).not.toBeInTheDocument();
+    expect(readOffsets).toEqual([0, 65_536]);
+  });
+
+  it('reports an honest display limit when a directory listing is truncated by the route', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          truncated: true,
+          items: [
+            { path: '/workspace/paw/a.txt', name: 'a.txt', kind: 'file', byteSize: 1 },
+            { path: '/workspace/paw/b.txt', name: 'b.txt', kind: 'file', byteSize: 2 },
+          ],
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    expect(await screen.findByText('目录条目已达显示上限，仅列出前 2 项。')).toBeInTheDocument();
+  });
+
+  it('renders a complete SVG as a safe image with a source toggle', async () => {
+    const user = userEvent.setup();
+    const svgContent = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/logo.svg', name: 'logo.svg', kind: 'file', byteSize: 104 }],
+        },
+        'agent.session.workspace.read': {
+          ok: true,
+          path: '/workspace/paw/logo.svg',
+          content: svgContent,
+          byteSize: 104,
+          truncated: false,
+        },
+      },
+    });
+
+    const { container } = renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 logo.svg' }));
+
+    const image = await screen.findByRole('img', { name: 'logo.svg 矢量图预览' });
+    expect(image).toHaveAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgContent)}`);
+    expect(container.querySelector('.agent-file-code')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '源码' }));
+    expect(container.querySelector('.agent-file-code')).not.toBeNull();
+    expect(screen.queryByRole('img', { name: 'logo.svg 矢量图预览' })).not.toBeInTheDocument();
   });
 
   it('recovers a failed file read through the in-place retry action', async () => {
@@ -542,6 +661,8 @@ describe('PawOsFilesApp', () => {
           path: '/workspace/paw/big.log',
           content: 'line 1\nline 2\n',
           byteSize: 131_072,
+          offset: 0,
+          nextOffset: 65_536,
           truncated: true,
         },
       },
