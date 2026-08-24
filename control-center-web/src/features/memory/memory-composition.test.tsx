@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -17,42 +17,30 @@ afterEach(() => {
 });
 
 describe('MemoryFeature composition', () => {
-  it('scopes the system overview to the catalog entry view', async () => {
+  it('keeps the governed pipeline spine visible across catalog and relations views', async () => {
     renderMemory(catalogTransport());
-    expect(await screen.findByText('查看记忆整理状态', { selector: 'summary' })).toBeInTheDocument();
+    const pipeline = await screen.findByRole('list', { name: '记忆内容分类' });
+    expect(within(pipeline).getByRole('button', { name: /来源/ })).toBeInTheDocument();
+    expect(within(pipeline).getByRole('button', { name: /主题/ })).toBeInTheDocument();
     cleanup();
 
     renderMemory(relationsTransport(), '/memory?view=relations');
     expect(await screen.findByRole('heading', { name: '记忆关系' })).toBeInTheDocument();
-    expect(screen.queryByText('查看记忆整理状态')).not.toBeInTheDocument();
+    expect(screen.getByRole('list', { name: '记忆内容分类' })).toBeInTheDocument();
   });
 
-  it('routes from the overview to memory preferences', async () => {
+  it('routes between memory layers from the pipeline spine', async () => {
     const user = userEvent.setup();
-    renderMemory(new MockControlTransport({
-      capabilities: { features: {} },
-      routes: {
-        'memory.summary': { ok: true, memoryAtomCount: 2, memoryBookCount: 1 },
-        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
-        'configuration.settings': {
-          ok: true,
-          settings: {
-            memory: {
-              timeDecay: { temporaryHalfLifeDays: 14, stablePreferenceHalfLifeDays: 365 },
-              recall: { detailLevel: 'compact' },
-              automaticOrganization: { includeAgentDialogue: true },
-            },
-          },
-          runtimeRevision: 3,
-        },
-      },
-    }));
+    const transport = catalogTransport();
+    renderMemory(transport);
 
-    await user.click(await screen.findByText('查看记忆整理状态', { selector: 'summary' }));
-    await user.click(await screen.findByRole('button', { name: '记忆偏好' }));
+    const pipeline = await screen.findByRole('list', { name: '记忆内容分类' });
+    await user.click(within(pipeline).getByRole('button', { name: /来源/ }));
 
-    expect(await screen.findByRole('heading', { name: '记忆偏好' })).toBeInTheDocument();
-    expect(screen.queryByText('查看记忆整理状态')).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '记忆来源 目录' })).toBeInTheDocument();
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'memory.pages' && call.request.params?.kind === 'evidence'
+    ))).toBe(true));
   });
 
   it('describes the relations view with the recorded tag count instead of an atom claim', async () => {

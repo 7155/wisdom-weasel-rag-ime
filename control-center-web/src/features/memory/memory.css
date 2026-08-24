@@ -1,129 +1,34 @@
-/* ==========================================================================
-   Memory App — one coherent stylesheet.
+/* Memory App — one stylesheet owner for the governed second brain.
+   The pipeline 来源 -> 整理 -> 记忆 -> 主题 is the App's spine: it is always
+   visible, carries the live counts, and is the primary navigation between
+   the memory layers. Every other surface (catalog, references, role books,
+   curation, relations, preferences) hangs off one of its stages.
 
-   Rebuilt from five accreted patch layers (base management page, editorial
-   grid, Personal Context v2, second-brain migration, per-fix overrides) into
-   a single pass. Two frames own the layout:
+   Order: identity tokens -> app frame -> pipeline -> view tabs -> catalog ->
+   lineage & references -> reference dialog -> role books -> curation ->
+   relations -> preferences -> edit dialog -> PAWOS native frame ->
+   semantic type roles -> interaction states -> motion -> responsive.
 
-   1. Web route (`main[data-route-id='memory']` without a PAWOS surface): a
-      flowing management sheet on the workspace canvas. The page scrolls once
-      and every token derives from the shared theme, so the route stays
-      dark-theme safe.
-   2. PAWOS window (`main[data-route-id='memory'][data-paw-os-app='memory']`):
-      a fixed frame. The height constraint flows window → tab root → active
-      tab panel, and the panel (or the catalog columns inside it) owns the
-      scrolling. The window re-points the `--mem-*` tokens at the light
-      Memory palette so the App keeps its identity inside the OS.
+   Timeline internals live in activity-timeline.css; this file only arranges
+   the timeline within the Memory frame. Shared mgmt-* grammar is owned by
+   management.css; only Memory-scoped composition may override it here. */
 
-   Composition contract (pinned by memory-composition / memory-feature /
-   paw-apps-style tests):
-   - the pipeline (`.memory-pipeline__flow`) is the `记忆内容分类` list and its
-     three stages stay Evidence → Atom → Book;
-   - `--memory-signal*` and `--memory-gold` identity tokens are declared here
-     and drive `:focus-visible` inside the App window;
-   - the catalog keeps its reversible list-to-detail disclosure
-     (`data-detail-open` + `.memory-layer-detail__back`) on compact widths;
-   - Role Books keep a readable measure: title owns the column, status and
-     meta stack underneath.
-   ========================================================================== */
-
-/* -------------------------------------------------------------------------
-   Tokens. Identity constants first (pinned), then derived roles. Dialogs and
-   tooltips portal to <body>, so they join the declaration scope.
-   ------------------------------------------------------------------------- */
-main[data-route-id='memory'],
-.memory-reference-dialog,
-.memory-edit-dialog,
-.memory-relation-tooltip {
+main[data-route-id='memory'] {
   --memory-signal: #d94f8b;
   --memory-signal-strong: #b82d70;
   --memory-signal-soft: rgb(217 79 139 / .1);
   --memory-gold: #b66a0b;
-  --memory-flow-source: #176fc1;
-  --memory-flow-atom: #7458d6;
-  --memory-flow-book: #b66a0b;
-  --mem-ink: var(--color-text-primary, var(--color-text));
-  --mem-ink-2: var(--color-text-secondary);
-  --mem-ink-3: var(--color-text-tertiary);
-  --mem-hairline: var(--color-border);
-  --mem-hairline-soft: var(--color-border-soft);
-  --mem-hairline-strong: var(--color-border-strong);
-  --mem-canvas: var(--color-canvas, var(--color-surface-subtle));
-  --mem-panel: var(--color-paper, var(--color-surface));
-  --mem-panel-2: var(--color-surface-subtle);
-  --mem-chip: var(--color-surface-muted, var(--color-surface-subtle));
-  --mem-hover: var(--color-surface-hover);
-  --mem-select: var(--color-accent);
-  --mem-select-soft: var(--color-accent-soft);
-  --mem-tint: color-mix(in srgb, var(--memory-signal) 9%, transparent);
+  --memory-line: rgb(32 38 49 / .08);
+  --memory-line-soft: rgb(32 38 49 / .06);
 }
 
-/* Inside a PAWOS window the App owns a fixed light palette: the window is a
-   working surface, not a themed page. Every literal colour of the old
-   second-brain layer maps onto exactly one role below. */
-main[data-route-id='memory'][data-paw-os-app='memory'] {
-  --mem-ink: #202631;
-  --mem-ink-2: #5f6a79;
-  --mem-ink-3: #7a8493;
-  --mem-hairline: rgb(32 38 49 / .08);
-  --mem-hairline-soft: rgb(32 38 49 / .06);
-  --mem-hairline-strong: rgb(32 38 49 / .14);
-  --mem-canvas: #f5f7fa;
-  --mem-panel: #fff;
-  --mem-panel-2: #f6f8fb;
-  --mem-chip: #f0f2f5;
-  --mem-hover: #eef1f6;
-  --mem-select: #5367d8;
-  --mem-select-soft: #f4f6fd;
-}
+/* ============================== app frame ============================== */
 
-main[data-route-id='memory'][data-paw-os-app='memory'] ::selection {
-  color: #641438;
-  background: rgb(217 79 139 / .22);
-}
-
-main[data-route-id='memory'][data-paw-os-app='memory'] :focus-visible {
-  outline-color: var(--memory-signal);
-}
-
-main[data-route-id='memory'][data-paw-os-app='memory'] :where(.memory-layer-list, [role='tabpanel']) {
-  scrollbar-color: rgb(217 79 139 / .28) transparent;
-  scrollbar-width: thin;
-}
-
-/* -------------------------------------------------------------------------
-   Frame 2 — PAWOS window. The native window is already the Memory surface;
-   the header bar carries the view mode and refresh, the body owns the rest.
-   ------------------------------------------------------------------------- */
-main[data-route-id='memory'][data-paw-os-app='memory'] {
-  height: 100%;
-  min-height: 0;
+.memory-second-brain {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-  color: var(--mem-ink);
-  background: var(--mem-canvas);
-  font-family: var(--font-body, "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif);
+  min-width: 0;
+  gap: var(--space-4);
   container: memory-second-brain / inline-size;
-}
-
-main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__native-actions {
-  position: relative;
-  min-height: 52px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  padding: 7px 14px 7px 16px;
-  border-bottom: 1px solid var(--mem-hairline);
-  background: rgb(255 255 255 / .94);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
-  backdrop-filter: blur(18px) saturate(125%);
-}
-
-main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
-  min-height: 0;
-  overflow: hidden;
-  padding: 0;
 }
 
 .memory-second-brain__mode {
@@ -138,534 +43,257 @@ main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--memory-signal);
+  background: var(--memory-signal, var(--color-accent));
   box-shadow: 0 2px 8px rgb(217 79 139 / .25);
 }
 
 .memory-second-brain__mode > span { min-width: 0; display: grid; gap: 1px; }
 .memory-second-brain__mode strong { font-size: 14px; line-height: 18px; }
-.memory-second-brain__mode small {
-  overflow: hidden;
-  color: var(--mem-ink-3);
-  font-size: 14px;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.memory-second-brain__mode small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 
-.memory-second-brain {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-  background: var(--mem-canvas);
-}
+/* ============================== the pipeline ============================== */
 
-/* The pipeline summary belongs to the catalog entry view; only there does the
-   grid reserve its collapsed disclosure row above the tab panels. */
-.memory-second-brain[data-view='catalog'] {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.memory-second-brain > .memory-system-summary {
-  min-height: 40px;
-  margin: 0;
-  padding-inline: 16px;
-  border-bottom: 1px solid var(--mem-hairline-soft);
-  background: var(--mem-panel);
-}
-
-.memory-second-brain > .memory-system-summary > summary {
-  min-height: 40px;
-  color: var(--mem-ink-3);
-  font-size: 12px;
-}
-
-.memory-second-brain > .memory-system-summary[open] {
-  max-height: min(58vh, 560px);
-  overflow: auto;
-  padding-bottom: 16px;
-}
-
-.memory-second-brain > .memory-system-summary > .ui-disclosure__reveal > div { padding-bottom: 12px; }
-
-.memory-system-summary {
-  margin-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.memory-system-summary > summary {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  color: var(--mem-ink-2);
-  font-size: 13px;
-  font-weight: var(--font-weight-semibold);
-}
-
-.memory-system-summary > summary:focus-visible,
-.memory-reference-view__advanced > summary:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.memory-system-summary > .ui-disclosure__reveal > div { padding-bottom: var(--space-3); }
-
-/* -------------------------------------------------------------------------
-   The pipeline. Evidence flows into Atoms, Atoms into Books; the rail *is*
-   the overview. Each stage keeps its own hue so the flow reads at a glance,
-   the connectors carry the transformation labels, and the governance meters
-   hang directly under the rail they describe.
-   ------------------------------------------------------------------------- */
 .memory-pipeline {
-  display: grid;
   min-width: 0;
-  gap: var(--space-4);
-  padding-top: var(--space-2);
-}
-
-.memory-pipeline__masthead {
-  display: flex;
-  min-width: 0;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.memory-pipeline__voice { min-width: 0; }
-
-.memory-pipeline__voice > span,
-.activity-timeline__eyebrow {
-  display: block;
-  color: var(--memory-signal-strong, var(--color-accent));
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: .06em;
-}
-
-.memory-pipeline__masthead h2 {
-  margin: 3px 0 0;
-  font-size: var(--text-section-lead);
-  line-height: var(--text-section-lead-lh);
-}
-
-.memory-pipeline__masthead p {
-  max-width: 62ch;
-  margin: 4px 0 0;
-  color: var(--mem-ink-2);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.memory-pipeline__actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-}
-
-/* The flow rail: three stage cards joined by labelled gradient connectors.
-   A single top rail runs the source → atom → book hue across the whole row,
-   so the pipeline reads as one continuous transformation. */
-.memory-pipeline__flow {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  margin: 0;
-  padding: 14px 12px 12px;
-  border: 1px solid var(--mem-hairline-strong);
-  border-radius: var(--radius-2);
-  background:
-    linear-gradient(160deg, color-mix(in srgb, var(--memory-flow-source) 4%, transparent), transparent 46%),
-    color-mix(in srgb, var(--mem-panel-2) 74%, var(--mem-panel));
-  list-style: none;
-  grid-template-columns: minmax(0, 1fr) 76px minmax(0, 1fr) 76px minmax(0, 1fr);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-paper);
   overflow: hidden;
 }
 
-.memory-pipeline__flow::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 3px;
-  background: linear-gradient(
-    90deg,
-    var(--memory-flow-source),
-    var(--memory-flow-atom) 50%,
-    var(--memory-flow-book)
-  );
-  content: '';
-  opacity: .82;
+.memory-pipeline__stages {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 8px;
+  list-style: none;
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
 }
 
-.memory-pipeline__stage { min-width: 0; }
-.memory-pipeline__stage[data-stage='evidence'] { --stage-hue: var(--memory-flow-source); }
-.memory-pipeline__stage[data-stage='atoms'] { --stage-hue: var(--memory-flow-atom); }
-.memory-pipeline__stage[data-stage='books'] { --stage-hue: var(--memory-flow-book); }
+.memory-pipeline__stage { min-width: 0; display: grid; }
 
 .memory-pipeline__stage > button {
   position: relative;
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 158px;
-  align-content: start;
-  padding: 13px 14px 14px;
-  border: 1px solid var(--mem-hairline);
+  align-items: center;
+  padding: 12px 12px 10px;
+  border: 0;
   border-radius: var(--radius-2);
-  background: color-mix(in srgb, var(--mem-panel) 94%, transparent);
+  background: transparent;
   color: inherit;
+  font: inherit;
   text-align: left;
   cursor: pointer;
-  gap: 8px;
-  transition:
-    border-color var(--duration-enter) var(--ease-standard),
-    background var(--duration-enter) var(--ease-standard),
-    box-shadow var(--duration-enter) var(--ease-standard),
-    transform var(--duration-press) var(--ease-press);
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 5px 11px;
+  transition: background var(--duration-enter) var(--ease-standard);
 }
 
 .memory-pipeline__stage > button:focus-visible {
+  z-index: 1;
   outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.memory-pipeline__stage > button:active { transform: scale(.99); }
-
-.memory-pipeline__stage[data-active='true'] > button {
-  border-color: color-mix(in srgb, var(--stage-hue) 58%, var(--mem-hairline));
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--stage-hue) 9%, transparent), transparent 56%),
-    var(--mem-panel);
-  box-shadow: inset 0 3px 0 var(--stage-hue);
-}
-
-.memory-pipeline__stage-head {
-  display: grid;
-  min-width: 0;
-  align-items: center;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  gap: 9px;
-}
-
-.memory-pipeline__stage-index {
-  color: color-mix(in srgb, var(--stage-hue) 72%, var(--mem-ink-3));
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
+  outline-offset: -2px;
 }
 
 .memory-pipeline__stage-icon {
   display: grid;
+  grid-area: 1 / 1;
   width: 30px;
   height: 30px;
-  border: 1px solid color-mix(in srgb, var(--stage-hue) 32%, var(--mem-hairline));
-  border-radius: var(--radius-1);
-  background: color-mix(in srgb, var(--stage-hue) 8%, var(--mem-panel));
-  color: var(--stage-hue);
+  border: 1px solid color-mix(in srgb, var(--memory-signal) 26%, var(--color-border));
+  border-radius: 9px;
+  background: var(--memory-signal-soft);
+  color: var(--memory-signal-strong);
   place-items: center;
+  transition: background var(--duration-enter) var(--ease-standard), border-color var(--duration-enter) var(--ease-standard);
 }
 
-.memory-pipeline__stage-count {
-  display: inline-flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: 3px;
-  color: var(--mem-ink);
-  font-family: var(--font-ui);
-  font-size: 22px;
-  font-weight: var(--font-weight-semibold);
+.memory-pipeline__stage-index {
+  grid-area: 2 / 1;
+  align-self: start;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -.01em;
-}
-
-.memory-pipeline__stage-count small {
-  color: var(--mem-ink-3);
-  font-size: 13px;
-  line-height: 1.4;
-  font-weight: var(--font-weight-medium);
-}
-
-.memory-pipeline__stage-title {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
-.memory-pipeline__stage-title small {
-  color: var(--mem-ink-2);
-  font-size: 13px;
-  line-height: 1.4;
-  letter-spacing: .04em;
-}
-
-.memory-pipeline__stage-title strong {
-  font-family: var(--font-ui);
-  font-size: 18px;
-  line-height: 1.25;
-  letter-spacing: -.01em;
+  text-align: center;
 }
 
 .memory-pipeline__stage-copy {
   display: grid;
+  grid-area: 1 / 2;
   min-width: 0;
-  gap: 6px;
+  gap: 1px;
 }
 
-.memory-pipeline__stage-copy p {
-  margin: 0;
-  color: var(--mem-ink-2);
-  font-size: 14px;
-  line-height: 1.55;
+.memory-pipeline__stage-copy small {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: .02em;
 }
 
-/* Detail ledgers truncate instead of wrapping: the counts inside would strand
-   mid-phrase and the full text stays reachable via the title attribute. */
-.memory-pipeline__stage-copy em {
+.memory-pipeline__stage-copy strong {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.3;
+  letter-spacing: -.01em;
+}
+
+.memory-pipeline__stage-count {
+  display: inline-flex;
+  grid-area: 1 / 3;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--color-text-primary);
+  font-family: var(--font-ui);
+  font-size: 20px;
+  line-height: 1.15;
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.memory-pipeline__stage-count small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: var(--font-weight-medium);
+}
+
+.memory-pipeline__stage-count[data-unknown] { color: var(--color-text-tertiary); }
+
+/* Truncate the tail instead of wrapping: the detail is a scent, not a table. */
+.memory-pipeline__stage-detail {
+  grid-area: 2 / 2 / 2 / -1;
   min-width: 0;
   overflow: hidden;
-  color: var(--mem-ink-3);
-  font-size: 13px;
-  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
   font-style: normal;
-  cursor: help;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Connectors: the transformation is the message, so the line carries a hue
-   gradient from its upstream stage to its downstream stage and the label
-   floats over it as a small chip. */
-.memory-pipeline__link {
-  position: relative;
+.memory-pipeline__stage[data-active] > button {
+  background: color-mix(in srgb, var(--memory-signal) 6%, var(--color-paper));
+  box-shadow: inset 0 -2px 0 var(--memory-signal);
+}
+
+.memory-pipeline__stage[data-active] .memory-pipeline__stage-copy strong { color: var(--memory-signal-strong); }
+.memory-pipeline__stage[data-active] .memory-pipeline__stage-icon {
+  border-color: color-mix(in srgb, var(--memory-signal) 52%, var(--color-border));
+  background: color-mix(in srgb, var(--memory-signal) 16%, var(--color-paper));
+}
+
+/* Connectors carry the real quantity waiting to move to the next stage. */
+.memory-pipeline__flow {
   display: grid;
-  min-width: 0;
   align-content: center;
   justify-items: center;
-  gap: 7px;
-  padding-inline: 4px;
+  gap: 2px;
+  padding-inline: 7px;
+  color: var(--color-text-tertiary);
 }
 
-.memory-pipeline__link > i {
-  width: 100%;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--link-from), var(--link-to));
-  opacity: .55;
-}
-
-.memory-pipeline__link:nth-child(2) {
-  --link-from: var(--memory-flow-source);
-  --link-to: var(--memory-flow-atom);
-}
-
-.memory-pipeline__link:nth-child(4) {
-  --link-from: var(--memory-flow-atom);
-  --link-to: var(--memory-flow-book);
-}
-
-.memory-pipeline__link > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 7px;
-  border: 1px solid var(--mem-hairline);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--mem-panel) 92%, transparent);
-  color: var(--mem-ink-3);
-  font-size: 13px;
+.memory-pipeline__flow span {
+  max-width: 110px;
+  overflow: hidden;
+  font-size: 12px;
   line-height: 1.4;
-  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.memory-pipeline__link svg { color: var(--link-to, var(--mem-ink-3)); }
+.memory-pipeline__flow svg { opacity: .7; }
 
-/* Governance meters: importance, not symmetry — the confirmation call leads. */
-.memory-pipeline__meters {
+.memory-pipeline__flow[data-tone='active'] { color: var(--memory-signal-strong); }
+.memory-pipeline__flow[data-tone='active'] span { font-weight: 650; }
+.memory-pipeline__flow[data-tone='active'] svg { opacity: 1; }
+
+.memory-pipeline[data-state='pending'] .memory-pipeline__stage-count,
+.memory-pipeline[data-state='error'] .memory-pipeline__stage-count { color: var(--color-text-tertiary); }
+
+.memory-pipeline__meta {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 8px 22px;
+  padding: 9px 16px 10px;
+  border-top: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--color-surface-subtle) 44%, var(--color-paper));
 }
 
-.memory-pipeline__meter {
+.memory-pipeline__signals {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 20px;
+}
+
+.memory-pipeline__signal {
   display: grid;
   min-width: 0;
   align-items: center;
   grid-template-columns: 8px minmax(0, auto);
-  gap: 9px;
+  gap: 8px;
 }
 
-.memory-pipeline__meter > i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-info);
-}
+.memory-pipeline__signal > i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-info); }
+.memory-pipeline__signal[data-tone='success'] > i { background: var(--color-success); }
+.memory-pipeline__signal[data-tone='warning'] > i { background: var(--color-warning); }
+.memory-pipeline__signal > span { display: grid; min-width: 0; gap: 0; }
+.memory-pipeline__signal strong { font-size: 13px; line-height: 1.4; }
+.memory-pipeline__signal small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 
-.memory-pipeline__meter[data-tone='success'] > i { background: var(--color-success); }
-.memory-pipeline__meter[data-tone='warning'] > i { background: var(--color-warning); }
-.memory-pipeline__meter > span { display: grid; min-width: 0; gap: 2px; }
-.memory-pipeline__meter strong { font-size: var(--font-size-ui, 13px); }
-.memory-pipeline__meter small {
-  color: var(--mem-ink-3);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.memory-pipeline__meter[data-tone='warning'] {
-  order: -1;
-  padding: 7px 12px;
-  border-radius: var(--radius-2);
-  background: color-mix(in srgb, var(--color-warning-soft) 55%, var(--mem-panel));
-}
-
-/* The provenance promise closes the frame. */
-.memory-pipeline__trust {
-  display: grid;
-  min-width: 0;
-  align-items: center;
-  padding: 11px 12px;
-  border-block: 1px solid var(--mem-hairline-soft);
-  color: var(--mem-ink-2);
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  gap: 9px;
-}
-
-.memory-pipeline__trust > svg { color: var(--color-success); }
-
-.memory-pipeline__trust > div {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.memory-pipeline__trust strong {
-  color: var(--mem-ink);
-  font-size: 13px;
-}
-
-.memory-pipeline__trust span {
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.memory-pipeline__trust-actions {
-  display: flex;
+.memory-pipeline__fault {
+  display: inline-flex;
   min-width: 0;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--color-warning);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
-/* -------------------------------------------------------------------------
-   View tabs. The tab row is the same component on every page; inside a PAWOS
-   window the App navigation replaces it, so the root stays structural.
-   ------------------------------------------------------------------------- */
-.memory-view-tabs {
+.memory-pipeline__note {
+  display: inline-flex;
   min-width: 0;
-  padding-top: var(--space-2);
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--color-text-secondary);
 }
 
+.memory-pipeline__note svg { flex: 0 0 auto; margin-top: 2px; color: var(--color-success); }
+.memory-pipeline__note span { font-size: 14px; line-height: 1.5; }
+
+/* ============================== view tabs ============================== */
+
+.memory-view-tabs { min-width: 0; }
 .memory-view-tabs > .ui-tabs__list {
-  margin-top: 0;
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
   padding-inline: 2px;
   overflow-x: auto;
 }
 
-.memory-second-brain > .memory-view-tabs {
-  min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-  padding: 0;
-}
-
-.memory-second-brain > .memory-view-tabs > [role='tabpanel'] {
-  min-height: 0;
-  overflow: auto;
-  padding: 0;
-  animation: memory-view-arrive 260ms cubic-bezier(.16, 1, .3, 1) both;
-}
-
-.memory-second-brain[data-view='catalog'] > .memory-view-tabs > [role='tabpanel'] { overflow: hidden; }
-
-/* The native window is already the Memory surface. The legacy management page
-   and the Radix Tabs root must stay structural here; letting either paint its
-   old sheet stacks three frames around the same catalog. */
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs,
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs > [role='tabpanel'],
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .mgmt-section {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs,
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs > [role='tabpanel'],
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .mgmt-section {
-  padding: 0;
-}
-
-/* -------------------------------------------------------------------------
-   Catalog — the deck row pairs the layer switch with the filters; the
-   workspace below owns the remaining height and its own scrolling.
-   ------------------------------------------------------------------------- */
-.memory-catalog {
-  height: 100%;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.memory-catalog__deck {
-  min-width: 0;
-  display: grid;
-  align-items: end;
-  grid-template-columns: auto minmax(170px, .7fr) minmax(300px, 1fr);
-  gap: 10px 16px;
-  padding: 9px 16px 11px;
-  border-bottom: 1px solid var(--mem-hairline);
-  background: color-mix(in srgb, var(--mem-panel) 62%, var(--mem-panel-2));
-}
-
-.memory-layer-context {
-  display: flex;
-  min-width: 0;
-  min-height: var(--control-height);
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--space-3);
-  border-block: 1px solid var(--mem-hairline-soft);
-  gap: 12px;
-}
-
-.memory-layer-context > strong { font-size: 14px; white-space: nowrap; }
-
-.memory-layer-context > span {
-  overflow: hidden;
-  min-width: 0;
-  color: var(--mem-ink-2);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ============================== catalog ============================== */
 
 .memory-catalog-filters {
   display: flex;
   min-width: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: end;
   justify-content: start;
-  gap: 7px;
+  gap: 7px 10px;
 }
 
 .memory-catalog-filters .ui-field { min-width: 116px; }
@@ -677,41 +305,62 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   align-self: end;
 }
 
-/* -------------------------------------------------------------------------
-   Catalog — list-and-detail workspace.
-   ------------------------------------------------------------------------- */
 .memory-layer-workspace {
   display: grid;
   min-width: 0;
   min-height: 440px;
   margin-top: var(--space-4);
-  border-block: 1px solid var(--mem-hairline-strong);
+  border-block: 1px solid var(--color-border-strong);
   grid-template-columns: minmax(320px, .78fr) minmax(0, 1.35fr);
 }
 
-/* No `overscroll-behavior: contain` here: when the list fits (no overflow of
-   its own) a contained scroll container swallows wheel events entirely, so
-   the surrounding tab panel's overflow could never be reached. */
 .memory-layer-list {
   min-width: 0;
   max-height: 720px;
-  border-right: 1px solid var(--mem-hairline);
+  padding: 8px 10px 18px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
+
+.memory-layer-list .mgmt-list { display: grid; gap: 7px; }
 
 .memory-layer-list .mgmt-list__row {
-  grid-template-columns: minmax(0, 1fr) minmax(112px, .44fr) auto auto;
-  align-items: center;
+  min-height: 78px;
+  align-items: start;
+  padding: 11px 12px;
+  border: 1px solid var(--memory-line, var(--color-border));
+  border-radius: 11px;
+  background: var(--color-paper);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 9px;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 180ms cubic-bezier(.16, 1, .3, 1);
 }
 
-.memory-layer-list .mgmt-list__copy strong,
+.memory-layer-list .mgmt-list__row[data-selected] {
+  border-color: color-mix(in srgb, var(--memory-signal) 42%, var(--color-border));
+  background: color-mix(in srgb, var(--memory-signal) 4%, var(--color-paper));
+  box-shadow: inset 3px 0 var(--memory-signal);
+}
+
+.memory-layer-list .mgmt-list__copy { grid-column: 1 / -1; }
+.memory-layer-list .mgmt-list__copy strong { display: block; overflow: visible; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .memory-layer-list .mgmt-list__copy span {
-  display: block;
-  overflow: visible;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 19px;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.memory-layer-list .mgmt-list__meta { white-space: normal; }
+.memory-layer-list .mgmt-list__meta { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; white-space: normal; }
+.memory-layer-list .mgmt-list__status { justify-self: end; }
+.memory-layer-list .mgmt-list__row > svg { display: none; }
 
 .memory-layer-detail {
   min-width: 0;
@@ -719,6 +368,21 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-layer-detail > .ui-empty-state { min-height: 360px; }
+
+.memory-layer-detail__back {
+  display: none;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-muted);
+  font: inherit;
+  cursor: pointer;
+}
 
 .memory-layer-actions {
   display: grid;
@@ -729,109 +393,6 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 
 .memory-layer-actions > :only-child { grid-column: 1 / -1; }
 
-.memory-second-brain[data-view='catalog'] .memory-layer-workspace {
-  min-height: 0;
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  border: 0;
-  grid-template-columns: minmax(310px, .88fr) minmax(420px, 1.12fr);
-  background: var(--mem-panel);
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-list {
-  max-height: none;
-  overflow: auto;
-  padding: 8px 10px 18px;
-  border-right: 1px solid var(--mem-hairline);
-  background: var(--mem-panel-2);
-  scrollbar-gutter: stable;
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list { display: grid; gap: 7px; }
-
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__row {
-  min-height: 78px;
-  align-items: start;
-  padding: 11px 12px;
-  border: 1px solid var(--mem-hairline);
-  border-radius: 11px;
-  color: var(--mem-ink);
-  background: var(--mem-panel);
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 9px;
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    transform 180ms cubic-bezier(.16, 1, .3, 1);
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__row[data-selected] {
-  border-color: color-mix(in srgb, var(--mem-select) 42%, transparent);
-  background: var(--mem-select-soft);
-  box-shadow: inset 3px 0 var(--mem-select);
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__copy { grid-column: 1 / -1; }
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__copy strong { font-size: 14px; line-height: 20px; }
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__copy span {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--mem-ink-2);
-  font-size: 13px;
-  line-height: 19px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__meta {
-  color: var(--mem-ink-3);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__status { justify-self: end; }
-.memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__row > svg { display: none; }
-
-.memory-second-brain[data-view='catalog'] .memory-layer-detail {
-  min-height: 0;
-  overflow: auto;
-  padding: 18px clamp(18px, 3cqw, 30px) 30px;
-  background: var(--mem-panel);
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-detail__back {
-  display: none;
-  min-height: 32px;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 14px;
-  border-radius: 8px;
-  padding: 0 9px;
-  color: var(--mem-ink-2);
-  background: var(--mem-chip);
-  font: inherit;
-  cursor: pointer;
-}
-
-/* An unselected catalog is an invitation, not a blank hero panel. Keep the
-   guidance close to the list and let the detail pane reclaim its height. */
-.memory-second-brain[data-view='catalog'] .memory-layer-detail > .ui-empty-state {
-  min-height: 0;
-  height: 100%;
-  align-content: start;
-  padding: clamp(24px, 8cqw, 64px) 0 24px;
-}
-
-.memory-second-brain[data-view='catalog'] .memory-layer-detail > .ui-empty-state .ui-empty-state__icon {
-  background: var(--memory-signal-soft);
-  border-color: color-mix(in srgb, var(--memory-signal) 28%, transparent);
-  color: var(--memory-signal-strong);
-}
-
-/* -------------------------------------------------------------------------
-   Catalog — selected record detail.
-   ------------------------------------------------------------------------- */
 .memory-catalog-detail {
   display: grid;
   min-width: 0;
@@ -839,23 +400,18 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   gap: var(--space-4);
   margin-bottom: var(--space-4);
   padding-block: var(--space-4);
-  border-block: 1px solid var(--mem-hairline);
+  border-block: 1px solid var(--color-border);
 }
-
-.memory-catalog-detail > div,
-.memory-catalog-detail dl { min-width: 0; }
 
 .memory-catalog-detail > .memory-lineage-panel,
 .memory-catalog-detail > .ui-inline-notice { grid-column: 1 / -1; }
+.memory-catalog-detail > div,
+.memory-catalog-detail dl { min-width: 0; }
 
-.memory-catalog-detail__identity > span,
-.memory-lineage-panel > div:first-child > span {
+.memory-catalog-detail__identity > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.memory-catalog-detail > div:first-child > span {
   color: var(--memory-signal-strong, var(--color-accent));
   font-size: 13px;
   font-weight: var(--font-weight-semibold);
@@ -870,7 +426,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-catalog-detail p {
   max-width: 70ch;
   margin: 6px 0 0;
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -879,12 +435,12 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-catalog-detail__body {
   margin-top: 12px;
   padding-top: 11px;
-  border-top: 1px solid var(--mem-hairline);
+  border-top: 1px solid var(--memory-line, var(--color-border));
 }
 
 .memory-catalog-detail__body > small {
   display: block;
-  color: var(--memory-signal-strong, var(--color-accent));
+  color: var(--memory-signal-strong, var(--color-text-tertiary));
   font-size: 12px;
   font-weight: var(--font-weight-semibold);
 }
@@ -892,17 +448,17 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-catalog-detail dl {
   display: grid;
   margin: 0;
-  border-left: 1px solid var(--mem-hairline);
+  border-left: 1px solid var(--color-border);
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .memory-catalog-detail dl div {
   min-width: 0;
   padding: 7px 10px;
-  border-bottom: 1px solid var(--mem-hairline);
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
 }
 
-.memory-catalog-detail dt { color: var(--mem-ink-3); font-size: 13px; }
+.memory-catalog-detail dt { color: var(--color-text-tertiary); font-size: 13px; }
 .memory-catalog-detail dd {
   margin: 3px 0 0;
   font-size: 13px;
@@ -919,9 +475,10 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-catalog-detail__tags span {
-  padding: 3px 6px;
-  border: 1px solid var(--mem-hairline);
-  color: var(--mem-ink-2);
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--memory-signal-strong, var(--color-text-secondary));
+  background: var(--memory-signal-soft, var(--color-surface-subtle));
   font-size: 13px;
 }
 
@@ -934,7 +491,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   width: max-content;
   max-width: 100%;
   padding: 4px 2px;
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   font-weight: 650;
 }
@@ -943,56 +500,25 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-catalog-detail__tag-disclosure[data-expanded='true'] > summary { color: var(--memory-signal-strong); }
 .memory-catalog-detail__tag-disclosure-body { padding-top: 6px; }
 
-.memory-second-brain[data-view='catalog'] .memory-catalog-detail {
-  display: block;
-  margin: 0 0 18px;
-  padding: 0;
-  border: 0;
+.memory-action-unavailable {
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-2);
+  background: var(--color-warning-soft);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
-.memory-second-brain[data-view='catalog'] .memory-catalog-detail h3 {
-  margin-top: 7px;
-  font-size: 20px;
-  line-height: 1.42;
-  letter-spacing: -.018em;
-}
+/* ============================== lineage & references ============================== */
 
-.memory-second-brain[data-view='catalog'] .memory-catalog-detail p {
-  max-width: 68ch;
-  font-size: 15px;
-  line-height: 1.68;
-}
-
-.memory-second-brain[data-view='catalog'] .memory-catalog-detail dl {
-  margin-top: 18px;
-  border: 0;
-  border-top: 1px solid var(--mem-hairline);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.memory-second-brain[data-view='catalog'] .memory-catalog-detail dl div {
-  padding: 9px 2px;
-  border-color: var(--mem-hairline-soft);
-}
-
-.memory-second-brain[data-view='catalog'] .memory-catalog-detail__tags { margin-top: 12px; }
-.memory-second-brain[data-view='catalog'] .memory-catalog-detail__tags span {
-  border: 0;
-  border-radius: 999px;
-  color: var(--memory-signal-strong);
-  background: var(--memory-signal-soft);
-}
-
-/* -------------------------------------------------------------------------
-   Provenance chain — the lineage panel and reference rows keep every claim
-   one click away from its source.
-   ------------------------------------------------------------------------- */
 .memory-lineage-panel {
   display: grid;
   min-width: 0;
   gap: var(--space-3);
   padding: 13px 0 3px;
-  border-top: 1px solid var(--mem-hairline);
+  border-top: 1px solid var(--color-border);
 }
 
 .memory-lineage-panel > div:first-child {
@@ -1002,6 +528,9 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-lineage-panel > div:first-child > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--memory-signal-strong, var(--color-accent));
   font-size: 12px;
   font-weight: var(--font-weight-semibold);
@@ -1016,7 +545,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-lineage-panel > div:first-child > p,
 .memory-lineage-empty {
   margin: 0;
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.55;
 }
@@ -1024,7 +553,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-reference-list {
   display: grid;
   min-width: 0;
-  border-top: 1px solid var(--mem-hairline);
+  border-top: 1px solid var(--color-border);
 }
 
 .memory-reference-list button {
@@ -1034,7 +563,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   align-items: center;
   padding: 9px 2px;
   border: 0;
-  border-bottom: 1px solid var(--mem-hairline);
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
   background: transparent;
   color: inherit;
   text-align: left;
@@ -1043,11 +572,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   gap: 7px;
 }
 
-.memory-reference-list button:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
-}
-
+.memory-reference-list button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .memory-reference-list button span {
   display: grid;
   min-width: 0;
@@ -1064,20 +589,8 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   text-transform: uppercase;
 }
 
-.memory-action-unavailable {
-  margin: 0;
-  padding: 8px 11px;
-  border: 1px solid var(--color-warning-border);
-  border-radius: var(--radius-2);
-  background: var(--color-warning-soft);
-  color: var(--mem-ink-2);
-  font-size: 14px;
-  line-height: 1.5;
-}
+/* ============================== reference dialog ============================== */
 
-/* -------------------------------------------------------------------------
-   Reference dialog — recursive provenance viewer (portalled to <body>).
-   ------------------------------------------------------------------------- */
 .memory-reference-dialog {
   width: min(760px, calc(100vw - 32px));
   max-height: min(88vh, 820px);
@@ -1092,189 +605,6 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   min-width: 0;
   justify-items: start;
   gap: var(--space-2);
-}
-
-.memory-reference-view {
-  display: grid;
-  min-width: 0;
-  max-height: min(62vh, 620px);
-  gap: var(--space-3);
-  padding-right: 3px;
-  overflow: auto;
-  overscroll-behavior: contain;
-}
-
-.memory-reference-view__identity {
-  display: grid;
-  min-width: 0;
-  align-items: center;
-  padding-block: 10px;
-  border-block: 1px solid var(--color-border-strong);
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-.memory-reference-view__identity > span {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--color-border-strong);
-  color: var(--color-accent);
-  place-items: center;
-}
-
-.memory-reference-view__identity > div { display: grid; min-width: 0; gap: 2px; }
-.memory-reference-view__identity small { color: var(--color-text-tertiary); font-size: 12px; }
-.memory-reference-view__identity strong {
-  font-family: var(--font-sans);
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.memory-reference-view__advanced {
-  margin-top: 12px;
-  border-top: 1px solid var(--color-border);
-}
-
-.memory-reference-view__advanced > summary {
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.memory-reference-view__advanced[open] > summary { color: var(--color-text-secondary); }
-.memory-reference-view__advanced > .ui-disclosure__reveal > div { padding-bottom: var(--space-2); }
-.memory-reference-view__notice { display: inline-flex; align-items: flex-start; gap: 7px; }
-.memory-reference-view__notice svg { flex: 0 0 auto; margin-top: 2px; }
-.memory-reference-view__content {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.62;
-  overflow-wrap: anywhere;
-}
-
-.memory-reference-view__facts {
-  display: grid;
-  margin: 0;
-  border-block: 1px solid var(--color-border);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.memory-reference-view__facts > div {
-  min-width: 0;
-  padding: 9px;
-  border-right: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.memory-reference-view__facts > div:nth-child(3n) { border-right: 0; }
-.memory-reference-view__facts dt { color: var(--color-text-tertiary); font-size: 12px; }
-.memory-reference-view__facts dd {
-  margin: 3px 0 0;
-  font-size: 13px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.memory-reference-view__source-context {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-subtle);
-}
-
-.memory-reference-view__source-context > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.memory-reference-view__source-context > header span { display: inline-flex; align-items: center; gap: 6px; }
-.memory-reference-view__source-context > header small { color: var(--color-text-tertiary); }
-.memory-reference-view__source-context > dl {
-  display: grid;
-  margin: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.memory-reference-view__source-context > dl > div { min-width: 0; }
-.memory-reference-view__source-context dt { color: var(--color-text-tertiary); font-size: 12px; }
-.memory-reference-view__source-context dd {
-  margin: 3px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.memory-reference-view__source-context > p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.memory-reference-view__children { display: grid; min-width: 0; }
-.memory-reference-view__children > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 0;
-}
-
-.memory-reference-view__children > header span { display: inline-flex; align-items: center; gap: 6px; }
-.memory-reference-view__children > header small { color: var(--color-text-tertiary); }
-
-.memory-reference-view__children > button {
-  display: grid;
-  min-width: 0;
-  align-items: center;
-  padding: 10px 2px;
-  border: 0;
-  border-top: 1px solid var(--color-border);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-.memory-reference-view__children > button:disabled { cursor: not-allowed; opacity: .64; }
-.memory-reference-view__children > button span { display: grid; min-width: 0; gap: 2px; }
-.memory-reference-view__children > button small { color: var(--color-accent); font-size: 12px; }
-.memory-reference-view__children > button strong { font-size: 13px; overflow-wrap: anywhere; }
-.memory-reference-view__children > button em {
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-style: normal;
-  overflow-wrap: anywhere;
-}
-
-.memory-reference-view__children > button b { color: var(--color-warning); font-size: 12px; }
-.memory-reference-view__children > p,
-.memory-reference-view__guard {
-  margin: 0;
-  padding: 10px 0;
-  color: var(--color-text-secondary);
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.memory-reference-view__guard {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--color-warning);
 }
 
 .memory-reference-path {
@@ -1306,12 +636,12 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-reference-path li[data-current='true'] {
-  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  background: color-mix(in srgb, var(--memory-signal, var(--color-accent)) 7%, transparent);
   color: var(--color-text-primary);
 }
 
 .memory-reference-path li > span {
-  color: var(--color-accent);
+  color: var(--memory-signal-strong, var(--color-accent));
   font-size: 13px;
   line-height: 1.4;
   font-weight: var(--font-weight-semibold);
@@ -1331,11 +661,130 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   grid-row: 1 / span 2;
 }
 
-/* -------------------------------------------------------------------------
-   Role Books — partner memory reading list. The shared OperationalList
-   grammar leaves too little measure for a partner summary at this width, so
-   the title owns the column and status/meta stack underneath.
-   ------------------------------------------------------------------------- */
+.memory-reference-view {
+  display: grid;
+  min-width: 0;
+  max-height: min(62vh, 620px);
+  gap: var(--space-3);
+  padding-right: 3px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.memory-reference-view__identity {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  padding-block: 10px;
+  border-block: 1px solid var(--color-border-strong);
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.memory-reference-view__identity > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, var(--memory-signal) 26%, var(--color-border));
+  border-radius: 9px;
+  background: var(--memory-signal-soft);
+  color: var(--memory-signal-strong, var(--color-accent));
+  place-items: center;
+}
+
+.memory-reference-view__identity > div { display: grid; min-width: 0; gap: 2px; }
+.memory-reference-view__identity small { color: var(--color-text-tertiary); font-size: 12px; }
+.memory-reference-view__identity strong { font-family: var(--font-sans); font-size: 13px; overflow-wrap: anywhere; }
+
+.memory-reference-view__advanced {
+  margin-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.memory-reference-view__advanced > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.memory-reference-view__advanced > summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.memory-reference-view__advanced[open] > summary { color: var(--color-text-secondary); }
+.memory-reference-view__advanced > .ui-disclosure__reveal > div { padding-bottom: var(--space-2); }
+.memory-reference-view__notice { display: inline-flex; align-items: flex-start; gap: 7px; }
+.memory-reference-view__notice svg { flex: 0 0 auto; margin-top: 2px; }
+.memory-reference-view__content { margin: 0; font-size: 14px; line-height: 1.62; overflow-wrap: anywhere; }
+
+.memory-reference-view__facts {
+  display: grid;
+  margin: 0;
+  border-block: 1px solid var(--color-border);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.memory-reference-view__facts > div { min-width: 0; padding: 9px; border-right: 1px solid var(--memory-line, var(--color-border)); border-bottom: 1px solid var(--memory-line, var(--color-border)); }
+.memory-reference-view__facts > div:nth-child(3n) { border-right: 0; }
+.memory-reference-view__facts dt { color: var(--color-text-tertiary); font-size: 12px; }
+.memory-reference-view__facts dd { margin: 3px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+
+.memory-reference-view__source-context {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-subtle);
+}
+
+.memory-reference-view__source-context > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.memory-reference-view__source-context > header span { display: inline-flex; align-items: center; gap: 6px; }
+.memory-reference-view__source-context > header small { color: var(--color-text-tertiary); }
+.memory-reference-view__source-context > dl { display: grid; margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.memory-reference-view__source-context > dl > div { min-width: 0; }
+.memory-reference-view__source-context dt { color: var(--color-text-tertiary); font-size: 12px; }
+.memory-reference-view__source-context dd { margin: 3px 0 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.memory-reference-view__source-context > p { margin: 0; color: var(--color-text-secondary); font-size: 14px; line-height: 1.55; }
+
+.memory-reference-view__children { display: grid; min-width: 0; }
+.memory-reference-view__children > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; }
+.memory-reference-view__children > header span { display: inline-flex; align-items: center; gap: 6px; }
+.memory-reference-view__children > header small { color: var(--color-text-tertiary); }
+
+.memory-reference-view__children > button {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  padding: 10px 2px;
+  border: 0;
+  border-top: 1px solid var(--memory-line, var(--color-border));
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.memory-reference-view__children > button:disabled { cursor: not-allowed; opacity: .64; }
+.memory-reference-view__children > button span { display: grid; min-width: 0; gap: 2px; }
+.memory-reference-view__children > button small { color: var(--memory-signal-strong, var(--color-accent)); font-size: 12px; }
+.memory-reference-view__children > button strong { font-size: 13px; overflow-wrap: anywhere; }
+.memory-reference-view__children > button em { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; font-style: normal; overflow-wrap: anywhere; }
+.memory-reference-view__children > button b { color: var(--color-warning); font-size: 12px; }
+.memory-reference-view__children > p,
+.memory-reference-view__guard { margin: 0; padding: 10px 0; color: var(--color-text-secondary); font-size: 14px; line-height: 1.55; }
+.memory-reference-view__guard { display: inline-flex; align-items: center; gap: 7px; color: var(--color-warning); }
+
+/* ============================== layer chrome (role books & relations) ============================== */
+
 .memory-layer-heading {
   display: flex;
   min-width: 0;
@@ -1346,34 +795,15 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-layer-heading > div { min-width: 0; }
-.memory-layer-heading span {
-  color: var(--memory-signal-strong, var(--color-accent));
-  font-size: 12px;
-  font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-}
-
+.memory-layer-heading span { color: var(--memory-signal-strong, var(--color-accent)); font-size: 12px; font-weight: var(--font-weight-semibold); text-transform: uppercase; }
 .memory-layer-heading h3 { margin: 4px 0 0; font-size: 20px; }
-.memory-layer-heading p {
-  margin: 5px 0 0;
-  color: var(--mem-ink-2);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.memory-layer-loading {
-  display: flex;
-  min-height: 120px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  color: var(--mem-ink-2);
-}
-
+.memory-layer-heading p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: 14px; line-height: 1.5; }
+.memory-layer-loading { display: flex; min-height: 120px; align-items: center; justify-content: center; gap: 7px; color: var(--color-text-secondary); }
 .memory-layer-loading svg { animation: memory-spin 1.2s linear infinite; }
 
-.memory-role-book-workspace { grid-template-columns: minmax(260px, .62fr) minmax(0, 1.5fr); }
-
+/* Role books are a reading list, not a four-column data table. The shared
+   OperationalList grammar leaves too little measure for a partner summary at
+   this width, so the title owns the column and status/meta stack underneath. */
 .memory-second-brain .memory-role-book-workspace {
   grid-template-columns: minmax(300px, .82fr) minmax(0, 1.18fr);
 }
@@ -1385,12 +815,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-second-brain .memory-role-book-workspace .memory-layer-list .mgmt-list__copy { grid-column: 1; }
-
-.memory-second-brain .memory-role-book-workspace .memory-layer-list .mgmt-list__meta {
-  grid-column: 1;
-  grid-row: 2;
-}
-
+.memory-second-brain .memory-role-book-workspace .memory-layer-list .mgmt-list__meta { grid-column: 1; grid-row: 2; }
 .memory-second-brain .memory-role-book-workspace .memory-layer-list .mgmt-list__status {
   grid-column: 1;
   grid-row: 3;
@@ -1403,12 +828,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   align-self: center;
 }
 
-.memory-role-book-detail {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-4);
-  padding-top: var(--space-4);
-}
+.memory-role-book-detail { display: grid; min-width: 0; gap: var(--space-4); padding-top: var(--space-4); }
 
 .memory-role-book-detail > header {
   display: grid;
@@ -1422,101 +842,36 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   display: grid;
   width: 34px;
   height: 34px;
-  border: 1px solid var(--mem-hairline-strong);
+  border: 1px solid color-mix(in srgb, var(--memory-signal) 26%, var(--color-border));
+  border-radius: 10px;
+  background: var(--memory-signal-soft);
   color: var(--memory-signal-strong, var(--color-accent));
   place-items: center;
 }
 
 .memory-role-book-detail > header > div { min-width: 0; }
-.memory-role-book-detail > header small { color: var(--mem-ink-3); font-size: 12px; }
+.memory-role-book-detail > header small { color: var(--color-text-tertiary); font-size: 12px; }
 .memory-role-book-detail > header h3 { margin: 2px 0 0; font-size: 16px; }
-.memory-role-book-detail > header p {
-  margin: 3px 0 0;
-  color: var(--mem-ink-2);
-  font-size: 14px;
-  line-height: 1.5;
-}
+.memory-role-book-detail > header p { margin: 3px 0 0; color: var(--color-text-secondary); font-size: 14px; line-height: 1.5; }
 
-.memory-role-book-revisions {
-  display: flex;
-  min-width: 0;
-  gap: 6px;
-  padding-block: 8px;
-  border-block: 1px solid var(--mem-hairline);
-  overflow-x: auto;
-}
-
-.memory-role-book-revisions button {
-  display: grid;
-  min-width: 112px;
-  padding: 7px 9px;
-  border: 1px solid var(--mem-hairline);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.memory-role-book-revisions button[aria-current='true'] {
-  border-color: var(--mem-select);
-  background: var(--mem-select-soft);
-}
-
+.memory-role-book-revisions { display: flex; min-width: 0; gap: 6px; padding-block: 8px; border-block: 1px solid var(--color-border); overflow-x: auto; }
+.memory-role-book-revisions button { display: grid; min-width: 112px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.memory-role-book-revisions button[aria-current='true'] { border-color: var(--memory-signal, var(--color-accent)); background: var(--memory-signal-soft, var(--color-accent-soft)); }
 .memory-role-book-revisions strong { font-size: 13px; }
-.memory-role-book-revisions small { color: var(--mem-ink-3); font-size: 12px; }
+.memory-role-book-revisions small { color: var(--color-text-tertiary); font-size: 12px; }
 
-.memory-role-book-sections {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid var(--mem-hairline);
-  border-left: 1px solid var(--mem-hairline);
-}
-
-.memory-role-book-sections > section {
-  min-width: 0;
-  border-right: 1px solid var(--mem-hairline);
-  border-bottom: 1px solid var(--mem-hairline);
-}
-
-.memory-role-book-sections > section > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  background: var(--mem-panel-2);
-}
-
+.memory-role-book-sections { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--color-border); border-left: 1px solid var(--color-border); }
+.memory-role-book-sections > section { min-width: 0; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
+.memory-role-book-sections > section > header { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: var(--color-surface-subtle); }
 .memory-role-book-sections > section > header strong { font-size: 13px; }
-.memory-role-book-sections > section > header small { color: var(--mem-ink-3); }
-
-.memory-role-book-sections > section > button {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  padding: 8px 10px;
-  border: 0;
-  border-top: 1px solid var(--mem-hairline);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
-}
-
-.memory-role-book-sections > section > button[aria-expanded='true'] {
-  box-shadow: inset 1px 0 0 var(--mem-select);
-  background: var(--mem-select-soft);
-}
-
+.memory-role-book-sections > section > header small { color: var(--color-text-tertiary); }
+.memory-role-book-sections > section > button { display: grid; width: 100%; min-width: 0; align-items: center; padding: 8px 10px; border: 0; border-top: 1px solid var(--memory-line, var(--color-border)); background: transparent; color: inherit; text-align: left; cursor: pointer; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.memory-role-book-sections > section > button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.memory-role-book-sections > section > button[aria-expanded='true'] { box-shadow: inset 1px 0 0 var(--memory-signal, var(--color-accent)); background: var(--memory-signal-soft, var(--color-accent-soft)); }
 .memory-role-book-sections > section > button span { font-size: 13px; overflow-wrap: anywhere; }
-.memory-role-book-sections > section > button > svg {
-  transition: transform var(--motion-disclose) var(--ease-standard);
-}
-
+.memory-role-book-sections > section > button > svg { transition: transform var(--motion-disclose) var(--ease-standard); }
 .memory-role-book-sections > section > button[aria-expanded='true'] > svg { transform: rotate(90deg); }
+.memory-role-book-sections > section > p { margin: 0; padding: 10px; color: var(--color-text-tertiary); font-size: 14px; line-height: 1.5; }
 
 .memory-role-book-item-disclosure {
   display: grid;
@@ -1528,114 +883,23 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
     opacity var(--duration-fast) var(--ease-standard);
 }
 
-.memory-role-book-item-disclosure[data-open='true'] {
-  grid-template-rows: 1fr;
-  opacity: 1;
-  pointer-events: auto;
-}
-
+.memory-role-book-item-disclosure[data-open='true'] { grid-template-rows: 1fr; opacity: 1; pointer-events: auto; }
 .memory-role-book-item-disclosure > div { min-height: 0; overflow: hidden; }
 .memory-role-book-item-disclosure__content { padding: 0 10px 10px; }
-
 .memory-role-book-item-disclosure .memory-lineage-panel {
   margin: 0;
   border: 0;
-  border-top: 1px solid var(--mem-hairline);
+  border-top: 1px solid var(--color-border);
   border-radius: 0;
-  background: var(--mem-panel);
+  background: var(--color-surface);
   box-shadow: none;
 }
 
-.memory-role-book-sections > section > p {
-  margin: 0;
-  padding: 10px;
-  color: var(--mem-ink-3);
-  font-size: 14px;
-  line-height: 1.5;
-}
+.memory-role-book-detail > footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-block: 10px; border-top: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 13px; line-height: 1.4; }
+.memory-role-book-detail > footer span { display: inline-flex; align-items: center; gap: 6px; }
 
-.memory-role-book-detail > footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-block: 10px;
-  border-top: 1px solid var(--mem-hairline);
-  color: var(--mem-ink-2);
-  font-size: 13px;
-  line-height: 1.4;
-}
+/* ============================== curation workbench ============================== */
 
-.memory-role-book-detail > footer span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* -------------------------------------------------------------------------
-   Activity timeline chrome owned here: the toolbar, date controls, loading
-   and decision surfaces. The calendar and semantic day view live in
-   activity-timeline.css.
-   ------------------------------------------------------------------------- */
-.activity-timeline {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-4);
-  padding: var(--space-5) 0 var(--space-6);
-}
-
-.activity-timeline__toolbar {
-  display: flex;
-  min-width: 0;
-  align-items: end;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.activity-timeline__toolbar > div:first-child { min-width: 0; }
-.activity-timeline__toolbar h2 { margin: 4px 0 0; font-size: 20px; letter-spacing: 0; }
-.activity-timeline__date-controls { display: flex; min-width: 0; align-items: center; gap: 6px; }
-.activity-timeline__date-controls .ui-input { width: 150px; min-width: 0; }
-
-.activity-timeline__loading {
-  display: flex;
-  min-height: 160px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--mem-ink-2);
-  font-size: 13px;
-}
-
-.activity-timeline__loading svg { animation: memory-spin 1.2s linear infinite; }
-
-.activity-timeline__decision-bar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: 12px 2px;
-  border-top: 1px solid var(--mem-hairline-strong);
-}
-
-.activity-timeline__decision-bar > div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.activity-timeline__decision-bar > div:first-child { color: var(--mem-ink-2); font-size: 12px; }
-.activity-timeline__decision-bar > div:first-child svg { flex: 0 0 auto; color: var(--mem-ink-3); }
-.activity-timeline__dialog { width: min(520px, calc(100vw - 32px)); }
-
-@keyframes memory-spin { to { transform: rotate(360deg); } }
-
-/* -------------------------------------------------------------------------
-   Curation workbench — the bounded, review-first organizer.
-   ------------------------------------------------------------------------- */
 .memory-curation {
   display: grid;
   min-width: 0;
@@ -1656,7 +920,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-curation__header span {
   display: block;
   margin-top: 3px;
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 13px;
 }
 
@@ -1672,9 +936,9 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-4);
-  border: 1px solid var(--mem-hairline-strong);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-3);
-  background: var(--mem-panel);
+  background: var(--color-paper);
   box-shadow: var(--shadow-card);
   grid-template-columns: minmax(220px, .9fr) minmax(300px, 1.35fr) minmax(176px, auto);
 }
@@ -1693,7 +957,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-curation__progress-copy > strong {
-  color: var(--mem-ink);
+  color: var(--color-text-primary);
   font-size: clamp(18px, 2vw, 24px);
   letter-spacing: -.025em;
   line-height: 1.2;
@@ -1702,7 +966,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-curation__progress-copy > p {
   max-width: 45ch;
   margin: 0;
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -1723,12 +987,12 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-curation__progress-label {
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 13px;
 }
 
 .memory-curation__progress-label strong {
-  color: var(--mem-ink);
+  color: var(--color-text-primary);
   font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
@@ -1737,8 +1001,8 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   height: 8px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--mem-panel-2);
-  box-shadow: inset 0 0 0 1px var(--mem-hairline);
+  background: var(--color-surface-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-border);
 }
 
 .memory-curation__progress-track > span {
@@ -1746,11 +1010,11 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   min-width: 3px;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--memory-flow-source), var(--memory-flow-atom));
+  background: var(--memory-signal, var(--color-accent));
 }
 
 .memory-curation__progress-dates {
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
@@ -1771,7 +1035,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 
 .memory-curation__runner label { display: grid; gap: 4px; }
 .memory-curation__runner label > span {
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 12px;
   font-weight: 650;
 }
@@ -1782,10 +1046,10 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   min-height: 34px;
   align-items: center;
   padding: 0 9px;
-  border: 1px solid var(--mem-hairline);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-2);
-  background: var(--mem-panel);
-  color: var(--mem-ink);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 650;
 }
@@ -1801,9 +1065,9 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-curation__apps {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--mem-hairline);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-2);
-  background: var(--mem-panel);
+  background: var(--color-surface);
 }
 
 .memory-curation__days > header,
@@ -1814,8 +1078,8 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   justify-content: space-between;
   gap: var(--space-2);
   padding: 0 12px;
-  border-bottom: 1px solid var(--mem-hairline);
-  background: var(--mem-panel-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
 }
 
 .memory-curation__days > header > div,
@@ -1830,7 +1094,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-curation__days > header strong,
 .memory-curation__apps > header strong { font-size: 13px; }
 .memory-curation__days > header > span,
-.memory-curation__apps > header > span { color: var(--mem-ink-3); font-size: 12px; }
+.memory-curation__apps > header > span { color: var(--color-text-tertiary); font-size: 12px; }
 
 .memory-curation__days ol,
 .memory-curation__apps ol {
@@ -1840,7 +1104,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   list-style: none;
 }
 
-.memory-curation__days li { border-bottom: 1px solid var(--mem-hairline); }
+.memory-curation__days li { border-bottom: 1px solid var(--memory-line, var(--color-border)); }
 
 .memory-curation__days li > button {
   display: grid;
@@ -1856,45 +1120,23 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   grid-template-columns: 104px minmax(120px, 1fr) auto auto;
   text-align: left;
   cursor: pointer;
-  transition:
-    background var(--duration-enter) var(--ease-standard),
-    transform var(--duration-enter) var(--ease-standard);
+  transition: background var(--duration-enter) var(--ease-standard), transform var(--duration-enter) var(--ease-standard);
 }
 
 .memory-curation__days li:last-child,
 .memory-curation__apps li:last-child { border-bottom: 0; }
-
-.memory-curation__days li > button:focus-visible {
-  position: relative;
-  z-index: 1;
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
-}
-
+.memory-curation__days li > button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .memory-curation__days li > button:active { transform: scale(.995); }
-.memory-curation__days time { color: var(--mem-ink); font-size: 13px; font-weight: 700; }
-.memory-curation__day-apps {
-  overflow: hidden;
-  color: var(--mem-ink-2);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.memory-curation__days li > button > strong {
-  color: var(--mem-ink);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
+.memory-curation__days time { color: var(--color-text-primary); font-size: 13px; font-weight: 700; }
+.memory-curation__day-apps { overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.memory-curation__days li > button > strong { color: var(--color-text-primary); font-size: 13px; font-variant-numeric: tabular-nums; }
 
 .memory-curation__apps li {
   display: grid;
   gap: 7px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--mem-hairline);
-  transition:
-    background var(--duration-enter) var(--ease-standard),
-    transform var(--duration-enter) var(--ease-standard);
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
+  transition: background var(--duration-enter) var(--ease-standard), transform var(--duration-enter) var(--ease-standard);
 }
 
 .memory-curation__apps li > div:first-child {
@@ -1905,49 +1147,38 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   gap: var(--space-2);
 }
 
-.memory-curation__apps li strong {
-  overflow: hidden;
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.memory-curation__apps li div > span {
-  color: var(--mem-ink-2);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.memory-curation__apps li small { color: var(--mem-ink-3); font-size: 12px; }
+.memory-curation__apps li strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.memory-curation__apps li div > span { color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.memory-curation__apps li small { color: var(--color-text-tertiary); font-size: 12px; }
 
 .memory-curation__app-meter {
   height: 4px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--mem-panel-2);
+  background: var(--color-surface-subtle);
 }
 
 .memory-curation__app-meter span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--memory-flow-atom);
+  background: var(--memory-signal, var(--color-accent));
   opacity: .72;
 }
 
 .memory-curation__empty-copy {
   margin: 0;
   padding: var(--space-4);
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 13px;
 }
 
-.memory-curation__technical { border-top: 1px solid var(--mem-hairline); }
+.memory-curation__technical { border-top: 1px solid var(--color-border); }
 
 .memory-curation__technical > summary {
   width: fit-content;
   padding: 9px 2px;
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -1959,7 +1190,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-curation__list {
   display: grid;
   min-width: 0;
-  border-top: 1px solid var(--mem-hairline);
+  border-top: 1px solid var(--color-border);
 }
 
 .memory-curation__row {
@@ -1968,24 +1199,14 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   grid-template-columns: 22px minmax(0, 1fr);
   gap: var(--space-2);
   padding: 11px 8px;
-  border-bottom: 1px solid var(--mem-hairline);
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
   background: transparent;
   cursor: pointer;
   transition: background var(--duration-enter) var(--ease-standard);
 }
 
-.memory-curation__row[data-selected='true'] {
-  box-shadow: inset 3px 0 0 var(--mem-select);
-  background: var(--mem-select-soft);
-}
-
-.memory-curation__row > input {
-  width: 16px;
-  height: 16px;
-  margin: 2px 0 0;
-  accent-color: var(--mem-select);
-}
-
+.memory-curation__row[data-selected='true'] { box-shadow: inset 3px 0 0 var(--memory-signal, var(--color-accent)); background: var(--memory-signal-soft, var(--color-accent-soft)); }
+.memory-curation__row > input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--memory-signal, var(--color-accent)); }
 .memory-curation__row > input:disabled { cursor: wait; opacity: .6; }
 
 .memory-curation__copy {
@@ -2006,41 +1227,11 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-curation__copy > span,
 .memory-curation__copy small { overflow-wrap: anywhere; }
 .memory-curation__title strong { font-size: 13px; }
-.memory-curation__copy > span { color: var(--mem-ink-2); font-size: 13px; line-height: 1.45; }
-.memory-curation__copy small { color: var(--mem-ink-3); font-size: 13px; }
+.memory-curation__copy > span { color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; }
+.memory-curation__copy small { color: var(--color-text-tertiary); font-size: 13px; }
 
-/* -------------------------------------------------------------------------
-   Edit dialog (portalled).
-   ------------------------------------------------------------------------- */
-.memory-edit-dialog { width: min(560px, calc(100vw - 32px)); }
+/* ============================== relations ============================== */
 
-.memory-edit-form {
-  display: grid;
-  max-height: min(62vh, 560px);
-  gap: var(--space-3);
-  padding: 2px;
-  overflow-y: auto;
-}
-
-.memory-edit-form__split {
-  display: grid;
-  gap: var(--space-3);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.memory-edit-error {
-  margin: 0;
-  padding: 8px 10px;
-  border-left: 2px solid var(--color-danger);
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-/* -------------------------------------------------------------------------
-   Relations — toolbar, force canvas, planes and entity inspector.
-   ------------------------------------------------------------------------- */
 .memory-relations {
   display: grid;
   min-width: 0;
@@ -2083,12 +1274,11 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   position: absolute;
   z-index: 1;
   left: 10px;
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   pointer-events: none;
 }
 
 .memory-relations__search .ui-input { padding-left: 32px; }
-
 .memory-relations__filters > .memory-relations__source {
   width: 154px;
   min-width: 126px;
@@ -2102,7 +1292,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   align-items: center;
   justify-content: flex-end;
   gap: 6px 10px;
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -2115,7 +1305,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 
 .memory-graph__scope code {
   max-width: 152px;
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2123,7 +1313,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-graph__scope strong {
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 13px;
 }
 
@@ -2132,20 +1322,10 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   font-weight: 700;
 }
 
-.memory-graph__viewport {
-  width: 100%;
-  max-width: 100%;
-  border-block: 1px solid var(--mem-hairline);
-  background: var(--mem-panel-2);
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scrollbar-gutter: stable;
-}
-
 .memory-explorer {
   display: grid;
   min-width: 0;
-  border-block: 1px solid var(--mem-hairline);
+  border-block: 1px solid var(--color-border);
   grid-template-columns: 256px minmax(0, 1fr);
 }
 
@@ -2156,13 +1336,171 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   grid-template-rows: auto auto minmax(620px, 70vh);
 }
 
+.memory-graph__truth {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.memory-graph__truth > p { margin: 0; }
+.memory-graph__truth .ui-button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+}
+
+.memory-graph__truth[data-empty='true'] {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+.memory-graph__legend {
+  display: flex;
+  min-height: 34px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.memory-graph__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memory-graph__legend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--memory-signal-strong, var(--color-accent));
+  background: var(--memory-signal-soft, var(--color-accent-soft));
+}
+
+.memory-graph__legend i[data-shape='tag'] { border-radius: 50%; }
+.memory-graph__legend i[data-shape='book'] { width: 15px; height: 10px; }
+.memory-graph__legend i[data-shape='edge'] {
+  width: 18px;
+  height: 0;
+  border: 0;
+  border-top: 2px solid var(--memory-signal-strong, var(--color-accent));
+  background: transparent;
+}
+
+.memory-graph__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.memory-node-list {
+  display: grid;
+  min-width: 0;
+  max-height: 590px;
+  align-content: start;
+  border-right: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.memory-node-list > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.memory-node-list > header span {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.memory-node-list__scroll,
+.memory-node-list--bipartite > div {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-block: contain;
+}
+
+.memory-node-list--bipartite { grid-template-rows: auto auto auto minmax(0, 1fr); }
+
+.memory-node-list button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-enter) var(--ease-standard), transform var(--duration-press) var(--ease-press);
+}
+
+.memory-node-list button:active { transform: scale(.99); }
+.memory-node-list button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.memory-node-list button[data-selected='true'] {
+  box-shadow: inset 3px 0 0 var(--memory-signal, var(--color-accent));
+  background: var(--memory-signal-soft, var(--color-accent-soft));
+}
+
+.memory-node-list button > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.memory-node-list button > span:last-child { justify-items: end; }
+.memory-node-list button strong,
+.memory-node-list button b {
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-node-list button b { font-family: var(--font-mono); }
+.memory-node-list button small {
+  max-width: 100%;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .memory-relation-canvas {
   position: relative;
   min-width: 0;
   height: clamp(620px, 70vh, 820px);
   overflow: hidden;
-  border-bottom: 1px solid var(--mem-hairline-strong);
-  background: var(--mem-panel);
+  border-bottom: 1px solid var(--color-border-strong);
+  background: var(--color-paper);
   isolation: isolate;
 }
 
@@ -2170,7 +1508,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   position: absolute;
   z-index: -1;
   inset: 0;
-  border: 1px solid var(--mem-hairline);
+  border: 1px solid var(--color-border);
   content: '';
   pointer-events: none;
 }
@@ -2197,56 +1535,10 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   display: flex;
   gap: 2px;
   padding: 3px;
-  border: 1px solid var(--mem-hairline);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-2);
-  background: var(--mem-panel);
+  background: var(--color-surface);
   box-shadow: var(--shadow-menu);
-}
-
-.memory-relation-canvas__focus {
-  position: absolute;
-  z-index: 2;
-  top: 12px;
-  left: 12px;
-  display: grid;
-  min-width: 184px;
-  max-width: min(280px, calc(100% - 150px));
-  padding: 10px 11px;
-  border: 1px solid color-mix(in srgb, var(--mem-select) 34%, var(--mem-hairline));
-  border-radius: var(--radius-3);
-  background: color-mix(in srgb, var(--mem-panel) 94%, transparent);
-  box-shadow: var(--shadow-2);
-  gap: 2px;
-  animation: memory-relation-focus-in 180ms cubic-bezier(.23, 1, .32, 1) both;
-  backdrop-filter: blur(12px) saturate(112%);
-}
-
-.memory-relation-canvas__focus > span {
-  color: var(--mem-select);
-  font-size: 13px;
-  line-height: 1.4;
-  font-weight: 800;
-  letter-spacing: .08em;
-}
-
-.memory-relation-canvas__focus > strong {
-  color: var(--mem-ink);
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.memory-relation-canvas__focus > small {
-  color: var(--mem-ink-3);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.memory-relation-canvas__focus .ui-button {
-  min-height: 28px;
-  justify-self: start;
-  margin-top: 5px;
 }
 
 .memory-relation-canvas__controls .ui-button {
@@ -2259,17 +1551,63 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   box-shadow: none;
 }
 
+.memory-relation-canvas__focus {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  display: grid;
+  min-width: 184px;
+  max-width: min(280px, calc(100% - 150px));
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--memory-signal, var(--color-accent)) 34%, var(--color-border));
+  border-radius: var(--radius-3);
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  box-shadow: var(--shadow-2);
+  gap: 2px;
+  animation: memory-relation-focus-in 180ms cubic-bezier(.23, 1, .32, 1) both;
+  backdrop-filter: blur(12px) saturate(112%);
+}
+
+.memory-relation-canvas__focus > span {
+  color: var(--memory-signal-strong, var(--color-accent));
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.memory-relation-canvas__focus > strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-relation-canvas__focus > small {
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.memory-relation-canvas__focus .ui-button {
+  min-height: 28px;
+  justify-self: start;
+  margin-top: 5px;
+}
+
 .memory-relation-canvas__hint {
   position: absolute;
   z-index: 2;
   bottom: 11px;
   left: 12px;
   padding: 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--mem-hairline) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
   border-radius: var(--radius-2);
-  background: color-mix(in srgb, var(--mem-panel) 88%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
   box-shadow: var(--shadow-1);
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 14px;
   line-height: 1.45;
   pointer-events: none;
@@ -2282,7 +1620,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   position: absolute;
   top: 50%;
   left: 50%;
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   transform: translate(-50%, -50%);
 }
@@ -2306,7 +1644,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-relation-tooltip__eyebrow {
-  color: var(--color-accent);
+  color: var(--memory-signal-strong, var(--color-accent));
   font-size: 13px;
   line-height: 1.4;
   font-weight: 800;
@@ -2352,358 +1690,12 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   line-height: 1.4;
 }
 
-.memory-node-list {
-  display: grid;
-  min-width: 0;
-  max-height: 590px;
-  align-content: start;
-  border-right: 1px solid var(--mem-hairline);
-  overflow: hidden;
-}
-
-.memory-node-list > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--mem-hairline);
-  color: var(--mem-ink-2);
-  font-size: 13px;
-}
-
-.memory-node-list > header span {
-  color: var(--mem-ink-3);
-  font-family: var(--font-mono);
-  font-size: 13px;
-}
-
-.memory-node-list__scroll,
-.memory-node-list--bipartite > div {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior-block: contain;
-}
-
-.memory-node-list--bipartite { grid-template-rows: auto auto auto minmax(0, 1fr); }
-
-.memory-node-list button {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 9px 10px;
-  border: 0;
-  border-bottom: 1px solid var(--mem-hairline);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background var(--duration-enter) var(--ease-standard),
-    transform var(--duration-press) var(--ease-press);
-}
-
-.memory-node-list button:active { transform: scale(.99); }
-.memory-node-list button[data-selected='true'] {
-  box-shadow: inset 3px 0 0 var(--mem-select);
-  background: var(--mem-select-soft);
-}
-
-.memory-node-list button > span {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.memory-node-list button > span:last-child { justify-items: end; }
-.memory-node-list button strong,
-.memory-node-list button b {
-  min-width: 0;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.memory-node-list button b { font-family: var(--font-mono); }
-.memory-node-list button small {
-  max-width: 100%;
-  color: var(--mem-ink-3);
-  font-size: 13px;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.memory-graph__truth {
-  display: flex;
-  min-height: 38px;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--mem-hairline);
-  color: var(--mem-ink-3);
-  font-size: 13px;
-}
-
-.memory-graph__truth > p { margin: 0; }
-
-.memory-graph__truth .ui-button {
-  min-height: 28px;
-  flex: 0 0 auto;
-  color: var(--mem-ink-2);
-}
-
-.memory-graph__truth[data-empty='true'] {
-  color: var(--color-warning);
-  background: var(--color-warning-soft);
-}
-
-.memory-graph__legend {
-  display: flex;
-  min-height: 34px;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--mem-hairline);
-  color: var(--mem-ink-2);
-  font-size: 13px;
-}
-
-.memory-graph__legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.memory-graph__legend i {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--mem-select);
-  background: var(--mem-select-soft);
-}
-
-.memory-graph__legend i[data-shape='tag'] { border-radius: 50%; }
-.memory-graph__legend i[data-shape='book'] { width: 15px; height: 10px; }
-.memory-graph__legend i[data-shape='edge'] {
-  width: 18px;
-  height: 0;
-  border: 0;
-  border-top: 2px solid var(--mem-select);
-  background: transparent;
-}
-
-.memory-graph__canvas {
-  display: block;
-  width: max(100%, 820px);
-  min-width: 820px;
-  height: 540px;
-}
-
-.memory-graph__canvas--bipartite { height: 620px; }
-
-.memory-graph__edge {
-  stroke: var(--mem-hairline-strong);
-  opacity: .5;
-  vector-effect: non-scaling-stroke;
-  transition:
-    stroke var(--duration-enter) var(--ease-standard),
-    opacity var(--duration-enter) var(--ease-standard);
-}
-
-.memory-graph__edge[data-emphasized='true'] {
-  stroke: var(--mem-select);
-  opacity: .9;
-}
-
-.memory-graph__edge[data-muted='true'] { opacity: .12; }
-.memory-graph__edge--membership { stroke-width: 1.15; }
-
-.memory-graph__node {
-  outline: none;
-  cursor: pointer;
-}
-
-.memory-graph__node-shape {
-  fill-opacity: .16;
-  stroke-width: 1.35;
-  vector-effect: non-scaling-stroke;
-  transition:
-    fill-opacity var(--duration-enter) var(--ease-standard),
-    stroke var(--duration-enter) var(--ease-standard);
-}
-
-.memory-graph__node[data-selected='true'] .memory-graph__node-shape,
-.memory-graph__node:focus-visible .memory-graph__node-shape {
-  fill-opacity: .3;
-  stroke: var(--color-focus);
-  stroke-width: 3;
-}
-
-.memory-graph__node-label,
-.memory-graph__bipartite-label {
-  fill: var(--color-text);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0;
-  pointer-events: none;
-}
-
-.memory-graph__node-count,
-.memory-graph__bipartite-count,
-.memory-graph__column-title {
-  fill: var(--color-text-secondary);
-  font-size: 13px;
-  letter-spacing: 0;
-  pointer-events: none;
-}
-
-.memory-graph__node-count--inside {
-  fill: var(--color-text);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: var(--font-weight-semibold);
-}
-
-.memory-graph__node-label--outside {
-  paint-order: stroke;
-  stroke: var(--color-surface-subtle);
-  stroke-width: 4px;
-  stroke-linejoin: round;
-}
-
-.memory-graph__column-title {
-  font-family: var(--font-mono);
-  font-weight: var(--font-weight-semibold);
-}
-
-.memory-graph__inspector {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-5);
-  padding-block: var(--space-4);
-  border-bottom: 1px solid var(--mem-hairline);
-  grid-template-columns: minmax(220px, .8fr) minmax(0, 1.5fr);
-}
-
-.memory-graph__summary,
-.memory-graph__relations { min-width: 0; }
-
-.memory-graph__summary h3,
-.memory-graph__relations h3 {
-  margin: 0 0 var(--space-2);
-  font-size: 13px;
-  letter-spacing: 0;
-}
-
-.memory-graph__summary p {
-  margin: 0 0 var(--space-3);
-  color: var(--mem-ink-2);
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.memory-graph__eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 5px;
-  color: var(--mem-ink-3);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.memory-graph__summary dl {
-  display: grid;
-  margin: 0 0 var(--space-3);
-  border-block: 1px solid var(--mem-hairline);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.memory-graph__summary dl div {
-  min-width: 0;
-  padding: 8px 9px;
-  border-right: 1px solid var(--mem-hairline);
-}
-
-.memory-graph__summary dl div:last-child { border-right: 0; }
-.memory-graph__summary dt { color: var(--mem-ink-3); font-size: 13px; }
-.memory-graph__summary dd {
-  margin: 3px 0 0;
-  font-size: 13px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.memory-graph__table-wrap {
-  width: 100%;
-  max-width: 100%;
-  max-height: 260px;
-  border-block: 1px solid var(--mem-hairline);
-  overflow: auto;
-}
-
-.memory-graph__table {
-  width: 100%;
-  min-width: 520px;
-  border-collapse: collapse;
-  table-layout: fixed;
-  font-size: 13px;
-}
-
-.memory-graph__table caption {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-
-.memory-graph__table th,
-.memory-graph__table td {
-  padding: 8px 9px;
-  border-bottom: 1px solid var(--mem-hairline);
-  overflow-wrap: anywhere;
-  text-align: left;
-}
-
-.memory-graph__table th {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  background: var(--mem-panel-2);
-  color: var(--mem-ink-2);
-  font-weight: 700;
-}
-
-.memory-graph__relation-link {
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--mem-select);
-  font-weight: 700;
-  text-align: left;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-
 .memory-entity {
   display: grid;
   min-width: 0;
   gap: var(--space-5);
   padding-block: var(--space-4);
-  border-bottom: 1px solid var(--mem-hairline);
+  border-bottom: 1px solid var(--color-border);
   grid-template-columns: minmax(220px, .72fr) repeat(2, minmax(0, 1fr));
 }
 
@@ -2717,7 +1709,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 
 .memory-entity__summary > p {
   margin: 5px 0 var(--space-3);
-  color: var(--mem-ink-2);
+  color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -2726,25 +1718,20 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-entity__summary dl {
   display: grid;
   margin: 0;
-  border-block: 1px solid var(--mem-hairline);
+  border-block: 1px solid var(--color-border);
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .memory-entity__summary dl div {
   min-width: 0;
   padding: 7px 8px;
-  border-right: 1px solid var(--mem-hairline);
-  border-bottom: 1px solid var(--mem-hairline);
+  border-right: 1px solid var(--memory-line, var(--color-border));
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
 }
 
 .memory-entity__summary dl div:nth-child(2n) { border-right: 0; }
-.memory-entity__summary dt { color: var(--mem-ink-3); font-size: 13px; }
-.memory-entity__summary dd {
-  margin: 3px 0 0;
-  font-size: 13px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
+.memory-entity__summary dt { color: var(--color-text-tertiary); font-size: 13px; }
+.memory-entity__summary dd { margin: 3px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
 
 .memory-entity__attributes {
   display: flex;
@@ -2755,20 +1742,20 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 
 .memory-entity__attributes span {
   padding: 3px 5px;
-  border: 1px solid var(--mem-hairline);
-  color: var(--mem-ink-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  color: var(--color-text-secondary);
   font-size: 13px;
 }
 
 .memory-entity__error { color: var(--color-danger) !important; }
-
 .memory-entity__rows > header {
   display: flex;
   min-height: 27px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  border-bottom: 1px solid var(--mem-hairline);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .memory-entity__rows > header span { color: var(--color-warning); font-size: 13px; }
@@ -2779,7 +1766,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   grid-template-columns: minmax(120px, 1.4fr) minmax(90px, .8fr) minmax(90px, .8fr);
   gap: var(--space-2);
   padding: 8px 4px;
-  border-bottom: 1px solid var(--mem-hairline);
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
 }
 
 .memory-entity__row > span {
@@ -2804,16 +1791,15 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   white-space: nowrap;
 }
 
-.memory-entity__row button { color: var(--mem-select); cursor: pointer; }
-.memory-entity__row button:focus-visible,
-.memory-graph__relation-link:focus-visible {
+.memory-entity__row button { color: var(--memory-signal-strong, var(--color-accent)); cursor: pointer; }
+.memory-entity__row button:focus-visible {
   border-radius: var(--radius-1);
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
 
 .memory-entity__row small {
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2823,7 +1809,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 .memory-entity__empty {
   margin: 0;
   padding: 12px 4px;
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -2832,83 +1818,291 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   width: 100%;
   min-height: 32px;
   margin-top: var(--space-2);
-  border: 1px solid var(--mem-hairline);
-  background: var(--mem-panel-2);
-  color: var(--mem-select);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-surface-subtle);
+  color: var(--memory-signal-strong, var(--color-accent));
   font: inherit;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition:
-    background var(--duration-enter) var(--ease-standard),
-    transform var(--duration-press) var(--ease-press);
+  transition: background var(--duration-enter) var(--ease-standard), transform var(--duration-press) var(--ease-press);
 }
 
 .memory-entity__load-more:active { transform: scale(.99); }
 .memory-entity__load-more:disabled {
-  color: var(--mem-ink-3);
+  color: var(--color-text-tertiary);
   cursor: wait;
 }
 
-/* -------------------------------------------------------------------------
-   Preferences.
-   ------------------------------------------------------------------------- */
+/* ============================== preferences ============================== */
+
 .memory-preferences { min-width: 0; }
 
 .memory-preferences__intro {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding-block: var(--space-3);
-  border-block: 1px solid var(--mem-hairline);
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
 }
 
-.memory-preferences__intro > span {
+.memory-preferences__intro > span:first-child {
   display: grid;
   flex: 0 0 auto;
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   place-items: center;
-  border-radius: 50%;
-  background: var(--mem-chip);
+  border-radius: 13px;
   color: var(--memory-signal-strong, var(--color-accent));
+  background: var(--memory-signal-soft, var(--color-surface-muted));
 }
 
-.memory-preferences__intro strong { display: block; margin-bottom: 4px; }
-.memory-preferences__intro p {
-  margin: 0;
-  color: var(--mem-ink-2);
-  font-size: 14px;
-  line-height: 1.6;
+.memory-preferences__intro strong { display: block; margin-bottom: 4px; font-size: 16px; letter-spacing: -.01em; }
+.memory-preferences__intro p { max-width: 62ch; margin: 0; color: var(--color-text-secondary); font-size: 15px; line-height: 1.6; }
+
+.memory-preferences__persistence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-muted);
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
+
+.memory-preferences__persistence i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); }
+.memory-preferences__persistence[data-state='pending'] i { background: var(--memory-gold); animation: memory-preference-pending 1.5s ease-in-out infinite; }
+.memory-preferences__persistence[data-state='read-only'] i { background: var(--color-text-tertiary); }
 
 .memory-preferences__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-  padding-block: var(--space-4);
+  gap: 0;
+  padding: 4px 0 20px;
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
 }
 
-.memory-preferences__grid > * { min-width: 0; }
-
-.memory-preferences__switch {
-  align-self: end;
-  padding: 10px 12px;
-  border: 1px solid var(--mem-hairline);
-  border-radius: var(--radius-md);
+.memory-preferences__grid > * {
+  min-width: 0;
+  min-height: 116px;
+  align-content: start;
+  padding: 18px 20px 18px 0;
+  border-bottom: 1px solid var(--memory-line-soft, var(--color-border));
 }
+
+.memory-preferences__grid > :nth-child(even) { padding-right: 0; padding-left: 20px; border-left: 1px solid var(--memory-line-soft, var(--color-border)); }
+.memory-preferences__grid > :nth-last-child(-n + 2) { border-bottom: 0; }
+.memory-preferences__switch { align-self: end; }
 
 .memory-preferences__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--mem-hairline);
+  padding-top: 14px;
 }
 
-.memory-preferences__actions > span { color: var(--mem-ink-3); font-size: 12px; }
+.memory-preferences__actions > span { color: var(--color-text-tertiary); font-size: 13px; }
 
+/* ============================== edit dialog ============================== */
+
+.memory-edit-dialog { width: min(560px, calc(100vw - 32px)); }
+
+.memory-edit-form {
+  display: grid;
+  max-height: min(62vh, 560px);
+  gap: var(--space-3);
+  padding: 2px;
+  overflow-y: auto;
+}
+
+.memory-edit-form__split {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.memory-edit-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ============================== PAWOS native frame ==============================
+   The native window is already the Memory surface. The management page shell
+   and the Radix Tabs root stay structural; the pipeline band, the filter band,
+   and the workspace panes provide all visible structure. */
+
+main[data-route-id='memory'][data-paw-os-app='memory'] {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  color: #202631;
+  background: #f5f7fa;
+  font-family: var(--font-body, "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif);
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__native-actions {
+  position: relative;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 7px 14px 7px 16px;
+  border-bottom: 1px solid var(--memory-line);
+  background: rgb(255 255 255 / .94);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+  background: #f5f7fa;
+}
+
+/* The pipeline becomes a full-bleed band under the window chrome. */
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline {
+  border: 0;
+  border-bottom: 1px solid var(--memory-line);
+  border-radius: 0;
+  background: #fff;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__meta {
+  background: #fafbfd;
+}
+
+/* Structural resets: no stacked frames around the same catalog. */
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs,
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs > [role='tabpanel'],
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .mgmt-section {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.memory-second-brain > .memory-view-tabs {
+  min-height: 0;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs > [role='tabpanel'] {
+  min-height: 0;
+  overflow: auto;
+  animation: memory-view-arrive 260ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.memory-second-brain[data-view='catalog'] > .memory-view-tabs > [role='tabpanel'] { overflow: hidden; }
+
+.memory-second-brain[data-view='catalog'] .mgmt-section {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.memory-second-brain[data-view='catalog'] .mgmt-section__header {
+  min-height: 54px;
+  margin: 0;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--memory-line);
+  background: #fff;
+}
+
+.memory-second-brain[data-view='catalog'] .mgmt-section__header h2 { margin: 0; font-size: 15px; letter-spacing: -.008em; }
+.memory-second-brain[data-view='catalog'] .mgmt-section__header p { margin-top: 2px; color: #7a8493; font-size: 14px; line-height: 1.45; }
+
+.memory-second-brain[data-view='catalog'] .memory-catalog-filters {
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 7px;
+  padding: 9px 16px 11px;
+  border-bottom: 1px solid var(--memory-line);
+  background: #fafbfd;
+}
+
+.memory-second-brain[data-view='catalog'] .memory-layer-workspace {
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  grid-template-columns: minmax(310px, .88fr) minmax(420px, 1.12fr);
+  background: #fff;
+}
+
+.memory-second-brain[data-view='catalog'] .memory-layer-list {
+  max-height: none;
+  height: auto;
+}
+
+.memory-second-brain[data-view='catalog'] .memory-layer-detail {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px clamp(18px, 3cqw, 30px) 30px;
+  background: #fff;
+}
+
+.memory-second-brain[data-view='catalog'] .memory-catalog-detail {
+  display: block;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+/* An unselected catalog is an invitation, not a blank hero panel. Keep the
+   guidance close to the list and let the detail pane reclaim its height. */
+.memory-second-brain[data-view='catalog'] .memory-layer-detail > .ui-empty-state {
+  min-height: 0;
+  height: 100%;
+  align-content: start;
+  padding: clamp(24px, 8cqw, 64px) 0 24px;
+}
+
+.memory-second-brain[data-view='catalog'] .memory-layer-detail > .ui-empty-state .ui-empty-state__icon {
+  background: var(--memory-signal-soft);
+  border-color: color-mix(in srgb, var(--memory-signal) 28%, transparent);
+  color: var(--memory-signal-strong);
+}
+
+.memory-second-brain[data-view='catalog'] .memory-catalog-detail h3 { margin-top: 7px; font-size: 20px; line-height: 1.42; letter-spacing: -.018em; }
+.memory-second-brain[data-view='catalog'] .memory-catalog-detail p { max-width: 68ch; font-size: 15px; line-height: 1.68; }
+.memory-second-brain[data-view='catalog'] .memory-catalog-detail dl { margin-top: 18px; border: 0; border-top: 1px solid var(--memory-line); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.memory-second-brain[data-view='catalog'] .memory-catalog-detail dl div { padding: 9px 2px; border-color: var(--memory-line-soft); }
+.memory-second-brain[data-view='catalog'] .memory-catalog-detail__tags { margin-top: 12px; }
+
+/* The centered reading column for full-width views inside the native frame. */
 .memory-second-brain .memory-preferences,
 .memory-second-brain .memory-curation,
 .memory-second-brain .activity-timeline,
@@ -2919,104 +2113,58 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
 }
 
 .memory-second-brain .memory-preferences > .mgmt-section { padding: 24px 0 36px; }
-.memory-second-brain .memory-preferences .mgmt-section__header {
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--mem-hairline);
+.memory-second-brain .memory-preferences .mgmt-section__header { padding-bottom: 14px; border-bottom: 1px solid var(--memory-line); }
+.memory-second-brain .memory-preferences .mgmt-section__header h2 { font-size: 21px; letter-spacing: -.018em; }
+
+main[data-route-id='memory'] ::selection { color: #641438; background: rgb(217 79 139 / .22); }
+main[data-route-id='memory'] :focus-visible { outline-color: var(--memory-signal); }
+main[data-route-id='memory'][data-paw-os-app='memory'] :where(.memory-layer-list, [role='tabpanel']) { scrollbar-color: rgb(217 79 139 / .28) transparent; scrollbar-width: thin; }
+
+/* UR-102 memory semantic typography */
+main[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span { font-size: 13px; }
+main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__signal strong { font-size: 13px; }
+main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__stage-copy strong { font-size: 15px; }
+main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong { font-size: 14px; }
+/* UR-102 memory semantic typography end */
+
+/* ============================== interaction states ============================== */
+
+@media (hover: hover) and (pointer: fine) {
+  .memory-pipeline__stage > button:hover,
+  .memory-reference-list button:hover,
+  .memory-reference-view__children > button:hover:not(:disabled),
+  .memory-role-book-sections > section > button:hover,
+  .memory-curation__row:hover,
+  .memory-curation__days li > button:hover,
+  .memory-curation__apps li:hover,
+  .memory-node-list button:hover,
+  .memory-entity__load-more:hover {
+    background: var(--color-surface-hover);
+  }
+
+  .memory-pipeline__stage[data-active] > button:hover {
+    background: color-mix(in srgb, var(--memory-signal) 9%, var(--color-paper));
+  }
+
+  .memory-curation__days li > button:hover,
+  .memory-curation__apps li:hover { transform: translateX(2px); }
+
+  .memory-relation-canvas__controls .ui-button:hover:not(:disabled) {
+    border-color: var(--color-border);
+    background: var(--color-surface-hover);
+  }
+
+  .memory-layer-list .mgmt-list__row:hover {
+    border-color: rgb(217 79 139 / .3);
+    background: #fffafd;
+    transform: translateY(-1px);
+  }
 }
 
-.memory-second-brain .memory-preferences .mgmt-section__header h2 {
-  font-size: 21px;
-  letter-spacing: -.018em;
-}
+/* ============================== motion ============================== */
 
-.memory-preferences--migrated-v1 .memory-preferences__intro {
-  position: relative;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 13px;
-  padding: 18px 0;
-  border-top: 0;
-  border-bottom-color: var(--mem-hairline);
-}
+@keyframes memory-spin { to { transform: rotate(360deg); } }
 
-.memory-preferences--migrated-v1 .memory-preferences__intro > span:first-child {
-  width: 42px;
-  height: 42px;
-  border-radius: 13px;
-  color: var(--memory-signal-strong);
-  background: var(--memory-signal-soft);
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__intro strong {
-  font-size: 16px;
-  letter-spacing: -.01em;
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__intro p {
-  max-width: 62ch;
-  color: var(--mem-ink-2);
-  font-size: 15px;
-  line-height: 1.6;
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__persistence {
-  width: auto;
-  height: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 9px;
-  border-radius: 999px;
-  color: var(--mem-ink-2);
-  background: var(--mem-chip);
-  font-size: 13px;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__persistence i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-success);
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__persistence[data-state='pending'] i {
-  background: var(--memory-gold);
-  animation: memory-preference-pending 1.5s ease-in-out infinite;
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__persistence[data-state='read-only'] i {
-  background: var(--mem-ink-3);
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__grid {
-  gap: 0;
-  padding: 4px 0 20px;
-  border-bottom: 1px solid var(--mem-hairline);
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__grid > * {
-  min-height: 116px;
-  align-content: start;
-  padding: 18px 20px 18px 0;
-  border-bottom: 1px solid var(--mem-hairline-soft);
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__grid > :nth-child(even) {
-  padding-right: 0;
-  padding-left: 20px;
-  border-left: 1px solid var(--mem-hairline-soft);
-}
-
-.memory-preferences--migrated-v1 .memory-preferences__grid > :nth-last-child(-n + 2) { border-bottom: 0; }
-.memory-preferences--migrated-v1 .memory-preferences__switch { border: 0; border-radius: 0; }
-.memory-preferences--migrated-v1 .memory-preferences__actions { padding-top: 14px; border-top: 0; }
-
-/* -------------------------------------------------------------------------
-   Motion.
-   ------------------------------------------------------------------------- */
 @keyframes memory-view-arrive {
   from { opacity: .94; transform: translateY(5px); filter: blur(1.5px); }
   to { opacity: 1; transform: none; filter: none; }
@@ -3044,132 +2192,105 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* -------------------------------------------------------------------------
-   Hover — pointer devices only, so touch never sticks a hover state.
-   ------------------------------------------------------------------------- */
-@media (hover: hover) and (pointer: fine) {
-  .memory-reference-list button:hover,
-  .memory-reference-view__children > button:hover:not(:disabled),
-  .memory-role-book-sections > section > button:hover,
-  .memory-curation__row:hover,
-  .memory-curation__days li > button:hover,
-  .memory-curation__apps li:hover,
-  .memory-node-list button:hover,
-  .memory-entity__load-more:hover {
-    background: var(--mem-hover);
-  }
+@media (prefers-reduced-motion: reduce) {
+  .memory-pipeline__stage > button,
+  .memory-curation__progress-track > span,
+  .memory-curation__app-meter span,
+  .memory-curation__days li > button,
+  .memory-curation__apps li,
+  .memory-node-list button,
+  .memory-entity__load-more,
+  .memory-layer-list .mgmt-list__row { transition: none !important; }
 
-  .memory-curation__days li > button:hover,
-  .memory-curation__apps li:hover { transform: translateX(2px); }
-
-  .memory-relation-canvas__controls .ui-button:hover:not(:disabled) {
-    border-color: var(--mem-hairline);
-    background: var(--mem-hover);
-  }
-
-  .memory-graph__node:hover .memory-graph__node-shape { fill-opacity: .25; }
-
-  .memory-pipeline__stage > button:hover {
-    border-color: color-mix(in srgb, var(--stage-hue) 54%, var(--mem-hairline));
-    background: var(--mem-panel);
-    box-shadow: 0 2px 10px color-mix(in srgb, var(--stage-hue) 12%, transparent);
-  }
-
-  .memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__row:hover {
-    border-color: color-mix(in srgb, var(--memory-signal) 30%, transparent);
-    background: color-mix(in srgb, var(--memory-signal) 3%, var(--mem-panel));
-    transform: translateY(-1px);
-  }
+  .memory-second-brain > .memory-view-tabs > [role='tabpanel'],
+  .memory-preferences__persistence i { animation: none; }
+  .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface { animation: none; }
+  .memory-relation-tooltip { animation: memory-relation-tooltip-fade 120ms linear both; }
+  .memory-relation-canvas__focus { animation: memory-relation-tooltip-fade 120ms linear both; }
+  .memory-role-book-item-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
+  .memory-role-book-sections > section > button > svg { transition: none; }
 }
 
-/* -------------------------------------------------------------------------
-   Responsive — viewport queries own the web route, container queries own the
-   PAWOS window.
-   ------------------------------------------------------------------------- */
-@media (max-width: 1180px) {
+:root[data-reduce-motion='true'] .memory-pipeline__stage > button,
+:root[data-reduce-motion='true'] .memory-curation__progress-track > span,
+:root[data-reduce-motion='true'] .memory-curation__app-meter span,
+:root[data-reduce-motion='true'] .memory-curation__days li > button,
+:root[data-reduce-motion='true'] .memory-curation__apps li,
+:root[data-reduce-motion='true'] .memory-node-list button,
+:root[data-reduce-motion='true'] .memory-entity__load-more,
+:root[data-reduce-motion='true'] .memory-layer-list .mgmt-list__row { transition: none !important; }
+
+:root[data-reduce-motion='true'] .memory-second-brain > .memory-view-tabs > [role='tabpanel'],
+:root[data-reduce-motion='true'] .memory-preferences__persistence i { animation: none; }
+:root[data-reduce-motion='true'] .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface { animation: none; }
+:root[data-reduce-motion='true'] .memory-relation-tooltip { animation: memory-relation-tooltip-fade 120ms linear both; }
+:root[data-reduce-motion='true'] .memory-relation-canvas__focus { animation: memory-relation-tooltip-fade 120ms linear both; }
+:root[data-reduce-motion='true'] .memory-role-book-item-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
+:root[data-reduce-motion='true'] .memory-role-book-sections > section > button > svg { transition: none; }
+
+/* ============================== responsive ==============================
+   One responsive system: the .memory-second-brain inline-size container
+   drives every in-flow surface in both the PAWOS window and the web page.
+   Only portalled dialogs and touch targets use viewport media queries. */
+
+@container memory-second-brain (max-width: 1120px) {
   .memory-entity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .memory-entity__summary { grid-column: 1 / -1; }
   .memory-curation__progress-card { grid-template-columns: minmax(220px, .8fr) minmax(280px, 1.2fr); }
-  .memory-curation__runner {
-    min-width: 0;
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(150px, 200px) auto;
-    align-items: end;
-  }
+  .memory-curation__runner { min-width: 0; grid-column: 1 / -1; grid-template-columns: minmax(150px, 200px) auto; align-items: end; }
 }
 
-@media (max-width: 980px) {
-  .memory-pipeline__flow { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .memory-pipeline__link { display: none; }
+@container memory-second-brain (max-width: 920px) {
+  .memory-pipeline__stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .memory-pipeline__flow { display: none; }
+  .memory-pipeline__stage:nth-child(n + 4) > button { border-top: 1px solid var(--color-border-soft); border-radius: 0; }
+
+  .memory-explorer { grid-template-columns: 210px minmax(0, 1fr); }
+  .memory-curation__backlog-grid { grid-template-columns: minmax(0, 1fr); }
+  .memory-second-brain[data-view='catalog'] .memory-layer-workspace { grid-template-columns: minmax(280px, .8fr) minmax(360px, 1.2fr); }
   .memory-layer-workspace,
-  .memory-role-book-workspace { grid-template-columns: 1fr; }
-  .memory-layer-list {
-    max-height: 460px;
-    border-right: 0;
-    border-bottom: 1px solid var(--mem-hairline);
-  }
-
-  .memory-layer-detail { padding-inline: 0; }
-  .memory-layer-actions { grid-template-columns: 1fr; }
+  .memory-second-brain .memory-role-book-workspace { grid-template-columns: minmax(0, 1fr); }
+  .memory-layer-list { max-height: 460px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .memory-layer-actions { grid-template-columns: minmax(0, 1fr); }
   .memory-role-book-detail > header { grid-template-columns: 36px minmax(0, 1fr) auto; }
-  .memory-role-book-detail > header .ui-button {
-    grid-column: 2 / -1;
-    justify-self: start;
-  }
+  .memory-role-book-detail > header .ui-button { grid-column: 2 / -1; justify-self: start; }
 }
 
-@media (max-width: 960px) {
-  .memory-pipeline__masthead {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
+@container memory-second-brain (max-width: 680px) {
+  .memory-pipeline__stages { grid-template-columns: minmax(0, 1fr); padding-block: 4px; }
+  .memory-pipeline__stage > button { padding-block: 9px 8px; border-radius: 0; }
+  .memory-pipeline__stage:not(:first-child) > button { border-top: 1px solid var(--color-border-soft); }
+  .memory-pipeline__meta { padding-inline: 14px; }
 
-  .memory-pipeline__actions { width: 100%; flex-wrap: wrap; }
-}
+  .memory-second-brain[data-view='catalog'] .memory-layer-workspace { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
+  .memory-second-brain[data-view='catalog'] .memory-layer-list { height: 100%; max-height: none; border-bottom: 0; }
+  .memory-second-brain[data-view='catalog'] .memory-layer-workspace:not([data-detail-open='true']) .memory-layer-detail { display: none; }
+  .memory-second-brain[data-view='catalog'] .memory-layer-workspace[data-detail-open='true'] .memory-layer-list { display: none; }
+  .memory-second-brain[data-view='catalog'] .memory-layer-workspace[data-detail-open='true'] .memory-layer-detail { display: block; overflow: auto; }
+  .memory-second-brain[data-view='catalog'] .memory-layer-detail__back { display: inline-flex; }
+  .memory-second-brain[data-view='catalog'] .memory-catalog-filters { flex-wrap: wrap; }
+  .memory-layer-workspace { min-height: 0; }
+  .memory-layer-detail { padding-inline: 0; }
+  .memory-layer-detail > .ui-empty-state { min-height: 152px; padding-block: var(--space-5); }
 
-@media (max-width: 920px) {
-  .memory-explorer { grid-template-columns: 220px minmax(0, 1fr); }
-  .memory-curation__backlog-grid { grid-template-columns: 1fr; }
-}
+  .memory-catalog-detail { grid-template-columns: minmax(0, 1fr); }
+  .memory-catalog-detail dl { border-left: 0; border-top: 1px solid var(--color-border); }
 
-@media (max-width: 760px) {
-  .memory-pipeline__flow { grid-template-columns: 1fr; }
-  .memory-pipeline__stage > button { min-height: 0; }
-
-  .memory-pipeline__trust {
-    align-items: start;
-    grid-template-columns: 22px minmax(0, 1fr);
-  }
-
-  .memory-pipeline__trust-actions {
-    grid-column: 2;
-    justify-self: start;
-  }
-
-  .memory-catalog-detail { grid-template-columns: 1fr; }
-  .memory-catalog-detail dl {
-    border-left: 0;
-    border-top: 1px solid var(--mem-hairline);
-  }
-
-  .memory-edit-form__split { grid-template-columns: 1fr; }
   .memory-curation__header { align-items: stretch; flex-direction: column; }
   .memory-curation__actions { flex-wrap: wrap; }
-  .memory-curation__progress-card { align-items: stretch; grid-template-columns: 1fr; }
-  .memory-curation__runner { grid-column: auto; grid-template-columns: 1fr; }
+  .memory-curation__progress-card { align-items: stretch; grid-template-columns: minmax(0, 1fr); }
+  .memory-curation__runner { grid-column: auto; grid-template-columns: minmax(0, 1fr); }
   .memory-curation__batch-bound { min-height: 44px; }
   .memory-curation__progress-dates { align-items: flex-start; flex-direction: column; }
   .memory-curation__days li > button { grid-template-columns: minmax(104px, .8fr) auto; }
   .memory-curation__day-apps { grid-column: 1 / -1; grid-row: 2; }
   .memory-curation__day-state { grid-column: 2; grid-row: 2; justify-self: end; }
 
-  .memory-relations__toolbar,
-  .memory-graph__inspector {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
+  .memory-relations__toolbar { display: grid; grid-template-columns: minmax(0, 1fr); }
   .memory-graph__scope { justify-content: flex-start; }
   .memory-relations__filters { justify-content: stretch; }
   .memory-relations__search { min-width: 100%; flex-basis: 100%; }
@@ -3179,115 +2300,51 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
     flex: 1 1 0;
   }
 
-  .memory-explorer { grid-template-columns: 1fr; }
+  .memory-explorer { grid-template-columns: minmax(0, 1fr); }
   .memory-explorer__visual { grid-template-rows: auto auto minmax(520px, 68vh); }
   .memory-node-list {
     max-height: 250px;
     border-right: 0;
-    border-bottom: 1px solid var(--mem-hairline);
+    border-bottom: 1px solid var(--color-border);
   }
 
   .memory-relation-canvas { height: clamp(520px, 68vh, 680px); }
   .memory-graph__truth { align-items: flex-start; flex-direction: column; }
-  .memory-graph__canvas { width: 820px; }
-  .memory-graph__summary dl { grid-template-columns: 1fr; }
-  .memory-graph__summary dl div {
-    border-right: 0;
-    border-bottom: 1px solid var(--mem-hairline);
-  }
 
-  .memory-graph__summary dl div:last-child { border-bottom: 0; }
-  .memory-entity { grid-template-columns: 1fr; }
+  .memory-entity { grid-template-columns: minmax(0, 1fr); }
   .memory-entity__summary { grid-column: auto; }
   .memory-entity__row { grid-template-columns: minmax(0, 1fr) auto; }
   .memory-entity__row > span:last-child { grid-column: 1 / -1; }
 
-  .memory-reference-view__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .memory-reference-view__facts > div:nth-child(3n) { border-right: 1px solid var(--color-border); }
-  .memory-reference-view__facts > div:nth-child(2n) { border-right: 0; }
-  .memory-role-book-sections { grid-template-columns: 1fr; }
+  .memory-role-book-sections { grid-template-columns: minmax(0, 1fr); }
   .memory-role-book-detail > header { grid-template-columns: 34px minmax(0, 1fr); }
   .memory-role-book-detail > header .mgmt-status,
-  .memory-role-book-detail > header .ui-button {
-    grid-column: 2;
-    justify-self: start;
-  }
+  .memory-role-book-detail > header .ui-button { grid-column: 2; justify-self: start; }
+
+  .memory-preferences__intro { grid-template-columns: 42px minmax(0, 1fr); }
+  .memory-preferences__persistence { grid-column: 2; justify-self: start; }
+  .memory-preferences__grid { grid-template-columns: minmax(0, 1fr); }
+  .memory-preferences__grid > *,
+  .memory-preferences__grid > :nth-child(even) { min-height: 0; padding: 15px 0; border-left: 0; border-bottom: 1px solid var(--memory-line-soft, var(--color-border)); }
+  .memory-preferences__grid > :last-child { border-bottom: 0; }
 }
 
+/* Portalled dialogs live outside the container; they follow the viewport. */
 @media (max-width: 680px) {
-  .memory-pipeline__meters { align-items: stretch; flex-direction: column; gap: 8px; }
-  .activity-timeline__decision-bar > div:last-child .ui-button { flex: 1; }
-  .activity-timeline__toolbar {
-    display: grid;
-    align-items: start;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
-
-  .activity-timeline__date-controls {
-    display: grid;
-    width: 100%;
-    grid-template-columns: 44px minmax(150px, 1fr) 44px;
-  }
-
-  .activity-timeline__date-controls .ui-input { width: 100%; }
-  .activity-timeline__date-controls .ui-button { grid-column: 1 / -1; }
-  .memory-layer-workspace { min-height: 0; }
-  .memory-layer-detail > .ui-empty-state {
-    min-height: 152px;
-    padding-block: var(--space-5);
-  }
-
-  .memory-layer-list .mgmt-list__row { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .memory-layer-list .mgmt-list__meta { display: none; }
+  .memory-reference-view__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .memory-reference-view__facts > div:nth-child(3n) { border-right: 1px solid var(--memory-line, var(--color-border)); }
+  .memory-reference-view__facts > div:nth-child(2n) { border-right: 0; }
+  .memory-reference-view__source-context > dl { grid-template-columns: minmax(0, 1fr); }
+  .memory-edit-form__split { grid-template-columns: minmax(0, 1fr); }
 }
 
-@media (max-width: 480px) {
-  .memory-pipeline__flow { padding: 10px 8px 8px; }
-  .memory-pipeline__stage > button { padding: 11px; }
-  .memory-pipeline__stage-icon { width: 28px; height: 28px; }
-  .memory-pipeline__stage-count { font-size: 17px; }
-  .memory-pipeline__actions .ui-button { flex: 1; }
-}
-
-@media (max-width: 440px) {
-  .memory-catalog-filters {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr);
-  }
-
-  .memory-catalog-filters__query {
-    grid-column: 1 / -1;
-    min-width: 0;
-  }
-
-  .memory-catalog-filters__submit {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .memory-catalog-filters__status {
-    grid-column: 2;
-    grid-row: 2;
-    min-width: 0;
-  }
-
-  .memory-catalog-filters__owner {
-    grid-column: 3;
-    grid-row: 2;
-    min-width: 0;
-  }
-}
-
-/* Touch targets: inside the route every interactive control keeps a 44px
-   floor on compact viewports. */
+/* Touch targets grow to 44px on compact touch-first viewports. */
 @media (max-width: 760px) {
   main[data-route-id='memory'] .ui-button,
   main[data-route-id='memory'] .ui-icon-button,
   main[data-route-id='memory'] .ui-input,
   main[data-route-id='memory'] .ui-select__trigger,
-  main[data-route-id='memory'] [role='tab'],
-  main[data-route-id='memory'] .ui-segmented__item {
+  main[data-route-id='memory'] [role='tab'] {
     min-height: 44px;
   }
 
@@ -3298,143 +2355,9 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
     min-width: 44px;
   }
 
-  main[data-route-id='memory'] .memory-entity__row button,
-  main[data-route-id='memory'] .memory-graph__relation-link {
+  main[data-route-id='memory'] .memory-entity__row button {
     display: flex;
     min-height: 44px;
     align-items: center;
   }
 }
-
-/* PAWOS window widths (container queries against the owning window). */
-@container paw-window (max-width: 900px) {
-  main[data-route-id='memory'][data-paw-os-app] .memory-explorer { grid-template-columns: 210px minmax(0, 1fr); }
-  main[data-route-id='memory'][data-paw-os-app] .memory-curation__backlog-grid,
-  main[data-route-id='memory'][data-paw-os-app] .memory-layer-workspace,
-  main[data-route-id='memory'][data-paw-os-app] .memory-role-book-workspace { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__flow { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__link { display: none; }
-  main[data-route-id='memory'][data-paw-os-app] .memory-layer-actions { grid-template-columns: minmax(0, 1fr); }
-}
-
-@container paw-window (max-width: 620px) {
-  main[data-route-id='memory'][data-paw-os-app] .memory-catalog-detail,
-  main[data-route-id='memory'][data-paw-os-app] .memory-edit-form__split,
-  main[data-route-id='memory'][data-paw-os-app] .memory-curation__progress-card,
-  main[data-route-id='memory'][data-paw-os-app] .memory-curation__runner,
-  main[data-route-id='memory'][data-paw-os-app] .memory-relations__toolbar,
-  main[data-route-id='memory'][data-paw-os-app] .memory-graph__inspector,
-  main[data-route-id='memory'][data-paw-os-app] .memory-explorer,
-  main[data-route-id='memory'][data-paw-os-app] .memory-graph__summary dl,
-  main[data-route-id='memory'][data-paw-os-app] .memory-entity,
-  main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__flow,
-  main[data-route-id='memory'][data-paw-os-app] .memory-role-book-sections,
-  main[data-route-id='memory'][data-paw-os-app] .memory-reference-view__source-context > dl { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='memory'][data-paw-os-app] .memory-preferences__grid { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='memory'][data-paw-os-app] .memory-curation__header,
-  main[data-route-id='memory'][data-paw-os-app] .memory-curation__progress-dates,
-  main[data-route-id='memory'][data-paw-os-app] .memory-graph__truth { align-items: stretch; flex-direction: column; }
-  main[data-route-id='memory'][data-paw-os-app] .memory-node-list {
-    max-height: 240px;
-    border-right: 0;
-    border-bottom: 1px solid var(--mem-hairline);
-  }
-
-  main[data-route-id='memory'][data-paw-os-app] .memory-role-book-detail > header { grid-template-columns: 34px minmax(0, 1fr); }
-  main[data-route-id='memory'][data-paw-os-app] .memory-entity__row { grid-template-columns: minmax(0, 1fr) auto; }
-}
-
-@container memory-second-brain (max-width: 920px) {
-  .memory-second-brain[data-view='catalog'] .memory-catalog__deck { grid-template-columns: minmax(0, 1fr); }
-  .memory-second-brain[data-view='catalog'] .memory-layer-context { display: none; }
-  .memory-second-brain[data-view='catalog'] .memory-layer-workspace { grid-template-columns: minmax(280px, .8fr) minmax(360px, 1.2fr); }
-}
-
-@container memory-second-brain (max-width: 680px) {
-  .memory-second-brain[data-view='catalog'] .memory-layer-workspace {
-    grid-template-columns: minmax(0, 1fr);
-    overflow: hidden;
-  }
-
-  .memory-second-brain[data-view='catalog'] .memory-layer-list { height: 100%; max-height: none; }
-  .memory-second-brain[data-view='catalog'] .memory-layer-workspace:not([data-detail-open='true']) .memory-layer-detail { display: none; }
-  .memory-second-brain[data-view='catalog'] .memory-layer-workspace[data-detail-open='true'] .memory-layer-list { display: none; }
-  .memory-second-brain[data-view='catalog'] .memory-layer-workspace[data-detail-open='true'] .memory-layer-detail {
-    display: block;
-    overflow: auto;
-  }
-
-  .memory-second-brain[data-view='catalog'] .memory-layer-detail__back { display: inline-flex; }
-  .memory-second-brain[data-view='catalog'] .memory-catalog-filters { flex-wrap: wrap; }
-  .memory-preferences--migrated-v1 .memory-preferences__intro { grid-template-columns: 42px minmax(0, 1fr); }
-  .memory-preferences--migrated-v1 .memory-preferences__persistence {
-    grid-column: 2;
-    justify-self: start;
-  }
-
-  .memory-preferences--migrated-v1 .memory-preferences__grid { grid-template-columns: minmax(0, 1fr); }
-  .memory-preferences--migrated-v1 .memory-preferences__grid > *,
-  .memory-preferences--migrated-v1 .memory-preferences__grid > :nth-child(even) {
-    min-height: 0;
-    padding: 15px 0;
-    border-left: 0;
-    border-bottom: 1px solid var(--mem-hairline-soft);
-  }
-
-  .memory-preferences--migrated-v1 .memory-preferences__grid > :last-child { border-bottom: 0; }
-}
-
-/* -------------------------------------------------------------------------
-   Motion honesty — both the media query and the runtime preference flag
-   silence every non-essential animation and transition.
-   ------------------------------------------------------------------------- */
-@media (prefers-reduced-motion: reduce) {
-  .memory-second-brain > .memory-view-tabs > [role='tabpanel'],
-  .memory-preferences--migrated-v1 .memory-preferences__persistence i { animation: none; }
-  .memory-role-book-item-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
-  .memory-role-book-sections > section > button > svg { transition: none; }
-
-  .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface { animation: none; }
-  .memory-relation-tooltip { animation: memory-relation-tooltip-fade 120ms linear both; }
-  .memory-relation-canvas__focus { animation: memory-relation-tooltip-fade 120ms linear both; }
-
-  .memory-pipeline__stage > button,
-  .memory-graph__node,
-  .memory-graph__edge,
-  .memory-graph__node-shape,
-  .memory-node-list button,
-  .memory-entity__load-more,
-  .memory-curation__progress-track > span,
-  .memory-curation__app-meter span,
-  .memory-curation__days li > button,
-  .memory-curation__apps li {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-
-:root[data-reduce-motion='true'] .memory-second-brain > .memory-view-tabs > [role='tabpanel'],
-:root[data-reduce-motion='true'] .memory-preferences--migrated-v1 .memory-preferences__persistence i { animation: none; }
-:root[data-reduce-motion='true'] .memory-role-book-item-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
-:root[data-reduce-motion='true'] .memory-role-book-sections > section > button > svg { transition: none; }
-:root[data-reduce-motion='true'] .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface { animation: none; }
-:root[data-reduce-motion='true'] .memory-relation-tooltip { animation: memory-relation-tooltip-fade 120ms linear both; }
-:root[data-reduce-motion='true'] .memory-relation-canvas__focus { animation: memory-relation-tooltip-fade 120ms linear both; }
-
-:root[data-reduce-motion='true'] .memory-pipeline__stage > button,
-:root[data-reduce-motion='true'] .memory-graph__node,
-:root[data-reduce-motion='true'] .memory-graph__edge,
-:root[data-reduce-motion='true'] .memory-graph__node-shape,
-:root[data-reduce-motion='true'] .memory-node-list button,
-:root[data-reduce-motion='true'] .memory-entity__load-more,
-:root[data-reduce-motion='true'] .memory-curation__progress-track > span,
-:root[data-reduce-motion='true'] .memory-curation__app-meter span,
-:root[data-reduce-motion='true'] .memory-curation__days li > button,
-:root[data-reduce-motion='true'] .memory-curation__apps li {
-  animation: none !important;
-  transition: none !important;
-}
-
-/* UR-102 memory semantic typography */
-main[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span { font-size: 13px; }
-/* UR-102 memory semantic typography end */
