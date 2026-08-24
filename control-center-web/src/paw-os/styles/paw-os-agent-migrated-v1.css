@@ -48,6 +48,44 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* 工作记录栏工艺：分组标签拖一条渐隐引导线；行悬停轻起、选中以白卡
+   浮出并沿左缘挂钴条——与轨迹时间树"你在这里"同一语言。 */
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-group > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-group > header::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, #e5eaf0, transparent);
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row:hover {
+  background: rgb(255 255 255 / 72%);
+  color: #18202b;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row[aria-current='page'] {
+  background: #fff;
+  color: #18202b;
+  box-shadow:
+    inset 2px 0 0 #2f6bff,
+    0 1px 2px rgb(24 32 43 / 5%),
+    0 4px 10px rgb(24 32 43 / 5%);
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row[aria-current='page'] small {
+  color: #526174;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-search:focus-within {
+  border-color: rgb(47 107 255 / 55%);
+  box-shadow: 0 0 0 3px rgb(47 107 255 / 10%);
+}
+
 .paw-desktop-root .paw-session-workspace[data-chrome-in-window='true'] {
   grid-template-rows: minmax(0, 1fr);
 }
@@ -517,6 +555,19 @@
   border-radius: 10px;
   background: #fff;
   box-shadow: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+/* 产物是可以拿起的实物：指针悬停时边缘加深、落下浅影。
+   只改 border/shadow，不做位移，流式重排零参与。 */
+.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] :is(
+  .agent-inline-diff,
+  .agent-rich-artifact,
+  .agent-file-block,
+  .agent-file-collection
+):hover {
+  border-color: color-mix(in srgb, var(--paw-chat-accent) 24%, var(--paw-chat-border));
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 10px 26px rgb(24 32 43 / 7%);
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-inline-diff > summary {
