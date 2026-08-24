@@ -38,7 +38,12 @@ class AgentApprovalNotFound(KeyError):
 
 
 class AgentGoalExecutionBlocked(ValueError):
-    """Configured Goal cannot incur new model or delegation work."""
+    """Configured Goal cannot incur new model or delegation work.
+
+    ``error_code`` stays lowercase (`goal_paused`, …) so Session receipts and
+    the workflow actGate share one spelling. Room event projection may
+    uppercase when publishing durable causeCode fields.
+    """
 
     def __init__(self, reason: str, message: str) -> None:
         super().__init__(f"Goal execution blocked ({reason}): {message}")
