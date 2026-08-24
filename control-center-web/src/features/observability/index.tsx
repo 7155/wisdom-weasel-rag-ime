@@ -29,7 +29,6 @@ import {
   InlineNotice,
   ManagementPage,
   ManagementSection,
-  MetricStrip,
   QueryState,
   StatusBadge,
   numberValue,
@@ -158,10 +157,6 @@ export function ObservabilityFeature() {
         isPending={feed.isPending}
         onRetry={() => void feed.refresh()}
       >
-        <InlineNotice title="隐私边界" tone="info">
-          运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，可以在上下文检查中查看指定目录保存的脱敏记录；未开启时只查看当前运行中的内容。
-        </InlineNotice>
-
         {snapshotTruncated ? (
           <InlineNotice title={`当前显示最近 ${feed.items.length} / 共 ${snapshotTotal} 条`} tone="warning">
             Runtime 当前只返回最近一段记录；这里明确保留该边界，不把这批结果当作完整历史。
@@ -175,164 +170,155 @@ export function ObservabilityFeature() {
           </div>
         ) : null}
 
-        <ManagementSection
-          title="实时概况"
-          trailing={(
+        <section aria-label="运行记录工作台" className="observation-console">
+          <header aria-label="实时概况" className="observation-pulse">
             <StatusBadge
               label={connectionLabel(feed.connection)}
               tone={connectionTone(feed.connection)}
             />
-          )}
-        >
-          <MetricStrip items={[
-            {
-              label: '本次流程',
-              value: traceCount,
-              detail: `${visibleItems.length} 条事件`,
-              icon: GitBranch,
-            },
-            {
-              label: '进行中',
-              value: runningCount,
-              detail: '运行、排队或等待',
-              icon: Radio,
-              tone: runningCount ? 'warning' : 'success',
-            },
-            {
-              label: '异常',
-              value: failedCount,
-              detail: failedCount ? '需要检查' : '当前无异常',
-              icon: TriangleAlert,
-              tone: failedCount ? 'warning' : 'success',
-            },
-            {
-              label: '平均耗时',
-              value: averageDuration ? formatDuration(averageDuration) : '暂无',
-              detail: '已记录的终态步骤',
-              icon: TimerReset,
-            },
-          ]} />
-        </ManagementSection>
+            <span className="observation-pulse__stat">
+              <GitBranch aria-hidden="true" size={14} />
+              {traceCount} 次流程 · {visibleItems.length} 条事件
+            </span>
+            <span className="observation-pulse__stat" data-tone={runningCount ? 'active' : undefined}>
+              <Radio aria-hidden="true" size={14} />
+              进行中 {runningCount}
+            </span>
+            <span className="observation-pulse__stat" data-tone={failedCount ? 'danger' : undefined}>
+              <TriangleAlert aria-hidden="true" size={14} />
+              异常 {failedCount}
+            </span>
+            <span className="observation-pulse__stat">
+              <TimerReset aria-hidden="true" size={14} />
+              平均耗时 {averageDuration ? formatDuration(averageDuration) : '暂无'}
+            </span>
+          </header>
 
-        <section className="observation-controls" aria-label="运行记录筛选">
-          <div className="observation-category-tabs" role="group" aria-label="事件类型">
-            {CATEGORY_FILTERS.map((item) => (
-              <button
-                aria-pressed={category === item}
-                data-active={category === item}
-                key={item}
-                onClick={() => selectCategory(item)}
-                type="button"
-              >
-                {categoryLabel(item)}
-              </button>
-            ))}
-          </div>
-          <label className="observation-search">
-            <Search aria-hidden="true" size={15} />
-            <input
-              aria-label="搜索运行记录"
-              onChange={(event) => setNeedle(event.target.value)}
-              placeholder="搜索流程、对话、协作或步骤"
-              type="search"
-              value={needle}
-            />
-          </label>
-          {scoped ? (
-            <div className="observation-scope">
-              <span>{scopeLabel(filters)}</span>
-              <IconButton
-                icon={<FilterX size={15} />}
-                label="清除来源范围"
-                onClick={clearScope}
-                tooltip
-              />
+          <section aria-label="运行记录筛选" className="observation-controls">
+            <div aria-label="事件类型" className="observation-category-tabs" role="group">
+              {CATEGORY_FILTERS.map((item) => (
+                <button
+                  aria-pressed={category === item}
+                  data-active={category === item}
+                  key={item}
+                  onClick={() => selectCategory(item)}
+                  type="button"
+                >
+                  {categoryLabel(item)}
+                </button>
+              ))}
             </div>
-          ) : null}
-        </section>
-
-        <div className="observation-workspace">
-          <ManagementSection
-            title="事件时间线"
-            trailing={<StatusBadge label={timelineCountLabel} tone="neutral" />}
-          >
-            {visibleItems.length ? (
-              <ol className="observation-timeline" aria-label="运行记录事件">
-                {visibleItems.map((item) => (
-                  <ObservationRow
-                    active={item.eventId === selectedEvent?.eventId}
-                    item={item}
-                    key={item.eventId}
-                    onSelect={() => {
-                      setSelectedTraceId(item.traceId);
-                      setSelectedEventId(item.eventId);
-                    }}
-                  />
-                ))}
-              </ol>
-            ) : (
-              <EmptyState
-                action={feed.items.length ? <Button onClick={clearViewFilters} size="small">清除筛选</Button> : <Button onClick={() => void feed.refresh()} size="small">重新检查</Button>}
-                description={feed.items.length ? '当前筛选没有匹配的运行记录。' : '当前范围内还没有结构化运行事件。'}
-                icon={Network}
-                title={feed.items.length ? '没有匹配的记录' : '暂无运行记录'}
+            <label className="observation-search">
+              <Search aria-hidden="true" size={15} />
+              <input
+                aria-label="搜索运行记录"
+                onChange={(event) => setNeedle(event.target.value)}
+                placeholder="搜索流程、对话、协作或步骤"
+                type="search"
+                value={needle}
               />
-            )}
-          </ManagementSection>
+            </label>
+            {scoped ? (
+              <div className="observation-scope">
+                <span>{scopeLabel(filters)}</span>
+                <IconButton
+                  icon={<FilterX size={15} />}
+                  label="清除来源范围"
+                  onClick={clearScope}
+                  tooltip
+                />
+              </div>
+            ) : null}
+          </section>
 
-          <ManagementSection
-            title="这次是怎样完成的"
-            trailing={selectedTrace.length ? (
-              <StatusBadge label={`${selectedTrace.length} 步`} tone="neutral" />
-            ) : undefined}
-          >
-            {selectedTrace.length ? (
-              <>
-                <header className="observation-trace-heading">
-                  <span><GitBranch size={15} />一次完整流程</span>
-                  <small>{traceScope(selectedTrace)}</small>
-                </header>
-                <ol className="observation-trace">
-                  {selectedTrace.map((item, index) => (
-                    <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} key={`${item.eventId}:trace`}>
-                      <article className="observation-trace__card">
-                        <button className="observation-trace__summary" onClick={() => setSelectedEventId(item.eventId)} type="button">
-                          <span className="observation-trace__index">{index + 1}</span>
-                          <span>
-                            <strong>{publicObservationSummary(item)}</strong>
-                            <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
-                          </span>
-                        </button>
-                        <ObservationFacts item={item} />
-                      </article>
-                    </li>
+          <div className="observation-workspace">
+            <ManagementSection
+              title="事件时间线"
+              trailing={<StatusBadge label={timelineCountLabel} tone="neutral" />}
+            >
+              {visibleItems.length ? (
+                <ol className="observation-timeline" aria-label="运行记录事件">
+                  {visibleItems.map((item) => (
+                    <ObservationRow
+                      active={item.eventId === selectedEvent?.eventId}
+                      item={item}
+                      key={item.eventId}
+                      onSelect={() => {
+                        setSelectedTraceId(item.traceId);
+                        setSelectedEventId(item.eventId);
+                      }}
+                    />
                   ))}
                 </ol>
-                {selectedEvent?.sessionId ? (
-                  <div className="observation-debug-actions">
-                    <a href={`#/context-debug?sessionId=${encodeURIComponent(selectedEvent.sessionId)}${selectedEvent.turnId ? `&turnId=${encodeURIComponent(selectedEvent.turnId)}` : ''}`}>
-                      <Braces size={15} />
-                      <span><strong>查看这轮的完整上下文</strong><small>逐次核对新增内容、模型请求和工具执行</small></span>
-                    </a>
-                    <Disclosure
-                      className="observation-debug-context"
-                      summary={<><Database size={15} /><span><strong>在这里快速查看</strong><small>{selectedEvent.turnId ? '读取本轮临时快照' : '读取当前对话的最新临时快照'}</small></span></>}
-                      title={selectedEvent.turnId || selectedEvent.sessionId}
-                    >
-                      <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded />
-                    </Disclosure>
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <EmptyState
-                description="从左侧时间线选择一条记录后，这里会按顺序还原同一次工作的前后步骤。"
-                icon={GitBranch}
-                title="选择一条运行记录"
-              />
-            )}
-          </ManagementSection>
-        </div>
+              ) : (
+                <EmptyState
+                  action={feed.items.length ? <Button onClick={clearViewFilters} size="small">清除筛选</Button> : <Button onClick={() => void feed.refresh()} size="small">重新检查</Button>}
+                  description={feed.items.length ? '当前筛选没有匹配的运行记录。' : '当前范围内还没有结构化运行事件。'}
+                  icon={Network}
+                  title={feed.items.length ? '没有匹配的记录' : '暂无运行记录'}
+                />
+              )}
+            </ManagementSection>
+
+            <ManagementSection
+              title="这次是怎样完成的"
+              trailing={selectedTrace.length ? (
+                <StatusBadge label={`${selectedTrace.length} 步`} tone="neutral" />
+              ) : undefined}
+            >
+              {selectedTrace.length ? (
+                <>
+                  <header className="observation-trace-heading">
+                    <span><GitBranch size={15} />一次完整流程</span>
+                    <small>{traceScope(selectedTrace)}</small>
+                  </header>
+                  <ol className="observation-trace">
+                    {selectedTrace.map((item, index) => (
+                      <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} key={`${item.eventId}:trace`}>
+                        <article className="observation-trace__card">
+                          <button className="observation-trace__summary" onClick={() => setSelectedEventId(item.eventId)} type="button">
+                            <span className="observation-trace__index">{index + 1}</span>
+                            <span>
+                              <strong>{publicObservationSummary(item)}</strong>
+                              <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
+                            </span>
+                          </button>
+                          <ObservationFacts item={item} />
+                        </article>
+                      </li>
+                    ))}
+                  </ol>
+                  {selectedEvent?.sessionId ? (
+                    <div className="observation-debug-actions">
+                      <a href={`#/context-debug?sessionId=${encodeURIComponent(selectedEvent.sessionId)}${selectedEvent.turnId ? `&turnId=${encodeURIComponent(selectedEvent.turnId)}` : ''}`}>
+                        <Braces size={15} />
+                        <span><strong>查看这轮的完整上下文</strong><small>逐次核对新增内容、模型请求和工具执行</small></span>
+                      </a>
+                      <Disclosure
+                        className="observation-debug-context"
+                        summary={<><Database size={15} /><span><strong>在这里快速查看</strong><small>{selectedEvent.turnId ? '读取本轮临时快照' : '读取当前对话的最新临时快照'}</small></span></>}
+                        title={selectedEvent.turnId || selectedEvent.sessionId}
+                      >
+                        <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded />
+                      </Disclosure>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <EmptyState
+                  description="从左侧时间线选择一条记录后，这里会按顺序还原同一次工作的前后步骤。"
+                  icon={GitBranch}
+                  title="选择一条运行记录"
+                />
+              )}
+            </ManagementSection>
+          </div>
+
+          <footer className="observation-privacy">
+            <LockKeyhole aria-hidden="true" size={14} />
+            <p>运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，可以在上下文检查中查看指定目录保存的脱敏记录；未开启时只查看当前运行中的内容。</p>
+          </footer>
+        </section>
       </QueryState>
     </ManagementPage>
   );
