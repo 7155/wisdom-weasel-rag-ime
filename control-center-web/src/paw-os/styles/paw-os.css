@@ -407,7 +407,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   user-select: none; cursor: grab;
 }
 .paw-window-titlebar > * { pointer-events: auto; }
-.paw-window-shell[data-interaction] .paw-window-title { visibility: hidden; opacity: 0; }
+/* Resizing re-measures the ellipsized title every frame, so it hides while the
+   width changes. Dragging is transform-only and must not blink the chrome. */
+.paw-window-shell[data-interaction='resizing'] .paw-window-title { visibility: hidden; opacity: 0; }
 .paw-window-titlebar:active { cursor: grabbing; }
 
 .paw-traffic-lights { display: flex; align-items: center; gap: 7px; }
