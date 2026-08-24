@@ -415,7 +415,7 @@
 
 .paw-files-preview > header small {
   display: block;
-  max-width: min(70ch, 70vw);
+  max-width: min(70ch, 100%);
   color: var(--color-text-tertiary);
   font: 13px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
@@ -484,9 +484,10 @@
   border-radius: 0;
 }
 
-.paw-files-preview__body > .agent-file-code {
-  background: #fafbfc;
-}
+/* The code, diff, and plain readers keep the shared
+   --color-code-bg / --color-code-text pair owned by the file-preview styles.
+   Repainting only the background here once left the light plain-text fallback
+   unreadable on a light surface; Files must not recolour the code surface. */
 
 .paw-files-preview__body > .agent-diff-preview .agent-diff-preview__files {
   height: 100%;
@@ -539,7 +540,8 @@
   animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
 }
 
-.paw-files-preview__state--binary {
+.paw-files-preview__state--binary,
+.paw-files-preview__state--empty {
   align-content: center;
   flex-direction: column;
   text-align: center;
@@ -721,5 +723,24 @@
   .paw-files-preview__back,
   .paw-files-preview__copy {
     transition-property: color, background-color, border-color, box-shadow;
+  }
+
+  /* The chevron still communicates open/closed state; it just stops travelling. */
+  .paw-files-tree__root-button > svg:first-child,
+  .paw-files-tree__row > svg:first-child {
+    transition: none;
+  }
+
+  .paw-files-tree__root-button:hover,
+  .paw-files-tree__row:hover,
+  .paw-files-tree__root-button:active,
+  .paw-files-tree__row:active,
+  .paw-files-app__toolbar > button:active:not(:disabled),
+  .paw-native-app__error button:active,
+  .paw-files-tree__state button:active,
+  .paw-files-preview__state button:active,
+  .paw-files-preview__back:active,
+  .paw-files-preview__copy:active {
+    transform: none;
   }
 }
