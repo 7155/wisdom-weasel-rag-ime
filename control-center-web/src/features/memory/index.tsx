@@ -45,7 +45,7 @@ import {
 import { MemoryRelations } from './MemoryRelations';
 import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
 import { ActivityTimeline } from './ActivityTimeline';
-import { MemorySystemOverview } from './MemorySystemOverview';
+import { MemoryPipeline } from './MemoryPipeline';
 import { MemoryPreferences } from './MemoryPreferences';
 import { RoleBookLayer } from './RoleBookLayer';
 import {
@@ -60,7 +60,6 @@ import {
 import {
   InlineNotice,
   ManagementPage,
-  ManagementSection,
   OperationalList,
   PaginationBar,
   QueryState,
@@ -192,7 +191,7 @@ export function MemoryFeature() {
         <QueryState error={error} isPending={pending} onRetry={refresh}>
         {view === 'catalog' ? (
           <Disclosure className="memory-system-summary" summary="查看记忆整理状态">
-            <MemorySystemOverview
+            <MemoryPipeline
               activeLayer={layer}
               onOpenLayer={openCatalogLayer}
               onOpenOrganize={() => openView('organize')}
@@ -203,7 +202,6 @@ export function MemoryFeature() {
             />
           </Disclosure>
         ) : null}
-
         <ViewTabs
           className="memory-view-tabs"
           onValueChange={(next) => openView(normalizeMemoryView(next))}
@@ -220,11 +218,8 @@ export function MemoryFeature() {
             </TabsList>
           ) : null}
           <TabsContent value="catalog">
-            <ManagementSection
-              title={`${kindLabel(kind)} 目录`}
-              description={memoryLayerDescription(kind)}
-            >
-              <div className="mgmt-stack">
+            <section aria-label="记忆库" className="memory-catalog">
+              <div className="memory-catalog__deck">
                 <SegmentedControl
                   aria-label="记忆内容分类"
                   items={layers}
@@ -232,7 +227,7 @@ export function MemoryFeature() {
                   value={layer}
                 />
                 <MemoryLayerContext kind={kind} summary={summaryPayload} />
-                <div className="mgmt-filter-row memory-catalog-filters">
+                <div aria-label={`筛选${kindLabel(kind)}`} className="memory-catalog-filters" role="search">
                   <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
                     <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
                   </Field>
@@ -388,7 +383,7 @@ export function MemoryFeature() {
                   )}
                 </div>
               </div>
-            </ManagementSection>
+            </section>
           </TabsContent>
           <TabsContent value="roleBooks">
             <RoleBookLayer
@@ -698,14 +693,6 @@ function MemoryLayerContext({
       <span>{current.text}</span>
     </div>
   );
-}
-
-function memoryLayerDescription(kind: MemoryKind): string {
-  return ({
-    evidence: '查看输入法、语音与伙伴主动记录形成的记忆来源。',
-    atoms: '查看完整记忆目录、当前状态以及每条记忆的来源。',
-    books: '查看长期主题如何整理相关记忆，并追溯到原始来源。',
-  } as Partial<Record<MemoryKind, string>>)[kind] ?? '查看当前记忆层的内容与来源。';
 }
 
 function catalogRowMeta(

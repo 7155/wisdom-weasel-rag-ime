@@ -15,7 +15,7 @@ import { asRecord, numberValue, stringValue } from '@/features/overview/manageme
 
 type MemoryLayer = 'evidence' | 'atoms' | 'books';
 
-interface MemorySystemOverviewProps {
+interface MemoryPipelineProps {
   activeLayer: MemoryLayer;
   onOpenLayer: (layer: MemoryLayer) => void;
   onOpenOrganize: () => void;
@@ -25,7 +25,13 @@ interface MemorySystemOverviewProps {
   summary: Record<string, unknown>;
 }
 
-export function MemorySystemOverview({
+/**
+ * Pipeline-first Memory composition: the Evidence -> Atom -> Book flow is the
+ * catalog's primary navigation, not an illustration hidden behind a summary.
+ * The stages switch the visible layer, the governance ledger hangs off the
+ * rail it describes, and the provenance promise closes the frame.
+ */
+export function MemoryPipeline({
   activeLayer,
   onOpenLayer,
   onOpenOrganize,
@@ -33,7 +39,7 @@ export function MemorySystemOverview({
   onOpenRelations,
   onOpenTimeline,
   summary,
-}: MemorySystemOverviewProps) {
+}: MemoryPipelineProps) {
   const identity = useProductIdentity();
   const projection = asRecord(summary.projection);
   const timelineCounts = asRecord(summary.activityTimelineCounts);
@@ -67,16 +73,16 @@ export function MemorySystemOverview({
   const projectionSignal = describeProjection(projection);
 
   return (
-    <section className="memory-system-overview" aria-labelledby="memory-system-overview-title">
-      <div className="memory-system-overview__headline">
-        <div>
+    <section className="memory-pipeline" aria-labelledby="memory-pipeline-title">
+      <header className="memory-pipeline__masthead">
+        <div className="memory-pipeline__voice">
           <span>可追溯记忆</span>
-          <h2 id="memory-system-overview-title">把重要的事整理好，需要时随时找回</h2>
+          <h2 id="memory-pipeline-title">把重要的事整理好，需要时随时找回</h2>
           <p>
-            这里汇总记录来源、已整理记忆和主题；需要核对时，每条结论都能回到它的来源。
+            原始记录先成为可核对的来源，再整理成记忆，最后按主题组织；每一步都能回到上一步核对。
           </p>
         </div>
-        <div className="memory-system-overview__primary-actions" aria-label="记忆辅助视图">
+        <div className="memory-pipeline__actions" aria-label="记忆辅助视图">
           <Button leadingIcon={<Network size={15} />} onClick={onOpenRelations} size="small" variant="quiet">
             关系图
           </Button>
@@ -84,28 +90,10 @@ export function MemorySystemOverview({
             让{identity.assistantName}整理
           </Button>
         </div>
-      </div>
+      </header>
 
-      <div className="memory-system-overview__signals" aria-label="记忆整理状态">
-        <StatusSignal
-          detail={projectionSignal.detail}
-          label="检索索引"
-          tone={projectionSignal.tone}
-        />
-        <StatusSignal
-          detail={pendingGovernance ? `${pendingGovernance} 项等待处理` : '没有待处理草案'}
-          label="待确认"
-          tone={pendingGovernance ? 'warning' : 'success'}
-        />
-        <StatusSignal
-          detail={latestTimelineStatus(latestTimeline)}
-          label="最近整理"
-          tone={stringValue(latestTimeline.status) === 'draft' ? 'warning' : 'info'}
-        />
-      </div>
-
-      <ol className="memory-architecture" aria-label="记忆内容分类">
-        <MemoryLayerStage
+      <ol className="memory-pipeline__flow" aria-label="记忆内容分类">
+        <PipelineStage
           active={activeLayer === 'evidence'}
           code="来源"
           count={evidenceCount}
@@ -115,9 +103,10 @@ export function MemorySystemOverview({
           index="01"
           label="来源记录"
           onClick={() => onOpenLayer('evidence')}
+          stage="evidence"
         />
-        <MemoryLayerConnector label="整理后可查看" />
-        <MemoryLayerStage
+        <PipelineLink label="整理后可查看" />
+        <PipelineStage
           active={activeLayer === 'atoms'}
           code="记忆"
           count={currentAtomCount}
@@ -127,9 +116,10 @@ export function MemorySystemOverview({
           index="02"
           label="记忆"
           onClick={() => onOpenLayer('atoms')}
+          stage="atoms"
         />
-        <MemoryLayerConnector label="按主题归类" />
-        <MemoryLayerStage
+        <PipelineLink label="按主题归类" />
+        <PipelineStage
           active={activeLayer === 'books'}
           code="主题"
           count={numberValue(summary.memoryBookCount)}
@@ -139,16 +129,36 @@ export function MemorySystemOverview({
           index="03"
           label="长期主题"
           onClick={() => onOpenLayer('books')}
+          stage="books"
         />
       </ol>
 
-      <div className="memory-system-overview__trust-note">
-        <ShieldCheck aria-hidden="true" size={17} />
-        <div>
-          <strong>主题不会替代原始记录</strong>
-          <span>从任一主题都能继续查看整理过的记忆和来源；历史状态也会保留。</span>
+      <footer className="memory-pipeline__ledger">
+        <div className="memory-pipeline__meters" aria-label="记忆整理状态">
+          <PipelineMeter
+            detail={projectionSignal.detail}
+            label="检索索引"
+            tone={projectionSignal.tone}
+          />
+          <PipelineMeter
+            detail={pendingGovernance ? `${pendingGovernance} 项等待处理` : '没有待处理草案'}
+            label="待确认"
+            tone={pendingGovernance ? 'warning' : 'success'}
+          />
+          <PipelineMeter
+            detail={latestTimelineStatus(latestTimeline)}
+            label="最近整理"
+            tone={stringValue(latestTimeline.status) === 'draft' ? 'warning' : 'info'}
+          />
         </div>
-        <div className="memory-system-overview__trust-actions">
+        <div className="memory-pipeline__trust">
+          <ShieldCheck aria-hidden="true" size={16} />
+          <div>
+            <strong>主题不会替代原始记录</strong>
+            <span>从任一主题都能继续查看整理过的记忆和来源；历史状态也会保留。</span>
+          </div>
+        </div>
+        <div className="memory-pipeline__trust-actions">
           <Button leadingIcon={<CalendarClock size={14} />} onClick={onOpenTimeline} size="small" variant="quiet">
             查看时间线
           </Button>
@@ -156,29 +166,12 @@ export function MemorySystemOverview({
             记忆偏好
           </Button>
         </div>
-      </div>
+      </footer>
     </section>
   );
 }
 
-function StatusSignal({
-  detail,
-  label,
-  tone,
-}: {
-  detail: string;
-  label: string;
-  tone: 'success' | 'warning' | 'info';
-}) {
-  return (
-    <div className="memory-system-overview__signal" data-tone={tone}>
-      <i aria-hidden="true" />
-      <span><strong>{label}</strong><small>{detail}</small></span>
-    </div>
-  );
-}
-
-function MemoryLayerStage({
+function PipelineStage({
   active,
   code,
   count,
@@ -188,6 +181,7 @@ function MemoryLayerStage({
   index,
   label,
   onClick,
+  stage,
 }: {
   active: boolean;
   code: '来源' | '记忆' | '主题';
@@ -198,30 +192,52 @@ function MemoryLayerStage({
   index: string;
   label: string;
   onClick: () => void;
+  stage: MemoryLayer;
 }) {
   return (
-    <li className="memory-architecture__stage" data-active={active || undefined}>
+    <li className="memory-pipeline__stage" data-active={active || undefined} data-stage={stage}>
       <button aria-label={`${code} · ${label} · ${count} 项`} aria-pressed={active} onClick={onClick} type="button">
-        <span className="memory-architecture__index">{index}</span>
-        <span className="memory-architecture__icon"><Icon aria-hidden="true" size={17} /></span>
-        <span className="memory-architecture__copy">
+        <span className="memory-pipeline__stage-head">
+          <span className="memory-pipeline__stage-index">{index}</span>
+          <span className="memory-pipeline__stage-icon"><Icon aria-hidden="true" size={16} /></span>
+          <span className="memory-pipeline__stage-count">{count}<small>项</small></span>
+        </span>
+        <span className="memory-pipeline__stage-title">
           <small>{label}</small>
           <strong>{code}</strong>
-          <p>{description}</p>
-          <em>{detail}</em>
         </span>
-        <span className="memory-architecture__count">{count}<small>项</small></span>
+        <span className="memory-pipeline__stage-copy">
+          <p>{description}</p>
+          <em title={detail}>{detail}</em>
+        </span>
       </button>
     </li>
   );
 }
 
-function MemoryLayerConnector({ label }: { label: string }) {
+function PipelineLink({ label }: { label: string }) {
   return (
-    <li className="memory-architecture__connector" aria-hidden="true">
-      <span>{label}</span>
-      <ArrowRight size={16} />
+    <li className="memory-pipeline__link" aria-hidden="true">
+      <i />
+      <span>{label}<ArrowRight size={14} /></span>
     </li>
+  );
+}
+
+function PipelineMeter({
+  detail,
+  label,
+  tone,
+}: {
+  detail: string;
+  label: string;
+  tone: 'success' | 'warning' | 'info';
+}) {
+  return (
+    <div className="memory-pipeline__meter" data-tone={tone}>
+      <i aria-hidden="true" />
+      <span><strong>{label}</strong><small>{detail}</small></span>
+    </div>
   );
 }
 
