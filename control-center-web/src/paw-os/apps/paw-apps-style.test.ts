@@ -30,7 +30,6 @@ import systemMigratedCss from '../styles/paw-os-sys-apps-migrated-v1.css?raw';
 import toolsMigratedCss from '../styles/paw-os-tools-files-migrated-v1.css?raw';
 import webmodelCss from '../styles/paw-os-webmodel-v1.css?raw';
 import workbenchMigratedCss from '../styles/paw-os-workbench-migrated-v1.css?raw';
-import polishCss from '../styles/paw-os-polish.css?raw';
 
 type SemanticBlock = {
   css: string;
@@ -85,9 +84,7 @@ function semanticBlock({ css, marker }: SemanticBlock): string {
 }
 
 describe('PAWOS semantic type roles', () => {
-  it('keeps Browser tabs out of generic segmented-control styling and owns the Ego execution layer', () => {
-    expect(polishCss).toContain(".paw-window-shell[data-app]:not([data-app='browser']):not([data-app='terminal']) [class*='-tabs']");
-    expect(polishCss).toContain(".paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='row']");
+  it('keeps the Ego execution layer owned by the tools-migrated final owner', () => {
     expect(toolsMigratedCss).toContain('.paw-browser-agent-field');
     expect(toolsMigratedCss).toContain('.paw-browser-agent-capsule');
     expect(toolsMigratedCss).toContain(".paw-browser-viewport[data-agent-state='active']");
@@ -127,7 +124,8 @@ describe('PAWOS semantic type roles', () => {
   });
 
   it('keeps ordinary App windows above the desktop Dock', () => {
-    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock\s*\{[^}]*z-index:\s*8;/s);
+    expect(pawOsCss).toMatch(/\.paw-dock\s*\{[^}]*z-index:\s*8;/s);
+    expect(shellMigratedCss).not.toMatch(/\.paw-dock\s*\{[^}]*z-index/s);
   });
 
   it('keeps desktop chrome and Dock visual ownership out of retired compatibility layers', () => {
@@ -136,11 +134,40 @@ describe('PAWOS semantic type roles', () => {
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-shell(?:\[[^\]]+\])? \.paw-window\s*\{/);
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{/);
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-menu-bar\s*\{/);
-    expect(pawOsCss).not.toContain(".paw-window-shell[data-app] .paw-window-titlebar");
-    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);[^}]*background:\s*rgb\(255 255 255 \/ \.5\);/s);
+    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*background:\s*rgb\(255 255 255 \/ \.5\);/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock button::before\s*\{\s*content:\s*none;/s);
+  });
+
+  it('keeps the redesigned OS shell opaque, cool and flicker-free', () => {
+    // One chrome scale: the 34px menu token owns the viewport offset.
+    expect(pawOsCss).toContain('--paw-menu-h: 34px');
+    expect(pawOsCss).toContain('--paw-titlebar-h: 40px');
+    expect(shellMigratedCss).not.toMatch(/\.paw-menu-bar\s*\{[^}]*height:/s);
+    // Windows are opaque working surfaces: no blur stack and no transparency
+    // fade for inactive windows, so drag/resize can never flicker.
+    expect(pawOsCss).toMatch(/\.paw-window\s*\{[^}]*backface-visibility:\s*hidden;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell \.paw-window\s*\{[^}]*background:\s*#fff;/s);
+    expect(shellMigratedCss).not.toMatch(/\.paw-window-shell[^{]*\.paw-window\s*\{[^}]*backdrop-filter/s);
+    expect(shellMigratedCss).not.toMatch(/:not\(\[data-active\]\)[^{]*\.paw-window\s*\{[^}]*opacity/s);
+    expect(pawOsCss).not.toMatch(/transition:\s*all/);
+    expect(shellMigratedCss).not.toMatch(/transition:\s*all/);
+    // Reduced-motion may still force stillness; material never needs force.
+    expect(shellMigratedCss).not.toMatch(/(?:background|border|color|opacity|border-radius)[^;{}]*!important/);
+    // Warm-paper leftovers stay retired from every shell owner.
+    for (const css of [pawOsCss, shellMigratedCss, motionCss]) {
+      expect(css).not.toContain('rgba(27, 21, 18');
+      expect(css).not.toContain('rgba(250, 247, 236');
+      expect(css).not.toContain('#f3efe6');
+      expect(css).not.toContain('--comp8-');
+    }
+    // Live flow direction and arrival signals survived the polish retirement
+    // in the structural owner, including their reduced-motion story.
+    expect(pawOsCss).toMatch(/g\[data-live\] \.paw-room-window-flow__base\s*\{[^}]*animation:\s*paw-window-flow-march/s);
+    expect(pawOsCss).toMatch(/\[data-flow-state='arrival'\] \.paw-window-title > strong::after\s*\{[^}]*animation:\s*paw-window-flow-arrival-blink/s);
+    expect(pawOsCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*g\[data-live\] \.paw-room-window-flow__base/);
   });
 
   it('keeps portalled controls above the PAWOS desktop stacking context', () => {
@@ -176,10 +203,8 @@ describe('PAWOS semantic type roles', () => {
     expect(narrowProjectCss).toMatch(/\.paw-wb-schedules-dialog \.planning-wake-form,\s*\.paw-wb-schedules-dialog \.planning-wake-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
   });
 
-  it('keeps Project controls out of generic paper polish and removes retired native owners', () => {
-    expect(polishCss).toContain(".paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='actions']");
-    expect(polishCss).not.toContain(".paw-window-shell[data-app]:not([data-app='browser']) [class*='row']");
-    expect(polishCss).not.toContain(".paw-window-shell[data-app]:not([data-app='browser']) [class*='actions']");
+  it('keeps generic paper polish retired and removes retired native owners', () => {
+    expect(pawOsAppSource).not.toContain('./styles/paw-os-polish.css');
     expect(agentCompositionCss).not.toContain('.paw-window-shell[data-app] .paw-native-app');
     expect(agentCompositionCss).not.toContain('.paw-window-shell[data-app] .paw-native-nav');
     expect(agentCompositionCss).not.toContain(".paw-window-shell[data-app='files'] .paw-files-tree");

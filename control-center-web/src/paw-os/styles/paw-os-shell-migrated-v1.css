@@ -2,13 +2,13 @@
  * THESIS: PAWOS is a bright working desktop whose real windows and App identities
  * carry attention; it refuses both the dark "ink bar" shell and dashboard chrome.
  * OWN-WORLD: cold-white mist, clear graphite type, disciplined identity colour,
- * 12px white instruments, one quiet sheen and soft offset depth.
+ * opaque white working surfaces and soft offset depth.
+ * OWNERSHIP: this file is the shell's visual owner (colour, material, blur,
+ * shadow). Structure, geometry and state semantics live in paw-os.css; timing
+ * lives in paw-os-motion.css. Backdrop blur is reserved for true chrome (menu
+ * bar, Dock, Launchpad); windows are opaque so drag/resize never flickers.
  * STORY: orient in PAW, recognize the active App, continue work from a spatially
  * stable window, then move through Dock, Overview or the complete 11-App archive.
- * FIRST VIEWPORT: 34px wordmark bar, low-presence geometric field, real windows,
- * and a centered light shelf; Launchpad opens as a shallow, readable identity wall.
- * FORM: archive-pinned shell migration; wireframe -> hifi -> living -> icon wall.
- * FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, docs/project/DESIGN.md, and every shipping raster carrying its provenance
  */
 
 .paw-desktop-root {
@@ -35,24 +35,21 @@
   --paw-warning: #d98806;
   --paw-danger: #d92d20;
   --paw-radius: 12px;
-  --paw-window-radius: 12px;
-  --paw-dock-radius: 18px;
   --paw-shadow: 0 28px 72px -24px rgb(23 32 52 / .3), 0 5px 18px rgb(23 26 33 / .07);
   --paw-ease-out: cubic-bezier(.16, 1, .3, 1);
   color: var(--paw-ink);
   background: #eef1f6;
-  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 .paw-desktop-root[data-paw-theme],
 .paw-desktop-root[data-paw-theme] .paw-desktop {
-  background-color: #eef1f6 !important;
+  background-color: #eef1f6;
   background-image:
     radial-gradient(72rem 46rem at -8% -12%, rgb(177 207 255 / .46), transparent 62%),
     radial-gradient(62rem 42rem at 106% 8%, rgb(214 205 255 / .36), transparent 60%),
     radial-gradient(56rem 36rem at 54% 112%, rgb(190 234 225 / .3), transparent 64%),
-    linear-gradient(145deg, #f8fafd 0%, #e9edf4 58%, #eef2f7 100%) !important;
+    linear-gradient(145deg, #f8fafd 0%, #e9edf4 58%, #eef2f7 100%);
 }
 
 .paw-desktop-root ::selection {
@@ -67,12 +64,7 @@
 
 /* One quiet orientation row: brand wordmark, current App identity, real status. */
 .paw-desktop-root .paw-menu-bar {
-  height: 34px;
-  grid-template-columns: max-content minmax(0, 1fr) auto;
-  gap: 12px;
-  padding: 0 16px;
   border-bottom: 1px solid rgb(23 26 33 / .08);
-  border-radius: 0 !important;
   color: #171a21;
   background: rgb(255 255 255 / .72);
   box-shadow: 0 1px 0 rgb(255 255 255 / .76);
@@ -80,22 +72,12 @@
   backdrop-filter: blur(18px) saturate(145%);
 }
 
-.paw-desktop-root[data-paw-theme] .paw-menu-bar::after { display: none; }
-.paw-desktop-root .paw-menu-bar > .paw-system-mark { grid-column: 1; }
-.paw-desktop-root .paw-menu-bar > .paw-menu-app { grid-column: 2; }
-.paw-desktop-root .paw-menu-bar > .paw-menu-status { grid-column: 3; }
-
-.paw-desktop-root[data-paw-theme] .paw-system-mark {
-  width: auto;
-  min-width: 0;
-  height: 28px;
-  padding: 0 2px;
-  border: 0 !important;
+.paw-desktop-root .paw-system-mark {
+  border: 0;
   border-radius: 5px;
-  color: #171a21 !important;
-  background: transparent !important;
+  color: #171a21;
+  background: transparent;
   box-shadow: none;
-  cursor: pointer;
 }
 
 .paw-brand-wordmark {
@@ -105,47 +87,30 @@
   line-height: 1;
 }
 
-.paw-desktop-root[data-paw-theme] .paw-system-mark:hover {
-  color: #2f6bff !important;
-  transform: none;
-}
+.paw-desktop-root .paw-system-mark:hover { color: #2f6bff; }
 
 .paw-desktop-root .paw-menu-app {
-  min-width: 0;
-  gap: 8px;
-  overflow: hidden;
   color: #5d6675;
   font-size: 13px;
   line-height: 1.4;
   font-weight: 570;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .paw-desktop-root .paw-menu-status {
-  gap: 12px;
   color: #5d6675;
   font-size: 13px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
 
-html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar {
-  grid-template-columns: 68px max-content minmax(0, 1fr) auto;
-}
-html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-system-mark { grid-column: 2; }
-html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-menu-app { grid-column: 3; }
-html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-menu-status { grid-column: 4; }
-
 /* The original raster is provenance, not the visible identity of the desktop. */
-.paw-desktop-root .paw-field-media { background: transparent; }
 .paw-desktop-root .paw-wayfinder .paw-composition-field {
-  opacity: .88 !important;
+  opacity: .88;
   filter: none;
   animation: paw-shell-field-arrive 620ms var(--paw-ease-out) both;
 }
 .paw-desktop-root .paw-composition__background {
-  opacity: .018 !important;
+  opacity: .018;
   filter: saturate(.32) contrast(.82) brightness(1.25);
 }
 .paw-desktop-root .paw-composition__mist { opacity: .78; }
@@ -250,30 +215,17 @@ html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-menu-s
 
 /* Bright shelf: identity colour belongs to Apps, not the system background. */
 .paw-desktop-root .paw-dock {
-  z-index: 8;
-  height: 62px;
-  gap: 5px;
-  padding: 8px 11px;
   border: 1px solid rgb(255 255 255 / .82);
-  border-radius: 18px !important;
   background: rgb(255 255 255 / .88);
   box-shadow: 0 22px 52px -18px rgb(61 74 96 / .28), 0 7px 18px rgb(35 49 73 / .1), inset 0 1px 0 #fff;
   -webkit-backdrop-filter: blur(26px) saturate(145%);
   backdrop-filter: blur(26px) saturate(145%);
 }
-.paw-desktop-root .paw-dock button {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  color: #556171;
-}
-.paw-desktop-root .paw-dock > i { height: 30px; margin: 0 3px; background: rgb(23 26 33 / .12); }
+.paw-desktop-root .paw-dock button { color: #556171; }
+.paw-desktop-root .paw-dock > i { background: rgb(23 26 33 / .12); }
 .paw-desktop-root .paw-dock button::before { content: none; }
 .paw-desktop-root .paw-dock button[aria-current='page'] { background: rgb(47 107 255 / .09); }
 .paw-desktop-root .paw-dock button[data-open]::after {
-  bottom: -3px;
-  width: 5px;
-  height: 5px;
   background: #2f6bff;
   box-shadow: 0 0 0 3px rgb(47 107 255 / .1);
 }
@@ -299,7 +251,7 @@ html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-menu-s
   max-height: min(700px, calc(100% - 32px));
   overflow: auto;
   border: 1px solid rgb(23 26 33 / .1);
-  border-radius: 16px !important;
+  border-radius: 16px;
   background: rgb(255 255 255 / .94);
   box-shadow: 0 32px 86px -28px rgb(28 39 61 / .34), 0 5px 18px rgb(23 26 33 / .08);
   animation: paw-shell-launchpad-arrive 280ms cubic-bezier(.16, 1, .3, 1) both;
@@ -371,24 +323,23 @@ html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-menu-s
   to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
-/* Window material follows the hifi sample while behavior stays store-owned. */
-.paw-desktop-root .paw-window { border-radius: 12px; }
+/* Window material: opaque white working surfaces. Focus reads through border,
+   shadow and chrome ink — never through transparency or a blur stack, so the
+   content below a window can never bleed through or flicker during drag. */
 .paw-desktop-root .paw-window-shell .paw-window {
-  border: 1px solid rgb(23 26 33 / .13);
-  background: rgb(255 255 255 / .92);
+  border-color: rgb(23 26 33 / .13);
+  background: #fff;
   box-shadow: var(--paw-shadow);
-  -webkit-backdrop-filter: blur(20px) saturate(125%);
-  backdrop-filter: blur(20px) saturate(125%);
 }
-.paw-desktop-root .paw-window-shell:not([data-active]) .paw-window { opacity: .76; }
+.paw-desktop-root .paw-window-shell:not([data-active]):not([data-overview]):not([data-collaboration-role]) .paw-window {
+  border-color: rgb(23 26 33 / .1);
+  box-shadow: 0 18px 44px -22px rgb(23 32 52 / .22), 0 3px 10px rgb(23 26 33 / .05);
+}
 .paw-desktop-root .paw-window-shell[data-active] .paw-window {
   border-color: rgb(23 26 33 / .16);
   box-shadow: 0 1px 0 rgb(255 255 255 / .75) inset, 0 30px 74px -22px rgb(23 32 52 / .34), 0 5px 18px rgb(23 26 33 / .07);
 }
 .paw-desktop-root .paw-window-titlebar {
-  height: 40px;
-  grid-template-columns: 76px minmax(0, 1fr) minmax(0, auto);
-  padding: 0 14px;
   border-bottom: 1px solid rgb(23 26 33 / .1);
   background: rgb(255 255 255 / .5);
 }
@@ -396,13 +347,10 @@ html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-menu-s
   border-bottom-color: var(--paw-app-line, rgb(23 26 33 / .1));
   background: var(--paw-app-nav, rgb(255 255 255 / .5));
 }
-.paw-desktop-root .paw-window-body { padding-top: 40px; }
 .paw-desktop-root .paw-window-title { gap: 8px; color: #171a21; font-size: 13px; line-height: 1.4; font-weight: 650; }
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-title { color: var(--paw-app-accent-strong, #171a21); }
-.paw-desktop-root .paw-traffic-lights { gap: 7px; }
+.paw-desktop-root .paw-window-shell:not([data-active]) .paw-window-title { color: #5d6675; }
 .paw-desktop-root .paw-traffic-lights button {
-  width: 12px;
-  height: 12px;
   border: 1.5px solid rgb(23 26 33 / .28);
   border-radius: 50%;
   background: transparent;
@@ -433,7 +381,7 @@ html[data-paw-native-host='macos'] .paw-desktop-root .paw-menu-bar > .paw-menu-s
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .paw-desktop-root :is(.paw-menu-bar, .paw-dock, .paw-launchpad > section, .paw-window-shell .paw-window) {
+  .paw-desktop-root :is(.paw-menu-bar, .paw-dock, .paw-launchpad, .paw-launchpad > section) {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background: #fff;
