@@ -263,6 +263,75 @@ describe('PawOsSatelliteHost', () => {
     expect(openRoute).toHaveBeenCalledWith('/agent?session=session-a');
   });
 
+  it('compresses each tool activity into one line with the time at the end', async () => {
+    const room = participantRoom();
+    const projection = participantProjectionWithActivities(room.id, [
+      { ...roomActivity('participant-tool-1', 'participant-a', 101, '已创建 interface.js'), status: 'completed' },
+    ]);
+    useRoomLiveStore.setState({ projections: { [room.id]: projection } });
+    const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
+
+    renderSatellite(transport, {
+      kind: 'participant', id: 'participant-a', roomId: room.id,
+      title: '实现伙伴', subtitle: '实现 · session-a',
+    });
+
+    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
+    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
+    const row = timeline.querySelector('article[data-kind="activity"]');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('header')).toBeNull();
+    expect(row?.querySelector('p')).toBeNull();
+    expect(row?.querySelector('strong')).toHaveTextContent('工具');
+    expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveTextContent('已创建 interface.js');
+    expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveAttribute('title', '已创建 interface.js');
+    expect(row?.querySelector('time')).toHaveTextContent(/\d/);
+  });
+
+  it('keeps the failure alarm visible on the one-line tool row', async () => {
+    const room = participantRoom();
+    const projection = createRoomProjection(room.id);
+    projection.activityOrder.push('tool-failed');
+    projection.activitiesById['tool-failed'] = {
+      id: 'tool-failed', turnId: 'root-a', participantId: 'participant-a', sourceSessionId: 'session-a',
+      kind: 'tool', status: 'failed', summary: '命令执行完成，退出码 1',
+      payload: { sourceEventType: 'tool_failed', toolName: 'bash' }, createdAtMs: 130, updatedAtMs: 130,
+    };
+    useRoomLiveStore.setState({ projections: { [room.id]: projection } });
+    const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
+
+    renderSatellite(transport, {
+      kind: 'participant', id: 'participant-a', roomId: room.id,
+      title: '实现伙伴', subtitle: '实现 · session-a',
+    });
+
+    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
+    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
+    const row = timeline.querySelector<HTMLElement>('article[data-kind="activity"][data-status="failed"]');
+    expect(row).not.toBeNull();
+    expect(within(row!).getByRole('img', { name: '执行失败' })).toBeInTheDocument();
+    expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveTextContent('命令执行完成，退出码 1');
+  });
+
+  it('turns a machine event name in the statusline into readable completion copy', async () => {
+    const room = { ...participantRoom(), workItems: [] };
+    const projection = participantProjectionWithActivities(room.id, [
+      { ...roomActivity('participant-tool-1', 'participant-a', 101, 'participant_activity'), status: 'completed' },
+    ]);
+    useRoomLiveStore.setState({ projections: { [room.id]: projection } });
+    const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
+
+    renderSatellite(transport, {
+      kind: 'participant', id: 'participant-a', roomId: room.id,
+      title: '实现伙伴', subtitle: '实现 · session-a',
+    });
+
+    const statusline = await screen.findByLabelText('当前工作与状态');
+    expect(statusline).toHaveAttribute('data-state', 'completed');
+    expect(statusline).toHaveTextContent('活动已完成');
+    expect(statusline).not.toHaveTextContent('participantactivity');
+  });
+
   it('projects only supported activities addressed to this participant across all event fields', async () => {
     const room = participantRoom();
     const projection = createRoomProjection(room.id);
