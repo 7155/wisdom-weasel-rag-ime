@@ -108,7 +108,7 @@ describe('PawSystemAppsMigrated', () => {
     const approvalsButton = await screen.findByRole('button', { name: '审批（2 项待处理，含 1 项高风险）' });
     const badge = approvalsButton.querySelector('.paw-system-app__nav-badge');
     expect(badge?.textContent).toBe('2');
-    expect(badge).toHaveAttribute('data-tone', 'danger');
+    expect(badge).toHaveAttribute('data-tone', 'attention');
   });
 
   it('keeps the Settings rail quiet when the approvals route is unavailable', async () => {
