@@ -217,11 +217,13 @@
    a raised active segment reads as a single choice. */
 .paw-desktop-root .paw-session-workspace__view-switch {
   flex: 0 0 auto;
+  display: inline-flex;
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--paw-chat-border);
+  border: 0;
   border-radius: 9px;
   background: var(--paw-chat-surface-subtle);
+  box-shadow: inset 0 0 0 1px var(--paw-chat-border);
 }
 
 .paw-desktop-root .paw-session-workspace__runtime {
@@ -246,6 +248,11 @@
   background: transparent;
   font-size: 13px;
   font-weight: 540;
+  transition: color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
+}
+
+.paw-desktop-root .paw-session-workspace__view-switch button {
+  min-height: 26px;
 }
 
 .paw-desktop-root .paw-session-workspace__tools > button {
@@ -263,14 +270,15 @@
 .paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'] {
   color: var(--paw-chat-text);
   background: var(--paw-chat-surface);
-  box-shadow: 0 1px 3px rgb(24 32 43 / 14%), 0 0 0 1px rgb(24 32 43 / 4%);
+  box-shadow: 0 1px 3px rgb(24 32 43 / 12%), 0 0 0 1px rgb(24 32 43 / 5%);
+  font-weight: 620;
 }
 
 .paw-desktop-root .paw-session-workspace__tools[data-open] > button {
   color: var(--paw-chat-text);
   border-color: transparent;
   background: var(--paw-chat-user-bubble);
-  box-shadow: 0 0 0 1px rgb(42 28 0 / 5%);
+  box-shadow: 0 0 0 1px rgb(24 32 43 / 5%);
 }
 
 .paw-desktop-root .paw-session-workspace__tools > nav {
@@ -318,23 +326,51 @@
   white-space: nowrap;
 }
 
+/* 运行时行：活点 + 状态词。忙碌时蓝点呼吸，是「正在执行」唯一的动。 */
 .paw-desktop-root .paw-session-workspace__runtime > span {
   border: 0;
   color: var(--paw-chat-text-tertiary);
   background: transparent;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .paw-desktop-root .paw-session-workspace__runtime > span > i {
   background: var(--paw-chat-ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-chat-ok) 12%, transparent);
 }
 
-.paw-desktop-root .paw-session-workspace[data-status='busy'] .paw-session-workspace__runtime > span > i {
-  background: var(--paw-chat-accent);
-}
-
+.paw-desktop-root .paw-session-workspace[data-status='busy'] .paw-session-workspace__runtime > span > i,
 .paw-desktop-root .paw-session-workspace__header[data-status='busy'] .paw-session-workspace__runtime > span > i {
   background: var(--paw-chat-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-chat-accent) 12%, transparent);
+  animation: paw-chat-live-pulse 1.4s ease-in-out infinite;
+}
+
+.paw-desktop-root .paw-session-workspace__header[data-status='stopping'] .paw-session-workspace__runtime > span > i {
+  background: var(--paw-chat-warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-chat-warn) 12%, transparent);
+  animation: none;
+}
+
+/* 头部停止钮：红色语义，按下即知在停哪一轮。 */
+.paw-desktop-root .paw-session-workspace__runtime > button {
+  color: var(--paw-chat-danger);
+  border-radius: 8px;
+  transition: background-color 130ms ease, transform 120ms ease;
+}
+
+.paw-desktop-root .paw-session-workspace__runtime > button:hover {
+  background: color-mix(in srgb, var(--paw-chat-danger) 9%, transparent);
+}
+
+.paw-desktop-root .paw-session-workspace__runtime > button:active {
+  transform: scale(.94);
+}
+
+@keyframes paw-chat-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-chat-accent) 14%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--paw-chat-accent) 5%, transparent); }
 }
 
 .paw-desktop-root .paw-session-workspace__body,
@@ -593,14 +629,14 @@
   font-size: 12px;
 }
 
+/* Composer 带：去掉硬分割线，改用向下渐白的落地带——时间线在船坞
+   下方自然淡出，输入区像悬浮在对话之上。禁 backdrop（流式性能红线）。 */
 .paw-desktop-root .paw-session-workspace__composer {
   grid-row: 2;
   align-self: end;
-  padding: 10px 24px 16px;
-  border-top: 1px solid rgb(236 235 234 / 68%);
-  /* The composer band sits directly on the streaming timeline; blurring an
-     already 96% opaque band re-rasterizes every streamed token beneath it. */
-  background: rgb(255 255 255 / 97%);
+  padding: 14px 24px 16px;
+  border-top: 0;
+  background: linear-gradient(rgb(255 255 255 / 0), #fff 40%);
   backdrop-filter: none;
 }
 
@@ -608,21 +644,29 @@
   width: min(742px, 100%);
 }
 
+/* 输入船坞：白卡 + 分层投影悬浮；聚焦时亮起冷钴描边与光环。 */
 .paw-desktop-root .paw-session-workspace__composer .agent-composer {
   border: 0;
-  border-radius: 16px;
+  border-radius: 18px;
   background: #fff;
-  box-shadow: 0 2px 4px rgb(0 0 0 / 4%), 0 0 0 1px rgb(42 28 0 / 7%);
-  transition: box-shadow 150ms ease;
+  box-shadow:
+    0 1px 2px rgb(24 32 43 / 5%),
+    0 10px 32px rgb(24 32 43 / 8%),
+    0 0 0 1px rgb(24 32 43 / 7%);
+  transition: box-shadow 160ms ease;
 }
 
 .paw-desktop-root .paw-session-workspace__composer .agent-composer:focus-within {
-  box-shadow: 0 8px 12px rgb(25 25 25 / 3%), 0 2px 6px rgb(25 25 25 / 3%), 0 0 0 1px rgb(42 28 0 / 8%);
+  box-shadow:
+    0 1px 2px rgb(24 32 43 / 5%),
+    0 12px 36px rgb(24 32 43 / 10%),
+    0 0 0 1px color-mix(in srgb, var(--paw-chat-accent) 46%, rgb(24 32 43 / 10%)),
+    0 0 0 4px color-mix(in srgb, var(--paw-chat-accent) 9%, transparent);
 }
 
 .paw-desktop-root .paw-session-workspace__composer .agent-composer textarea {
   min-height: 64px;
-  padding: 12px 14px 41px;
+  padding: 13px 15px 41px;
   color: var(--paw-chat-text);
   caret-color: var(--paw-chat-accent);
   font-size: 16px;
@@ -688,6 +732,90 @@
 .paw-desktop-root .paw-session-workspace__composer .agent-composer__attachment:hover:not(:disabled) {
   border-color: var(--paw-chat-border);
   background: var(--paw-chat-surface-subtle);
+}
+
+/* 忙碌时的停止钮：红色语义圆点，与发送钮同排但绝不混淆。 */
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__stop {
+  border-radius: 50%;
+  color: var(--paw-chat-danger);
+  background: color-mix(in srgb, var(--paw-chat-danger) 8%, transparent);
+  transition: background-color 130ms ease, transform 120ms ease;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--paw-chat-danger) 14%, transparent);
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__stop:active:not(:disabled) {
+  transform: scale(.94);
+}
+
+/* 干预 / 接续：忙碌时的投递选择也是一枚小分段控件。 */
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__delivery {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--paw-chat-surface-subtle);
+  box-shadow: inset 0 0 0 1px var(--paw-chat-border);
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__delivery button {
+  min-height: 24px;
+  padding: 1px 9px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--paw-chat-text-secondary);
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 570;
+  transition: color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__delivery button[aria-checked='true'] {
+  color: var(--paw-chat-text);
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(24 32 43 / 12%), 0 0 0 1px rgb(24 32 43 / 5%);
+}
+
+/* 错误条：与船坞同列宽的可行动提醒，一键重新同步。 */
+.paw-desktop-root .paw-session-workspace__composer .paw-session-workspace__error {
+  width: min(742px, 100%);
+  margin: 0 auto 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--paw-chat-danger) 26%, var(--paw-chat-border));
+  border-radius: 12px;
+  color: var(--paw-chat-danger);
+  background: color-mix(in srgb, var(--paw-chat-danger) 5%, #fff);
+  box-shadow: 0 4px 14px rgb(205 60 58 / 8%);
+}
+
+.paw-desktop-root .paw-session-workspace__composer .paw-session-workspace__error button {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 620;
+  text-decoration: none;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .paw-session-workspace__error button:hover {
+  background: color-mix(in srgb, var(--paw-chat-danger) 9%, transparent);
+}
+
+/* 加载帷幕：恢复完整 Session 时的一块安静白幕 + 呼吸标签。 */
+.paw-desktop-root .paw-session-workspace__loading {
+  inset: 0;
+  gap: 10px;
+  color: var(--paw-chat-text-secondary);
+  background: rgb(255 255 255 / 94%);
+}
+
+.paw-desktop-root .paw-session-workspace__loading > svg {
+  color: var(--paw-chat-accent);
 }
 
 .paw-desktop-root .paw-session-workspace__side {
@@ -1354,6 +1482,15 @@
     transition-duration: .01ms !important;
   }
 
+  .paw-desktop-root .paw-session-workspace[data-status='busy'] .paw-session-workspace__runtime > span > i,
+  .paw-desktop-root .paw-session-workspace__header[data-status='busy'] .paw-session-workspace__runtime > span > i {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace[data-status='busy'] .paw-session-workspace__runtime > span > i,
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace__header[data-status='busy'] .paw-session-workspace__runtime > span > i {
+  animation: none;
 }
 
 
@@ -1426,9 +1563,11 @@
 }
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message .agent-markdown {
   display: block;
-  padding: 7px 14px;
-  border-radius: 16px;
-  background: var(--paw-chat-user-bubble);
+  padding: 8px 15px;
+  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
+  border-radius: 18px 18px 6px 18px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
   font-size: 16px;
   line-height: 24px;
 }

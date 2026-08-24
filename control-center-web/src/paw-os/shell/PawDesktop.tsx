@@ -1,9 +1,10 @@
 import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
-import { PawAppIcon } from './PawAppIcon';
+import { dockMagnetics } from './dock-magnification';
+import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 import { PawCompositionField } from './PawCompositionField';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuItem } from './PawContextMenu';
@@ -318,12 +319,13 @@ export function PawDesktop() {
       onContextMenu={openContextMenu}
     >
       <header className="paw-menu-bar">
-        <button aria-label="打开全部 App" className="paw-system-mark" onClick={() => api.getState().setLaunchpadOpen(!launchpadOpen)} type="button"><span className="paw-brand-wordmark">PAW</span></button>
+        <button aria-label="打开全部 App" className="paw-system-mark" onClick={() => api.getState().setLaunchpadOpen(!launchpadOpen)} type="button"><PawBrandMark size={15} /><span className="paw-brand-wordmark">PAW</span></button>
         <button
           aria-expanded={contextMenu?.kind === 'menubar'}
           aria-haspopup="menu"
           aria-label={`${menuBarLabel} 菜单`}
           className="paw-menu-app"
+          data-app={activeAppId ?? undefined}
           data-idle={activeAppId ? undefined : true}
           onClick={openMenuBarMenu}
           ref={menuAppRef}
@@ -411,6 +413,8 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
   onOverview: () => void;
   overviewOpen: boolean;
 }) {
+  const dockRef = useRef<HTMLElement>(null);
+  useDockMagnification(dockRef);
   const dockStateSignature = usePawDesktopStore((state) => Object.values(state.windows)
     .map((node) => `${node.appId}\u0001${node.minimized ? '1' : '0'}`)
     .sort()
@@ -426,7 +430,7 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
     return { open, visible };
   }, [dockStateSignature]);
   return (
-    <nav aria-label="PAWOS 工具架" className="paw-dock">
+    <nav aria-label="PAWOS 工具架" className="paw-dock" ref={dockRef}>
       {pawDockAppIds.map((appId) => {
         const minimizedOnly = dockState.open.has(appId) && !dockState.visible.has(appId);
         return (
@@ -443,14 +447,72 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
             type="button"
           >
             <PawAppIcon appId={appId} size={32} />
+            <span aria-hidden="true" className="paw-dock-tip">{minimizedOnly ? `${pawApp(appId).label} · 已最小化` : pawApp(appId).label}</span>
           </button>
         );
       })}
       <i aria-hidden="true" />
-      <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /></button>
-      <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /></button>
+      <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /><span aria-hidden="true" className="paw-dock-tip">窗口总览</span></button>
+      <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
     </nav>
   );
+}
+
+/* Dock proximity magnification. A rAF-throttled pointer stream feeds the pure
+ * cosine-falloff geometry in dock-magnification.ts and lands as two custom
+ * properties per shelf child, driving transform-only styles: layout is read
+ * (offsetLeft) but never written, nothing repaints, dragging cannot flicker.
+ * Coarse pointers, the narrow scrolling Dock and both reduced-motion signals
+ * opt out entirely, leaving the resting shelf untouched. */
+function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) return undefined;
+    const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const wideShelf = window.matchMedia('(min-width: 821px)');
+    let frame = 0;
+    let pointerX = 0;
+    const children = () => Array.from(dock.children).filter((child): child is HTMLElement => child instanceof HTMLElement);
+    const rest = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = 0;
+      delete dock.dataset.magnify;
+      for (const child of children()) {
+        child.style.removeProperty('--paw-dock-mag');
+        child.style.removeProperty('--paw-dock-shift');
+      }
+    };
+    const apply = () => {
+      frame = 0;
+      const items = children();
+      const dockLeft = dock.getBoundingClientRect().left;
+      const { mag, shift } = dockMagnetics(
+        items.map((item) => dockLeft + item.offsetLeft + item.offsetWidth / 2),
+        pointerX,
+      );
+      items.forEach((item, index) => {
+        item.style.setProperty('--paw-dock-mag', mag[index].toFixed(4));
+        item.style.setProperty('--paw-dock-shift', shift[index].toFixed(2));
+      });
+    };
+    const move = (event: PointerEvent) => {
+      if (!finePointer.matches || !wideShelf.matches || reducedMotion.matches) return;
+      if (document.documentElement.getAttribute('data-reduce-motion') === 'true') return;
+      pointerX = event.clientX;
+      dock.dataset.magnify = 'true';
+      if (!frame) frame = window.requestAnimationFrame(apply);
+    };
+    dock.addEventListener('pointermove', move);
+    dock.addEventListener('pointerleave', rest);
+    dock.addEventListener('pointercancel', rest);
+    return () => {
+      dock.removeEventListener('pointermove', move);
+      dock.removeEventListener('pointerleave', rest);
+      dock.removeEventListener('pointercancel', rest);
+      rest();
+    };
+  }, [dockRef]);
 }
 
 function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: PawAppId) => void }) {
@@ -463,10 +525,17 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
       return [app.label, app.shortLabel, app.tagline, app.id].some((part) => part.toLowerCase().includes(needle));
     });
   }, [query]);
-  const groups = useMemo(() => LAUNCHPAD_KIND_ORDER.flatMap((kind) => {
-    const apps = filtered.filter((app) => launchpadKind(app) === kind);
-    return apps.length ? [{ kind, label: LAUNCHPAD_KIND_LABEL[kind], apps }] : [];
-  }), [filtered]);
+  const groups = useMemo(() => {
+    // A running index across groups drives the cascade arrival: every tile
+    // knows its own beat, so the archive opens as one choreography.
+    let order = 0;
+    return LAUNCHPAD_KIND_ORDER.flatMap((kind) => {
+      const apps = filtered.filter((app) => launchpadKind(app) === kind);
+      return apps.length
+        ? [{ kind, label: LAUNCHPAD_KIND_LABEL[kind], apps: apps.map((app) => ({ app, order: order++ })) }]
+        : [];
+    });
+  }, [filtered]);
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
@@ -491,7 +560,7 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
     >
       <section>
         <header>
-          <span className="paw-launchpad-title"><b className="paw-brand-wordmark">PAW</b><span>全部 App</span></span>
+          <span className="paw-launchpad-title"><PawBrandMark size={16} /><b className="paw-brand-wordmark">PAW</b><span>全部 App</span></span>
           <input
             aria-label="搜索 App"
             onChange={(event) => setQuery(event.target.value)}
@@ -508,8 +577,8 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
           ) : groups.map((group) => (
             <Fragment key={group.kind}>
               <h2 className="paw-launchpad-group">{group.label}</h2>
-              {group.apps.map((app) => (
-                <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} type="button">
+              {group.apps.map(({ app, order }) => (
+                <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} style={{ '--paw-tile-i': order } as CSSProperties} type="button">
                   <span><PawAppIcon appId={app.id} size={48} /></span>
                   <strong>{app.label}</strong>
                   <small>{app.tagline}</small>
@@ -524,7 +593,14 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
 }
 
 function timeLabel(): string {
-  return new Intl.DateTimeFormat('zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
 }
 
 function launchpadKind(app: PawAppDefinition): (typeof LAUNCHPAD_KIND_ORDER)[number] {

@@ -45,7 +45,7 @@ describe('History WorkContract UI', () => {
     expect(within(dialog).getByText('2 次')).toBeInTheDocument();
     expect(within(dialog).getByText('1 次')).toBeInTheDocument();
     expect(within(dialog).getByText('PAW')).toBeInTheDocument();
-    expect(within(dialog).getByRole('heading', { name: '辅助上下文' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: '上下文获取' })).toBeInTheDocument();
     expect(within(dialog).getByText('前面正在核对来源筛选，随后完成了当前输入。')).toBeInTheDocument();
     expect(within(dialog).queryByText('语音定稿插入')).not.toBeInTheDocument();
     const captureSummary = within(dialog).getByText('高级：采集详情').closest('summary');

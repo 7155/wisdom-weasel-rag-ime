@@ -554,16 +554,13 @@ describe('PAWOS semantic type roles', () => {
     expect(roomMigratedCss).toMatch(/\.paw-room-workspace--migrated-v1 \.paw-room-workspace__body\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
   });
 
-  it('adapts Room Flow to its satellite window instead of the absent main-workspace container', () => {
-    const workspaceRuleStart = roomMigratedCss.indexOf('@container paw-room-workspace (max-width: 760px)');
-    const windowRuleStart = roomMigratedCss.indexOf('@container paw-window (max-width: 760px)', workspaceRuleStart);
-    const workspaceRule = roomMigratedCss.slice(workspaceRuleStart, windowRuleStart);
-
-    expect(roomMigratedCss).toMatch(/@container paw-window \(max-width:\s*760px\)[\s\S]*?\.paw-room-flow--migrated-v1\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
-    expect(workspaceRuleStart).toBeGreaterThan(-1);
-    expect(windowRuleStart).toBeGreaterThan(workspaceRuleStart);
-    expect(workspaceRule).not.toContain('.paw-room-flow--migrated-v1');
-    expect(satelliteCss).toMatch(/\.paw-os-satellite__room-panel-body > \.paw-room-flow\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*470px;/s);
+  it('projects the consolidated Sol console into the room-panel satellite without dead flow styles', () => {
+    expect(satelliteCss).toMatch(/\.paw-os-satellite__room-panel-body > \.paw-room-focus-overview\s*\{[^}]*min-height:\s*100%;/s);
+    for (const css of [roomMigratedCss, satelliteCss, appCss]) {
+      expect(css).not.toContain('.paw-room-flow');
+      expect(css).not.toContain('.paw-room-execution');
+      expect(css).not.toContain('.paw-room-work-tree');
+    }
   });
 
   it('preserves explicit Focus frames and resize handles throughout the 721–820px gap', () => {
@@ -601,10 +598,10 @@ describe('PAWOS semantic type roles', () => {
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
     expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
     expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
-    expect(systemMigratedCss).toMatch(/\.paw-system-agent-fields small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    expect(systemMigratedCss).toMatch(/\.paw-agent-mode__copy small\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.55;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);
     expect(memoryCss).toMatch(/\.memory-lineage-panel > div:first-child > p,[\s\S]*?font-size:\s*14px;[\s\S]*?line-height:\s*1\.55;/);
-    expect(memoryCss).toMatch(/\.memory-system-overview__trust-note span\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/s);
+    expect(memoryCss).toMatch(/\.memory-pipeline__note span\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/s);
     expect(knowledgeCss).toMatch(/\.knowledge-graph__inspector > p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/s);
     expect(knowledgeCss).toMatch(/\.knowledge-chunk-grid p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.62;/s);
   });

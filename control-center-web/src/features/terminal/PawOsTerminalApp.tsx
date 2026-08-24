@@ -90,6 +90,7 @@ export function PawOsTerminalApp() {
   const [searchResult, setSearchResult] = useState<ScrollbackSearchResult | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [cwdDraft, setCwdDraft] = useState('');
+  const [cwdCopied, setCwdCopied] = useState(false);
   const terminalTabsId = useId();
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Xterm | null>(null);
@@ -101,6 +102,8 @@ export function PawOsTerminalApp() {
   const initialLoadHandled = useRef(false);
   const restoreTabFocusRef = useRef(false);
   const selectedStatusRef = useRef<TerminalState>('running');
+  const createShortcutRef = useRef<() => void>(() => undefined);
+  const cwdCopyTimerRef = useRef(0);
 
   const sessionsQuery = useQuery({
     queryKey: terminalKeys.root,
@@ -147,6 +150,13 @@ export function PawOsTerminalApp() {
     onSuccess: invalidate,
   });
 
+  // The keyboard shortcut runs from inside the xterm key handler, which lives
+  // in a mount-scoped effect; route it through a ref so it always reaches the
+  // current mutation without re-creating the terminal instance.
+  createShortcutRef.current = () => {
+    if (!create.isPending) create.mutate({});
+  };
+
   // A shell is created only when the very first successful load finds no
   // sessions at all. A failed list read proves nothing about existing sessions,
   // and refetches, reconnects, and tab closes never invent a new identity.
@@ -183,7 +193,10 @@ export function PawOsTerminalApp() {
     setShowSearch(false);
     setSearchDraft('');
     setSearchResult(null);
+    setCwdCopied(false);
   }, [selectedId]);
+
+  useEffect(() => () => window.clearTimeout(cwdCopyTimerRef.current), []);
 
   useEffect(() => {
     if (showSearch) searchInputRef.current?.focus();
@@ -227,7 +240,8 @@ export function PawOsTerminalApp() {
     const searchSubscription = search.onDidChangeResults(setSearchResult);
     searchAddonRef.current = search;
     // Ctrl/Cmd combos that must stay in PAWOS instead of reaching the PTY:
-    // copy the current selection, and open the scrollback search.
+    // copy the current selection, open the scrollback search, and create a
+    // sibling terminal without leaving the keyboard.
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true;
       const withShell = (event.ctrlKey && event.shiftKey) || (event.metaKey && !event.ctrlKey && !event.altKey);
@@ -239,6 +253,10 @@ export function PawOsTerminalApp() {
       if (event.code === 'KeyF') {
         setShowCreateForm(false);
         setShowSearch(true);
+        return false;
+      }
+      if (event.code === 'KeyT') {
+        createShortcutRef.current();
         return false;
       }
       return true;
@@ -358,6 +376,17 @@ export function PawOsTerminalApp() {
     terminalRef.current?.focus();
   };
 
+  const copySelectedCwd = () => {
+    if (!selected) return;
+    void writeClipboardText(selected.cwd)
+      .then(() => {
+        setCwdCopied(true);
+        window.clearTimeout(cwdCopyTimerRef.current);
+        cwdCopyTimerRef.current = window.setTimeout(() => setCwdCopied(false), 1_600);
+      })
+      .catch(() => setInteractionError('无法访问剪贴板，路径没有复制。'));
+  };
+
   const cwdInvalid = cwdDraft.trim() !== '' && !cwdDraft.trim().startsWith('/');
 
   const closeCreateForm = () => {
@@ -443,7 +472,7 @@ export function PawOsTerminalApp() {
       </div>
       {sessions.length ? (
         <div className="paw-terminal-new-group">
-          <button aria-busy={create.isPending || undefined} aria-label="新建终端" className="paw-terminal-tab-new" disabled={create.isPending} onClick={() => create.mutate({})} type="button">
+          <button aria-busy={create.isPending || undefined} aria-label="新建终端" className="paw-terminal-tab-new" disabled={create.isPending} onClick={() => create.mutate({})} title="新建终端（⌘T / Ctrl+Shift+T）" type="button">
             {create.isPending ? <LoaderCircle className="ui-spin" size={13} /> : <Plus size={13} />}
           </button>
           <button
@@ -550,7 +579,12 @@ export function PawOsTerminalApp() {
             ) : selected ? (
               <div aria-label="终端输入输出" className="paw-terminal-xterm" onClick={() => terminalRef.current?.focus()} ref={terminalHostRef} />
             ) : (
-              <div className="paw-terminal-console__empty"><p>还没有终端会话</p><button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate({})} ref={emptyCreateRef} type="button">{create.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Plus size={14} />}{create.isPending ? '正在创建' : '新建终端'}</button></div>
+              <div className="paw-terminal-console__empty">
+                <span aria-hidden className="paw-terminal-empty-glyph">❯<i /></span>
+                <p>还没有终端会话</p>
+                <p className="paw-terminal-console__empty-hint">新建一个 PAWOS 内嵌 PTY，直接在这里运行项目命令。</p>
+                <button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate({})} ref={emptyCreateRef} type="button">{create.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Plus size={14} />}{create.isPending ? '正在创建' : '新建终端'}</button>
+              </div>
             )}
             {selected && selected.status !== 'running' ? (
               <div className="paw-terminal-ended" role="status">
@@ -573,7 +607,17 @@ export function PawOsTerminalApp() {
             ) : null}
             {selected ? (
               <footer className="paw-terminal-statusbar">
-                <span className="paw-terminal-cwd" title={selected.cwd}><Folder size={11} />{selected.cwd}</span>
+                <button
+                  aria-label={`复制工作目录 ${selected.cwd}`}
+                  className="paw-terminal-cwd"
+                  data-copied={cwdCopied || undefined}
+                  onClick={copySelectedCwd}
+                  title={`${selected.cwd}（点击复制路径）`}
+                  type="button"
+                >
+                  <Folder size={11} />
+                  <span>{cwdCopied ? '已复制路径' : selected.cwd}</span>
+                </button>
                 <i aria-hidden="true" />
                 <strong className="paw-terminal-shell" title={selected.shell || '/bin/zsh'}>{selected.shell || '/bin/zsh'}</strong>
                 <i aria-hidden="true" />

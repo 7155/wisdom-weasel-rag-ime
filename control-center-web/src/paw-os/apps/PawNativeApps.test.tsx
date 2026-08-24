@@ -238,7 +238,7 @@ describe('PAWOS native Apps', () => {
     expect(await screen.findByRole('heading', { name: '外观' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /默认明亮/ })).toBeChecked();
     expect(screen.getByRole('navigation', { name: 'System Settings页面' })).toBeInTheDocument();
-    expect(transport.requests).toEqual([]);
+    await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(['agent.approvals.list']));
   });
 
   it.each([

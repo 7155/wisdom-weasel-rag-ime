@@ -109,7 +109,7 @@ describe('PAWOS shared control language', () => {
   it('keeps System App selects on the shared skin instead of a local shorthand', () => {
     // A `background:` shorthand on these selects would erase the shared
     // chevron and re-fork the field skin; layout-only overrides are fine.
-    expect(sysAppsCss).not.toMatch(/\.paw-system-agent-fields select\s*\{[^}]*background/s);
+    expect(sysAppsCss).not.toMatch(/\.paw-agent-model__field select\s*\{[^}]*background/s);
     // The compact ui-* sizing rule must not reclaim native selects.
     expect(sysAppsCss).toContain(':is(.ui-button, .ui-input, .ui-select__trigger) {');
   });

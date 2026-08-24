@@ -84,7 +84,7 @@ export function MemoryPreferences() {
 
   return (
     <div
-      className="memory-preferences memory-preferences--migrated-v1"
+      className="memory-preferences"
       data-dirty={Boolean(Object.keys(changes).length) || undefined}
       data-writable={writesSupported || undefined}
     >

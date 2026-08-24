@@ -174,6 +174,19 @@ describe('PAWOS desktop', () => {
     expect(document.querySelector('[data-paw-window-id="agent"]')).toBeInTheDocument();
   });
 
+  it('gives every Dock control a hover name label that stays out of the accessible name', () => {
+    renderDesktop('agent');
+    const dock = screen.getByRole('navigation', { name: 'PAWOS 工具架' });
+
+    // The exact-name queries above only stay stable if the visual label is
+    // aria-hidden; the button keeps its aria-label as the accessible name.
+    const agentTip = within(dock).getByRole('button', { name: 'Agent' }).querySelector('.paw-dock-tip');
+    expect(agentTip).toHaveAttribute('aria-hidden', 'true');
+    expect(agentTip).toHaveTextContent('Agent');
+    expect(within(dock).getByRole('button', { name: '窗口总览' }).querySelector('.paw-dock-tip')).toHaveTextContent('窗口总览');
+    expect(within(dock).getByRole('button', { name: '全部 App' }).querySelector('.paw-dock-tip')).toHaveTextContent('全部 App');
+  });
+
   it('closes all PAWOS windows from the desktop menu in one projection-only action', () => {
     renderDesktop('agent');
     const desktop = screen.getByRole('main');

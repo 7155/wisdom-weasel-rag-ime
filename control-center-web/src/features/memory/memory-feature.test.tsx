@@ -79,8 +79,6 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(screen.queryByRole('list', { name: '记忆内容分类' })).not.toBeInTheDocument();
-    await user.click(await screen.findByText('查看记忆整理状态', { selector: 'summary' }));
     expect(await screen.findByText('来源记录')).toBeInTheDocument();
     await user.click(await screen.findByRole('tab', { name: '时间线' }));
     expect(await screen.findByText('实现最终输入框捕获并核对三条记忆消费路径。')).toBeInTheDocument();
@@ -452,21 +450,19 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(screen.queryByRole('list', { name: '记忆内容分类' })).not.toBeInTheDocument();
-    await user.click(await screen.findByText('查看记忆整理状态', { selector: 'summary' }));
     const architecture = await screen.findByRole('list', { name: '记忆内容分类' });
-    expect(within(architecture).getByRole('button', { name: /来源/ })).toHaveTextContent('24');
+    await waitFor(() => (
+      expect(within(architecture).getByRole('button', { name: /来源/ })).toHaveTextContent('24')
+    ));
     expect(within(architecture).getByRole('button', { name: /记忆/ })).toHaveTextContent('10');
     expect(within(architecture).getByRole('button', { name: /主题/ })).toHaveTextContent('4');
 
-    const layerSelector = screen.getByRole('radiogroup', { name: '记忆内容分类' });
-    expect(within(layerSelector).getAllByRole('radio').map((item) => item.textContent)).toEqual([
-      '记录来源',
-      '已整理记忆',
-      '主题',
-    ]);
-    expect(within(layerSelector).queryByRole('radio', { name: '应用' })).not.toBeInTheDocument();
-    expect(within(layerSelector).queryByRole('radio', { name: '标签' })).not.toBeInTheDocument();
+    const stageLabels = within(architecture).getAllByRole('button').map((stage) => (
+      within(stage).getByText(/^(?:来源记录|分批审核|已整理记忆|长期主题)$/).textContent
+    ));
+    expect(stageLabels).toEqual(['来源记录', '分批审核', '已整理记忆', '长期主题']);
+    expect(within(architecture).queryByRole('button', { name: /应用/ })).not.toBeInTheDocument();
+    expect(within(architecture).queryByRole('button', { name: /标签/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '关系图' }));
     expect(await screen.findByRole('heading', { name: '记忆关系', level: 2 })).toBeInTheDocument();
@@ -771,11 +767,9 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(screen.queryByRole('list', { name: '记忆内容分类' })).not.toBeInTheDocument();
-    await user.click(await screen.findByText('查看记忆整理状态', { selector: 'summary' }));
     expect(await screen.findByText('全部 8 · 历史 4')).toBeInTheDocument();
-    expect(screen.getByRole('list', { name: '记忆内容分类' })).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: '应用' })).not.toBeInTheDocument();
+    const pipeline = screen.getByRole('list', { name: '记忆内容分类' });
+    expect(within(pipeline).queryByRole('button', { name: /应用/ })).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.params?.kind === 'apps')).toBe(false);
   });
 
@@ -790,25 +784,15 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    const openArchitecture = async () => {
-      const visibleArchitecture = screen.queryByRole('list', { name: '记忆内容分类' });
-      if (visibleArchitecture) return visibleArchitecture;
-      await user.click(await screen.findByText('查看记忆整理状态', { selector: 'summary' }));
-      return screen.findByRole('list', { name: '记忆内容分类' });
-    };
-
-    expect(screen.queryByRole('list', { name: '记忆内容分类' })).not.toBeInTheDocument();
-    let architecture = await openArchitecture();
+    const architecture = await screen.findByRole('list', { name: '记忆内容分类' });
     await user.click(within(architecture).getByRole('button', { name: /来源/ }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'evidence'
     ))).toBe(true));
-    architecture = await openArchitecture();
     await user.click(within(architecture).getByRole('button', { name: /记忆/ }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'atoms'
     ))).toBe(true));
-    architecture = await openArchitecture();
     await user.click(within(architecture).getByRole('button', { name: /主题/ }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'books'
@@ -1186,7 +1170,8 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题' }));
+    const pipelineStages = await screen.findByRole('list', { name: '记忆内容分类' });
+    await user.click(within(pipelineStages).getByRole('button', { name: /主题/ }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     const editWorkflow = screen.getByText('编辑内容').closest('.mgmt-workflow');
     expect(editWorkflow).not.toBeNull();
@@ -1221,7 +1206,8 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题' }));
+    const pipelineStages = await screen.findByRole('list', { name: '记忆内容分类' });
+    await user.click(within(pipelineStages).getByRole('button', { name: /主题/ }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     await user.click(within(screen.getByText('编辑内容').closest('.mgmt-workflow') as HTMLElement).getByRole('button', { name: '编辑' }));
     const dialog = await screen.findByRole('dialog', { name: '编辑 长期主题' });
@@ -1696,7 +1682,8 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题' }));
+    const pipelineStages = await screen.findByRole('list', { name: '记忆内容分类' });
+    await user.click(within(pipelineStages).getByRole('button', { name: /主题/ }));
     const book = await screen.findByRole('button', { name: /控制中心迁移/ });
     await user.click(book);
     const details = screen.getByRole('region', { name: '控制中心迁移 详情' });
@@ -1735,7 +1722,8 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题' }));
+    const pipelineStages = await screen.findByRole('list', { name: '记忆内容分类' });
+    await user.click(within(pipelineStages).getByRole('button', { name: /主题/ }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     expect(await screen.findByText('管理长期主题')).toBeInTheDocument();
     expect(screen.getByText('当前不可用')).toBeInTheDocument();

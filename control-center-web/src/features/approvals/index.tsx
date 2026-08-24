@@ -2,8 +2,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Check,
-  Clock3,
   ExternalLink,
+  Inbox,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -16,8 +16,6 @@ import { Button, Disclosure, EmptyState, Field, Input, SegmentedControl, Select 
 import type { AgentApprovalV1 } from '@/contracts/generated/agent-approval.v1';
 import {
   ManagementPage,
-  ManagementSection,
-  MetricStrip,
   QueryState,
   StatusBadge,
   publicErrorText,
@@ -27,12 +25,20 @@ import './approvals.css';
 type ApprovalFilter = 'pending' | 'all' | 'resolved';
 type RiskFilter = 'all' | AgentApprovalV1['riskLevel'];
 
+/**
+ * 审批中心 — a decision desk, not a card wall.
+ *
+ * The queue on the left orders what waits; the panel on the right holds
+ * exactly one hash-bound request with its full evidence and two stable
+ * actions. Deciding never moves the buttons under the pointer.
+ */
 export function ApprovalsFeature() {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<ApprovalFilter>('pending');
   const [risk, setRisk] = useState<RiskFilter>('all');
   const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState('');
   const [pendingId, setPendingId] = useState('');
   const [confirmingId, setConfirmingId] = useState('');
   const [actionError, setActionError] = useState<Record<string, string>>({});
@@ -75,8 +81,14 @@ export function ApprovalsFeature() {
         sessions.get(item.sessionId) ?? '',
       ].join(' ').toLocaleLowerCase('zh-CN');
       return matchesState && matchesRisk && (!needle || haystack.includes(needle));
+    }).sort((left, right) => {
+      const pendingDelta = Number(right.state === 'pending') - Number(left.state === 'pending');
+      if (pendingDelta) return pendingDelta;
+      const riskDelta = riskRank(left.riskLevel) - riskRank(right.riskLevel);
+      return riskDelta || left.requestedAtMs - right.requestedAtMs;
     });
   }, [approvals, filter, query, risk, sessions]);
+  const selected = visible.find((item) => item.approvalId === selectedId) ?? visible[0];
 
   async function decide(item: AgentApprovalV1, decision: 'approve' | 'reject'): Promise<void> {
     if (decision === 'approve' && item.riskLevel === 'R3' && confirmingId !== item.approvalId) {
@@ -108,141 +120,200 @@ export function ApprovalsFeature() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={approvalsQuery.isFetching} onClick={() => void approvalsQuery.refetch()} size="small">刷新</Button>}
-      description="集中查看所有 Session 和 Room 伙伴等待中的高风险操作。审批只决定一个哈希绑定的具体请求，不会扩大后续权限。"
-      eyebrow="人类决策队列"
+      description="伙伴执行高风险操作前会先停在这里等你决定。每个决定只针对当前这一项请求，不会顺带放行之后的同类操作。"
+      eyebrow="需要你决定"
       routeId="approvals"
       title="审批中心"
     >
       <QueryState error={approvalsQuery.error ? new Error(publicErrorText(approvalsQuery.error, '无法读取审批队列。')) : null} isPending={approvalsQuery.isPending} onRetry={() => void approvalsQuery.refetch()}>
-        <MetricStrip items={[
-          { label: '等待决定', value: pending.length, detail: pending.length ? '逐项处理' : '当前已清空', icon: ShieldQuestion, tone: pending.length ? 'warning' : 'success' },
-          { label: '高风险', value: highRisk.length, detail: 'R3 需要二次确认', icon: AlertTriangle, tone: highRisk.length ? 'danger' : 'neutral' },
-          { label: '即将过期', value: expiring.length, detail: '5 分钟内', icon: Clock3, tone: expiring.length ? 'warning' : 'neutral' },
-          { label: '已收束', value: completed.length, detail: '已执行或已拒绝', icon: ShieldCheck, tone: 'success' },
-        ]} />
-
-        <ManagementSection
-          title="审批队列"
-          description="失败、过期或已被 Pi 释放的请求会保留事实记录，但不能再次批准。"
-          trailing={<span className="approvals-count">{visible.length} 项</span>}
+        <section
+          aria-label="审批现状"
+          className="approvals-pulse"
+          data-tone={pending.length ? (highRisk.length ? 'danger' : 'attention') : 'calm'}
         >
-          <div className="approvals-toolbar">
-            <SegmentedControl
-              aria-label="审批状态筛选"
-              items={[
-                { label: '待审批', value: 'pending' },
-                { label: '全部', value: 'all' },
-                { label: '已处理', value: 'resolved' },
-              ]}
-              onValueChange={(value) => setFilter(value as ApprovalFilter)}
-              value={filter}
-            />
-            <Field htmlFor="approval-risk" label="风险">
-              <Select
-                id="approval-risk"
-                onValueChange={(value) => setRisk(value as RiskFilter)}
-                options={[
-                  { value: 'all', label: '全部风险' },
-                  { value: 'R1', label: 'R1 · 低风险' },
-                  { value: 'R2', label: 'R2 · 受控操作' },
-                  { value: 'R3', label: 'R3 · 高风险' },
-                ]}
-                value={risk}
-              />
-            </Field>
-            <Field className="approvals-search" htmlFor="approval-search" label="搜索">
-              <Input id="approval-search" onChange={(event) => setQuery(event.target.value)} placeholder="工具、操作、对话或摘要" type="search" value={query} />
-            </Field>
+          <span aria-hidden="true" className="approvals-pulse__icon">
+            {pending.length ? <ShieldQuestion size={19} /> : <ShieldCheck size={19} />}
+          </span>
+          <div className="approvals-pulse__copy">
+            <strong>{pending.length ? `${pending.length} 项操作在等你决定` : '队列已清空'}</strong>
+            <p>{pulseDetail(pending.length, highRisk.length, expiring.length)}</p>
           </div>
+          {completed.length ? <span className="approvals-pulse__done">已处理 {completed.length} 项</span> : null}
+        </section>
 
-          {visible.length ? <ol className="approvals-list" aria-label="审批项目">
-            {visible.map((item) => (
-              <ApprovalCard
-                error={actionError[item.approvalId] ?? ''}
-                item={item}
-                key={item.approvalId}
-                pending={pendingId === item.approvalId}
-                confirming={confirmingId === item.approvalId}
-                sessionTitle={sessions.get(item.sessionId) ?? '所属对话'}
-                onCancelConfirm={() => setConfirmingId('')}
-                onDecide={(decision) => void decide(item, decision)}
+        <section aria-label="审批工作台" className="approvals-desk">
+          <section aria-label="审批队列" className="approvals-queue">
+            <div className="approvals-queue__filters">
+              <SegmentedControl
+                aria-label="审批状态筛选"
+                items={[
+                  { label: '待审批', value: 'pending' },
+                  { label: '全部', value: 'all' },
+                  { label: '已处理', value: 'resolved' },
+                ]}
+                onValueChange={(value) => setFilter(value as ApprovalFilter)}
+                value={filter}
               />
-            ))}
-          </ol> : (
-            <EmptyState
-              action={(query || risk !== 'all' || filter !== 'pending') ? <Button onClick={() => { setQuery(''); setRisk('all'); setFilter('pending'); }} size="small">查看待审批</Button> : undefined}
-              description={filter === 'pending' && !query && risk === 'all' ? '新的高风险请求会在这里逐项出现。' : '调整筛选条件后再查看。'}
-              icon={Search}
-              title={filter === 'pending' && !query && risk === 'all' ? '当前没有待审批请求' : '没有匹配的审批'}
-            />
-          )}
-        </ManagementSection>
+              <span aria-label={`${visible.length} 项审批`} className="approvals-queue__count">{visible.length} 项</span>
+            </div>
+            <div className="approvals-queue__tools">
+              <Field htmlFor="approval-risk" label="风险">
+                <Select
+                  id="approval-risk"
+                  onValueChange={(value) => setRisk(value as RiskFilter)}
+                  options={[
+                    { value: 'all', label: '全部风险' },
+                    { value: 'R1', label: 'R1 · 低风险' },
+                    { value: 'R2', label: 'R2 · 受控操作' },
+                    { value: 'R3', label: 'R3 · 高风险' },
+                  ]}
+                  value={risk}
+                />
+              </Field>
+              <Field className="approvals-queue__search" htmlFor="approval-search" label="搜索">
+                <Input id="approval-search" onChange={(event) => setQuery(event.target.value)} placeholder="工具、操作、对话或摘要" type="search" value={query} />
+              </Field>
+            </div>
+
+            {visible.length ? (
+              <ol aria-label="审批项目" className="approvals-queue__list">
+                {visible.map((item) => {
+                  const active = item.approvalId === selected?.approvalId;
+                  return (
+                    <li data-active={active || undefined} data-risk={item.riskLevel} data-state={item.state} key={item.approvalId}>
+                      <button aria-current={active ? 'true' : undefined} onClick={() => setSelectedId(item.approvalId)} type="button">
+                        <span aria-hidden="true" className="approvals-risk">{item.riskLevel}</span>
+                        <span className="approvals-queue__copy">
+                          <strong>{previewSummary(item.preview) || `${item.toolId} · ${item.operation}`}</strong>
+                          <small>{toolLabel(item.toolId)} · {operationLabel(item.operation)} · {sessions.get(item.sessionId) ?? '所属对话'}</small>
+                        </span>
+                        <span className="approvals-queue__meta">
+                          <StatusBadge label={stateLabel(item.state)} tone={stateTone(item.state)} />
+                          <time dateTime={new Date(item.requestedAtMs).toISOString()}>{formatTime(item.requestedAtMs)}</time>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <EmptyState
+                action={(query || risk !== 'all' || filter !== 'pending') ? <Button onClick={() => { setQuery(''); setRisk('all'); setFilter('pending'); }} size="small">查看待审批</Button> : undefined}
+                description={filter === 'pending' && !query && risk === 'all' ? '新的高风险请求会在这里逐项出现。' : '调整筛选条件后再查看。'}
+                headingLevel={3}
+                icon={Search}
+                title={filter === 'pending' && !query && risk === 'all' ? '当前没有待审批请求' : '没有匹配的审批'}
+              />
+            )}
+          </section>
+
+          <section aria-label="审批详情" className="approvals-decision">
+            {selected ? (
+              <ApprovalDecision
+                confirming={confirmingId === selected.approvalId}
+                error={actionError[selected.approvalId] ?? ''}
+                item={selected}
+                key={selected.approvalId}
+                onCancelConfirm={() => setConfirmingId('')}
+                onDecide={(decision) => void decide(selected, decision)}
+                pending={pendingId === selected.approvalId}
+                sessionTitle={sessions.get(selected.sessionId) ?? '所属对话'}
+              />
+            ) : (
+              <EmptyState
+                description="从左侧队列选择一项后，这里会显示与哈希绑定的完整请求内容。"
+                headingLevel={3}
+                icon={Inbox}
+                title="没有可显示的审批"
+              />
+            )}
+          </section>
+        </section>
       </QueryState>
     </ManagementPage>
   );
 }
 
-function ApprovalCard({
-  item,
-  sessionTitle,
-  pending,
+function ApprovalDecision({
   confirming,
   error,
-  onDecide,
+  item,
   onCancelConfirm,
+  onDecide,
+  pending,
+  sessionTitle,
 }: {
-  item: AgentApprovalV1;
-  sessionTitle: string;
-  pending: boolean;
   confirming: boolean;
   error: string;
-  onDecide: (decision: 'approve' | 'reject') => void;
+  item: AgentApprovalV1;
   onCancelConfirm: () => void;
+  onDecide: (decision: 'approve' | 'reject') => void;
+  pending: boolean;
+  sessionTitle: string;
 }) {
   const summary = previewSummary(item.preview) || `${item.toolId} · ${item.operation}`;
   const facts = previewFacts(item.preview);
-  const compactFacts = facts.slice(0, 5);
-  return <li data-risk={item.riskLevel} data-state={item.state}>
-    <header>
-      <span className="approvals-list__risk">{item.riskLevel}</span>
-      <span><strong>{summary}</strong><small>{toolLabel(item.toolId)} · {operationLabel(item.operation)}</small></span>
-      <StatusBadge label={stateLabel(item.state)} tone={stateTone(item.state)} />
-    </header>
-    <div className="approvals-list__context">
-      <a href={`#/agent?session=${encodeURIComponent(item.sessionId)}`}>{sessionTitle}<ExternalLink size={12} /></a>
-      <span>请求于 {formatTime(item.requestedAtMs)}</span>
-      <span>{item.state === 'pending' ? expiryLabel(item.expiresAtMs) : `决定于 ${formatTime(item.decidedAtMs ?? item.requestedAtMs)}`}</span>
-    </div>
-    {compactFacts.length ? <dl>{compactFacts.map((fact) => <div key={fact.label}><dt>{fact.label}</dt><dd>{compactPreviewValue(fact.value)}</dd></div>)}</dl> : null}
-    {Object.keys(item.preview).length ? <ApprovalPreviewDisclosure item={item} /> : null}
-    {confirming ? <p className="approvals-list__confirm"><AlertTriangle size={15} /><span><strong>确认批准 R3 高风险操作？</strong><small>只批准当前哈希绑定请求；不会自动批准同类操作。</small></span></p> : null}
-    {error ? <p className="approvals-list__error" role="alert">{error}</p> : null}
-    {item.state === 'pending' ? <footer>
-      {confirming ? <Button disabled={pending} onClick={onCancelConfirm} size="small" variant="quiet">取消</Button> : null}
-      <Button disabled={pending} leadingIcon={<X size={14} />} onClick={() => onDecide('reject')} size="small" variant="quiet">拒绝</Button>
-      <Button loading={pending} leadingIcon={<Check size={14} />} onClick={() => onDecide('approve')} size="small" variant="primary">{confirming ? '确认批准' : '批准'}</Button>
-    </footer> : null}
-  </li>;
-}
-
-function ApprovalPreviewDisclosure({ item }: { item: AgentApprovalV1 }) {
   const fieldCount = Object.keys(item.preview).length;
   return (
-    <Disclosure
-      className="approvals-preview"
-      revealClassName="approvals-preview__reveal"
-      summary={<>
-        <span>完整预览</span>
-        <small>{fieldCount} 个字段 · SHA-256 绑定</small>
-      </>}
-    >
-      <div className="approvals-preview__body">
-        <p><ShieldCheck size={15} /><span>以下完整预览与本次审批哈希绑定</span></p>
-        <div className="approvals-preview__binding"><span>SHA-256</span><code>{item.payloadSha256}</code></div>
-        <pre>{JSON.stringify(redactApprovalPreview(item.preview), null, 2)}</pre>
-      </div>
-    </Disclosure>
+    <article className="approvals-decision__card" data-risk={item.riskLevel} data-state={item.state}>
+      <header className="approvals-decision__head">
+        <span aria-hidden="true" className="approvals-risk">{item.riskLevel}</span>
+        <div className="approvals-decision__title">
+          <h3>{summary}</h3>
+          <p>{toolLabel(item.toolId)} · {operationLabel(item.operation)} · {riskMeaning(item.riskLevel)}</p>
+        </div>
+        <StatusBadge label={stateLabel(item.state)} tone={stateTone(item.state)} />
+      </header>
+
+      <ul className="approvals-decision__context">
+        <li><a href={`#/agent?session=${encodeURIComponent(item.sessionId)}`}>{sessionTitle}<ExternalLink size={12} /></a></li>
+        <li>请求于 {formatTime(item.requestedAtMs)}</li>
+        <li>{item.state === 'pending' ? expiryLabel(item.expiresAtMs) : `决定于 ${formatTime(item.decidedAtMs ?? item.requestedAtMs)}`}</li>
+      </ul>
+
+      {facts.length ? (
+        <dl className="approvals-decision__facts">
+          {facts.map((fact) => <div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
+        </dl>
+      ) : null}
+
+      {fieldCount ? (
+        <Disclosure
+          className="approvals-preview"
+          revealClassName="approvals-preview__reveal"
+          summary={<>
+            <span>完整预览</span>
+            <small>{fieldCount} 个字段 · SHA-256 绑定</small>
+          </>}
+        >
+          <div className="approvals-preview__body">
+            <p><ShieldCheck size={15} /><span>以下完整预览与本次审批哈希绑定</span></p>
+            <div className="approvals-preview__binding"><span>SHA-256</span><code>{item.payloadSha256}</code></div>
+            <pre>{JSON.stringify(redactApprovalPreview(item.preview), null, 2)}</pre>
+          </div>
+        </Disclosure>
+      ) : null}
+
+      {confirming ? <p className="approvals-decision__confirm"><AlertTriangle size={15} /><span><strong>确认批准 R3 高风险操作？</strong><small>只批准当前哈希绑定请求；不会自动批准同类操作。</small></span></p> : null}
+      {error ? <p className="approvals-decision__error" role="alert">{error}</p> : null}
+
+      {item.state === 'pending' ? (
+        <footer className="approvals-decision__actions">
+          {confirming ? <Button disabled={pending} onClick={onCancelConfirm} size="small" variant="quiet">取消</Button> : null}
+          <Button disabled={pending} leadingIcon={<X size={14} />} onClick={() => onDecide('reject')} size="small" variant="quiet">拒绝</Button>
+          <Button leadingIcon={<Check size={14} />} loading={pending} onClick={() => onDecide('approve')} size="small" variant="primary">{confirming ? '确认批准' : '批准'}</Button>
+        </footer>
+      ) : null}
+    </article>
   );
+}
+
+function pulseDetail(pendingCount: number, highRiskCount: number, expiringCount: number): string {
+  if (!pendingCount) return '新的高风险请求会先停在这里，问过你再执行。';
+  const parts: string[] = [];
+  if (highRiskCount) parts.push(`${highRiskCount} 项高风险需要二次确认`);
+  if (expiringCount) parts.push(`${expiringCount} 项将在 5 分钟内过期`);
+  return parts.length ? parts.join('；') + '。' : '逐项核对后决定；到期未处理的请求会自动作废。';
 }
 
 function approvalItems(value: unknown): AgentApprovalV1[] {
@@ -274,12 +345,15 @@ function previewSummary(preview: Record<string, unknown>): string {
   return [preview.summary, preview.title, preview.message, preview.description].map(text).find(Boolean) ?? '';
 }
 
+const secretPreviewKey = /token|secret|password|api.?key|authorization|cookie/i;
+
 function previewFacts(preview: Record<string, unknown>): Array<{ label: string; value: string }> {
   const ignored = new Set(['summary', 'title', 'message', 'description']);
   return Object.entries(preview).flatMap(([key, value]) => {
     if (ignored.has(key)) return [];
+    if (secretPreviewKey.test(key)) return [{ label: publicKey(key), value: value ? '已隐藏' : '未配置' }];
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return [{ label: publicKey(key), value: String(value) }];
+      return [{ label: publicKey(key), value: compactPreviewValue(String(value)) }];
     }
     if (Array.isArray(value)) return [{ label: publicKey(key), value: `${value.length} 项` }];
     return [];
@@ -291,7 +365,7 @@ function compactPreviewValue(value: string): string {
 }
 
 function redactApprovalPreview(value: unknown, key = ''): unknown {
-  if (/token|secret|password|api.?key|authorization|cookie/i.test(key)) return value ? '已隐藏' : '未配置';
+  if (secretPreviewKey.test(key)) return value ? '已隐藏' : '未配置';
   if (Array.isArray(value)) return value.map((item) => redactApprovalPreview(item));
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([entryKey, item]) => (
@@ -318,8 +392,16 @@ function operationLabel(value: string): string {
   return ({ run: '执行', apply: '应用', restart: '重启', restore_apply: '恢复', apply_settings: '应用设置' } as Record<string, string>)[value] ?? value;
 }
 
+function riskRank(value: AgentApprovalV1['riskLevel']): number {
+  return ({ R3: 0, R2: 1, R1: 2 })[value];
+}
+
+function riskMeaning(value: AgentApprovalV1['riskLevel']): string {
+  return ({ R1: '低风险，影响可逆', R2: '受控操作，影响已在预览中列出', R3: '高风险，批准前需要二次确认' })[value];
+}
+
 function publicKey(value: string): string {
-  return ({ command: '命令', path: '路径', changes: '变更', target: '目标', scope: '范围', files: '文件' } as Record<string, string>)[value] ?? value;
+  return ({ command: '命令', path: '路径', changes: '变更', target: '目标', scope: '范围', files: '文件', rollback: '恢复方式' } as Record<string, string>)[value] ?? value;
 }
 
 function expiryLabel(value: number): string {

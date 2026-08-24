@@ -120,6 +120,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   inset: 10px 10px 84px;
   pointer-events: none;
   border: 2px solid color-mix(in srgb, var(--paw-accent) 74%, white);
+  border-radius: 14px;
   background: color-mix(in srgb, var(--paw-accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 62%, transparent);
   opacity: 0;
@@ -460,15 +461,58 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   border-radius: 18px;
   transform: translateX(-50%);
 }
-.paw-dock > i { width: 1px; height: 30px; margin: 0 3px; }
+.paw-dock > i { width: 1px; height: 30px; margin: 0 3px; transform: translate3d(calc(var(--paw-dock-shift, 0) * 1px), 0, 0); }
+/* Proximity magnification. dock-magnification.ts writes --paw-dock-mag (0..1
+   pointer energy) and --paw-dock-shift (outward push in px) per shelf child;
+   everything below is transform-only, so the shelf answers the pointer at
+   frame rate without reflow. At rest both properties resolve to 0 and the
+   button is exactly its layout box. */
 .paw-dock button {
   position: relative; width: 44px; height: 44px; display: grid; place-items: center;
   border-radius: 12px; color: var(--paw-ink); cursor: pointer;
-  transition: transform 140ms var(--paw-ease-out), background-color 120ms ease;
+  transform: translate3d(calc(var(--paw-dock-shift, 0) * 1px), calc(var(--paw-dock-mag, 0) * -12px), 0)
+    scale(calc((1 + var(--paw-dock-mag, 0) * .32) * var(--paw-dock-press, 1)));
+  transform-origin: 50% 92%;
+  transition: transform 280ms var(--paw-ease-out), background-color 120ms ease;
 }
+.paw-dock button:active { --paw-dock-press: .94; }
+/* While the pointer conducts, follow it closely; the long ease only carries
+   the shelf back to rest after pointerleave. */
+.paw-dock[data-magnify] button {
+  transition: transform 120ms var(--paw-ease-out), background-color 120ms ease;
+  will-change: transform;
+}
+/* Running state is a shape, not only a colour: a long pill means the App has
+   a visible window; a short soft pill means every window is minimized. */
 .paw-dock button[data-open]::after {
-  position: absolute; bottom: -3px; width: 5px; height: 5px; border-radius: 50%;
+  position: absolute; bottom: -5px; left: 50%; width: 14px; height: 3px;
+  border-radius: 999px; translate: -50%;
   background: var(--paw-app-accent, var(--paw-accent)); content: '';
+}
+.paw-dock button[data-minimized]::after { width: 6px; }
+/* Hover/focus name label. Centering uses the separate translate property so a
+   reduced-motion transform reset can never knock the label off its icon. */
+.paw-dock-tip {
+  position: absolute;
+  bottom: calc(100% + 13px);
+  left: 50%;
+  width: max-content;
+  max-width: 240px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  visibility: hidden;
+  opacity: 0;
+  translate: -50% 4px;
+  /* The label rides a magnified button; the inverse scale keeps its box and
+     type at exactly 1:1 while the icon grows underneath it. */
+  scale: calc(1 / ((1 + var(--paw-dock-mag, 0) * .32) * var(--paw-dock-press, 1)));
+  transform-origin: 50% 100%;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.paw-dock button:focus-visible .paw-dock-tip { visibility: visible; opacity: 1; translate: -50% 0; }
+@media (hover: hover) and (pointer: fine) {
+  .paw-dock button:hover .paw-dock-tip { visibility: visible; opacity: 1; translate: -50% 0; }
 }
 .paw-launchpad {
   position: absolute;
@@ -485,8 +529,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-launchpad section > header {
   display: grid;
-  grid-template-columns: max-content minmax(140px, 1fr) auto;
+  grid-template-columns: max-content minmax(140px, 460px) max-content;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   min-height: 48px;
   padding: 0 16px;
@@ -714,17 +759,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-window-shell[data-app='files'] .paw-files-tree { background: var(--paw-app-nav); }
 
+/* Terminal window chrome shares the console's obsidian material; the feature
+   stylesheet owns tab, selection, and accent states so the identity beam and
+   ambient depth live beside the DOM they describe. */
 .paw-window-shell[data-app='terminal'] .paw-terminal-app {
   background: color-mix(in oklab, #0d1117 92%, var(--paw-app-accent));
 }
 .paw-window-shell[data-app='terminal'] .paw-window-titlebar,
-.paw-window-shell[data-app='terminal'] .paw-terminal-app__toolbar { background: color-mix(in oklab, #161b22 88%, var(--paw-app-support)); }
-.paw-window-shell[data-app='terminal'] .paw-terminal-tab[data-selected] {
-  border-color: color-mix(in srgb, var(--paw-app-accent) 38%, transparent);
-  background: color-mix(in oklab, #21262d 88%, var(--paw-app-accent));
-  color: var(--paw-app-accent);
-}
-.paw-window-shell[data-app='terminal'] .paw-terminal-meta strong { color: var(--paw-app-accent); }
+.paw-window-shell[data-app='terminal'] .paw-terminal-app__toolbar { background: color-mix(in oklab, #151a22 94%, var(--paw-app-accent)); }
 .paw-window-shell[data-app='terminal'] .paw-terminal-console__empty button {
   border-color: color-mix(in srgb, var(--paw-app-accent) 54%, transparent);
   background: var(--paw-app-accent-strong);
@@ -744,6 +786,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-desktop-shortcuts { position: relative; right: auto; top: auto; grid-template-columns: repeat(3, minmax(72px, 1fr)); gap: 14px 8px; padding: 14px 20px 108px; }
   .paw-dock { max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none; }
   .paw-dock button { flex: 0 0 42px; }
+  /* The narrow Dock scrolls internally; a hover label would be clipped. */
+  .paw-dock-tip { display: none; }
   .paw-launchpad { padding: 12px; }
   .paw-launchpad > section { width: 100%; max-height: calc(100vh - var(--paw-menu-h) - 24px); }
   .paw-launchpad section > div { grid-template-columns: repeat(3, 1fr); }
@@ -775,12 +819,15 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-dock button {
     transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease !important;
   }
+  .paw-dock button,
   .paw-dock button:hover,
   .paw-dock button:active,
+  .paw-dock > i,
   .paw-desktop-shortcuts button:hover > span,
   .paw-desktop-shortcuts button[aria-selected='true'] > span {
     transform: none !important;
   }
+  .paw-dock-tip { scale: none; }
   .paw-room-window-flow g[data-live] .paw-room-window-flow__base {
     animation: none !important;
   }
@@ -902,8 +949,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-room-workspace__identity small,
   .paw-room-workspace__header nav button,
   .paw-room-workspace__runtime > span,
-  .paw-room-flow__packets small,
-  .paw-room-flow__detail dl,
   .paw-room-governance small,
   .paw-files-tree small,
   .paw-files-preview > header small,
@@ -982,9 +1027,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-desktop-root .paw-terminal-app :is(
   button,
   input,
-  .paw-terminal-console__subbar,
-  .paw-terminal-output,
-  .paw-terminal-connecting,
   .paw-terminal-console__empty
 ) {
   font-family: var(--font-mono);

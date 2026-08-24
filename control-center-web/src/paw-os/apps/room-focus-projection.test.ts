@@ -158,6 +158,70 @@ describe('buildRoomFocusProjection', () => {
     ]);
   });
 
+  it('projects the chronological flow ledger from public messages, transfers and WorkItem revisions', () => {
+    const withWork = room([work({
+      id: 'work-root',
+      objective: '并行实现 Room 任务图',
+      artifactRefs: ['docs/plan.md'],
+      updatedAtMs: 400,
+    })]);
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['approval-a'];
+    projection.activitiesById = {
+      'approval-a': {
+        id: 'approval-a', sequence: 5, turnId: 'turn-root', participantId: 'p-mars', sourceSessionId: 'session-p-mars',
+        kind: 'approval_required', status: 'waiting', summary: '批准发布前检查',
+        payload: { sourceEventType: 'approval_required', approvalId: 'approval:a', payloadSha256: 'a'.repeat(64) },
+        createdAtMs: 120, updatedAtMs: 120,
+      },
+    };
+    projection.messageOrder = ['message-user'];
+    projection.messagesById = {
+      'message-user': {
+        id: 'message-user', roomId: 'room-sol', turnId: 'turn-root', participantId: null, sourceSessionId: '',
+        role: 'user', status: 'completed', text: '请实现主线迁移', projectionKind: 'post',
+        mentionedParticipantIds: ['p-earth'], sequence: 4, createdAtMs: 110,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(withWork, projection);
+
+    expect(focus.flow.map((packet) => [packet.id, packet.kind, packet.sourceParticipantId, packet.targetParticipantIds])).toEqual([
+      ['message:message-user', 'request', 'root', ['p-earth']],
+      ['activity:approval-a', 'approval', 'p-mars', ['root']],
+      ['work:work-root:1', 'document', 'p-earth', ['p-earth']],
+    ]);
+    expect(focus.flow.at(-1)?.refs).toEqual(['docs/plan.md']);
+  });
+
+  it.each([
+    { label: 'dispatch（activity.kind）', kind: 'dispatch', payload: { targetParticipantId: 'p-earth' }, expectedKind: 'dispatch', project: true },
+    { label: 'route_decision（activity.kind）', kind: 'route_decision', payload: { targetParticipantId: 'p-earth' }, expectedKind: 'dispatch', project: true },
+    { label: 'intercom（payload.activityKind）', kind: 'participant_activity', payload: { activityKind: 'intercom', targetParticipantId: 'p-earth' }, expectedKind: 'request', project: true },
+    { label: 'ContextRef 移交', kind: 'participant_activity', payload: { contextRefs: ['context://room-sol/brief'], targetParticipantId: 'p-earth' }, expectedKind: 'context', project: true },
+    { label: '未知 activity 不投影', kind: 'participant_activity', payload: { sourceEventType: 'not_a_flow_event', targetParticipantId: 'p-earth' }, expectedKind: 'dispatch', project: false },
+    { label: '无目标 dispatch 不投影', kind: 'dispatch', payload: {}, participantId: null, expectedKind: 'dispatch', project: false },
+  ] as const)('projects $label into the ledger only when it is an authoritative targeted transfer', ({ kind, payload, participantId = 'p-mars', expectedKind, project }) => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['activity-1'];
+    projection.activitiesById = {
+      'activity-1': {
+        id: 'activity-1', turnId: 'turn-root', participantId, sourceSessionId: 'session-x',
+        kind, status: 'completed', summary: 'activity-1', payload: payload as Record<string, unknown>,
+        createdAtMs: 200, updatedAtMs: 200,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+    const packet = focus.flow.find((candidate) => candidate.id === 'activity:activity-1');
+
+    if (project) {
+      expect(packet).toEqual(expect.objectContaining({ kind: expectedKind, targetParticipantIds: ['p-earth'] }));
+    } else {
+      expect(packet).toBeUndefined();
+    }
+  });
+
   it('makes a real offer visible as a directed handoff and preserves blocker recovery copy', () => {
     const blocked = work({
       id: 'work-blocked',

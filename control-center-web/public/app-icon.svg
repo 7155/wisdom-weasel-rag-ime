@@ -1,12 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-  <defs>
-    <linearGradient id="sheen" x1="0" x2="0" y1="0" y2="1">
-      <stop offset="0" stop-color="#fff" stop-opacity=".24" />
-      <stop offset=".55" stop-color="#fff" stop-opacity="0" />
-    </linearGradient>
-  </defs>
-  <rect x="1.5" y="1.5" width="45" height="45" rx="11.5" fill="#0a84ff" />
-  <rect x="1.5" y="1.5" width="45" height="45" rx="11.5" fill="url(#sheen)" />
-  <path d="M10 15a10 10 0 0 1 10-10h8a10 10 0 0 1 10 10v7a10 10 0 0 1-10 10h-9l-6.5 6v-6.2A10 10 0 0 1 10 25z" fill="#fff" transform="translate(0 4)" />
-  <circle cx="24" cy="22" r="5.2" fill="#0a84ff" />
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="#1c222c" />
+  <g fill="#fff" transform="translate(24 24) scale(.68) translate(-24 -25.8)">
+    <ellipse cx="10.5" cy="17.5" rx="5.6" ry="7" transform="rotate(-14 10.5 17.5)" />
+    <ellipse cx="24" cy="13" rx="5.9" ry="7.3" />
+    <ellipse cx="37.5" cy="17.5" rx="5.6" ry="7" transform="rotate(14 37.5 17.5)" />
+    <path d="M24 24.8c4.1 0 7.8 1.7 10.3 4.4 2 2.2 3.2 5 3.2 7.7 0 5.7-6 9.3-13.5 9.3s-13.5-3.6-13.5-9.3c0-2.7 1.2-5.5 3.2-7.7 2.5-2.7 6.2-4.4 10.3-4.4z" />
+  </g>
 </svg>
