@@ -230,8 +230,11 @@ function DebugMessageList({ value }: { value: unknown }) {
         const message = record(item);
         const role = text(message.role) || 'message';
         const customType = text(message.customType);
+        // Runtime context increments travel on the user role for the wire, but
+        // rendering them as if the person typed them misstates authorship.
+        const presentedRole = customType ? 'context' : role;
         return (
-          <article data-role={role} key={`${role}:${customType}:${index}`}>
+          <article data-role={presentedRole} key={`${role}:${customType}:${index}`}>
             <small>{debugMessageRoleLabel(role, customType)}</small>
             <div>{semanticContent(message.content ?? item) || '(无文本内容)'}</div>
           </article>
