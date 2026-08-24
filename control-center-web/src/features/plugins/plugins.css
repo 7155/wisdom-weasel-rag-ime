@@ -460,25 +460,7 @@ main[data-route-id='plugins'] .plugins-count {
 .plugin-lifecycle__install .ui-field { min-width: 0; }
 .plugin-lifecycle__install .ui-input { width: 100%; }
 
-.plugin-lifecycle__source {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.plugin-lifecycle__source > span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plugin-lifecycle__steps,
-.installed-plugin__actions,
-.plugin-lifecycle__approval > div {
+.installed-plugin__actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -547,22 +529,140 @@ main[data-route-id='plugins'] .plugins-count {
   box-shadow: inset 3px 0 0 var(--color-accent);
 }
 
+/* Approval is the one deliberate stop in the Package lifecycle. It renders as
+   a structured confirmation card — stage progress, then facts, then the
+   decision — instead of one concatenated metadata sentence. */
 .plugin-lifecycle__approval {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.plugin-lifecycle__approval > span {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-2);
+  background: var(--color-warning-soft);
+}
+
+.plugin-lifecycle__approval-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.plugin-lifecycle__approval-heading > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
 .plugin-lifecycle__approval small {
   color: var(--color-text-secondary);
   font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.plugin-lifecycle__approval-heading strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.plugin-lifecycle__stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plugin-lifecycle__stages li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.plugin-lifecycle__stages li::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+  content: '';
+  opacity: .55;
+}
+
+.plugin-lifecycle__stages li[data-state='done'] {
+  border-color: color-mix(in srgb, var(--color-success) 34%, var(--color-border));
+  color: var(--color-success);
+}
+
+.plugin-lifecycle__stages li[data-state='current'] {
+  border-color: var(--color-warning-border);
+  color: var(--color-warning);
+  font-weight: var(--font-weight-semibold);
+}
+
+.plugin-lifecycle__approval-facts {
+  display: grid;
+  margin: 0;
+  border-block: 1px solid color-mix(in srgb, var(--color-warning) 16%, var(--color-border));
+}
+
+.plugin-lifecycle__approval-facts > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 16%, var(--color-border));
+  grid-template-columns: minmax(96px, .38fr) minmax(0, 1.62fr);
+}
+
+.plugin-lifecycle__approval-facts > div:last-child { border-bottom: 0; }
+
+.plugin-lifecycle__approval-facts dt,
+.plugin-lifecycle__approval-facts dd {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.plugin-lifecycle__approval-facts dt { color: var(--color-text-secondary); }
+.plugin-lifecycle__approval-facts dd { overflow-wrap: anywhere; }
+
+.plugin-lifecycle__approval-actions {
+  display: flex;
+  align-items: center;
+  justify-content: end;
+  gap: var(--space-2);
+}
+
+.plugin-lifecycle__receipt {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.plugin-lifecycle__receipt > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.plugin-lifecycle__receipt small {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .lifecycle-hooks {
@@ -657,7 +757,6 @@ main[data-route-id='plugins'] .plugins-count {
     flex-direction: column;
   }
 
-  .capability-stage-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .plugins-filters { grid-template-columns: 1fr; }
   .plugins-mode-filter { grid-column: auto; }
   .plugins-mode-filter .ui-segmented { width: 100%; }
@@ -675,7 +774,8 @@ main[data-route-id='plugins'] .plugins-count {
   .plugin-lifecycle__validation { grid-column: auto; flex-wrap: wrap; }
   .installed-plugin { align-items: start; grid-template-columns: minmax(0, 1fr) auto; }
   .installed-plugin__actions { grid-column: 1 / -1; }
-  .plugin-lifecycle__approval { align-items: flex-start; flex-direction: column; }
+  .plugin-lifecycle__approval-facts > div { grid-template-columns: 1fr; gap: 3px; }
+  .plugin-lifecycle__receipt { align-items: stretch; flex-direction: column; }
   .plugin-catalog__row,
   .lifecycle-policy { align-items: start; grid-template-columns: 1fr; }
   .plugin-catalog__action { grid-column: auto; justify-content: stretch; justify-items: stretch; }
@@ -692,10 +792,6 @@ main[data-route-id='plugins'] .plugins-count {
   .plugins-list__item { align-items: start; grid-template-columns: minmax(0, 1fr); }
   .plugins-list__aside { justify-content: space-between; }
 }
-.capability-stage-legend { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--color-border); }
-.capability-stage-legend > span { display: grid; gap: 2px; min-width: 0; padding: 9px 8px; border-right: 1px solid var(--color-border); color: var(--color-text-tertiary); font-size: 12px; }
-.capability-stage-legend > span:last-child { border-right: 0; }
-.capability-stage-legend b { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 12px; overflow-wrap: normal; white-space: nowrap; }
 .capability-disclosure { border-top: 1px solid var(--color-border); padding-top: 12px; }
 .capability-disclosure h4 { margin: 0 0 9px; font-size: 12px; }
 .capability-disclosure dl { display: grid; gap: 7px; margin: 0; }
@@ -707,10 +803,6 @@ main[data-route-id='plugins'] .plugins-count {
 .capability-disclosure__technical-content { padding-bottom: 2px; }
 .capability-disclosure pre { max-height: 240px; overflow: auto; margin: 0; padding: 9px; border: 1px solid var(--color-border); border-radius: var(--radius-2); font-size: 12px; white-space: pre-wrap; }
 .capability-disclosure > p { color: var(--color-text-tertiary); font-size: 12px; }
-
-@media (max-width: 760px) {
-  .capability-stage-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 
 /* The usage ledger speaks once: per-column boilerplate repeated five times is
    noise, not information — the section description already carries it. */
@@ -753,12 +845,13 @@ main[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto
 
 @container paw-window (max-width: 680px) {
   main[data-route-id='plugins'][data-paw-os-app] .plugins-maintenance-entry,
-  main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__approval,
+  main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__receipt,
   main[data-route-id='plugins'][data-paw-os-app] .capability-precedence > header { align-items: stretch; flex-direction: column; }
   main[data-route-id='plugins'][data-paw-os-app] .plugins-filters,
   main[data-route-id='plugins'][data-paw-os-app] .plugins-browser,
   main[data-route-id='plugins'][data-paw-os-app] .plugins-browser[data-detail-open='true'],
   main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__install,
+  main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__approval-facts > div,
   main[data-route-id='plugins'][data-paw-os-app] .plugin-catalog__row,
   main[data-route-id='plugins'][data-paw-os-app] .lifecycle-policy,
   main[data-route-id='plugins'][data-paw-os-app] .lifecycle-policy__limits,
@@ -776,13 +869,16 @@ main[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto
 main[data-route-id='plugins'][data-paw-os-app] :is(
   .plugins-policy-disclosure > summary small,
   .plugin-lifecycle__approval small,
+  .plugin-lifecycle__stages li,
+  .plugin-lifecycle__approval-facts dt,
+  .plugin-lifecycle__approval-facts dd,
+  .plugin-lifecycle__receipt small,
   .lifecycle-audit small,
-  .capability-stage-legend > span,
-  .capability-stage-legend b,
   .capability-disclosure dt,
   .capability-disclosure dd
 ) { font-size: 13px; }
 main[data-route-id='plugins'][data-paw-os-app] :is(
+  .plugin-lifecycle__approval-heading strong,
   .capability-disclosure h4,
   .capability-disclosure summary
 ) { font-size: 14px; }

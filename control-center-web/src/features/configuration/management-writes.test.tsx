@@ -96,7 +96,7 @@ describe('Configuration settings WorkContract UI', () => {
     await user.click(await screen.findByRole('button', { name: /^上下文/ }));
     const secretInput = await screen.findByLabelText('管理令牌');
     expect(secretInput).toBeDisabled();
-    expect(screen.getByText('请使用上方模型账号或对应安全功能修改。')).toBeInTheDocument();
+    expect(screen.getByText('请使用下方模型账号或对应安全功能修改。')).toBeInTheDocument();
     const workflow = screen.getByText('保存这些设置', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 
@@ -150,6 +150,25 @@ describe('Configuration settings WorkContract UI', () => {
         confirmText: 'apply',
       },
     });
+  });
+
+  it('leads with the settings editor and keeps accounts and wayfinding below it', async () => {
+    renderConfiguration(true);
+    await screen.findByRole('heading', { name: '设置', level: 1 });
+
+    const editor = await screen.findByRole('heading', { name: '称呼、对话与上下文', level: 2 });
+    const accounts = await screen.findByRole('heading', { name: '模型账号', level: 2 });
+    const subagents = screen.getByRole('heading', { name: '子 Agent', level: 2 });
+    const destinations = screen.getByRole('heading', { name: '功能设置', level: 2 });
+    const portability = screen.getByRole('heading', { name: '迁移与恢复', level: 2 });
+
+    const follows = (earlier: HTMLElement, later: HTMLElement) => Boolean(
+      earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(follows(editor, accounts)).toBe(true);
+    expect(follows(accounts, subagents)).toBe(true);
+    expect(follows(subagents, destinations)).toBe(true);
+    expect(follows(destinations, portability)).toBe(true);
   });
 
   it('finds settings by human wording and recovers cleanly from an empty result', async () => {

@@ -12,6 +12,49 @@ main[data-route-id='observability'] .observation-connection-notice .mgmt-notice 
   flex: 1 1 auto;
 }
 
+main[data-route-id='observability'] .observation-console {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* The pulse strip is ambient status, not a destination: one row of live
+   counts that reads at a glance without claiming a whole card section. */
+main[data-route-id='observability'] .observation-pulse {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+}
+
+main[data-route-id='observability'] .observation-pulse__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='observability'] .observation-pulse__stat svg {
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='observability'] .observation-pulse__stat[data-tone='active'],
+main[data-route-id='observability'] .observation-pulse__stat[data-tone='active'] svg {
+  color: var(--color-warning);
+}
+
+main[data-route-id='observability'] .observation-pulse__stat[data-tone='danger'],
+main[data-route-id='observability'] .observation-pulse__stat[data-tone='danger'] svg {
+  color: var(--color-danger);
+}
+
 main[data-route-id='observability'] .observation-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 320px) auto;
@@ -481,6 +524,28 @@ main[data-route-id='observability'] .observation-debug-actions strong { font-siz
 main[data-route-id='observability'] .observation-debug-actions small { color: var(--color-text-tertiary); font-size: 12px; }
 main[data-route-id='observability'] .observation-debug-context > summary::marker { content: ''; }
 
+/* The privacy boundary is a standing property of this surface, not an alert;
+   it closes the console as quiet fine print instead of a leading banner. */
+main[data-route-id='observability'] .observation-privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='observability'] .observation-privacy svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+main[data-route-id='observability'] .observation-privacy p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 /* Category filters are high-frequency controls: only color changes, with no
    positional motion or delayed panel transition. */
 @media (hover: hover) and (pointer: fine) {
@@ -617,6 +682,8 @@ main[data-route-id='observability'][data-paw-os-app] :is(
 ) { font-size: 14px; }
 main[data-route-id='observability'][data-paw-os-app] :is(
   .observation-scope,
+  .observation-pulse__stat,
+  .observation-privacy p,
   .observation-row__copy small,
   .observation-row__scope small,
   .observation-row__scope time,

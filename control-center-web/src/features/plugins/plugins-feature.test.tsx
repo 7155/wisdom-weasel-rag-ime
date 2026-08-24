@@ -379,7 +379,14 @@ describe('PluginsFeature', () => {
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
     await user.click(await screen.findByRole('button', { name: '查看安装内容' }));
     expect(transport.filePickCalls).toEqual([]);
-    expect(await screen.findByText('等待你的批准')).toBeInTheDocument();
+
+    const approval = await screen.findByRole('region', { name: '待确认的插件更改' });
+    expect(within(approval).getByText('等待你的批准')).toBeVisible();
+    const stages = within(approval).getByRole('list', { name: '生命周期进度' });
+    expect(within(stages).getByText('检查来源')).toBeVisible();
+    expect(within(stages).getByText('你的确认')).toHaveAttribute('aria-current', 'step');
+    expect(within(stages).getByText('应用并出具回执')).toBeVisible();
+
     await user.click(screen.getByRole('button', { name: '确认更改' }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'agent.extensions.apply'
@@ -389,6 +396,12 @@ describe('PluginsFeature', () => {
       && call.request.body.confirmText === 'apply'
       && call.request.body.previewToken === 'preview-token'
     ))).toBe(true));
+
+    expect(await screen.findByText('更改已应用')).toBeVisible();
+    expect(screen.getByText('安装插件：Guided Plugin')).toBeVisible();
+    expect(screen.getByText(/回执 plugin:install:test/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '知道了' }));
+    expect(screen.queryByText('更改已应用')).not.toBeInTheDocument();
   });
 
   it('shows governed versions and lifecycle policies, and can toggle a hook', async () => {
@@ -556,7 +569,11 @@ describe('PluginsFeature', () => {
 
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
     await user.click(await screen.findByRole('button', { name: /对话复盘/ }));
-    expect(screen.getByText('v1.1.0 · 需要的权限：读取对话内容 · 当前已启用')).toBeVisible();
+    const approval = await screen.findByRole('region', { name: '待确认的插件更改' });
+    const fact = (label: string) => within(approval).getByText(label).nextElementSibling as HTMLElement;
+    expect(fact('版本')).toHaveTextContent('v1.1.0');
+    expect(fact('需要的权限')).toHaveTextContent('读取对话内容');
+    expect(fact('当前状态')).toHaveTextContent('已启用');
   });
   it('requires explicit confirmation before disabling or rolling back an installed Package', async () => {
     const user = userEvent.setup();
@@ -603,7 +620,9 @@ describe('PluginsFeature', () => {
       call.request.pathId === 'agent.extensions.apply'
     ))).toHaveLength(1));
 
-    expect(screen.queryByText('时间线检查')).not.toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: '时间线检查 Package' })).not.toBeInTheDocument();
+    expect(screen.getByText('卸载插件：时间线检查')).toBeVisible();
+    expect(screen.getByText(/回执 plugin:uninstall:preview/)).toBeVisible();
     expect(screen.getByRole('heading', { name: '还没有额外扩展' })).toBeVisible();
   });
 

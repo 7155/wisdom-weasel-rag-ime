@@ -267,7 +267,7 @@ export function PiProviderCredentials() {
   }
   if (!providers.length) {
     return <ManagementSection title="模型账号"><InlineNotice title="还没有模型服务" tone="warning">
-      请先在下方运行设置中配置模型服务，再重新读取账号列表。
+      请先在上方运行设置中配置模型服务，再重新读取账号列表。
       <div className="mgmt-toolbar configuration-provider-recovery-actions">
         <Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={() => void catalog.refetch()} size="small">重新读取</Button>
       </div>

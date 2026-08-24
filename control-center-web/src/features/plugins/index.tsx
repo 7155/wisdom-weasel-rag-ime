@@ -68,6 +68,7 @@ type ToolRecord = CapabilityCatalogItem;
 type KindFilter = 'all' | CapabilityKind;
 type DefaultMutationOutcome = CapabilityMutationOutcome & { scope: 'global' | 'project' };
 type AvailabilityFilter = 'all' | 'online' | 'attention';
+type LifecycleReceipt = { summary: string; evidence: string };
 
 const kindFilters: readonly { label: string; value: KindFilter }[] = [
   { label: '全部', value: 'all' },
@@ -129,6 +130,7 @@ export function PluginsFeature() {
   const [packageSource, setPackageSource] = useState('');
   const [validation, setValidation] = useState<Record<string, unknown>>({});
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
+  const [lifecycleReceipt, setLifecycleReceipt] = useState<LifecycleReceipt>();
   const [lifecycleError, setLifecycleError] = useState('');
   const [defaultMutation, setDefaultMutation] = useState<DefaultMutationOutcome>();
   const [hookError, setHookError] = useState('');
@@ -312,6 +314,7 @@ export function PluginsFeature() {
   };
   const previewInstalledAction = async (action: 'enable' | 'disable' | 'uninstall' | 'rollback', pluginId: string) => {
     setLifecycleError('');
+    setLifecycleReceipt(undefined);
     try {
       setPendingChange(asRecord(await preview.mutateAsync({ action, pluginId })));
     } catch (error) {
@@ -321,6 +324,7 @@ export function PluginsFeature() {
 
   const previewCatalogAction = async (item: Record<string, unknown>) => {
     setLifecycleError('');
+    setLifecycleReceipt(undefined);
     try {
       const validationResult = asRecord(await validate.mutateAsync({
         catalogId: stringValue(item.id),
@@ -340,6 +344,7 @@ export function PluginsFeature() {
   const previewPackageSource = async () => {
     const source = packageSource.trim();
     setLifecycleError('');
+    setLifecycleReceipt(undefined);
     setValidation({});
     setPendingChange({});
     if (!source) {
@@ -364,11 +369,17 @@ export function PluginsFeature() {
 
   const applyPendingChange = async () => {
     setLifecycleError('');
+    const confirmedSummary = `${pluginActionLabel(stringValue(pendingSummary.action))}：${publicPluginDisplayName(pendingDisplayName)}`;
     try {
-      await apply.mutateAsync({
+      const response = asRecord(await apply.mutateAsync({
         previewToken: stringValue(pendingChange.previewToken),
         payloadSha256: stringValue(pendingChange.payloadSha256),
         confirmText: 'apply',
+      }));
+      const receiptId = stringValue(asRecord(response.receipt).receiptId);
+      setLifecycleReceipt({
+        summary: confirmedSummary,
+        evidence: receiptId ? `回执 ${receiptId} · 安装状态已重新读取` : '安装状态已重新读取',
       });
       setPendingChange({});
       setValidation({});
@@ -656,30 +667,52 @@ export function PluginsFeature() {
             ) : null}
 
             {pendingChange.previewToken ? (
-              <InlineNotice title="等待你的批准" tone="warning">
-                <div className="plugin-lifecycle__approval">
+              <section aria-label="待确认的插件更改" className="plugin-lifecycle__approval">
+                <header className="plugin-lifecycle__approval-heading">
                   <span>
-                    {pluginActionLabel(stringValue(pendingSummary.action))}：{publicPluginDisplayName(pendingDisplayName)}
-                    <small>
-                      {pendingCanonicalEvidence}
-                      {stringValue(pendingSummary.version) ? `v${stringValue(pendingSummary.version)} · ` : ''}
-                      {stringArray(pendingSummary.permissions).length
-                        ? `需要的权限：${stringArray(pendingSummary.permissions).map(publicPluginPermissionLabel).join('、')}`
-                        : '无额外权限'}
-                      {pendingResourceCount ? ` · ${pendingResourceCount} 项 Pi 资源` : ''}
-                      {stringValue(pendingSource.kind) ? ` · 来源：${publicPluginSourceLabel(stringValue(pendingSource.kind))}` : ''}
-                      {typeof pendingSummary.expectedEnabled === 'boolean'
-                        ? ` · 当前${pendingSummary.expectedEnabled ? '已启用' : '已停用'}`
-                        : ''}
-                      {stringValue(pendingSummary.action) === 'uninstall'
-                        ? ' · 只移除这个 Pi Package 的受管资源；不会删除项目文件、对话、WorkDocument 或个人数据。'
-                        : ''}
-                    </small>
+                    <small>等待你的批准</small>
+                    <strong>{pluginActionLabel(stringValue(pendingSummary.action))}：{publicPluginDisplayName(pendingDisplayName)}</strong>
                   </span>
+                  <ol aria-label="生命周期进度" className="plugin-lifecycle__stages">
+                    <li data-state="done">检查来源</li>
+                    <li data-state="done">预览影响</li>
+                    <li aria-current="step" data-state="current">你的确认</li>
+                    <li data-state="todo">应用并出具回执</li>
+                  </ol>
+                </header>
+                <dl className="plugin-lifecycle__approval-facts">
+                  {pendingCanonicalEvidence ? <div><dt>标识</dt><dd>{pendingPluginId}</dd></div> : null}
+                  {stringValue(pendingSummary.version) ? <div><dt>版本</dt><dd>v{stringValue(pendingSummary.version)}</dd></div> : null}
                   <div>
-                    <Button disabled={lifecyclePending} onClick={() => setPendingChange({})} size="small" variant="quiet">取消</Button>
-                    <Button leadingIcon={<ShieldCheck size={16} />} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button>
+                    <dt>需要的权限</dt>
+                    <dd>{stringArray(pendingSummary.permissions).length
+                      ? stringArray(pendingSummary.permissions).map(publicPluginPermissionLabel).join('、')
+                      : '无额外权限'}</dd>
                   </div>
+                  {pendingResourceCount ? <div><dt>Pi 资源</dt><dd>{pendingResourceCount} 项 · 新对话加载 Skill、Prompt 与主题</dd></div> : null}
+                  {stringValue(pendingSource.kind) ? <div><dt>来源</dt><dd>{publicPluginSourceLabel(stringValue(pendingSource.kind))}</dd></div> : null}
+                  {typeof pendingSummary.expectedEnabled === 'boolean'
+                    ? <div><dt>当前状态</dt><dd>{pendingSummary.expectedEnabled ? '已启用' : '已停用'}</dd></div>
+                    : null}
+                  {stringValue(pendingSummary.action) === 'uninstall'
+                    ? <div><dt>保留的数据</dt><dd>只移除这个 Pi Package 的受管资源；不会删除项目文件、对话、WorkDocument 或个人数据。</dd></div>
+                    : null}
+                </dl>
+                <div className="plugin-lifecycle__approval-actions">
+                  <Button disabled={lifecyclePending} onClick={() => setPendingChange({})} size="small" variant="quiet">取消</Button>
+                  <Button leadingIcon={<ShieldCheck size={16} />} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button>
+                </div>
+              </section>
+            ) : null}
+
+            {lifecycleReceipt && !pendingChange.previewToken ? (
+              <InlineNotice title="更改已应用" tone="success">
+                <div className="plugin-lifecycle__receipt">
+                  <span>
+                    {lifecycleReceipt.summary}
+                    <small>{lifecycleReceipt.evidence}</small>
+                  </span>
+                  <Button onClick={() => setLifecycleReceipt(undefined)} size="small" variant="quiet">知道了</Button>
                 </div>
               </InlineNotice>
             ) : null}
