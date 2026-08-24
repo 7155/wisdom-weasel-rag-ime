@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Columns2, Rows3 } from 'lucide-react';
 import { SegmentedControl } from '@/components/primitives';
-import { pairDiffLines, parseUnifiedDiff, type DiffFile, type DiffLine } from './unified-diff';
+import { CopyTextButton } from './CopyTextButton';
+import { countDiffLines, countFileDiffLines, pairDiffLines, parseUnifiedDiff, type DiffFile, type DiffLine } from './unified-diff';
 
 export function DiffPreview({
   content,
@@ -25,6 +26,7 @@ export function DiffPreview({
        file content is changed. */
     return parseUnifiedDiff(`--- a/${fileName}\n+++ b/${fileName}\n${content}`);
   }, [content, fileName]);
+  const totals = useMemo(() => countDiffLines(files), [files]);
   if (!files.length) {
     return (
       <pre
@@ -46,17 +48,20 @@ export function DiffPreview({
       role={disclosureRegionId ? 'region' : undefined}
     >
       <header>
-        <small>{files.length} 个文件</small>
-        <SegmentedControl
-          aria-label="Diff 展示方式"
-          className="agent-diff-preview__mode"
-          items={[
-            { value: 'unified', label: <span><Rows3 size={13} />单栏</span> },
-            { value: 'split', label: <span><Columns2 size={13} />并排</span> },
-          ]}
-          onValueChange={setMode}
-          value={mode}
-        />
+        <small>{files.length} 个文件 · +{totals.added} −{totals.removed}</small>
+        <span className="agent-diff-preview__actions">
+          <CopyTextButton label="补丁原文" value={content} />
+          <SegmentedControl
+            aria-label="Diff 展示方式"
+            className="agent-diff-preview__mode"
+            items={[
+              { value: 'unified', label: <span><Rows3 size={13} />单栏</span> },
+              { value: 'split', label: <span><Columns2 size={13} />并排</span> },
+            ]}
+            onValueChange={setMode}
+            value={mode}
+          />
+        </span>
       </header>
       <div
         aria-label="Diff 文件列表"
@@ -71,9 +76,10 @@ export function DiffPreview({
 }
 
 function FileDiff({ file, mode }: { file: DiffFile; mode: 'unified' | 'split' }) {
+  const totals = countFileDiffLines(file);
   return (
     <section className="agent-diff-file" data-status={file.status}>
-      <header><strong>{file.path}</strong><span>{statusLabel(file.status)}</span></header>
+      <header><strong>{file.path}</strong><span>{statusLabel(file.status)} · +{totals.added} −{totals.removed}</span></header>
       <div
         aria-label={`${file.path} 变更内容`}
         className="agent-diff-file__scroll"

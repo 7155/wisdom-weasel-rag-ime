@@ -8,6 +8,73 @@ import { PawContextTrace, projectionTraceTurns } from './PawContextTrace';
 
 afterEach(cleanup);
 
+describe('PawContextTrace evidence access', () => {
+  it('opens a trace node without captured body to its real capture record with a safe copy', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': debugContextResponse(),
+        'agent.session.contextTraces.list': {
+          ok: true,
+          items: [{ traceId: 'trace-a', sessionId: 'session-a', turnId: 'turn-a' }],
+        },
+        'agent.session.contextTrace.get': contextTraceResponse(),
+      },
+    });
+    const user = userEvent.setup();
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawContextTrace active sessionId="session-a" />
+      </ControlTransportProvider>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: '上下文装配' }));
+
+    const memoryNode = (await screen.findByText('记忆注入', { selector: '.n-label' })).closest('details');
+    expect(memoryNode).not.toBeNull();
+    await user.click(memoryNode!.querySelector('summary')!);
+    expect(memoryNode).toHaveAttribute('open');
+
+    const record = within(memoryNode!).getByRole('region', { name: '节点捕获记录，可滚动原文' });
+    expect(record).toHaveTextContent('"stage": "memory"');
+    expect(record).toHaveTextContent('"summary": "3 条偏好"');
+    expect(record).toHaveTextContent('"itemCount": 3');
+    expect(within(memoryNode!).getByText('contextTrace 未附带该阶段的原文捕获；以上为该节点记录的全部真实字段。')).toBeInTheDocument();
+
+    await user.click(within(memoryNode!).getByRole('button', { name: '复制节点捕获记录' }));
+    expect(await within(memoryNode!).findByRole('button', { name: '复制节点捕获记录：已复制' })).toBeInTheDocument();
+    await expect(navigator.clipboard.readText()).resolves.toContain('"stage": "memory"');
+  });
+
+  it('shows line and character counts with a copy action on captured assembly evidence', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': debugContextResponse(),
+        'agent.session.contextTraces.list': { ok: true, items: [] },
+      },
+    });
+    const user = userEvent.setup();
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawContextTrace active sessionId="session-a" />
+      </ControlTransportProvider>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: '上下文装配' }));
+
+    const systemNode = screen.getByText('系统指令', { selector: '.n-label' }).closest('details');
+    expect(systemNode).not.toBeNull();
+    await user.click(systemNode!.querySelector('summary')!);
+
+    const evidence = within(systemNode!).getByRole('region', { name: '本次模型调用收到的系统指令，可滚动原文' });
+    expect(evidence).toHaveTextContent('真实系统提示');
+    expect(within(systemNode!).getByText('1 行 · 6 字符')).toBeInTheDocument();
+    await user.click(within(systemNode!).getByRole('button', { name: '复制本次模型调用收到的系统指令' }));
+    await expect(navigator.clipboard.readText()).resolves.toBe('真实系统提示');
+  });
+});
+
 describe('PawContextTrace', () => {
   it('renders the turn-grouped projection trace and keeps real context assembly available', async () => {
     const transport = new MockControlTransport({
@@ -580,6 +647,21 @@ function contextTraceResponse() {
       reason: '',
       metadata: {},
       createdAtMs: 102,
+    }, {
+      nodeId: 'node-memory',
+      ordinal: 2,
+      stage: 'memory',
+      label: '记忆注入',
+      sourceKind: 'memory',
+      disposition: 'included',
+      summary: '3 条偏好',
+      charCount: 420,
+      tokenEstimate: 105,
+      durationMs: 1,
+      fingerprint: 'sha256:fedcba9876543210',
+      reason: '',
+      metadata: { itemCount: 3 },
+      createdAtMs: 103,
     }],
     edges: [],
     createdAtMs: 100,

@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import { Button, IconButton } from '@/components/primitives';
 import { AgentHtmlReportCard } from './AgentHtmlReportCard';
+import { CopyTextButton } from './CopyTextButton';
 import { filePreviewRequestFromBlock, fileSizeLabel, isHtmlReport } from './file-descriptor';
 import { FilePreviewRenderer } from './renderer-registry';
 import { useFilePreviewStore } from './file-preview-store';
@@ -80,18 +81,21 @@ export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, 
           id={regionId}
         >
           <header>
-            <span>
-              {status === 'loading' ? '正在读取文件' : preview?.truncated ? '显示前 512 KB' : '文件内容'}
+            <span>{inlinePreviewCaption(status, preview?.truncated ?? false, preview?.content)}</span>
+            <span className="agent-file-preview-inline__actions">
+              {status === 'ready' && typeof preview?.content === 'string' && preview.content ? (
+                <CopyTextButton label={`${fileName} 内容`} value={preview.content} />
+              ) : null}
+              {preview?.descriptor ? (
+                <IconButton
+                  icon={<ExternalLink size={15} />}
+                  label={`打开原文件 ${fileName}`}
+                  onClick={() => window.open(preview.descriptor.contentUrl, '_blank', 'noopener,noreferrer')}
+                  size="small"
+                  tooltip
+                />
+              ) : null}
             </span>
-            {preview?.descriptor ? (
-              <IconButton
-                icon={<ExternalLink size={15} />}
-                label={`打开原文件 ${fileName}`}
-                onClick={() => window.open(preview.descriptor.contentUrl, '_blank', 'noopener,noreferrer')}
-                size="small"
-                tooltip
-              />
-            ) : null}
           </header>
           <div className="agent-file-preview-inline__body" data-preview-kind={status === 'ready' ? preview?.descriptor.previewKind : undefined}>
             {status === 'loading' ? <div className="agent-file-preview-inline__state"><LoaderCircle size={19} /><span>正在读取文件</span></div> : null}
@@ -121,6 +125,19 @@ function samePreviewRequest(
     && left.sessionId === right.sessionId
     && left.expectedSha256 === right.expectedSha256,
   );
+}
+
+function inlinePreviewCaption(
+  status: string,
+  truncated: boolean,
+  content: string | undefined | null,
+): string {
+  if (status === 'loading') return '正在读取文件';
+  const scope = truncated ? '显示前 512 KB' : '文件内容';
+  if (typeof content === 'string' && content) {
+    return `${scope} · ${content.split('\n').length.toLocaleString('zh-CN')} 行`;
+  }
+  return scope;
 }
 
 function fileKind(fileName: string, mimeType: string): 'code' | 'diff' | 'document' | 'image' | 'file' {

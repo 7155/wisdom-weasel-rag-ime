@@ -29,7 +29,6 @@ import {
 } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Disclosure } from '@/components/primitives';
-import { writeClipboardText } from '@/platform/clipboard';
 import type {
   AgentActivityProjection,
   AgentMessageProjection,
@@ -47,6 +46,7 @@ import {
   type DebugTurnSummary,
 } from '@/features/context-debug/model';
 import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
+import { CopyTextButton } from '@/features/agent/file-preview/CopyTextButton';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
@@ -375,7 +375,23 @@ export function PawContextTrace({
                           <span>处置 <b>{node.disposition}</b></span>
                         </div>
                         {node.reason ? <div className="nb-row"><span>原因 <b>{node.reason}</b></span></div> : null}
-                        {evidence ? <AssemblyEvidence evidence={evidence} /> : null}
+                        {evidence ? (
+                          <AssemblyEvidence evidence={evidence} />
+                        ) : (
+                          /* PF-CM-010: a summary row is never a dead end. When
+                             contextTrace carries no captured body for this
+                             stage, open to the node's complete real capture
+                             record and say so — do not stay silent and do not
+                             invent content. */
+                          <AssemblyEvidence
+                            evidence={{
+                              label: '节点捕获记录',
+                              value: traceNodeCaptureRecord(node),
+                              kind: 'json',
+                            }}
+                            note="contextTrace 未附带该阶段的原文捕获；以上为该节点记录的全部真实字段。"
+                          />
+                        )}
                     </Disclosure>
                     );
                   })
@@ -545,14 +561,14 @@ type AssemblyEvidenceValue = {
   kind: 'json' | 'text';
 };
 
-function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
+function AssemblyEvidence({ evidence, note }: { evidence: AssemblyEvidenceValue; note?: string }) {
   return (
     <section className="an-assembly-evidence" aria-label={evidence.label}>
       <header>
         <strong>{evidence.label}</strong>
-        <span className="an-evidence-tools">
-          <span>{formatNumber(evidence.value.length)} 字符</span>
-          <EvidenceCopyButton label={evidence.label} value={evidence.value} />
+        <span className="agent-trace-evidence-actions">
+          <small>{formatNumber(countLines(evidence.value))} 行 · {formatNumber(evidence.value.length)} 字符</small>
+          <CopyTextButton label={evidence.label} value={evidence.value} />
         </span>
       </header>
       <pre
@@ -563,32 +579,26 @@ function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
       >
         {evidence.value}
       </pre>
+      {note ? <p className="agent-trace-evidence-note">{note}</p> : null}
     </section>
   );
 }
 
-/* 核对后的原文经常要带走比对；全选一段可滚动 pre 不应是唯一途径。 */
-function EvidenceCopyButton({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
-  const resetRef = useRef(0);
-  useEffect(() => () => window.clearTimeout(resetRef.current), []);
-  return (
-    <button
-      aria-label={copied ? `已复制${label}` : `复制${label}`}
-      className="an-evidence-copy"
-      data-copied={copied || undefined}
-      onClick={() => {
-        void writeClipboardText(value).then(() => {
-          setCopied(true);
-          window.clearTimeout(resetRef.current);
-          resetRef.current = window.setTimeout(() => setCopied(false), 1_400);
-        }).catch(() => setCopied(false));
-      }}
-      type="button"
-    >
-      {copied ? '已复制' : '复制'}
-    </button>
-  );
+function traceNodeCaptureRecord(node: AgentContextTraceV1['nodes'][number]): string {
+  return formatEvidence(safeTraceEvidence({
+    stage: node.stage,
+    label: node.label || undefined,
+    sourceKind: node.sourceKind,
+    disposition: node.disposition,
+    summary: node.summary || undefined,
+    reason: node.reason || undefined,
+    tokenEstimate: node.tokenEstimate,
+    charCount: node.charCount,
+    durationMs: node.durationMs,
+    fingerprint: node.fingerprint,
+    metadata: node.metadata,
+    createdAtMs: node.createdAtMs,
+  }));
 }
 
 function traceNodeEvidence(stage: string, context: DebugContextRecord): AssemblyEvidenceValue | undefined {
@@ -878,8 +888,9 @@ function TraceEvidenceSection({ section }: { section: TraceEvidenceSectionValue 
         </>
       )}
     >
-      <div className="an-evidence-actions">
-        <EvidenceCopyButton label={section.label} value={section.value} />
+      <div className="agent-trace-evidence-tools">
+        <small>{formatNumber(countLines(section.value))} 行 · {formatNumber(section.value.length)} 字符</small>
+        <CopyTextButton label={section.label} value={section.value} />
       </div>
       <pre
         aria-label={`${section.label}，可滚动原文`}
@@ -1139,6 +1150,9 @@ function text(value: unknown): string {
 }
 function estimateTokens(content: string): number {
   return content ? Math.ceil(content.length / 4) : 0;
+}
+function countLines(content: string): number {
+  return content ? content.split('\n').length : 0;
 }
 function findCache(cache: DebugCacheEvidence[], call: DebugModelCall): DebugCacheEvidence | undefined {
   return cache.find((item) => item.requestIndex === call.index);
