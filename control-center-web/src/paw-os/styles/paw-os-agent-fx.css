@@ -239,11 +239,13 @@
   gap: 20px;
 }
 
+/* Same 220ms spring as .agent-smooth-reveal (DISCLOSURE_MOTION): the turn
+   work fold and every nested reveal answer with one motion voice. */
 .paw-desktop-root .paw-chatfx .agent-turn-work__reveal {
   min-width: 0;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 150ms ease;
+    height 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)),
+    opacity 170ms ease;
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work__process {
@@ -433,8 +435,8 @@
   color: var(--paw-chat-text-secondary);
   font-size: 13px;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 150ms ease,
+    height 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)),
+    opacity 170ms ease,
     margin 200ms ease;
 }
 

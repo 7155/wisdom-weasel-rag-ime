@@ -632,15 +632,17 @@
 .agent-activity:active { box-shadow: var(--shadow-control-press); transform: translateY(1px); }
 .agent-activity > svg { color: var(--color-text-tertiary); }
 /* Height/easing must stay in step with DISCLOSURE_MOTION in
-   SmoothDisclosureReveal.tsx, which bounds the fallback finish timer. */
+   SmoothDisclosureReveal.tsx, which bounds the fallback finish timer. This is
+   the conversation baseline's disclosure spring (--paw-chat-spring): every
+   reveal in the timeline answers with the same 220ms voice. */
 .agent-smooth-reveal {
   min-width: 0;
   overflow: hidden;
   overflow: clip;
   opacity: 0;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 150ms ease;
+    height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
+    opacity 170ms ease;
   will-change: height;
 }
 .agent-smooth-reveal[data-state='opening'],

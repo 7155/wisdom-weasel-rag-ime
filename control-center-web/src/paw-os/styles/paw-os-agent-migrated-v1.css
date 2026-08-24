@@ -646,6 +646,7 @@
 
 /* 输入船坞：白卡 + 分层投影悬浮；聚焦时亮起冷钴描边与光环。 */
 .paw-desktop-root .paw-session-workspace__composer .agent-composer {
+  position: relative;
   border: 0;
   border-radius: 18px;
   background: #fff;
@@ -662,6 +663,79 @@
     0 12px 36px rgb(24 32 43 / 10%),
     0 0 0 1px color-mix(in srgb, var(--paw-chat-accent) 46%, rgb(24 32 43 / 10%)),
     0 0 0 4px color-mix(in srgb, var(--paw-chat-accent) 9%, transparent);
+}
+
+/* 工作光环（签收基线的 composer 呼吸）：回合执行时，一圈钴-紫渐隐光沿船坞
+   边缘缓慢行进——「Agent 正在为你工作」的环境信号，不遮挡任何控件。
+   停止中切换为静止的琥珀描边：动停下来，但状态仍然可见。 */
+.paw-desktop-root .paw-session-workspace__composer .agent-composer::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  z-index: 1;
+  padding: 2px;
+  border-radius: 20px;
+  background: conic-gradient(
+    from var(--paw-chat-glow-angle, 0deg),
+    transparent 0%,
+    color-mix(in srgb, var(--paw-chat-accent) 55%, transparent) 12%,
+    color-mix(in srgb, var(--paw-chat-violet) 40%, transparent) 22%,
+    transparent 34%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 220ms ease;
+  pointer-events: none;
+}
+
+.paw-desktop-root .paw-session-workspace[data-status='busy'] .paw-session-workspace__composer .agent-composer::before {
+  opacity: 1;
+  animation: paw-chat-glow-rotate 3.2s linear infinite;
+}
+
+.paw-desktop-root .paw-session-workspace[data-status='stopping'] .paw-session-workspace__composer .agent-composer::before {
+  opacity: 1;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--paw-chat-warn) 34%, transparent),
+    color-mix(in srgb, var(--paw-chat-warn) 34%, transparent)
+  );
+  animation: none;
+}
+
+@keyframes paw-chat-glow-rotate {
+  to { --paw-chat-glow-angle: 360deg; }
+}
+
+@property --paw-chat-glow-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Reduced motion keeps the state signal but stops the march: a still accent
+   ring instead of a rotating gradient. */
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root .paw-session-workspace[data-status='busy'] .paw-session-workspace__composer .agent-composer::before {
+    background: conic-gradient(
+      from 0deg,
+      color-mix(in srgb, var(--paw-chat-accent) 30%, transparent),
+      color-mix(in srgb, var(--paw-chat-accent) 30%, transparent)
+    );
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace[data-status='busy'] .paw-session-workspace__composer .agent-composer::before {
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--paw-chat-accent) 30%, transparent),
+    color-mix(in srgb, var(--paw-chat-accent) 30%, transparent)
+  );
+  animation: none;
 }
 
 .paw-desktop-root .paw-session-workspace__composer .agent-composer textarea {

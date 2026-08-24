@@ -80,7 +80,8 @@
 .an-send:hover:not(:disabled) { background: var(--an-cobalt); transform: translateY(-2px); }
 .an-send:active:not(:disabled) { transform: translateY(0) scale(.96); }
 .an-send:disabled { opacity: .34; }
-.an-menu { position: absolute; z-index: 40; bottom: calc(100% + 8px); left: 0; width: min(330px, calc(100cqw - 32px)); max-height: 330px; overflow: auto; padding: 7px; border: 1px solid var(--an-rule); border-radius: 10px; background: var(--an-paper-bright); box-shadow: 0 18px 42px rgba(24, 32, 43, .15); animation: an-menu-in 180ms var(--an-ease-out) both; }
+/* 锚定菜单向下展开：Home 的 Composer 靠近页面顶部，向上展开会撞到窗顶。 */
+.an-menu { position: absolute; z-index: 40; top: calc(100% + 8px); left: 0; width: min(330px, calc(100cqw - 32px)); max-height: 330px; overflow: auto; padding: 7px; border: 1px solid var(--an-rule); border-radius: 10px; background: var(--an-paper-bright); box-shadow: 0 18px 42px rgba(24, 32, 43, .15); animation: an-menu-in 180ms var(--an-ease-out) both; }
 .an-anchor:nth-last-of-type(-n + 2) .an-menu { right: 0; left: auto; }
 .an-menu-title,
 .an-menu-group { padding: 6px 9px 5px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .07em; }
@@ -136,73 +137,11 @@
 .an-home-foot button { padding: 1px 7px; border: 1px solid var(--an-rule); border-radius: 6px; background: var(--an-paper-bright); color: var(--an-cobalt); font-size: 12px; font-weight: 650; }
 .an-home-foot button:hover { border-color: var(--an-rule-strong); background: var(--an-paper-soft); }
 
-/* Conversation uses the same single paper surface as New Work and Agent trace.
-   These bounded overrides remove the older Composition 8 wallpaper effects
-   without touching the real Session timeline, tools, approvals, or composer. */
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next {
-  background: var(--an-paper);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-timeline {
-  width: min(920px, 100%);
-  margin: 0 auto;
-  padding: 22px 34px 26px 42px;
-  background: var(--an-paper);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-timeline::before {
-  top: 22px;
-  bottom: 26px;
-  left: 21px;
-  background: var(--an-hairline);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-timeline :is(
-  .agent-user-message-shell,
-  .agent-assistant-turn,
-  .agent-activity-group,
-  .agent-turn__failure
-)::before { left: -25px; }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message {
-  min-width: 4.5em;
-  border-color: var(--an-rule);
-  border-left-color: var(--an-ink);
-  border-radius: 10px;
-  background: var(--an-paper-bright);
-  box-shadow: 0 1px 2px rgba(24, 32, 43, .07), 0 6px 16px rgba(24, 32, 43, .05);
-  color: var(--an-ink);
-  overflow-wrap: break-word;
-  word-break: normal;
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message::before { display: none; }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message__delivery { color: var(--an-ink-3); }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message a { color: var(--an-cobalt); }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-assistant-turn__body { border-left: 1px solid var(--an-violet); }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-assistant-message-shell:hover { background: var(--an-paper-soft); }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next :is(
-  .agent-activity-group,
-  .agent-tool-request,
-  .agent-tool-result-panel,
-  .agent-approval-block
-) {
-  background: var(--an-paper-bright);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .paw-session-workspace__composer {
-  border-top-color: var(--an-hairline);
-  background: var(--an-paper-bright);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-composer {
-  border-color: var(--an-rule);
-  background: var(--an-paper-bright);
-  box-shadow: 0 2px 8px rgba(24, 32, 43, .07);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-composer::before {
-  width: 1px;
-  background: var(--an-violet);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-composer:focus-within {
-  border-color: var(--an-violet);
-  box-shadow: 0 6px 18px rgba(24, 32, 43, .11);
-}
+/* The Session conversation is owned by paw-os-agent-migrated-v1.css and
+   paw-os-agent-fx.css (both later in the cascade). This file deliberately
+   stops at the shared type foundation above: an earlier compatibility block
+   that re-skinned .agent-user-message / .agent-assistant-turn__body here was
+   dead against the fx grammar and has been retired. */
 
 /* True Agent trace */
 .an-trace { display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--an-paper); }
@@ -321,7 +260,7 @@
 .paw-agent-next *::-webkit-scrollbar { width: 9px; height: 9px; }
 .paw-agent-next *::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 9px; background: var(--an-rule-strong); background-clip: padding-box; }
 
-@keyframes an-menu-in { from { opacity: 0; transform: translateY(5px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes an-menu-in { from { opacity: 0; transform: translateY(-5px) scale(.985); } to { opacity: 1; transform: none; } }
 @keyframes an-pulse { 50% { opacity: .34; transform: scale(.82); } }
 @keyframes an-spin { to { transform: rotate(360deg); } }
 @keyframes an-rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
@@ -402,14 +341,14 @@
 .an-evidence-tools { display: inline-flex; flex: none; align-items: center; gap: 8px; }
 .an-evidence-copy {
   flex: none;
-  min-height: 22px;
-  padding: 1px 9px;
+  min-height: 24px;
+  padding: 2px 10px;
   border: 1px solid var(--an-rule);
   border-radius: 999px;
   background: var(--an-paper-bright);
   color: var(--an-ink-2);
   font-family: var(--font-ui, inherit);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   line-height: 1.4;
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
