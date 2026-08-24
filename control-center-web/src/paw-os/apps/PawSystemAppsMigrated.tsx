@@ -496,6 +496,18 @@ function PawPackageCatalog() {
             ))}
           </div>
 
+          {/* The one pending decision sits above the grid, never below the
+              fold of a long catalogue. */}
+          {validation.validationToken && pendingChange.previewToken ? (
+            <InlineNotice title="等待你的确认" tone="warning">
+              <div className="paw-system-package-approval">
+                <span><strong>{packageActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</strong><small>{stringArray(pendingSummary.permissions).length ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}` : '无额外权限'}</small></span>
+                <div><Button disabled={busy} onClick={() => { setPendingChange({}); setValidation({}); }} size="small" variant="quiet">取消</Button><Button disabled={busy} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button></div>
+              </div>
+            </InlineNotice>
+          ) : null}
+          {error ? <InlineNotice title="Package 操作未完成" tone="danger">{error}</InlineNotice> : null}
+
           {visibleItems.length ? (
             <div className="paw-system-package-grid" aria-label="受管 Package 目录">
               {visibleItems.map((item) => {
@@ -543,16 +555,6 @@ function PawPackageCatalog() {
               title={versionItems.length ? '没有匹配的 Package' : '目录为空'}
             />
           )}
-
-          {validation.validationToken && pendingChange.previewToken ? (
-            <InlineNotice title="等待你的确认" tone="warning">
-              <div className="paw-system-package-approval">
-                <span><strong>{packageActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</strong><small>{stringArray(pendingSummary.permissions).length ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}` : '无额外权限'}</small></span>
-                <div><Button disabled={busy} onClick={() => { setPendingChange({}); setValidation({}); }} size="small" variant="quiet">取消</Button><Button disabled={busy} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button></div>
-              </div>
-            </InlineNotice>
-          ) : null}
-          {error ? <InlineNotice title="Package 操作未完成" tone="danger">{error}</InlineNotice> : null}
         </ManagementSection>
       </QueryState>
     </ManagementPage>
