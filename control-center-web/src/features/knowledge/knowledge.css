@@ -1529,6 +1529,22 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-libr
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-base-rail {
+  background: #eef1f8;
+  border-right-color: rgb(32 38 49 / .08);
+}
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-base-row {
+  margin: 2px 0;
+  border-radius: 10px;
+}
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-base-row[data-selected],
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-base-row[aria-current='true'] {
+  background: #fff;
+  box-shadow: inset 3px 0 var(--knowledge-indigo);
+}
+
 /* The library Tabs root is a layout owner, not a segmented control.  A broad
    PAWOS polish selector historically gave every `*-tabs` class a capsule and
    shrink-to-fit width; that left a dead column beside Knowledge at wide sizes.
