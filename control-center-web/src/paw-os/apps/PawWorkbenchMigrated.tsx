@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   CircleAlert,
@@ -16,15 +15,16 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Target,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import '../styles/paw-os-workbench-migrated-v1.css';
 
 /**
  * THESIS: Workbench is a live project dependency field, never a summary-card dashboard.
- * OWN-WORLD: Cold-white canvas, coral project identity, compact white task plates, dotted topology, blue flow, and restrained semantic inks.
- * STORY: Read the real project, inspect task ownership and dependencies, then open the authoritative task or WorkDocument.
- * FIRST VIEWPORT: Project outline left, dependency field center, selected truth right; overview and documents retain the same hierarchy.
+ * OWN-WORLD: Glacier-cool canvas, ultramarine workbench identity, white rounded plates, dotted topology, azure flow, and restrained semantic inks.
+ * STORY: Answer "what is the next unresolved thing" first, then inspect task ownership and dependencies, then open the authoritative task or WorkDocument.
+ * FIRST VIEWPORT: The now-band leads the overview; planning keeps outline, labelled dependency lanes and selected truth; documents are a two-pane reader.
  * FORM: Archive-led Operate extension, pawos-workbench-v1.
  */
 
@@ -87,7 +87,20 @@ interface TaskGraphEdge {
   active: boolean;
 }
 
+interface TaskGraphLane {
+  count: number;
+  lane: TaskLane;
+  x: number;
+}
+
 const GRAPH_LANES: readonly TaskLane[] = ['done', 'active', 'review', 'blocked', 'todo'];
+const GRAPH_LANE_LABELS: Record<TaskLane, string> = {
+  done: '已完成',
+  active: '进行中',
+  review: '待验收',
+  blocked: '受阻',
+  todo: '待办',
+};
 const GRAPH_NODE_WIDTH = 188;
 const GRAPH_NODE_HEIGHT = 82;
 const GRAPH_COLUMN_GAP = 42;
@@ -320,20 +333,41 @@ function ProjectOverview({
   const remainingTasks = Math.max(0, tasks.length - displayedTasks.length);
   const remainingLoadedDocuments = Math.max(0, documents.length - displayedDocuments.length);
   const remainingUnloadedDocuments = Math.max(0, resolvedDocumentTotal - documents.length);
+  const repoFacts: { label: string; value: string; mono?: boolean }[] = [
+    { label: '分支', value: text(project.branch) || text(overview.branch) },
+    { label: '状态', value: stateLabel(text(project.status) || text(overview.status)) },
+    { label: 'Revision', value: text(project.revision) || text(overview.revision), mono: true },
+  ].filter((fact) => Boolean(fact.value));
   return (
     <div className="paw-wb-overview">
       <ResourceNotice label="项目概览" onRefresh={onRefresh ? () => onRefresh('overview') : undefined} state={overviewState} />
+      {resourceSettled(planningState) ? (
+        <NowBand
+          documents={documents}
+          documentsSettled={resourceSettled(documentsState)}
+          onNavigate={onNavigate}
+          onOpenTask={onOpenTask}
+          tasks={tasks}
+        />
+      ) : null}
+
       <section className="paw-wb-project-lead">
-        <div className="paw-wb-project-lead__mark"><FolderTree aria-hidden size={27} /></div>
+        <div className="paw-wb-project-lead__mark"><FolderTree aria-hidden size={20} /></div>
         <div className="paw-wb-project-lead__copy">
           <h2 title={projectName}>{projectName}</h2>
           {projectPath ? <p className="paw-wb-mono" title={projectPath}>{projectPath}</p> : <p>当前项目尚未提供工作区路径。</p>}
         </div>
-        <dl className="paw-wb-project-facts">
-          {text(project.branch) || text(overview.branch) ? <Fact label="分支" value={text(project.branch) || text(overview.branch)} /> : null}
-          {text(project.status) || text(overview.status) ? <Fact label="状态" value={stateLabel(text(project.status) || text(overview.status))} /> : null}
-          {text(project.revision) || text(overview.revision) ? <Fact label="Revision" value={text(project.revision) || text(overview.revision)} mono /> : null}
-        </dl>
+        {repoFacts.length ? (
+          <details className="paw-wb-repo">
+            <summary>
+              <ChevronDown aria-hidden size={14} />
+              仓库与运行事实
+            </summary>
+            <dl className="paw-wb-project-facts">
+              {repoFacts.map((fact) => <Fact key={fact.label} label={fact.label} mono={fact.mono} value={fact.value} />)}
+            </dl>
+          </details>
+        ) : null}
       </section>
 
       {metrics.length ? <dl className="paw-wb-metrics" aria-label="项目真实指标">{metrics.map((metric) => <Fact key={metric.label} label={metric.label} value={metric.value} />)}</dl> : null}
@@ -401,6 +435,65 @@ function ProjectOverview({
   );
 }
 
+/**
+ * The overview leads with the next unresolved thing, before any metric.
+ * Every value here is derived from real planning tasks and real registered
+ * WorkDocuments; unresolved reads never masquerade as truthful zeros.
+ */
+function NowBand({
+  documents,
+  documentsSettled,
+  onNavigate,
+  onOpenTask,
+  tasks,
+}: {
+  documents: readonly PawWorkbenchRecord[];
+  documentsSettled: boolean;
+  onNavigate?: PawWorkbenchMigratedProps['onNavigate'];
+  onOpenTask: (task: PawWorkbenchRecord, index: number) => void;
+  tasks: PawWorkbenchRecord[];
+}) {
+  const next = nextUnresolvedTask(tasks);
+  const laneCount = (lane: TaskLane) => tasks.filter((task) => taskLane(task) === lane).length;
+  const blockedCount = laneCount('blocked');
+  const reviewCount = laneCount('review');
+  const activeCount = laneCount('active');
+  const latestDocumentMs = documents.reduce((latest, document) => Math.max(latest, number(document.updatedAtMs)), 0);
+  const evidenceValue = documentsSettled ? (latestDocumentMs ? updatedLabel(latestDocumentMs) : '暂无文档') : '读取中';
+  return (
+    <section aria-label="当前最需要处理的工作" className="paw-wb-now" data-state={next ? next.lane : tasks.length ? 'clear' : 'empty'}>
+      <div className="paw-wb-now__lead">
+        <span className="paw-wb-now__eyebrow"><Target aria-hidden size={14} />{next ? '下一个未完成' : '当前计划'}</span>
+        {next ? (
+          <>
+            <h2 title={taskTitle(next.task)}>{taskTitle(next.task)}</h2>
+            <p>{taskMeta(next.task)} · {taskStateLabel(next.task)}</p>
+          </>
+        ) : (
+          <>
+            <h2>{tasks.length ? '未完成工作已清零' : '还没有可执行任务'}</h2>
+            <p>{tasks.length ? '当前计划的任务都已完成，可以规划下一步或复盘。' : '在任务编排里写下第一个可执行的下一步。'}</p>
+          </>
+        )}
+        <div className="paw-wb-now__actions">
+          {next ? (
+            <button className="paw-wb-now__primary" onClick={() => onOpenTask(next.task, next.index)} type="button">
+              打开任务窗口<ArrowRight aria-hidden size={14} />
+            </button>
+          ) : null}
+          {onNavigate ? <button className="paw-wb-now__secondary" onClick={() => onNavigate('planning')} type="button">任务编排</button> : null}
+        </div>
+      </div>
+      <dl aria-label="未完成工作脉搏" className="paw-wb-now__pulse">
+        <div data-tone={blockedCount ? 'blocked' : undefined}><dt>受阻</dt><dd>{blockedCount}</dd></div>
+        <div data-tone={reviewCount ? 'review' : undefined}><dt>待验收</dt><dd>{reviewCount}</dd></div>
+        <div data-tone={activeCount ? 'active' : undefined}><dt>进行中</dt><dd>{activeCount}</dd></div>
+        <div><dt>证据更新</dt><dd>{evidenceValue}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
 function TaskOrchestration({
   goals,
   onCreateGoal,
@@ -429,6 +522,9 @@ function TaskOrchestration({
   tasks: PawWorkbenchRecord[];
 }) {
   const graph = useMemo(() => buildTaskGraph(tasks), [tasks]);
+  const [taskQuery, setTaskQuery] = useState('');
+  const trimmedTaskQuery = taskQuery.trim();
+  const outlineTasks = trimmedTaskQuery ? tasks.filter((task) => matchesTask(task, trimmedTaskQuery)) : tasks;
   return (
     <div className="paw-wb-orchestration">
       <aside className="paw-wb-outline">
@@ -448,13 +544,27 @@ function TaskOrchestration({
             ) : <><StatusMark lane={taskLane(goal)} /><span>{title}</span></>}
           </li>;
         })}</ol> : null}
-        <ol className="paw-wb-outline__tasks">{tasks.map((task, index) => <li key={taskId(task, index)}><button aria-label={`在任务列表中选择：${taskTitle(task)}`} aria-current={taskId(task, index) === selectedTaskId || undefined} onClick={() => onSelectTask(task, index)} title={`${taskTitle(task)} · ${taskMeta(task)}`} type="button"><StatusMark lane={taskLane(task)} /><span>{taskTitle(task)}</span><small>{taskProgressLabel(task)}</small></button></li>)}</ol>
+        {tasks.length > 5 ? (
+          <input
+            aria-label="筛选任务"
+            className="paw-wb-outline__filter"
+            onChange={(event) => setTaskQuery(event.target.value)}
+            placeholder="标题、负责人或状态"
+            type="search"
+            value={taskQuery}
+          />
+        ) : null}
+        {outlineTasks.length ? (
+          <ol className="paw-wb-outline__tasks">{outlineTasks.map((task) => {
+            const index = tasks.indexOf(task);
+            return <li key={taskId(task, index)}><button aria-label={`在任务列表中选择：${taskTitle(task)}`} aria-current={taskId(task, index) === selectedTaskId || undefined} onClick={() => onSelectTask(task, index)} title={`${taskTitle(task)} · ${taskMeta(task)}`} type="button"><StatusMark lane={taskLane(task)} /><span>{taskTitle(task)}</span><small>{taskProgressLabel(task)}</small></button></li>;
+          })}</ol>
+        ) : trimmedTaskQuery ? <p className="paw-wb-outline__quiet">没有匹配的任务。</p> : null}
       </aside>
 
       <main className="paw-wb-graph" aria-label="真实任务依赖图">
         <header>
           <div><GitBranch aria-hidden size={16} /><strong>依赖图</strong><span>{tasks.length} 节点 · {graph.edges.length} 条真实依赖</span></div>
-          <p>连线只来自任务记录中的依赖字段。</p>
         </header>
         <ResourceNotice label="任务编排" onRefresh={onRefresh ? () => onRefresh('planning') : undefined} state={resourceState} />
         {tasks.length ? (
@@ -468,7 +578,19 @@ function TaskOrchestration({
                   </circle>
                 ))}
               </svg>
-              {graph.nodes.map((node, index) => (
+              {graph.lanes.map((lane) => (
+                <span
+                  className="paw-wb-graph__lane"
+                  data-lane={lane.lane}
+                  key={lane.lane}
+                  style={{ '--paw-wb-lane-x': `${lane.x}px` } as CSSProperties}
+                >
+                  <StatusMark lane={lane.lane} />
+                  {GRAPH_LANE_LABELS[lane.lane]}
+                  <em>{lane.count}</em>
+                </span>
+              ))}
+              {graph.nodes.map((node) => (
                 <button
                   aria-label={`在依赖图中选择：${taskTitle(node.task)}`}
                   aria-pressed={node.id === selectedTaskId}
@@ -516,9 +638,10 @@ function TaskDetail({
   const dependencies = taskDependencyIds(task);
   const progress = taskProgress(task);
   const detail = text(task.detail) || text(task.description);
+  const realTaskId = text(task.id) || text(task.taskId);
   return (
     <aside className="paw-wb-detail" data-expanded={detailsExpanded || undefined}>
-      <header><StatusMark lane={taskLane(task)} /><div><h2 title={taskTitle(task)}>{taskTitle(task)}</h2><p className="paw-wb-mono" title={selectedTaskKey || '无任务 ID'}>{selectedTaskKey || '无任务 ID'}</p></div></header>
+      <header><StatusMark lane={taskLane(task)} /><div><h2 title={taskTitle(task)}>{taskTitle(task)}</h2><p>{taskMeta(task)}</p></div></header>
       <div className="paw-wb-detail__actions">
         {onEditTask ? <button onClick={() => onEditTask(task)} type="button"><PencilLine aria-hidden size={14} />编辑任务</button> : null}
         <button
@@ -540,6 +663,7 @@ function TaskDetail({
           {text(task.project) ? <Fact label="项目" value={text(task.project)} /> : null}
           {text(task.source) ? <Fact label="来源" value={text(task.source)} /> : null}
           <Fact label="状态" value={taskStateLabel(task)} />
+          {realTaskId ? <Fact label="任务 ID" value={realTaskId} mono wide /> : null}
         </dl>
         <section>
           <h3>依赖</h3>
@@ -595,6 +719,11 @@ function WorkDocumentWorkspace({
   selectedDocument: PawWorkbenchRecord | null;
 }) {
   const resolvedDocumentTotal = Math.max(documents.length, documentTotal ?? 0);
+  const [activeQuery, setActiveQuery] = useState('');
+  const trimmedActiveQuery = documentScope === 'active' ? activeQuery.trim() : '';
+  const visibleDocuments = trimmedActiveQuery
+    ? documents.filter((document) => matchesDocument(document, trimmedActiveQuery))
+    : documents;
   return (
     <div className="paw-wb-documents" data-reader-open={selectedDocument ? 'true' : undefined}>
       <aside className="paw-wb-document-index">
@@ -611,8 +740,16 @@ function WorkDocumentWorkspace({
             <input onChange={(event) => onDocumentHistoryQueryChange(event.target.value)} placeholder="标题、Authority 或路径" type="search" value={documentHistoryQuery} />
           </label>
         ) : null}
+        {documentScope === 'active' && documents.length > 5 ? (
+          <label className="paw-wb-document-index__search">
+            <span>筛选当前文档</span>
+            <input onChange={(event) => setActiveQuery(event.target.value)} placeholder="标题、Authority 或路径" type="search" value={activeQuery} />
+          </label>
+        ) : null}
         <ResourceNotice label="工作文档" onRefresh={onRefresh ? () => onRefresh('documents') : undefined} state={listState} />
-        {documents.length ? <ol>{documents.map((document, index) => <li key={documentId(document, index)}><button aria-current={sameDocument(document, selectedDocument) || undefined} onClick={() => void onOpenDocument(document)} title={`${documentTitle(document)} · ${text(document.activePath) || text(document.path) || text(document.authorityId)}`} type="button"><FileText aria-hidden size={15} /><span><strong>{documentTitle(document)}</strong><small>{authorityLabel(text(document.authorityKind))} · r{number(document.documentRevision)}</small></span><StatusMark lane={documentLane(document)} /></button></li>)}</ol> : resourceSettled(listState) ? <EmptyState icon={<FileText size={22} />} title={documentScope === 'history' ? '没有匹配的历史文档' : '暂无工作文档'} copy={documentScope === 'history' ? '调整筛选条件，或返回当前文档。' : '这里只投影 Runtime 已登记的文档。'} /> : null}
+        {visibleDocuments.length ? <ol>{visibleDocuments.map((document, index) => <li key={documentId(document, index)}><button aria-current={sameDocument(document, selectedDocument) || undefined} onClick={() => void onOpenDocument(document)} title={`${documentTitle(document)} · ${text(document.activePath) || text(document.path) || text(document.authorityId)}`} type="button"><FileText aria-hidden size={15} /><span><strong>{documentTitle(document)}</strong><small>{authorityLabel(text(document.authorityKind))} · r{number(document.documentRevision)}</small></span><StatusMark lane={documentLane(document)} /></button></li>)}</ol> : trimmedActiveQuery && documents.length ? (
+          <EmptyState icon={<FileText size={22} />} title="没有匹配的文档" copy="调整筛选词，或清空后查看全部当前文档。" />
+        ) : resourceSettled(listState) ? <EmptyState icon={<FileText size={22} />} title={documentScope === 'history' ? '没有匹配的历史文档' : '暂无工作文档'} copy={documentScope === 'history' ? '调整筛选条件，或返回当前文档。' : '这里只投影 Runtime 已登记的文档。'} /> : null}
       </aside>
 
       <main className="paw-wb-document-reader">
@@ -628,8 +765,8 @@ function WorkDocumentWorkspace({
             </header>
             <ResourceNotice label="文档详情" onRefresh={onRefresh ? () => onRefresh('documentDetail') : undefined} state={detailState} />
             <section className="paw-wb-document-reader__authority">
-              <ShieldCheck aria-hidden size={21} />
-              <div><h2>权威绑定</h2><p>文档承载已接受语义；运行状态仍由对应 Runtime 对象负责。</p></div>
+              <ShieldCheck aria-hidden size={19} />
+              <p>文档承载已接受语义；运行状态、路径与 revision 由 Runtime 原样投影。</p>
             </section>
             <dl className="paw-wb-document-facts">
               <Fact label="Authority" value={text(selectedDocument.authorityId) || '—'} mono />
@@ -639,6 +776,8 @@ function WorkDocumentWorkspace({
               <Fact label="状态" value={stateLabel(text(selectedDocument.state) || 'active')} />
               <Fact label="更新时间" value={updatedLabel(number(selectedDocument.updatedAtMs))} />
               <Fact label="当前路径" value={text(selectedDocument.activePath) || text(selectedDocument.path) || '—'} mono wide />
+              <Fact label="Document ID" value={text(selectedDocument.documentId) || text(selectedDocument.id) || '—'} mono wide />
+              <Fact label="Authority key" value={text(selectedDocument.authorityKey) || '—'} mono wide />
               {text(selectedDocument.contentSha256) ? <Fact label="内容校验" titleValue={text(selectedDocument.contentSha256)} value={shortHash(text(selectedDocument.contentSha256))} mono wide /> : null}
             </dl>
             {text(selectedDocument.error) ? <div className="paw-wb-document-error"><CircleAlert aria-hidden size={16} /><span>{text(selectedDocument.error)}</span></div> : null}
@@ -646,16 +785,6 @@ function WorkDocumentWorkspace({
           </>
         ) : <EmptyState icon={<ExternalLink size={25} />} title="选择一份工作文档" copy="详情只显示文档合同已有的权威、revision、路径与状态。" />}
       </main>
-
-      <aside className="paw-wb-document-truth">
-        <header><Network aria-hidden size={16} /><strong>事实边界</strong></header>
-        <ul>
-          <li><CheckCircle2 aria-hidden size={15} /><span>语义由 WorkDocument 保存</span></li>
-          <li><CheckCircle2 aria-hidden size={15} /><span>机械状态来自 Runtime</span></li>
-          <li><CheckCircle2 aria-hidden size={15} /><span>路径与 revision 原样投影</span></li>
-        </ul>
-        {selectedDocument ? <dl><Fact label="Document ID" value={text(selectedDocument.documentId) || text(selectedDocument.id) || '—'} mono /><Fact label="Authority key" value={text(selectedDocument.authorityKey) || '—'} mono /></dl> : null}
-      </aside>
     </div>
   );
 }
@@ -691,20 +820,27 @@ function Fact({ label, mono = false, titleValue, value, wide = false }: { label:
   return <div data-wide={wide || undefined}><dt>{label}</dt><dd className={mono ? 'paw-wb-mono' : undefined} title={titleValue ?? value}>{value}</dd></div>;
 }
 
-function buildTaskGraph(tasks: PawWorkbenchRecord[]): { nodes: TaskGraphNode[]; edges: TaskGraphEdge[]; height: number; width: number } {
+function buildTaskGraph(tasks: PawWorkbenchRecord[]): { nodes: TaskGraphNode[]; edges: TaskGraphEdge[]; lanes: TaskGraphLane[]; height: number; width: number } {
   const byLane = new Map<TaskLane, PawWorkbenchRecord[]>();
   for (const lane of GRAPH_LANES) byLane.set(lane, []);
   for (const task of tasks) byLane.get(taskLane(task))?.push(task);
+  // Only populated lanes earn a column: real data decides the field width.
+  const populatedLanes = GRAPH_LANES.filter((lane) => (byLane.get(lane)?.length ?? 0) > 0);
+  const laneX = new Map(populatedLanes.map((lane, index) => [lane, GRAPH_PADDING_X + index * (GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP)]));
+  const lanes: TaskGraphLane[] = populatedLanes.map((lane) => ({
+    count: byLane.get(lane)?.length ?? 0,
+    lane,
+    x: laneX.get(lane) ?? GRAPH_PADDING_X,
+  }));
   const nodes: TaskGraphNode[] = [];
   for (const task of tasks) {
     const lane = taskLane(task);
-    const laneIndex = GRAPH_LANES.indexOf(lane);
     const rowIndex = byLane.get(lane)?.indexOf(task) ?? 0;
     nodes.push({
       id: taskId(task, tasks.indexOf(task)),
       lane,
       task,
-      x: GRAPH_PADDING_X + laneIndex * (GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP),
+      x: laneX.get(lane) ?? GRAPH_PADDING_X,
       y: GRAPH_PADDING_Y + rowIndex * (GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP),
     });
   }
@@ -726,12 +862,14 @@ function buildTaskGraph(tasks: PawWorkbenchRecord[]): { nodes: TaskGraphNode[]; 
       });
     }
   }
-  const maxRows = Math.max(1, ...GRAPH_LANES.map((lane) => byLane.get(lane)?.length ?? 0));
+  const laneCount = Math.max(1, populatedLanes.length);
+  const maxRows = Math.max(1, ...populatedLanes.map((lane) => byLane.get(lane)?.length ?? 0));
   return {
     nodes,
     edges,
+    lanes,
     height: GRAPH_PADDING_Y * 2 + maxRows * GRAPH_NODE_HEIGHT + Math.max(0, maxRows - 1) * GRAPH_ROW_GAP,
-    width: GRAPH_PADDING_X * 2 + GRAPH_LANES.length * GRAPH_NODE_WIDTH + (GRAPH_LANES.length - 1) * GRAPH_COLUMN_GAP,
+    width: GRAPH_PADDING_X * 2 + laneCount * GRAPH_NODE_WIDTH + (laneCount - 1) * GRAPH_COLUMN_GAP,
   };
 }
 
@@ -751,6 +889,31 @@ function overviewMetrics(
     ['工作文档', documentsState?.loading || documentsState?.error ? undefined : documents.length],
   ];
   return candidates.flatMap(([label, value]) => value === undefined || value === null || value === '' ? [] : [{ label, value: scalar(value) }]);
+}
+
+function nextUnresolvedTask(tasks: PawWorkbenchRecord[]): { index: number; lane: TaskLane; task: PawWorkbenchRecord } | null {
+  for (const lane of ['blocked', 'review', 'active', 'todo'] as const) {
+    const index = tasks.findIndex((task) => taskLane(task) === lane);
+    if (index >= 0) return { index, lane, task: tasks[index] };
+  }
+  return null;
+}
+
+function matchesTask(task: PawWorkbenchRecord, query: string): boolean {
+  const needle = query.toLowerCase();
+  return [taskTitle(task), text(task.owner), text(task.project), text(task.source), taskStateLabel(task)]
+    .some((value) => value.toLowerCase().includes(needle));
+}
+
+function matchesDocument(document: PawWorkbenchRecord, query: string): boolean {
+  const needle = query.toLowerCase();
+  return [
+    documentTitle(document),
+    authorityLabel(text(document.authorityKind)),
+    text(document.authorityId),
+    text(document.activePath) || text(document.path),
+    stateLabel(text(document.state) || 'active'),
+  ].some((value) => value.toLowerCase().includes(needle));
 }
 
 function taskId(task: PawWorkbenchRecord, index: number): string {
