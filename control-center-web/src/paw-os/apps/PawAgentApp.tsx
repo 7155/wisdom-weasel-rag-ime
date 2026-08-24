@@ -251,7 +251,7 @@ export function PawAgentApp({
               <WorkRow
                 active={selection.kind === 'session' && selection.id === session.id}
                 key={session.id}
-                meta={`${projectName(session.workspaceRoots)} · ${relativeTime(session.updatedAtMs)}`}
+                meta={sessionMeta(session)}
                 onClick={() => { setSelection({ kind: 'session', id: session.id }); setRailOpen(false); }}
                 title={session.title}
                 trailing={<SessionActions onArchive={() => void archiveSession(session)} onDelete={() => { setActionError(''); setDeleteTarget(session); }} session={session} />}
@@ -420,6 +420,16 @@ function pathName(path: string): string {
 
 function projectName(paths: string[] | undefined): string {
   return paths?.[0] ? pathName(paths[0]) : '无项目';
+}
+
+// 行内 meta 只在状态可行动时前置：归档、执行中、故障；idle/active 不加噪声。
+function sessionMeta(session: SessionSummary): string {
+  const base = `${projectName(session.workspaceRoots)} · ${relativeTime(session.updatedAtMs)}`;
+  const state = session.status === 'archived' ? '已归档'
+    : session.status === 'busy' ? '进行中'
+    : session.status === 'faulted' ? '需要处理'
+    : '';
+  return state ? `${state} · ${base}` : base;
 }
 
 function relativeTime(timestamp: number): string {

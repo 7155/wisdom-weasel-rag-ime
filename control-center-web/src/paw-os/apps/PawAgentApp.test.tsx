@@ -56,6 +56,21 @@ describe('PAWOS Agent App', () => {
     expect(screen.getByRole('button', { name: '打开工作记录' })).toHaveFocus();
   });
 
+  it('returns focus to the owning chip when Escape closes an anchored composer menu', async () => {
+    const user = userEvent.setup();
+    renderAgent();
+
+    const chip = await screen.findByRole('button', { name: /按风险确认/ });
+    await user.click(chip);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await user.tab();
+    expect(chip).not.toHaveFocus();
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(chip).toHaveFocus();
+  });
+
   it('keeps the containing window identity aligned when the same Agent window moves between Room and Session', async () => {
     const bindAgentMain = vi.fn();
     const transport = createTransport();
@@ -127,6 +142,47 @@ describe('PAWOS Agent App', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('配置服务暂时不可用');
     expect(screen.getByRole('button', { name: '重新读取' })).toBeInTheDocument();
+  });
+
+  it('reports only real model-catalog facts on the home footer instead of a runtime connectivity claim', async () => {
+    const empty = renderAgent();
+    await screen.findByRole('heading', { name: '交给 Agent 一件事。' });
+    expect(screen.queryByText(/Pi Runtime/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/个可用模型/)).not.toBeInTheDocument();
+    empty.unmount();
+
+    renderAgent(createTransport({ modelCatalog: modelCatalog() }));
+    expect(await screen.findByText('3 个可用模型')).toBeInTheDocument();
+    expect(screen.getByText(/默认模型 gpt-5\.6-luna/)).toBeInTheDocument();
+    expect(screen.queryByText(/Pi Runtime/)).not.toBeInTheDocument();
+  });
+
+  it('reflects the selected permission risk on the composer chip state dot', async () => {
+    const user = userEvent.setup();
+    renderAgent();
+
+    const chip = await screen.findByRole('button', { name: /按风险确认/ });
+    expect(chip.querySelector('.mini-dot')).toHaveAttribute('data-execution-mode', 'per_action');
+
+    await user.click(chip);
+    await user.click(await screen.findByRole('menuitemradio', { name: /^只读/ }));
+    expect(screen.getByRole('button', { name: /只读/ }).querySelector('.mini-dot'))
+      .toHaveAttribute('data-execution-mode', 'read_only');
+  });
+
+  it('orders 继续工作 by real recency instead of catalog list position', async () => {
+    renderAgent(createTransport({
+      sessions: [
+        { id: 's-a', title: '最旧的检查', mode: 'coordinator', status: 'idle', updatedAtMs: 1, workspaceRoots: ['/work/paw'], messageCount: 1, lastMessagePreview: '' },
+        { id: 's-b', title: '较旧的检查', mode: 'coordinator', status: 'idle', updatedAtMs: 2, workspaceRoots: ['/work/paw'], messageCount: 1, lastMessagePreview: '' },
+        { id: 's-c', title: '次新的检查', mode: 'coordinator', status: 'idle', updatedAtMs: 4, workspaceRoots: ['/work/paw'], messageCount: 1, lastMessagePreview: '' },
+        { id: 's-d', title: '最新的检查', mode: 'coordinator', status: 'idle', updatedAtMs: 9, workspaceRoots: ['/work/paw'], messageCount: 1, lastMessagePreview: '' },
+      ],
+    }));
+
+    const recent = (await screen.findByRole('heading', { name: '继续工作' })).parentElement!;
+    expect(within(recent).getByRole('button', { name: /最新的检查/ })).toBeInTheDocument();
+    expect(within(recent).queryByRole('button', { name: /最旧的检查/ })).not.toBeInTheDocument();
   });
 
   it('creates a Session and sends the first prompt from the same composer', async () => {
@@ -285,6 +341,23 @@ describe('PAWOS Agent App', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
+  it('states the archived Session state on its revealed rail row', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '更多“发布检查”操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '归档 Session' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^发布检查/ })).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '工作记录选项' }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: '显示已归档 Session' }));
+
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    const row = await within(rail).findByRole('button', { name: /^发布检查/ });
+    expect(row).toHaveTextContent('已归档 · paw ·');
+  });
+
   it('switches the same entry to Room and creates it with selected partners', async () => {
     const transport = createTransport();
     const user = userEvent.setup();
@@ -353,6 +426,17 @@ describe('PAWOS Agent App', () => {
   });
 });
 
+type MockSessionSummary = {
+  id: string;
+  title: string;
+  mode: string;
+  status: string;
+  updatedAtMs: number;
+  workspaceRoots: string[];
+  messageCount: number;
+  lastMessagePreview: string;
+};
+
 function agentTree(transport = createTransport(), props: { initialRoute?: string } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return (
@@ -378,8 +462,9 @@ function createTransport(options: {
   roomMessageHandler?: () => Promise<unknown>;
   staleCatalogAfterCreate?: boolean;
   preferencesHandler?: () => unknown | Promise<unknown>;
+  sessions?: MockSessionSummary[];
 } = {}) {
-  let sessions = [{
+  let sessions: MockSessionSummary[] = options.sessions ?? [{
     id: 'session-old', title: '发布检查', mode: 'coordinator', status: 'idle', updatedAtMs: 2,
     workspaceRoots: ['/work/paw'], messageCount: 3, lastMessagePreview: '检查构建结果',
   }];
