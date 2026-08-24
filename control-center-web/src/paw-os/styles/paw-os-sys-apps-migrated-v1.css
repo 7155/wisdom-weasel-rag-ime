@@ -112,8 +112,10 @@
   transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 
-/* The human decision queue announces itself from the rail; everything else
-   stays quiet. */
+/* Truthful rail signals. The filled accent badge is reserved for the human
+   decision queue (审批 / 建议); Monitor attention wears the shared danger red;
+   available updates stay a quiet outline so nothing shouts. Counts come from
+   the owning Runtime routes — a failed read leaves the rail unadorned. */
 .paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge {
   min-width: 20px;
   padding: 1px 6px;
@@ -125,6 +127,16 @@
   font-weight: 700;
   line-height: 1.5;
   text-align: center;
+}
+
+.paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge[data-tone='attention'] {
+  background: #b42332;
+}
+
+.paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge[data-tone='quiet'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-system-accent) 46%, transparent);
+  color: var(--paw-system-accent);
 }
 
 .paw-desktop-root .paw-system-app__nav nav button > span {
@@ -821,6 +833,7 @@
   }
 
   .paw-desktop-root .paw-system-app__nav nav button {
+    position: relative;
     display: grid;
     grid-template-columns: 1fr;
     justify-items: center;
@@ -829,6 +842,21 @@
   }
 
   .paw-desktop-root .paw-system-app__nav nav button span { display: none; }
+
+  /* The icon-only rail keeps its truthful signal as a dot; the exact count
+     stays available through the button's accessible name and tooltip. */
+  .paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge {
+    position: absolute;
+    top: 5px;
+    right: 8px;
+    display: block;
+    width: 8px;
+    height: 8px;
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
+    color: transparent;
+  }
 
   .paw-desktop-root .paw-system-app__page-title { left: 16px; }
 
