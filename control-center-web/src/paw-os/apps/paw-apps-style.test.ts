@@ -304,6 +304,13 @@ describe('PAWOS semantic type roles', () => {
     expect(systemMigratedCss).toMatch(
       /@container paw-window \(max-width: 720px\)[\s\S]*?\.paw-desktop-root \.paw-system-app\s*\{[^}]*grid-template-columns:\s*54px minmax\(0, 1fr\);/s,
     );
+    // The rail may drop its labels, but never a live decision or health count.
+    expect(systemMigratedCss).toMatch(
+      /@container paw-window \(max-width: 720px\)[\s\S]*?button > span:not\(\.paw-system-app__nav-badge\)\s*\{\s*display:\s*none;/s,
+    );
+    expect(systemMigratedCss).toMatch(
+      /@container paw-window \(max-width: 720px\)[\s\S]*?\.paw-system-app__nav-badge\s*\{[^}]*position:\s*absolute;/s,
+    );
     expect(systemMigratedCss).toMatch(
       /@container paw-window \(max-width: 520px\)[\s\S]*?\.paw-system-app \.(?:mgmt-metrics)\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
     );
