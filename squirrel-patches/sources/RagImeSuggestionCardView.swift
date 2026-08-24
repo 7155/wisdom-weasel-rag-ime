@@ -280,6 +280,206 @@ enum RagImeAssistantCommitMode: Equatable {
   case replace
 }
 
+enum RagImeGenerationStageState: String {
+  case pending
+  case active
+  case done
+  case failed
+
+  var accessibilityWord: String {
+    switch self {
+    case .pending: return "等待"
+    case .active: return "进行中"
+    case .done: return "已完成"
+    case .failed: return "未完成"
+    }
+  }
+}
+
+struct RagImeGenerationStageRowModel: Equatable {
+  let title: String
+  let detail: String
+  let state: RagImeGenerationStageState
+}
+
+struct RagImeGenerationStagePlan: Equatable {
+  let title: String
+  let rows: [RagImeGenerationStageRowModel]
+  let summary: String
+}
+
+/// Pure presentation model for one explicit generation. It only interprets the
+/// progress stages the rag_ime sidecar actually reports through
+/// `_active_rag_progress_payload` (rag_ime/active_rag_service.py):
+/// capturing_context → retrieval_complete → generating → streaming →
+/// quality_retry → ready, plus the terminal failure statuses error, cancelled,
+/// and stale_dropped. It must not invent stages the backend never emits.
+enum RagImeGenerationStagePlanner {
+  struct Input {
+    var stage = ""
+    var diagnosticStatus = ""
+    var foregroundChars = 0
+    var windowNodes = 0
+    var recentCount = 0
+    var recentChars = 0
+    var recentUsed = false
+    var evidenceCount = 0
+    var retrievalAttempted = false
+    var firstTokenMs = 0
+    var qualityRetry = false
+    var recalledTitles: [String] = []
+  }
+
+  static let contextStages: Set<String> = ["capturing_context"]
+  static let retrievalHandoffStages: Set<String> = ["retrieval_complete"]
+  static let modelStages: Set<String> = ["generating", "streaming", "quality_retry"]
+  static let readyStages: Set<String> = ["ready"]
+  static let failureStages: Set<String> = ["error", "cancelled", "stale_dropped"]
+
+  static func plan(_ input: Input) -> RagImeGenerationStagePlan {
+    let stage = input.stage
+    let interrupted = failureStages.contains(stage)
+    let contextDone = input.foregroundChars > 0 || input.windowNodes > 0
+    let historyDone = input.retrievalAttempted || input.recentCount > 0 || input.recentChars > 0
+    let retrievalDone = input.retrievalAttempted
+    let modelDone = readyStages.contains(stage)
+    let captureFailed = input.diagnosticStatus.contains("context_missing")
+      || input.diagnosticStatus.contains("capture_failed")
+
+    // During capturing_context the sidecar has not confirmed retrieval yet;
+    // history selection and RAG recall run inside the same retrieval pass.
+    let contextActive = !interrupted && contextStages.contains(stage) && !contextDone
+    let retrievalActive = !interrupted && contextStages.contains(stage) && contextDone && !retrievalDone
+    let modelActive = !interrupted
+      && (modelStages.contains(stage) || retrievalHandoffStages.contains(stage))
+      && !modelDone
+
+    // An interrupted run stops at the first step that never produced data.
+    // Steps that already finished keep their honest done state.
+    let contextInterrupted = interrupted && !contextDone
+    let retrievalInterrupted = interrupted && contextDone && !retrievalDone
+    let modelInterrupted = interrupted && contextDone && retrievalDone && !modelDone
+
+    func resolve(done: Bool, active: Bool, failed: Bool) -> RagImeGenerationStageState {
+      if failed { return .failed }
+      if done { return .done }
+      if active { return .active }
+      return .pending
+    }
+
+    let contextState = resolve(
+      done: contextDone && !captureFailed,
+      active: contextActive,
+      failed: captureFailed || contextInterrupted
+    )
+    let historyState = resolve(done: historyDone, active: retrievalActive, failed: retrievalInterrupted && !historyDone)
+    let retrievalState = resolve(done: retrievalDone, active: retrievalActive, failed: retrievalInterrupted)
+    let modelState = resolve(done: modelDone, active: modelActive, failed: modelInterrupted)
+
+    let failureDetail: String
+    switch stage {
+    case "cancelled": failureDetail = "已停止，未继续生成"
+    case "stale_dropped": failureDetail = "输入已更新，本轮结果不再使用"
+    default: failureDetail = "生成未完成，可重试"
+    }
+
+    let contextDetail: String
+    if contextState == .failed {
+      contextDetail = captureFailed ? "未读取到前台内容，仅使用已有输入" : failureDetail
+    } else if input.windowNodes > 0 {
+      contextDetail = "已读取当前输入和界面信息"
+    } else if input.foregroundChars > 0 {
+      contextDetail = "已读取当前输入"
+    } else if contextState == .active {
+      contextDetail = "正在读取当前输入与界面信息"
+    } else {
+      contextDetail = "等待可访问性上下文"
+    }
+
+    let historyDetail: String
+    if historyState == .failed {
+      historyDetail = failureDetail
+    } else if input.recentCount > 0 {
+      historyDetail = input.recentUsed ? "已选取相关的近期内容" : "近期内容与本次问题无关"
+    } else if input.recentChars > 0 {
+      historyDetail = input.recentUsed ? "已补充近期内容" : "本次无需补充"
+    } else if input.retrievalAttempted {
+      historyDetail = "本次没有可用历史"
+    } else if historyState == .active {
+      historyDetail = "正在选择最近输入"
+    } else {
+      historyDetail = "等待上下文就绪"
+    }
+
+    let recalledTitles = input.recalledTitles.prefix(2).filter { !$0.isEmpty }
+    let retrievalDetail: String
+    if retrievalState == .failed {
+      retrievalDetail = failureDetail
+    } else if !recalledTitles.isEmpty {
+      retrievalDetail = "已找到 " + recalledTitles.joined(separator: "、")
+    } else if input.evidenceCount > 0 {
+      retrievalDetail = "已找到相关记忆与资料"
+    } else if input.retrievalAttempted {
+      retrievalDetail = "没有额外依据，继续使用当前上下文"
+    } else if retrievalState == .active {
+      retrievalDetail = "正在检索记忆、计划与资料"
+    } else {
+      retrievalDetail = "等待上下文就绪"
+    }
+
+    let qualityRetry = input.qualityRetry || stage == "quality_retry"
+    let modelDetail: String
+    if modelState == .failed {
+      modelDetail = failureDetail
+    } else if modelDone {
+      modelDetail = "回答已生成"
+    } else if qualityRetry {
+      modelDetail = "正在调整表达，避免重复原文"
+    } else if stage == "streaming" || input.firstTokenMs > 0 {
+      modelDetail = "首段内容已到达，正在继续"
+    } else if modelState == .active {
+      modelDetail = "等待首段内容"
+    } else {
+      modelDetail = "等待检索结果"
+    }
+
+    let title: String
+    switch stage {
+    case "quality_retry": title = "正在优化回答"
+    case "streaming": title = "正在接收内容"
+    case "generating": title = "正在生成"
+    case "retrieval_complete": title = "已找到相关内容"
+    case "ready": title = "已生成"
+    case "error": title = "生成未完成"
+    case "cancelled": title = "已停止生成"
+    case "stale_dropped": title = "输入已更新，本轮已作废"
+    default: title = "正在准备"
+    }
+
+    var summaryParts: [String] = []
+    if input.windowNodes > 0 { summaryParts.append("AX \(input.windowNodes) 节点") }
+    if input.recentCount > 0 { summaryParts.append("历史 \(input.recentCount) 条") }
+    if !recalledTitles.isEmpty {
+      summaryParts.append("召回 " + recalledTitles.joined(separator: "、"))
+    } else if input.evidenceCount > 0 {
+      summaryParts.append("召回 \(input.evidenceCount) 条")
+    }
+    if interrupted { summaryParts.append(title) }
+    let summary = summaryParts.isEmpty ? "上下文与召回已准备" : summaryParts.joined(separator: " · ")
+
+    return RagImeGenerationStagePlan(
+      title: title,
+      rows: [
+        RagImeGenerationStageRowModel(title: "理解当前内容", detail: contextDetail, state: contextState),
+        RagImeGenerationStageRowModel(title: "补充近期上下文", detail: historyDetail, state: historyState),
+        RagImeGenerationStageRowModel(title: "查找相关记忆", detail: retrievalDetail, state: retrievalState),
+        RagImeGenerationStageRowModel(title: qualityRetry ? "优化回答" : "组织回答", detail: modelDetail, state: modelState),
+      ],
+      summary: summary
+    )
+  }
+}
+
 final class RagImeSuggestionCardView: NSVisualEffectView {
   static let compactHeight: CGFloat = 38
   static let pendingHeight: CGFloat = 44
@@ -933,99 +1133,25 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
 
   private func applyGenerationProgress(_ payload: RagImeAssistantOverlayPayload) {
     let transaction = payload.frontendTransaction ?? [:]
-    let stage = stringValue(in: [transaction], keys: ["progressStage"])
-    let foregroundChars = intValue(in: [transaction], keys: ["foregroundContextChars", "effectiveContextChars", "contextChars"]) ?? 0
-    let windowNodes = intValue(in: [transaction], keys: ["windowContextNodes"]) ?? 0
-    let recentCount = intValue(in: [transaction], keys: ["timelineRecentInputRecordCount"]) ?? 0
-    let recentChars = intValue(in: [transaction], keys: ["timelineRecentInputChars"]) ?? 0
-    let recentUsed = boolValue(in: [transaction], keys: ["timelineRecentInputUsedForGeneration"]) == true
-    let evidenceCount = intValue(in: [transaction], keys: ["evidenceCount"]) ?? payload.sourceCards.count
-    let retrievalAttempted = boolValue(in: [transaction], keys: ["retrievalAttempted"]) == true
-    let firstTokenMs = intValue(in: [transaction], keys: ["firstTokenMs"]) ?? 0
-    let qualityRetry = boolValue(in: [transaction], keys: ["contentRetryAttempted", "qualityRetry"]) == true
-
-    switch stage {
-    case "quality_retry": progressTitleLabel.stringValue = "正在优化回答"
-    case "streaming": progressTitleLabel.stringValue = "正在接收内容"
-    case "generating": progressTitleLabel.stringValue = "正在生成"
-    default: progressTitleLabel.stringValue = "正在准备"
+    var input = RagImeGenerationStagePlanner.Input()
+    input.stage = stringValue(in: [transaction], keys: ["progressStage"]).lowercased()
+    input.diagnosticStatus = stringValue(in: [transaction], keys: ["diagnosticStatus"]).lowercased()
+    input.foregroundChars = intValue(in: [transaction], keys: ["foregroundContextChars", "effectiveContextChars", "contextChars"]) ?? 0
+    input.windowNodes = intValue(in: [transaction], keys: ["windowContextNodes"]) ?? 0
+    input.recentCount = intValue(in: [transaction], keys: ["timelineRecentInputRecordCount"]) ?? 0
+    input.recentChars = intValue(in: [transaction], keys: ["timelineRecentInputChars"]) ?? 0
+    input.recentUsed = boolValue(in: [transaction], keys: ["timelineRecentInputUsedForGeneration"]) == true
+    input.evidenceCount = intValue(in: [transaction], keys: ["evidenceCount"]) ?? payload.sourceCards.count
+    input.retrievalAttempted = boolValue(in: [transaction], keys: ["retrievalAttempted"]) == true
+    input.firstTokenMs = intValue(in: [transaction], keys: ["firstTokenMs"]) ?? 0
+    input.qualityRetry = boolValue(in: [transaction], keys: ["contentRetryAttempted", "qualityRetry"]) == true
+    input.recalledTitles = payload.sourceCards.prefix(2).map(\.title).filter { !$0.isEmpty }
+    let plan = RagImeGenerationStagePlanner.plan(input)
+    progressTitleLabel.stringValue = plan.title
+    for (index, row) in progressRows.enumerated() where index < plan.rows.count {
+      row.apply(model: plan.rows[index])
     }
-
-    let contextDetail: String
-    if windowNodes > 0 {
-      contextDetail = "已读取当前输入和界面信息"
-    } else if foregroundChars > 0 {
-      contextDetail = "已读取当前输入"
-    } else {
-      contextDetail = "等待可访问性上下文"
-    }
-
-    let historyDetail: String
-    if recentCount > 0 {
-      historyDetail = recentUsed ? "已选取相关的近期内容" : "近期内容与本次问题无关"
-    } else if recentChars > 0 {
-      historyDetail = recentUsed ? "已补充近期内容" : "本次无需补充"
-    } else {
-      historyDetail = retrievalAttempted ? "本次没有可用历史" : "正在选择最近输入"
-    }
-
-    let recalledTitles = payload.sourceCards.prefix(2).map(\.title).filter { !$0.isEmpty }
-    let retrievalDetail: String
-    if !recalledTitles.isEmpty {
-      retrievalDetail = "已找到 " + recalledTitles.prefix(2).joined(separator: "、")
-    } else if evidenceCount > 0 {
-      retrievalDetail = "已找到相关记忆与资料"
-    } else if retrievalAttempted {
-      retrievalDetail = "没有额外依据，继续使用当前上下文"
-    } else {
-      retrievalDetail = "正在检索记忆、计划与资料"
-    }
-
-    let modelDetail: String
-    if qualityRetry || stage == "quality_retry" {
-      modelDetail = "正在调整表达，避免重复原文"
-    } else if firstTokenMs > 0 {
-      modelDetail = "首段内容已到达，正在继续"
-    } else {
-      modelDetail = "等待首段内容"
-    }
-
-    let modelActive = ["generating", "quality_retry", "streaming"].contains(stage)
-    let retrievalActive = stage == "retrieving" || stage == "retrieval_complete"
-    progressRows[0].apply(
-      title: "理解当前内容",
-      detail: contextDetail,
-      completed: foregroundChars > 0 || windowNodes > 0,
-      active: stage == "capturing_context"
-    )
-    progressRows[1].apply(
-      title: "补充近期上下文",
-      detail: historyDetail,
-      completed: retrievalAttempted || recentCount > 0 || recentChars > 0,
-      active: stage == "retrieving" && recentCount == 0
-    )
-    progressRows[2].apply(
-      title: "查找相关记忆",
-      detail: retrievalDetail,
-      completed: retrievalAttempted,
-      active: retrievalActive
-    )
-    progressRows[3].apply(
-      title: qualityRetry ? "优化回答" : "组织回答",
-      detail: modelDetail,
-      completed: stage == "ready",
-      active: modelActive || (!retrievalActive && retrievalAttempted)
-    )
-
-    var summary: [String] = []
-    if windowNodes > 0 { summary.append("AX \(windowNodes) 节点") }
-    if recentCount > 0 { summary.append("历史 \(recentCount) 条") }
-    if !recalledTitles.isEmpty {
-      summary.append("召回 " + recalledTitles.prefix(2).joined(separator: "、"))
-    } else if evidenceCount > 0 {
-      summary.append("召回 \(evidenceCount) 条")
-    }
-    progressSummaryText = summary.isEmpty ? "上下文与召回已准备" : summary.joined(separator: " · ")
+    progressSummaryText = plan.summary
   }
 
   private func layoutProgressRows() {
@@ -1291,28 +1417,39 @@ private final class RagImeGenerationProgressRowView: NSView {
     )
   }
 
-  func apply(title: String, detail: String, completed: Bool, active: Bool) {
-    titleLabel.stringValue = title
-    detailLabel.stringValue = detail
+  func apply(model: RagImeGenerationStageRowModel) {
+    titleLabel.stringValue = model.title
+    detailLabel.stringValue = model.detail
     let symbol: String
     let color: NSColor
-    if completed {
+    switch model.state {
+    case .done:
       symbol = "checkmark.circle.fill"
       color = .systemGreen
-    } else if active {
+    case .active:
       symbol = "sparkles"
       color = .systemIndigo
-    } else {
+    case .failed:
+      symbol = "exclamationmark.triangle.fill"
+      color = .systemOrange
+    case .pending:
       symbol = "circle"
       color = .tertiaryLabelColor
     }
-    iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: model.title)
     iconView.contentTintColor = color
-    layer?.backgroundColor = active
-      ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.055).cgColor
-      : NSColor.clear.cgColor
-    updateShimmer(active: active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-    setAccessibilityLabel("\(title)：\(detail)")
+    titleLabel.textColor = model.state == .pending ? .secondaryLabelColor : .labelColor
+    detailLabel.textColor = model.state == .failed ? .systemOrange : .secondaryLabelColor
+    switch model.state {
+    case .active:
+      layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.055).cgColor
+    case .failed:
+      layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.05).cgColor
+    case .done, .pending:
+      layer?.backgroundColor = NSColor.clear.cgColor
+    }
+    updateShimmer(active: model.state == .active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    setAccessibilityLabel("\(model.title)（\(model.state.accessibilityWord)）：\(model.detail)")
   }
 
   private func updateShimmer(active: Bool) {
