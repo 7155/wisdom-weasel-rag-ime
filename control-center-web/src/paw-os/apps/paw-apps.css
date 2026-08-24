@@ -343,32 +343,6 @@
 .paw-room-workspace__error span { min-width: 0; flex: 1; }
 .paw-room-workspace__error button { color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
-.paw-room-flow { min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; background: color-mix(in srgb, var(--paw-panel-soft) 58%, var(--paw-panel-strong)); }
-.paw-room-flow__ledger { min-width: 0; min-height: 0; display: grid; grid-template-rows: 46px minmax(0, 1fr) auto; background: color-mix(in srgb, var(--paw-panel-strong) 92%, transparent); }
-.paw-room-flow__ledger > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--paw-line-soft); }
-.paw-room-flow__ledger > header > span { display: flex; align-items: center; gap: 6px; }
-.paw-room-flow__ledger > header strong { font-size: 13px; }
-.paw-room-flow__ledger > header small { color: var(--paw-muted); font-size: 12px; }
-.paw-room-flow__packets { min-height: 0; overflow-y: auto; padding: 7px; scrollbar-gutter: stable; }
-.paw-room-flow__packets > button { width: 100%; min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; padding: 8px; border-radius: 10px; color: var(--paw-ink); text-align: left; cursor: pointer; transition: background 130ms ease, transform 100ms ease; }
-.paw-room-flow__packets > button:hover, .paw-room-flow__packets > button[aria-current='true'] { background: var(--paw-panel-soft); }
-.paw-room-flow__packets > button:active { transform: scale(.985); }
-.paw-room-flow__packets > button > span { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 9px; color: var(--paw-accent); background: color-mix(in srgb, var(--paw-accent) 10%, transparent); }
-.paw-room-flow__packets > button[data-kind='question'] > span { color: #a855f7; background: rgb(168 85 247 / 10%); }
-.paw-room-flow__packets > button[data-kind='answer'] > span { color: #0f9f8f; background: rgb(20 184 166 / 10%); }
-.paw-room-flow__packets > button[data-kind='plan'] > span, .paw-room-flow__packets > button[data-kind='document'] > span { color: #d97706; background: rgb(245 158 11 / 10%); }
-.paw-room-flow__packets > button > div { min-width: 0; display: grid; gap: 2px; }
-.paw-room-flow__packets strong { font-size: 13px; }
-.paw-room-flow__packets p { margin: 0; overflow: hidden; font-size: 12px; line-height: 1.42; text-overflow: ellipsis; white-space: nowrap; }
-.paw-room-flow__packets small { overflow: hidden; color: var(--paw-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-room-flow__detail { display: grid; gap: 7px; padding: 10px 12px 12px; border-top: 1px solid var(--paw-line-soft); background: color-mix(in srgb, var(--paw-panel-soft) 64%, transparent); }
-.paw-room-flow__detail > header { display: flex; align-items: center; justify-content: space-between; }
-.paw-room-flow__detail > header strong { font-size: 13px; }
-.paw-room-flow__detail > header span { padding: 3px 6px; border-radius: 999px; color: var(--paw-success); background: color-mix(in srgb, var(--paw-success) 10%, transparent); font-size: 12px; }
-.paw-room-flow__detail p { max-height: 4.2em; margin: 0; overflow: auto; font-size: 13px; line-height: 1.45; }
-.paw-room-flow__detail dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 7px; margin: 0; font-size: 12px; }
-.paw-room-flow__detail dt { color: var(--paw-muted); }
-.paw-room-flow__detail dd { margin: 0; overflow: hidden; font-family: var(--paw-font-mono); text-overflow: ellipsis; white-space: pre-line; }
 .paw-room-governance { height: 100%; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 /* Sticky over the scrolling governance list: an almost-opaque bar with its own
    blur re-blurs the list every scroll frame; keep it opaque instead. */
@@ -404,10 +378,6 @@
 .paw-room-governance__form > button:disabled, .paw-room-governance__archive:disabled { opacity: .36; cursor: default; }
 .paw-room-governance__archive { color: var(--paw-muted); background: var(--paw-panel-soft); }
 
-@container paw-room-workspace (max-width: 980px) {
-  .paw-room-flow { grid-template-columns: minmax(0, 1fr); }
-  .paw-room-flow__ledger { position: static; width: auto; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
-}
 @media (max-width: 760px) {
   .paw-room-workspace__runtime > span { display: none; }
   .paw-room-workspace__header nav button { width: 30px; justify-content: center; padding: 0; font-size: 0; }
