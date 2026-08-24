@@ -99,6 +99,37 @@ describe('MemoryFeature composition', () => {
     }
     expect(memoryStylesheet).toContain('outline-color: var(--memory-signal)');
   });
+
+  it('gives every memory layer its own signal identity in the stylesheet owner', () => {
+    for (const scope of [
+      ".memory-second-brain[data-view='catalog'][data-layer='evidence']",
+      ".memory-second-brain[data-view='catalog'][data-layer='books']",
+      ".memory-second-brain[data-view='roleBooks']",
+      ".memory-second-brain[data-view='timeline']",
+      ".memory-second-brain[data-view='relations']",
+      ".memory-second-brain[data-view='organize']",
+      ".memory-second-brain[data-view='preferences']",
+    ]) {
+      expect(memoryStylesheet).toContain(scope);
+    }
+    // The pipeline spine carries all four stage identities at once.
+    for (const stage of ['evidence', 'organize', 'atoms', 'books']) {
+      expect(memoryStylesheet).toContain(`.memory-pipeline__stage[data-stage='${stage}']`);
+    }
+  });
+
+  it('runs the catalog search live instead of behind a filter button', async () => {
+    const user = userEvent.setup();
+    const transport = catalogTransport();
+    renderMemory(transport);
+
+    await screen.findByRole('list', { name: '记忆内容分类' });
+    expect(screen.queryByRole('button', { name: '筛选' })).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: '搜索' }), '偏好');
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'memory.pages' && call.request.query?.query === '偏好'
+    ))).toBe(true));
+  });
 });
 
 function catalogTransport(): MockControlTransport {

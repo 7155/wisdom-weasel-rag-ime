@@ -54,6 +54,10 @@ export function PawWindowLayer() {
     focusFrames.has(id) ? { ...node, bounds: focusFrames.get(id)! } : node,
   ])), [focusFrames, windows]);
   const flowGroups = useMemo(() => roomWindowFlowGroups(flowWindows, projections), [flowWindows, projections]);
+  const flowTrackedWindowIds = useMemo(
+    () => new Set(flowGroups.flatMap((group) => [...group.windowIds.values()])),
+    [flowGroups],
+  );
   const flowPulse = useWindowFlowPulse(flowGroups);
   const roomFocusRail = useMemo(() => roomFocusRailMetrics(focusedRoomSatellites, focusFrames, viewport), [focusFrames, focusedRoomSatellites, viewport]);
   const roomFocusRailIds = useMemo(() => new Set(roomFocusRail?.satelliteIds ?? []), [roomFocusRail]);
@@ -135,6 +139,7 @@ export function PawWindowLayer() {
           <PawWindow
             collaborationFocusGroup={collaborationFocusGroup}
             flowState={flowPulse.targetWindowIds.has(id) ? 'arrival' : flowPulse.sourceWindowIds.has(id) ? 'source' : undefined}
+            flowTracked={flowTrackedWindowIds.has(id)}
             focusFrame={focusFrames.get(id)}
             key={id}
             onFocusFrameCommit={commitFocusFrame}
@@ -150,6 +155,7 @@ export function PawWindowLayer() {
               return <PawWindow
                 collaborationFocusGroup={collaborationFocusGroup}
                 flowState={flowPulse.targetWindowIds.has(id) ? 'arrival' : flowPulse.sourceWindowIds.has(id) ? 'source' : undefined}
+                flowTracked={flowTrackedWindowIds.has(id)}
                 focusFrame={frame ? roomFocusRailLocalFrame(frame, roomFocusRail.top) : undefined}
                 key={id}
                 onFocusFrameCommit={commitFocusRailFrame}
@@ -255,11 +261,15 @@ export const PAW_WINDOW_FLOW_GEOMETRY_EVENT = 'paw-window-flow-geometry';
 
 type WindowFlowGeometryDetail = { windowId: string; point: WindowFlowPoint | null };
 
+/* Only windows that actually sit in a Room flow group carry data-flow-tracked.
+ * Dragging any other window must stay a pure compositor transform: no rect
+ * reads, no event dispatch and no per-frame React state in the flow layer. */
 function publishLiveWindowFlowPoint(shell: HTMLElement, clear = false): void {
   const windowId = shell.dataset.pawWindowId;
   if (!windowId) return;
   let point: WindowFlowPoint | null = null;
   if (!clear) {
+    if (!shell.dataset.flowTracked) return;
     const layer = shell.closest('.paw-window-layer');
     if (!layer) return;
     const rect = shell.getBoundingClientRect();
@@ -707,9 +717,10 @@ function windowFlowStatusLabel(status?: string): string {
 
 function stringValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
 
-function PawWindow({ collaborationFocusGroup, flowState, focusFrame, onFocusFrameCommit, overview, overviewFrame, windowId }: {
+function PawWindow({ collaborationFocusGroup, flowState, flowTracked, focusFrame, onFocusFrameCommit, overview, overviewFrame, windowId }: {
   collaborationFocusGroup: string | null;
   flowState?: 'source' | 'arrival';
+  flowTracked?: boolean;
   focusFrame?: PawWindowBounds;
   onFocusFrameCommit: (windowId: string, bounds: PawWindowBounds) => void;
   overview: boolean;
@@ -748,6 +759,7 @@ function PawWindow({ collaborationFocusGroup, flowState, focusFrame, onFocusFram
       collaborationRole={collaborationRole}
       deferPointerInteractionUntilFocused={!collaborationFocusGroup && Boolean(satelliteGroup(node.target))}
       flowState={flowState}
+      flowTracked={flowTracked}
       focusFrame={focusFrame}
       frameMode={focusFrame && collaborationRole === 'satellite' ? 'focus-card' : 'window'}
       onBoundsCommit={(bounds) => {
@@ -833,7 +845,7 @@ function openDesktopRoute(api: ReturnType<typeof usePawDesktopApi>, route: strin
   api.getState().openApp(app.id, { initialRoute: normalized, title: app.label });
 }
 
-export function PawWindowFrame({ active, appId, bounds, children, collaborationRole, deferPointerInteractionUntilFocused = false, flowState, focusFrame, frameMode = 'window', onBoundsCommit, onClose, onFocus, onMinimize, onOpenFromOverview, onSnap, onToggleMaximize, overview = false, overviewFrame, placement, targetKind, title, windowChrome, windowId, zIndex }: {
+export function PawWindowFrame({ active, appId, bounds, children, collaborationRole, deferPointerInteractionUntilFocused = false, flowState, flowTracked = false, focusFrame, frameMode = 'window', onBoundsCommit, onClose, onFocus, onMinimize, onOpenFromOverview, onSnap, onToggleMaximize, overview = false, overviewFrame, placement, targetKind, title, windowChrome, windowId, zIndex }: {
   active: boolean;
   appId: PawAppId;
   bounds: PawWindowBounds;
@@ -841,6 +853,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   collaborationRole?: 'primary' | 'satellite' | 'unrelated' | 'hidden';
   deferPointerInteractionUntilFocused?: boolean;
   flowState?: 'source' | 'arrival';
+  flowTracked?: boolean;
   focusFrame?: PawWindowBounds;
   frameMode?: 'window' | 'focus-card';
   onBoundsCommit: (bounds: PawWindowBounds) => void;
@@ -884,7 +897,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   } as CSSProperties;
   return (
     <PawWindowChromeProvider target={windowChromeTarget}>
-      <section aria-label={`${title}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle}>
+      <section aria-label={`${title}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-flow-tracked={flowTracked || undefined} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle}>
         <div className="paw-window">
           <header className="paw-window-titlebar" data-window-chrome={windowChrome} onDoubleClick={overview || focusFrame ? undefined : onToggleMaximize} onPointerDown={overview ? undefined : drag}>
             {frameMode === 'focus-card' ? null : <div className="paw-traffic-lights" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}><button aria-label="关闭窗口" data-action="close" onClick={() => exit('close', onClose)} title="关闭" type="button"><X size={9} /></button><button aria-label="最小化窗口" data-action="minimize" onClick={() => exit('minimize', onMinimize)} title="最小化" type="button"><Minus size={9} /></button><button aria-label={maximized ? '还原窗口' : '最大化窗口'} data-action={maximized ? 'restore' : 'maximize'} onClick={onToggleMaximize} title={maximized ? '还原' : '最大化'} type="button">{maximized ? <Minimize2 size={8} /> : <Maximize2 size={8} />}</button></div>}
@@ -1092,7 +1105,9 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       window.removeEventListener('pointercancel', cancel);
       publishLiveWindowFlowPoint(shell, true);
     };
-    window.addEventListener('pointermove', move);
+    // The move stream never calls preventDefault; passive keeps the
+    // compositor thread free while the pointer drives the transform.
+    window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', cancel);
   }, [active, bounds, commit, deferPointerInteractionUntilFocused, focus, ref, snap]);
@@ -1152,7 +1167,7 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
       commit(next);
       publishLiveWindowFlowPoint(shell, true);
     };
-    window.addEventListener('pointermove', move);
+    window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', finish);
   }, [active, bounds, commit, deferPointerInteractionUntilFocused, focus, handle, ref]);

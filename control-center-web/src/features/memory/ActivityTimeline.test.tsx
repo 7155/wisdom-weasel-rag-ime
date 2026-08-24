@@ -48,9 +48,9 @@ describe('ActivityTimeline activity projection', () => {
   it('does not present a heuristic approved timeline as a semantic journal', async () => {
     renderTimeline(semanticTimeline(), { organized: false });
 
-    expect(await screen.findByText('这一天还没有形成语义日记')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '语义整理这一天' })).toBeInTheDocument();
-    expect(screen.getByText('待语义整理')).toBeInTheDocument();
+    expect(await screen.findByText('这一天还没有整理成日记')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '整理这一天' })).toBeInTheDocument();
+    expect(screen.getByText('待整理成日记')).toBeInTheDocument();
     expect(screen.queryByText('上午完成账号切换与连续开发，下午验证记忆召回。')).not.toBeInTheDocument();
   });
 

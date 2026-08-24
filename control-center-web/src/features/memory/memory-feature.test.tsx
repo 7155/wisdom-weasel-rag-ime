@@ -640,7 +640,7 @@ describe('MemoryFeature relations', () => {
     await user.click(await screen.findByRole('combobox', { name: '状态' }));
     expect(await screen.findByRole('option', { name: '历史保留' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '已合并' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: '碎片证据' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '来源归档' })).toBeInTheDocument();
   });
 
   it('normalizes structured source and sourceType/sourceId evidence references', async () => {

@@ -9,7 +9,7 @@ import type { PawWindowBounds, PawWindowNode } from '../runtime/desktop-store';
 import { PawDesktopProvider } from '../runtime/desktop-context';
 import { usePawDesktopApi } from '../runtime/desktop-context';
 import { PawWindowChromePortal } from './PawWindowChrome';
-import { PawRoomFocusRail, PawWindowFrame, PawWindowLayer, roomWindowFlowGroups } from './PawWindowLayer';
+import { PAW_WINDOW_FLOW_GEOMETRY_EVENT, PawRoomFocusRail, PawWindowFrame, PawWindowLayer, roomWindowFlowGroups } from './PawWindowLayer';
 
 vi.mock('../apps/PawApps', () => ({ PawAppProcess: () => null }));
 
@@ -263,6 +263,66 @@ describe('PAWOS compositor window frame', () => {
     expect(screen.getByLabelText('Rooms窗口')).toHaveAttribute('data-placement', 'maximized');
   });
 
+  it('renders exactly one traffic light cluster with the three window verbs', () => {
+    render(<FrameHarness initial={{ x: 0, y: 0, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>);
+
+    const shell = screen.getByLabelText('Rooms窗口');
+    const clusters = shell.querySelectorAll('.paw-traffic-lights');
+    expect(clusters).toHaveLength(1);
+    const lights = within(clusters[0] as HTMLElement).getAllByRole('button');
+    expect(lights.map((light) => light.getAttribute('aria-label'))).toEqual(['关闭窗口', '最小化窗口', '最大化窗口']);
+  });
+
+  it('keeps an untracked window drag free of live flow geometry work', () => {
+    const seenPoints: Array<{ x: number; y: number } | null> = [];
+    const listen = (event: Event) => seenPoints.push((event as CustomEvent<{ point: { x: number; y: number } | null }>).detail.point);
+    window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
+    try {
+      render(
+        <div className="paw-window-layer">
+          <FrameHarness initial={{ x: 20, y: 30, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>
+        </div>,
+      );
+      const titlebar = screen.getByText('Rooms').closest('.paw-window-titlebar')!;
+
+      fireEvent.pointerDown(titlebar, { button: 0, clientX: 100, clientY: 80, pointerId: 11 });
+      fireEvent.pointerMove(window, { clientX: 164, clientY: 122, pointerId: 11 });
+      fireEvent.pointerUp(window, { clientX: 164, clientY: 122, pointerId: 11 });
+
+      // An ordinary window publishes no live points while moving — only the
+      // final clear signal, which carries no geometry and forces no reads.
+      expect(seenPoints.length).toBeGreaterThanOrEqual(1);
+      expect(seenPoints.every((point) => point === null)).toBe(true);
+    } finally {
+      window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
+    }
+  });
+
+  it('publishes live flow geometry for windows that sit in a Room flow group', () => {
+    const seenPoints: Array<{ x: number; y: number } | null> = [];
+    const listen = (event: Event) => seenPoints.push((event as CustomEvent<{ point: { x: number; y: number } | null }>).detail.point);
+    window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
+    try {
+      render(
+        <div className="paw-window-layer">
+          <FrameHarness flowTracked initial={{ x: 20, y: 30, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>
+        </div>,
+      );
+      const shell = screen.getByLabelText('Rooms窗口');
+      expect(shell).toHaveAttribute('data-flow-tracked', 'true');
+      const titlebar = screen.getByText('Rooms').closest('.paw-window-titlebar')!;
+
+      fireEvent.pointerDown(titlebar, { button: 0, clientX: 100, clientY: 80, pointerId: 12 });
+      fireEvent.pointerMove(window, { clientX: 164, clientY: 122, pointerId: 12 });
+      fireEvent.pointerUp(window, { clientX: 164, clientY: 122, pointerId: 12 });
+
+      expect(seenPoints.some((point) => point !== null)).toBe(true);
+      expect(seenPoints.at(-1)).toBeNull();
+    } finally {
+      window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
+    }
+  });
+
   it('drags and resizes the temporary focus frame instead of the ordinary desktop bounds', () => {
     const commit = vi.fn();
     render(<FrameHarness
@@ -464,13 +524,14 @@ function LiveRoomChrome() {
   );
 }
 
-function FrameHarness({ appId = 'agent', children, focusFrame, initial, onCommit, overview, placement, targetKind, windowChrome }: { appId?: PawAppId; children: React.ReactNode; focusFrame?: PawWindowBounds; initial: PawWindowBounds; onCommit: (bounds: PawWindowBounds) => void; overview?: boolean; placement?: 'maximized' | 'left' | 'right'; targetKind?: 'room'; windowChrome?: string }) {
+function FrameHarness({ appId = 'agent', children, flowTracked, focusFrame, initial, onCommit, overview, placement, targetKind, windowChrome }: { appId?: PawAppId; children: React.ReactNode; flowTracked?: boolean; focusFrame?: PawWindowBounds; initial: PawWindowBounds; onCommit: (bounds: PawWindowBounds) => void; overview?: boolean; placement?: 'maximized' | 'left' | 'right'; targetKind?: 'room'; windowChrome?: string }) {
   const [bounds, setBounds] = useState(initial);
   return (
     <PawWindowFrame
       active
       appId={appId}
       bounds={bounds}
+      flowTracked={flowTracked}
       focusFrame={focusFrame}
       onBoundsCommit={(next) => { onCommit(next); setBounds(next); }}
       onClose={() => undefined}
