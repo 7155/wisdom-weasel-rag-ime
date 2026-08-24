@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-label="">
+  <defs>
+    <linearGradient id="wash" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbfcf9"/>
+      <stop offset="0.58" stop-color="#e9eff0"/>
+      <stop offset="1" stop-color="#c8d8db"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#00c2ca" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#18d1ff" stop-opacity="0.28"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#1c272c" stroke-opacity="0.09"/>
+    </pattern>
+    <pattern id="dots" width="16" height="16" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.4" fill="#172126" fill-opacity="0.22"/>
+    </pattern>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="24"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#wash)"/>
+  <rect width="1600" height="1000" fill="url(#grid)"/>
+  <path d="M1010-40h630v510l-338 118-242-148z" fill="url(#cyan)"/>
+  <path d="M-90 724 600 480l264 520H-90z" fill="#f8faf7" fill-opacity="0.92"/>
+  <path d="M-60 790 530 582l92 195L20 1000H-60z" fill="#00b5be" fill-opacity="0.22"/>
+  <path d="M118 150h560l-144 306H38z" fill="#fff" fill-opacity="0.7"/>
+  <path d="M122 156h420M98 204h388M76 252h366" fill="none" stroke="#172126" stroke-opacity="0.2" stroke-width="2"/>
+  <rect x="116" y="302" width="244" height="128" fill="url(#dots)" opacity="0.82"/>
+  <circle cx="1260" cy="334" r="164" fill="#18d1ff" fill-opacity="0.16" filter="url(#soft)"/>
+  <circle cx="1260" cy="334" r="106" fill="none" stroke="#f8faf7" stroke-opacity="0.9" stroke-width="2"/>
+  <circle cx="1260" cy="334" r="70" fill="none" stroke="#172126" stroke-opacity="0.24" stroke-width="2" stroke-dasharray="6 12"/>
+  <path d="m1214 284 112 48-72 88z" fill="#f8faf7" fill-opacity="0.8"/>
+  <path d="M982 742h448M1044 790h324M1098 838h214" fill="none" stroke="#172126" stroke-opacity="0.24" stroke-width="2"/>
+  <path d="M1440 740h78v12h-78z" fill="#f2c641"/>
+  <path d="M742 72h12v316h-12z" fill="#172126" fill-opacity="0.22"/>
+  <path d="M754 72h88v12h-88z" fill="#00b5be"/>
+</svg>

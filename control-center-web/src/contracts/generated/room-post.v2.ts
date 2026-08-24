@@ -866,7 +866,7 @@ export interface RoomPostV2 {
       ];
   idempotencyKey: string;
   publicationSource: {
-    kind: 'user' | 'room_commit' | 'room_post';
+    kind: 'user' | 'room_commit' | 'room_post' | 'runtime_projection';
     ref: string;
   };
   chronology?: Chronology;

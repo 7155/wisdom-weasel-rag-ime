@@ -1,0 +1,861 @@
+/*
+ * PAWOS Browser migration v1
+ *
+ * Owns the real Browser surface whose page remains dominant. Archive fixtures
+ * supplied composition and state grammar only; tabs, history, settings,
+ * traces, errors, and lifecycle remain owned by the existing PAW transport.
+ * Files and Terminal now live entirely in their feature stylesheets.
+ */
+
+/* --------------------------------------------------------------------------
+   Browser — single-layer window/tab chrome, page-first viewport, overlay trace
+   -------------------------------------------------------------------------- */
+
+.paw-desktop-root .paw-direct-browser {
+  --paw-browser-chrome: var(--paw-app-nav, #f4f6f9);
+  --paw-browser-control: var(--paw-app-surface-strong, #fff);
+  --paw-browser-hover: var(--paw-app-selection, rgb(24 32 44 / 6%));
+  --paw-browser-line: rgb(24 32 44 / 10%);
+  --paw-browser-ink: #18202c;
+  --paw-browser-muted: #687180;
+  --paw-browser-agent-blue: #5b8cff;
+  --paw-browser-agent-violet: #8b5cf6;
+  --paw-browser-agent-cyan: #52d7ff;
+  grid-template-rows: 42px 1fr;
+  background: var(--paw-app-surface, #fff);
+  color: var(--paw-browser-ink);
+  font-family: var(--font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
+  container: paw-browser / inline-size;
+}
+
+.paw-desktop-root .paw-direct-browser:not([data-tabs-in-window-chrome]) {
+  grid-template-rows: 38px 42px minmax(0, 1fr);
+}
+
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='browser-tabs'] {
+  --paw-browser-chrome: #f4f6f9;
+  --paw-browser-control: #fff;
+  --paw-browser-hover: rgb(24 32 44 / 6%);
+  grid-template-columns: 76px minmax(54px, 86px) minmax(0, 1fr);
+  gap: 7px;
+  border-bottom-color: rgb(24 32 44 / 9%);
+  background: rgb(247 248 250 / 96%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 78%) inset;
+}
+
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='browser-tabs'] .paw-window-title {
+  color: #5f6875;
+}
+
+.paw-desktop-root .paw-browser-tabstrip {
+  align-items: end;
+  padding: 4px 4px 0;
+  border: 0;
+  background: transparent;
+}
+
+.paw-desktop-root .paw-browser-tabs-live {
+  gap: 4px;
+}
+
+.paw-desktop-root .paw-browser-tab {
+  min-width: 104px;
+  max-width: 232px;
+  height: 34px;
+  flex-basis: 174px;
+  border: 1px solid transparent;
+  border-radius: 10px 10px 0 0;
+  color: #737b88;
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-browser-tab-main {
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 7px;
+  padding: 0 30px 0 10px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 520;
+}
+
+.paw-desktop-root .paw-browser-tab[data-active] {
+  border-color: rgb(24 32 44 / 10%);
+  border-bottom-color: #fff;
+  background: #fff;
+  color: var(--paw-browser-ink);
+  box-shadow: 0 -1px 2px rgb(15 23 42 / 3%);
+  transform: translateY(1px);
+}
+
+.paw-desktop-root .paw-browser-tab-close,
+.paw-desktop-root .paw-browser-new-tab {
+  border-radius: 7px;
+}
+
+.paw-desktop-root .paw-browser-new-tab {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 3px;
+}
+
+.paw-desktop-root .paw-browser-toolbar {
+  gap: 7px;
+  padding: 5px 10px 7px;
+  border-bottom-color: var(--paw-browser-line);
+  background: #f7f8fa;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 86%) inset;
+}
+
+.paw-desktop-root .paw-nav-buttons,
+.paw-desktop-root .paw-toolbar-actions {
+  gap: 3px;
+}
+
+.paw-desktop-root .paw-nav-buttons button,
+.paw-desktop-root .paw-toolbar-actions > button {
+  width: 29px;
+  height: 29px;
+  border-radius: 8px;
+  color: #626c79;
+}
+
+.paw-desktop-root .paw-omnibox-form {
+  height: 34px;
+  gap: 7px;
+  padding-inline: 12px;
+  border: 1px solid var(--paw-browser-line);
+  border-radius: 17px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
+}
+
+/* The form owns the address field chrome. Older Browser composition rules
+   target every toolbar input, so the final owner must keep this inner input
+   visually neutral instead of rendering a second pill inside the omnibox. */
+.paw-desktop-root .paw-window-shell[data-app='browser'] .paw-omnibox-form {
+  background: #fff;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='browser'] .paw-omnibox-form input {
+  height: auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  outline: 0;
+}
+
+.paw-desktop-root .paw-omnibox-form:focus-within {
+  border-color: rgb(20 184 200 / 62%);
+  box-shadow: 0 0 0 3px rgb(20 184 200 / 12%), 0 1px 2px rgb(15 23 42 / 5%);
+}
+
+.paw-desktop-root .paw-omnibox-form input {
+  font-size: 13px;
+}
+
+.paw-desktop-root .paw-lock-icon {
+  color: #1f9d4d;
+}
+
+.paw-desktop-root .paw-browser-workspace,
+.paw-desktop-root .paw-browser-workspace[data-show-agent] {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  isolation: isolate;
+  background: #fff;
+}
+
+.paw-desktop-root .paw-browser-viewport {
+  background: #fff;
+}
+
+.paw-desktop-root .paw-browser-error {
+  width: min(460px, calc(100% - 32px));
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgb(197 27 47 / 18%);
+  border-radius: 12px;
+  background: #fff;
+  color: #687180;
+  box-shadow: 0 12px 32px rgb(15 23 42 / 10%);
+}
+
+.paw-desktop-root .paw-browser-error > svg {
+  color: #c51b2f;
+}
+
+.paw-desktop-root .paw-browser-error strong {
+  color: var(--paw-browser-ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paw-desktop-root .paw-browser-error button {
+  min-height: 30px;
+  padding-inline: 11px;
+  border: 1px solid var(--paw-browser-line);
+  border-radius: 8px;
+  background: #f4f6f8;
+  color: var(--paw-browser-ink);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.paw-desktop-root .paw-browser-live-view {
+  background: #e9edf2;
+}
+
+.paw-desktop-root .paw-browser-live-canvas {
+  box-shadow: 0 1px 4px rgb(15 23 42 / 12%);
+}
+
+.paw-desktop-root .paw-browser-agent-stream {
+  position: absolute;
+  display: grid;
+  z-index: 12;
+  top: 10px;
+  right: 10px;
+  bottom: auto;
+  width: min(320px, calc(100% - 20px));
+  max-height: calc(100% - 20px);
+  grid-template-rows: 42px minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--paw-browser-line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 14px 38px rgb(15 23 42 / 17%), 0 1px 0 rgb(255 255 255 / 75%) inset;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--paw-browser-ink);
+}
+
+.paw-desktop-root .paw-browser-agent-stream > header {
+  padding-inline: 13px;
+  border-bottom-color: var(--paw-browser-line);
+}
+
+.paw-desktop-root .paw-browser-agent-stream > header > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.paw-desktop-root .paw-browser-agent-stream > header > div > button {
+  min-width: 26px;
+  height: 26px;
+  justify-content: center;
+  padding-inline: 7px;
+  border-color: transparent;
+  background: transparent;
+  color: #687180;
+  font-size: 12px;
+}
+
+.paw-desktop-root .paw-browser-agent-stream > header span {
+  color: var(--paw-browser-ink);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 680;
+}
+
+.paw-desktop-root .paw-browser-agent-stream > header svg {
+  color: #14a9bb;
+}
+
+.paw-desktop-root .paw-browser-agent-stream > div {
+  min-height: 0;
+  gap: 1px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 7px;
+  scrollbar-gutter: stable;
+}
+
+.paw-desktop-root .paw-browser-agent-stream article {
+  align-items: start;
+  gap: 9px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-browser-agent-stream article[data-source='agent'][data-status='claimed'],
+.paw-desktop-root .paw-browser-agent-stream article[data-source='agent'][data-status='queued'] {
+  border: 0;
+  background: rgb(20 184 200 / 7%);
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-browser-agent-stream article > span {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: #eef1f5;
+}
+
+.paw-desktop-root .paw-browser-agent-stream article strong {
+  display: block;
+  color: var(--paw-browser-ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paw-desktop-root .paw-browser-agent-stream article small {
+  display: block;
+  margin-top: 1px;
+  color: #737b88;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paw-desktop-root .paw-browser-trace-steps {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top-color: rgb(24 32 44 / 8%);
+}
+
+.paw-desktop-root .paw-browser-trace-step-window__meta {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  color: #737b88;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.paw-desktop-root .paw-browser-trace-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.paw-desktop-root .paw-browser-trace-progress progress {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  accent-color: #14a9bb;
+}
+
+.paw-desktop-root .paw-browser-trace-steps-toggle {
+  margin-top: 6px;
+  padding: 3px 0;
+  color: #168b9a;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.paw-desktop-root .paw-browser-trace-steps-toggle:hover { color: #0f6d78; text-decoration: underline; }
+
+.paw-desktop-root .paw-browser-trace-steps li {
+  color: #737b88;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paw-desktop-root .paw-browser-agent-stream > footer {
+  padding: 8px 12px;
+  border-top-color: var(--paw-browser-line);
+  background: rgb(247 248 250 / 86%);
+  color: #737b88;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.paw-desktop-root .paw-browser-agent-stream > footer > span[data-active] {
+  background: #14b8c8;
+  box-shadow: 0 0 0 4px rgb(20 184 200 / 13%);
+}
+
+.paw-desktop-root .paw-browser-menu {
+  top: 35px;
+  width: 220px;
+  border-color: var(--paw-browser-line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 46px rgb(15 23 42 / 18%), 0 1px 0 rgb(255 255 255 / 78%) inset;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.paw-desktop-root .paw-toolbar-actions .paw-browser-menu > button,
+.paw-desktop-root .paw-browser-menu-zoom {
+  color: var(--paw-browser-ink);
+  font-size: 13px;
+}
+
+.paw-desktop-root .paw-browser-menu-narrow-only {
+  display: none;
+}
+
+.paw-desktop-root .paw-browser-find {
+  border-color: var(--paw-browser-line);
+  border-radius: 11px;
+  background: #fff;
+}
+
+.paw-desktop-root .paw-browser-history,
+.paw-desktop-root .paw-browser-settings {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  place-items: start center;
+  padding: clamp(28px, 7vh, 58px) 14px 14px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #eef1f5;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.paw-desktop-root .paw-browser-surface-card {
+  width: min(650px, 100%);
+  max-height: min(640px, 100%);
+  display: grid;
+  grid-template-rows: 50px auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgb(24 32 44 / 8%);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgb(15 23 42 / 22%), 0 1px 0 rgb(255 255 255 / 80%) inset;
+}
+
+.paw-desktop-root .paw-browser-settings .paw-browser-surface-card {
+  grid-template-rows: 50px minmax(0, 1fr);
+}
+
+.paw-desktop-root .paw-browser-surface-card > header,
+.paw-desktop-root .paw-browser-surface-card > header > div {
+  display: flex;
+  align-items: center;
+}
+
+.paw-desktop-root .paw-browser-surface-card > header {
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--paw-browser-line);
+}
+
+.paw-desktop-root .paw-browser-surface-card > header > div {
+  gap: 8px;
+}
+
+.paw-desktop-root .paw-browser-surface-card > header button {
+  min-width: 28px;
+  height: 28px;
+  padding-inline: 8px;
+  border-radius: 8px;
+  color: #687180;
+  cursor: pointer;
+}
+
+.paw-desktop-root .paw-browser-surface-card > header > div:last-child button:first-child:not(:last-child) {
+  background: rgb(215 0 21 / 7%);
+  color: #c51b2f;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 650;
+}
+
+.paw-desktop-root .paw-browser-history-search {
+  margin: 8px 16px 5px;
+  border: 1px solid var(--paw-browser-line);
+  background: #f4f6f8;
+}
+
+.paw-desktop-root .paw-browser-history ol {
+  padding: 5px 8px 12px;
+}
+
+.paw-desktop-root .paw-browser-history li > button:first-child {
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+
+.paw-desktop-root .paw-browser-history li strong {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.paw-desktop-root .paw-browser-history li small { font-size: 14px; line-height: 1.45; }
+.paw-desktop-root .paw-browser-history li time { font-size: 13px; line-height: 1.4; }
+
+.paw-desktop-root .paw-browser-history .paw-browser-surface-card > p {
+  margin: auto;
+  color: #737b88;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.paw-desktop-root .paw-browser-settings-body {
+  width: 100%;
+  margin: 0;
+  padding: 0 18px 18px;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-browser-settings-body > section {
+  padding: 15px 0;
+  border-bottom-color: var(--paw-browser-line);
+}
+
+.paw-desktop-root .paw-browser-settings-body h3 {
+  color: var(--paw-browser-ink);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.paw-desktop-root .paw-browser-settings-body p,
+.paw-desktop-root .paw-browser-setting-row {
+  color: #687180;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.paw-desktop-root .paw-browser-setting-row input,
+.paw-desktop-root .paw-browser-setting-row button {
+  border-color: var(--paw-browser-line);
+  border-radius: 9px;
+  background: #f4f6f8;
+}
+
+.paw-desktop-root .paw-browser-action-receipt {
+  border-color: rgb(31 157 77 / 24%);
+  background: rgb(255 255 255 / 96%);
+  color: var(--paw-browser-ink);
+}
+
+/* Ego-style execution projection. It is driven only by a real Agent trace;
+   the page remains the Browser and the full trace stays on demand. */
+.paw-desktop-root .paw-browser-viewport[data-agent-state='active'] {
+  box-shadow:
+    inset 0 0 0 1px rgb(91 140 255 / 60%),
+    inset 0 0 28px rgb(91 140 255 / 8%);
+}
+
+.paw-desktop-root .paw-browser-agent-field {
+  position: absolute;
+  z-index: 11;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  isolation: isolate;
+  animation: paw-browser-agent-field-in 220ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.paw-desktop-root .paw-browser-agent-field::before {
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% -8%, rgb(114 153 255 / 24%), transparent 52%),
+    radial-gradient(ellipse at 106% 48%, rgb(82 161 255 / 27%), transparent 46%),
+    radial-gradient(ellipse at -7% 66%, rgb(88 197 255 / 20%), transparent 43%),
+    radial-gradient(ellipse at 48% 108%, rgb(108 106 255 / 28%), transparent 53%),
+    rgb(94 132 255 / 3%);
+  content: '';
+}
+
+.paw-desktop-root .paw-browser-agent-field::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background-image: radial-gradient(circle, rgb(141 178 255 / 65%) 1px, transparent 1.4px);
+  background-position: center bottom;
+  background-size: 12px 12px;
+  content: '';
+  opacity: .32;
+  -webkit-mask-image: radial-gradient(ellipse at center, transparent 16%, rgb(0 0 0 / 28%) 52%, #000 100%);
+  mask-image: radial-gradient(ellipse at center, transparent 16%, rgb(0 0 0 / 28%) 52%, #000 100%);
+}
+
+.paw-desktop-root .paw-browser-agent-signal {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(107 145 255 / 62%);
+  box-shadow:
+    inset 0 0 24px rgb(91 140 255 / 12%),
+    inset 0 -34px 56px rgb(91 108 255 / 13%),
+    0 0 36px rgb(91 140 255 / 31%);
+}
+
+.paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal {
+  animation: paw-browser-agent-signal-live 1.8s ease-in-out infinite;
+}
+
+.paw-desktop-root .paw-browser-agent-field[data-state='settled']::before,
+.paw-desktop-root .paw-browser-agent-field[data-state='settled']::after {
+  opacity: .1;
+}
+
+.paw-desktop-root .paw-browser-agent-field[data-state='settled'] .paw-browser-agent-signal {
+  border-color: rgb(91 140 255 / 24%);
+  box-shadow: inset 0 -1px 0 rgb(91 140 255 / 36%);
+}
+
+.paw-desktop-root .paw-browser-agent-counter {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  min-width: 44px;
+  height: 31px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 72%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 91%);
+  box-shadow: 0 8px 24px rgb(46 76 169 / 20%);
+  color: #2e3445;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.paw-desktop-root .paw-browser-agent-capsule {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  width: min(430px, calc(100% - 30px));
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 8px 8px 13px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 21px;
+  background: rgb(27 28 34 / 90%);
+  box-shadow:
+    0 18px 54px rgb(12 17 38 / 32%),
+    0 0 0 1px rgb(91 140 255 / 8%),
+    0 0 34px rgb(91 116 255 / 21%),
+    inset 0 1px 0 rgb(255 255 255 / 12%);
+  color: #f7f8ff;
+  pointer-events: auto;
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+  backdrop-filter: blur(22px) saturate(135%);
+  animation: paw-browser-agent-capsule-in 240ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.paw-desktop-root .paw-browser-agent-mark {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  filter: drop-shadow(0 0 7px rgb(153 177 255 / 58%));
+}
+
+.paw-desktop-root .paw-browser-agent-capsule output {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule output > span {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule output > strong,
+.paw-desktop-root .paw-browser-agent-capsule output > span,
+.paw-desktop-root .paw-browser-agent-capsule output small,
+.paw-desktop-root .paw-browser-agent-capsule output small > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule output > strong {
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 680;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule output > span > b {
+  flex: 0 0 auto;
+  color: rgb(239 242 255 / 82%);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 620;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule output small {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: rgb(199 207 231 / 62%);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule output small > b {
+  color: #aebcff;
+  font-weight: 650;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule-actions > button {
+  min-width: 0;
+  min-height: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #f5f6fb;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 620;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.paw-desktop-root .paw-browser-agent-capsule-actions > button[aria-label='接管浏览器'] {
+  border-left: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 0;
+  color: #fff;
+}
+
+.paw-desktop-root .paw-browser-agent-capsule-actions > button[data-danger] {
+  color: #ff7885;
+}
+
+.paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-mark svg,
+.paw-desktop-root .paw-browser-agent-counter svg {
+  animation: paw-browser-agent-spark 2.4s linear infinite;
+}
+
+@keyframes paw-browser-agent-field-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes paw-browser-agent-signal-live {
+  0%, 100% { opacity: .68; }
+  50% { opacity: 1; }
+}
+
+@keyframes paw-browser-agent-capsule-in {
+  from { opacity: 0; transform: translate3d(-50%, 10px, 0) scale(.97); }
+  to { opacity: 1; transform: translate3d(-50%, 0, 0) scale(1); }
+}
+
+@keyframes paw-browser-agent-spark {
+  to { transform: rotate(360deg); }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive and interaction polish
+   -------------------------------------------------------------------------- */
+
+@container paw-browser (max-width: 620px) {
+  .paw-desktop-root .paw-browser-home,
+  .paw-desktop-root .paw-browser-history-toggle,
+  .paw-desktop-root .paw-browser-settings-toggle { display: none; }
+  .paw-desktop-root .paw-browser-toolbar { gap: 4px; padding-inline: 6px; }
+  .paw-desktop-root .paw-nav-buttons button,
+  .paw-desktop-root .paw-toolbar-actions > button { width: 27px; }
+  .paw-desktop-root .paw-browser-agent-stream { width: min(290px, calc(100% - 12px)); top: 6px; right: 6px; max-height: calc(100% - 12px); }
+  .paw-desktop-root .paw-browser-trace-progress { grid-template-columns: 1fr; gap: 2px; }
+  .paw-desktop-root .paw-browser-agent-capsule {
+    bottom: 10px;
+    width: calc(100% - 20px);
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 15px;
+  }
+  .paw-desktop-root .paw-browser-agent-mark { width: 22px; height: 22px; }
+  .paw-desktop-root .paw-browser-agent-capsule-actions > button { padding-inline: 8px; }
+  .paw-desktop-root .paw-browser-surface-card { border-radius: 13px; }
+  .paw-desktop-root .paw-browser-menu-narrow-only { display: flex; }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .paw-desktop-root .paw-browser-agent-capsule-actions > button:hover {
+    background: rgb(255 255 255 / 9%);
+    color: #fff;
+    transform: translate3d(0, -1px, 0);
+  }
+  .paw-desktop-root .paw-browser-agent-capsule-actions > button[aria-label='接管浏览器']:hover {
+    background: rgb(255 255 255 / 9%);
+    color: #fff;
+  }
+  .paw-desktop-root .paw-browser-agent-capsule-actions > button[data-danger]:hover {
+    background: rgb(255 92 104 / 12%);
+    color: #ffd5d8;
+  }
+  .paw-desktop-root .paw-browser-agent-stream article:hover,
+  .paw-desktop-root .paw-browser-history li > button:first-child:hover,
+  .paw-desktop-root .paw-browser-surface-card > header button:hover,
+  .paw-desktop-root .paw-toolbar-actions .paw-browser-menu > button:hover {
+    background: var(--paw-browser-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root .paw-browser-agent-field,
+  .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal,
+  .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-mark svg,
+  .paw-desktop-root .paw-browser-agent-counter svg,
+  .paw-desktop-root .paw-browser-agent-capsule,
+  .paw-desktop-root .paw-browser-agent-capsule-actions > button,
+  .paw-desktop-root .paw-browser-agent-stream,
+  .paw-desktop-root .paw-browser-agent-stream article,
+  .paw-desktop-root .paw-browser-history,
+  .paw-desktop-root .paw-browser-settings,
+  .paw-desktop-root .paw-browser-tab {
+    animation: none;
+    transition: none;
+  }
+  .paw-desktop-root .paw-browser-agent-capsule { transform: translate3d(-50%, 0, 0); }
+}

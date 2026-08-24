@@ -22,7 +22,7 @@ describe('control center shell', () => {
   it('switches routes immediately and exposes one global status surface', async () => {
     const user = userEvent.setup();
     await router.navigate('/agent');
-    render(<App />);
+    render(<App frontendProduct="legacy" />);
 
     await waitFor(
       () => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument(),
@@ -44,7 +44,7 @@ describe('control center shell', () => {
 
   it('keeps the shell title in sync with programmatic route navigation', async () => {
     await router.navigate('/planning');
-    render(<App />);
+    render(<App frontendProduct="legacy" />);
 
     await waitFor(() => expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument());
     await router.navigate('/agent');
@@ -54,7 +54,7 @@ describe('control center shell', () => {
       { timeout: 10_000 },
     );
     expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('对话');
-    expect(document.title).toBe('对话 · 澄');
+    expect(document.title).toBe('对话 · PAW');
     expect(document.querySelector('#workspace-main')).toHaveAccessibleName('对话主内容');
     expect(document.querySelector('.shell-sidebar [data-route="agent"]')).toHaveAttribute('aria-current', 'page');
   });

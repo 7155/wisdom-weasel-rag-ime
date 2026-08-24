@@ -56,6 +56,66 @@ describe('selectRoomTurnExecution', () => {
     expect(selectPublicRoomTurnOrder(projection)).toEqual(['root-1']);
   });
 
+  it('keeps delivered intercom receipts out of the public turn lifecycle', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1', 'peer-delivery-turn');
+    projection.turnsById['root-1'] = {
+      id: 'root-1', rootId: 'root-1', status: 'completed',
+      messageIds: ['request-1'], activityIds: [], participantIds: ['participant-a'],
+      createdAtMs: 1, updatedAtMs: 4,
+    };
+    projection.messagesById['request-1'] = {
+      id: 'request-1', roomId: 'room-1', turnId: 'root-1',
+      participantId: null, sourceSessionId: '', role: 'user',
+      status: 'completed', text: '直接询问伙伴', rootId: 'root-1',
+      createdAtMs: 1,
+    };
+    projection.turnsById['peer-delivery-turn'] = {
+      id: 'peer-delivery-turn', rootId: 'peer-delivery-turn', status: 'running',
+      messageIds: [], activityIds: ['intercom-delivered'], participantIds: ['participant-b'],
+      createdAtMs: 2, updatedAtMs: 3,
+    };
+    projection.activitiesById['intercom-delivered'] = {
+      id: 'intercom-delivered', turnId: 'peer-delivery-turn',
+      participantId: 'participant-b', sourceSessionId: 'session-b',
+      kind: 'participant_activity', status: 'completed', summary: '伙伴沟通',
+      payload: {
+        activityKind: 'intercom',
+        phase: 'delivered',
+        message: {
+          id: 'room-message-1', kind: 'reply', status: 'delivered',
+          sourceParticipantId: 'participant-b',
+          targetParticipantId: 'participant-a',
+        },
+      },
+      createdAtMs: 2,
+    };
+
+    expect(selectPublicRoomTurnOrder(projection)).toEqual(['root-1']);
+    expect(selectRoomExecutionOverview(projection)).toEqual([
+      expect.objectContaining({ id: 'root-1', status: 'completed' }),
+    ]);
+  });
+
+  it('projects a linked retry as one logical Room turn', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1', 'root-2', 'root-3');
+    projection.turnsById['root-1'] = {
+      id: 'root-1', status: 'failed', messageIds: [], activityIds: [], participantIds: [],
+      createdAtMs: 1, updatedAtMs: 2,
+    };
+    projection.turnsById['root-2'] = {
+      id: 'root-2', status: 'failed', retryOfRootId: 'root-1', messageIds: [], activityIds: [], participantIds: [],
+      createdAtMs: 3, updatedAtMs: 4,
+    };
+    projection.turnsById['root-3'] = {
+      id: 'root-3', status: 'running', retryOfRootId: 'root-2', messageIds: [], activityIds: [], participantIds: [],
+      createdAtMs: 5, updatedAtMs: 6,
+    };
+
+    expect(selectPublicRoomTurnOrder(projection)).toEqual(['root-3']);
+  });
+
   it('merges a payload-addressed route and its reply into one participant lane', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');
@@ -112,65 +172,6 @@ describe('selectRoomTurnExecution', () => {
       messageIds: ['reply-1'],
     });
     expect(selected.lanes[0].activities.map((item) => item.id)).toEqual(['route-1']);
-  });
-
-  it('keeps WorkItem retries separate and joins replies by exact dispatch', () => {
-    const projection = createRoomProjection('room-1');
-    projection.turnOrder.push('root-1');
-    projection.turnsById['root-1'] = {
-      id: 'root-1',
-      rootId: 'root-1',
-      status: 'running',
-      messageIds: ['reply-b'],
-      activityIds: ['attempt-a', 'attempt-b'],
-      participantIds: ['participant-1'],
-      dispatchIds: ['dispatch-a', 'dispatch-b'],
-      dispatchParticipantIds: {
-        'dispatch-a': 'participant-1',
-        'dispatch-b': 'participant-1',
-      },
-      createdAtMs: 1,
-      updatedAtMs: 3,
-    };
-    projection.activitiesById['attempt-a'] = {
-      id: 'attempt-a', turnId: 'root-1', participantId: 'participant-1',
-      sourceSessionId: 'session-1', kind: 'participant_activity', status: 'failed',
-      summary: '第一次失败',
-      payload: {
-        rootId: 'root-1', dispatchId: 'dispatch-a', workItemId: 'work-1',
-        workItemRevision: 1, attemptId: 'attempt-a', sourceEventType: 'turn_failed',
-      },
-      createdAtMs: 1,
-    };
-    projection.activitiesById['attempt-b'] = {
-      id: 'attempt-b', turnId: 'root-1', participantId: 'participant-1',
-      sourceSessionId: 'session-1', kind: 'participant_activity', status: 'running',
-      summary: '返修进行中',
-      payload: {
-        rootId: 'root-1', dispatchId: 'dispatch-b', workItemId: 'work-1',
-        workItemRevision: 2, attemptId: 'attempt-b', sourceEventType: 'tool_started',
-      },
-      createdAtMs: 2,
-    };
-    projection.messagesById['reply-b'] = {
-      id: 'reply-b', roomId: 'room-1', turnId: 'root-1',
-      participantId: 'participant-1', sourceSessionId: 'session-1', role: 'assistant',
-      status: 'streaming', text: '第二次尝试', projectionKind: 'execution',
-      rootId: 'root-1', dispatchId: 'dispatch-b', createdAtMs: 3,
-    };
-
-    const selected = selectRoomTurnExecution(projection, 'root-1');
-
-    expect(selected.lanes).toHaveLength(2);
-    expect(selected.lanes.map((lane) => ({
-      workItemId: lane.workItemId,
-      revision: lane.workItemRevision,
-      attemptId: lane.attemptId,
-      messageIds: lane.messageIds,
-    }))).toEqual([
-      { workItemId: 'work-1', revision: 1, attemptId: 'attempt-a', messageIds: [] },
-      { workItemId: 'work-1', revision: 2, attemptId: 'attempt-b', messageIds: ['reply-b'] },
-    ]);
   });
 
   it('keeps an accepted answer in canonical message order after its question', () => {
@@ -341,6 +342,86 @@ describe('selectRoomTurnExecution', () => {
     expect(selected.lanes.map((lane) => lane.dispatchId)).toEqual([
       'dispatch-a',
       'dispatch-b',
+    ]);
+  });
+
+  it('keeps every Pi loop in its own lane even when the participant and dispatch are unchanged', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'completed',
+      messageIds: ['first-result', 'root-final'],
+      activityIds: ['first-loop', 'final-loop'],
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-1'],
+      dispatchParticipantIds: { 'dispatch-1': 'participant-1' },
+      createdAtMs: 1,
+      updatedAtMs: 6,
+    };
+    projection.activitiesById['first-loop'] = {
+      ...activity('first-loop', 'dispatch-1', 'completed', 2),
+      sequence: 2,
+      payload: {
+        rootId: 'root-1',
+        dispatchId: 'dispatch-1',
+        sourceTurnId: 'turn:facilitator',
+        sourceLoopId: 'loop:facilitator-open',
+        sourceEventType: 'tool_finished',
+      },
+    };
+    projection.activitiesById['final-loop'] = {
+      ...activity('final-loop', 'dispatch-1', 'completed', 5),
+      sequence: 5,
+      payload: {
+        rootId: 'root-1',
+        dispatchId: 'dispatch-1',
+        sourceTurnId: 'turn:facilitator',
+        sourceLoopId: 'loop:facilitator-final',
+        sourceEventType: 'tool_finished',
+      },
+    };
+    projection.messagesById['first-result'] = {
+      id: 'first-result', roomId: 'room-1', turnId: 'root-1',
+      participantId: 'participant-1', sourceSessionId: 'session-1',
+      role: 'assistant', status: 'completed', text: '已完成分工',
+      projectionKind: 'post', postKind: 'progress', rootId: 'root-1',
+      dispatchId: 'dispatch-1', sourceTurnId: 'turn:facilitator',
+      sourceLoopId: 'loop:facilitator-open',
+      sequence: 3, createdAtMs: 3,
+    };
+    projection.messagesById['root-final'] = {
+      id: 'root-final', roomId: 'room-1', turnId: 'root-1',
+      participantId: 'participant-1', sourceSessionId: 'session-1',
+      role: 'assistant', status: 'completed', text: 'Root 最终汇合',
+      projectionKind: 'post', postKind: 'result', rootId: 'root-1',
+      dispatchId: 'dispatch-1', sourceTurnId: 'turn:facilitator',
+      sourceLoopId: 'loop:facilitator-final',
+      sequence: 6, createdAtMs: 6,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.lanes).toHaveLength(2);
+    expect(selected.lanes.map((lane) => ({
+      sourceTurnId: lane.sourceTurnId,
+      sourceLoopId: lane.sourceLoopId,
+      activities: lane.activities.map((item) => item.id),
+      messages: lane.messageIds,
+    }))).toEqual([
+      {
+        sourceTurnId: 'turn:facilitator',
+        sourceLoopId: 'loop:facilitator-open',
+        activities: ['first-loop'],
+        messages: ['first-result'],
+      },
+      {
+        sourceTurnId: 'turn:facilitator',
+        sourceLoopId: 'loop:facilitator-final',
+        activities: ['final-loop'],
+        messages: ['root-final'],
+      },
     ]);
   });
 

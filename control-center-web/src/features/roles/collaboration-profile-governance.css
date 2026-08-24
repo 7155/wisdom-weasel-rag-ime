@@ -9,7 +9,6 @@
 .profile-governance__details > summary strong, .profile-governance section > header strong { font-size: 13px; }
 .profile-governance__details > summary small, .profile-governance section > header small { color: var(--color-text-tertiary); font: 500 12px var(--font-mono); }
 .profile-governance__content { display: grid; min-width: 0; gap: 11px; padding-top: 14px; }
-.profile-governance__details:not([open]) > .profile-governance__content { display: none; }
 .profile-governance__notice, .profile-governance__fallback { margin: 0; border-left: 3px solid var(--color-border-strong); padding: 7px 9px; background: var(--color-surface-subtle); color: var(--color-text-secondary) !important; font-size: 12px !important; overflow-wrap: anywhere; }
 .profile-governance[data-load-state='denied'] .profile-governance__notice, .profile-governance[data-load-state='error'] .profile-governance__notice { border-color: var(--color-danger); color: var(--color-danger) !important; }
 .profile-governance dl { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 0; }
@@ -60,4 +59,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .profile-governance__details > summary::before { transition: none; }
+}
+
+@container paw-window (max-width: 620px) {
+  main.roles-feature[data-paw-os-app] .profile-governance dl { grid-template-columns: 1fr; }
+  main.roles-feature[data-paw-os-app] .profile-governance__content > ol { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  main.roles-feature[data-paw-os-app] .profile-governance__actions > .ui-button { flex: 1 1 92px; }
 }

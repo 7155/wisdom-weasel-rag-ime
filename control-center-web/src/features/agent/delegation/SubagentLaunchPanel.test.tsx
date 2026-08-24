@@ -52,6 +52,7 @@ describe('SubagentLaunchPanel', () => {
 
     await user.click(await screen.findByText('审阅者'));
     expect(screen.getByRole('radio', { name: '工作区写入' })).toBeDisabled();
+    await user.click(screen.getByText('工具与技能'));
     expect(screen.getByRole('checkbox', { name: /Pi Skills/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Codex Skills/ })).not.toBeChecked();
     await user.click(screen.getByRole('radio', { name: 'Fork 当前' }));
@@ -109,6 +110,7 @@ describe('SubagentLaunchPanel', () => {
     );
 
     await screen.findByRole('radio', { name: /^执行者/ });
+    await user.click(screen.getByText('工具与技能'));
     await user.click(screen.getByRole('radio', { name: '手动收窄' }));
     await user.click(await screen.findByText('知识检索'));
     await user.type(screen.getByRole('textbox', { name: '子 Agent 有界任务' }), '实现一个小改动');

@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Virtuoso } from 'react-virtuoso';
 import remarkGfm from 'remark-gfm';
-import { Button, EmptyState, IconButton, Select, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
+import { Button, Disclosure, EmptyState, IconButton, Select, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
 import type { ControlTransport } from '@/platform/transport';
 import type {
@@ -126,7 +126,7 @@ export function KnowledgeMaterialsPanel({
           <DocumentSummary detail={detail} document={selected} error={detailError} loading={detailLoading} />
         </div>
       ) : (
-        <EmptyState action={<Button leadingIcon={<Upload size={15} />} loading={importing} onClick={onImport}>导入文件</Button>} description="" icon={FileText} title="还没有资料" />
+        <EmptyState action={<Button leadingIcon={<Upload size={15} />} loading={importing} onClick={onImport}>导入文件</Button>} description="导入后，文件会在这里排队解析并进入可检索目录。" icon={FileText} title="还没有资料" />
       )}
     </div>
   );
@@ -168,7 +168,7 @@ function DocumentSummary({ detail, document, error, loading }: { detail: Knowled
         <div><dt>文件大小</dt><dd>{formatBytes(document.byteSize)}</dd></div>
         <div><dt>更新时间</dt><dd>{formatTime(document.updatedAtMs)}</dd></div>
       </dl>
-      <details className="knowledge-document-summary__advanced"><summary>高级：材料详情</summary><dl><div><dt>文件格式</dt><dd>{document.mimeType || '未提供'}</dd></div><div><dt>解析版本</dt><dd>{document.parserVersion || '未提供'}</dd></div><div><dt>内容容量</dt><dd>{document.tokenCount || '未提供'}</dd></div><div><dt>内容指纹</dt><dd>{shortHash(document.sha256)}</dd></div></dl></details>
+      <Disclosure className="knowledge-document-summary__advanced" summary="高级：材料详情"><dl><div><dt>文件格式</dt><dd>{document.mimeType || '未提供'}</dd></div><div><dt>解析版本</dt><dd>{document.parserVersion || '未提供'}</dd></div><div><dt>内容容量</dt><dd>{document.tokenCount || '未提供'}</dd></div><div><dt>内容指纹</dt><dd>{shortHash(document.sha256)}</dd></div></dl></Disclosure>
       {document.error ? <p className="knowledge-document-summary__error">{document.error}</p> : null}
       <div className="knowledge-document-summary__counts">
         <span><FileImage size={13} />{detail?.assets.length ?? 0} 个图片/附件</span>
@@ -213,7 +213,7 @@ export function KnowledgeDocumentViewer({
   const pageCount = detail ? detail.pages.length || detail.document.pageCount : 0;
   useEffect(() => setView('markdown'), [selectedDocumentId]);
   useEffect(() => { if (focusHit?.documentId === selectedDocumentId) setView('chunks'); }, [focusHit, selectedDocumentId]);
-  if (!documents.length) return <EmptyState description="" icon={FileText} title="先导入资料" />;
+  if (!documents.length) return <EmptyState description="先在“资料”页导入文件，再回来查看解析结果。" icon={FileText} title="先导入资料" />;
   return (
     <div className="knowledge-panel knowledge-viewer">
       <div className="knowledge-viewer__bar">
@@ -269,13 +269,13 @@ function DocumentContent({ detail, hasMore, loadingMore, onLoadMore }: { detail:
         </section>
       ))}
     </div>
-  ) : <EmptyState description="" icon={FileText} title="暂无解析正文" />;
+  ) : <EmptyState description="当前文件还没有返回可显示的正文；可回到“资料”页重新解析，或切换到源文件查看。" icon={FileText} title="暂无解析正文" />;
 }
 
 function DocumentSource({ detail, transport }: { detail: KnowledgeDocumentDetail; transport: ControlTransport }) {
   const source = useKnowledgeDocumentSource(detail, transport);
   if (!detail.document.sourceReadPath || !transport.readKnowledgeDocumentSource) {
-    return <EmptyState description="" icon={FileText} title="源文件预览不可用" />;
+    return <EmptyState description="当前运行环境未提供可安全读取的源文件；请回到“资料”页重新解析。" icon={FileText} title="源文件预览不可用" />;
   }
   if (source.loading) return <p className="knowledge-detail-loading">正在安全读取源文件…</p>;
   if (source.error || !source.url) {
@@ -309,12 +309,12 @@ function ChunkGallery({ detail, focusHit, hasMore, loadingMore, onLoadMore }: { 
           <header><b>#{chunk.ordinal + 1}{focusHit?.id === chunk.id ? ' · 检索命中' : ''}</b><span>{chunk.page ? `第 ${chunk.page} 页` : chunk.lineStart ? `第 ${chunk.lineStart} 行` : '无页码'}</span></header>
           {chunk.heading ? <h4>{publicKnowledgeText(chunk.heading)}</h4> : null}
           <p>{focusHit?.id === chunk.id ? <HighlightedChunkText content={publicKnowledgeText(chunk.content)} excerpt={publicKnowledgeText(focusHit.excerpt)} /> : publicKnowledgeText(chunk.content)}</p>
-          <footer><span>文档段落</span><details><summary>高级：段落详情</summary><span>{chunk.tokenCount ? `${chunk.tokenCount} tokens` : 'Token 未统计'}</span><span>{chunk.id}</span></details></footer>
+          <footer><span>文档段落</span><Disclosure className="knowledge-chunk-detail" contentClassName="knowledge-chunk-detail__content" summary="高级：段落详情"><span>{chunk.tokenCount ? `${chunk.tokenCount} tokens` : 'Token 未统计'}</span><span>{chunk.id}</span></Disclosure></footer>
         </article>
       ))}
       {hasMore ? <div className="knowledge-more-note"><span>已显示 {detail.chunks.length} / {detail.chunkTotal} 个段落</span><Button loading={loadingMore} onClick={onLoadMore} size="small">加载更多</Button></div> : <p className="knowledge-more-note">已加载全部 {detail.chunkTotal} 个段落。</p>}
     </div>
-  ) : <EmptyState description="" icon={Grid3X3} title="暂无段落" />;
+  ) : <EmptyState description="当前文件还没有可展示的段落；完成解析后可在此查看检索命中。" icon={Grid3X3} title="暂无段落" />;
 }
 
 function HighlightedChunkText({ content, excerpt }: { content: string; excerpt: string }) {
@@ -326,7 +326,7 @@ function HighlightedChunkText({ content, excerpt }: { content: string; excerpt: 
 function ArtifactGallery({ assets, document, tables, transport }: { assets: readonly KnowledgeAsset[]; document: KnowledgeDocument; tables: readonly KnowledgeTableArtifact[]; transport: ControlTransport }) {
   const images = assets.filter((item) => item.mimeType.startsWith('image/') && item.readPath);
   const attachments = assets.filter((item) => !images.includes(item));
-  if (!assets.length && !tables.length) return <EmptyState description="" icon={GalleryHorizontalEnd} title="暂无解析产物" />;
+  if (!assets.length && !tables.length) return <EmptyState description="当前解析没有返回图片或表格产物；重新解析后可再次检查。" icon={GalleryHorizontalEnd} title="暂无解析产物" />;
   return (
     <div className="knowledge-artifacts">
       {images.length ? <section><header><FileImage size={14} /><strong>图片</strong><span>{images.length}</span></header><div className="knowledge-image-grid">{images.map((asset) => <KnowledgeAssetImage asset={asset} document={document} key={asset.id} transport={transport} />)}</div></section> : null}
@@ -455,7 +455,7 @@ export function KnowledgeJobsPanel({ cancellingJobId, cancelError, error, jobs, 
 function JobDetails({ job }: { job: KnowledgeIndexJob }) {
   const finished = job.finishedAtMs || (terminalJobStatus(job.status) ? job.updatedAtMs : 0);
   const started = job.startedAtMs || job.createdAtMs;
-  return <div className="knowledge-job-detail"><dl><div><dt>当前进度</dt><dd>{jobStageLabel(job.stage)}</dd></div><div><dt>耗时</dt><dd>{finished && started ? formatDuration(finished - started) : '进行中'}</dd></div></dl><ol aria-label="任务阶段记录"><li><span>创建</span><time>{formatTime(job.createdAtMs)}</time></li>{job.startedAtMs ? <li><span>开始 · {jobStageLabel(job.stage)}</span><time>{formatTime(job.startedAtMs)}</time></li> : null}{finished ? <li><span>{jobStatusLabel(job.status)}</span><time>{formatTime(finished)}</time></li> : null}</ol>{job.error ? <p>{publicErrorText(job.error, '这项处理没有完成，请稍后重试。')}</p> : null}<details><summary>高级：处理详情</summary><dl><div><dt>任务 ID</dt><dd>{job.id}</dd></div><div><dt>类型</dt><dd>{job.kind}</dd></div><div><dt>解析器</dt><dd>{parserLabel(job.parserMode)}</dd></div><div><dt>文档 ID</dt><dd>{job.documentId || '整库任务'}</dd></div><div><dt>索引版本</dt><dd>{job.revision || '未提供'}</dd></div><div><dt>错误代码</dt><dd>{job.errorCode || '无'}</dd></div></dl></details></div>;
+  return <div className="knowledge-job-detail"><dl><div><dt>当前进度</dt><dd>{jobStageLabel(job.stage)}</dd></div><div><dt>耗时</dt><dd>{finished && started ? formatDuration(finished - started) : '进行中'}</dd></div></dl><ol aria-label="任务阶段记录"><li><span>创建</span><time>{formatTime(job.createdAtMs)}</time></li>{job.startedAtMs ? <li><span>开始 · {jobStageLabel(job.stage)}</span><time>{formatTime(job.startedAtMs)}</time></li> : null}{finished ? <li><span>{jobStatusLabel(job.status)}</span><time>{formatTime(finished)}</time></li> : null}</ol>{job.error ? <p>{publicErrorText(job.error, '这项处理没有完成，请稍后重试。')}</p> : null}<Disclosure className="knowledge-job-detail__technical" summary="高级：处理详情"><dl><div><dt>任务 ID</dt><dd>{job.id}</dd></div><div><dt>类型</dt><dd>{job.kind}</dd></div><div><dt>解析器</dt><dd>{parserLabel(job.parserMode)}</dd></div><div><dt>文档 ID</dt><dd>{job.documentId || '整库任务'}</dd></div><div><dt>索引版本</dt><dd>{job.revision || '未提供'}</dd></div><div><dt>错误代码</dt><dd>{job.errorCode || '无'}</dd></div></dl></Disclosure></div>;
 }
 
 function summarizeDocuments(documents: readonly KnowledgeDocument[]) {

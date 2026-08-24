@@ -28,7 +28,7 @@ type DefaultSchedulerHandle = {
 export function createEventBatcher<Event, Handle = DefaultSchedulerHandle>(
   options: EventBatcherOptions<Event, Handle>,
 ): EventBatcher<Event> {
-  const intervalMs = clamp(options.intervalMs ?? 20, 16, 33);
+  const intervalMs = clamp(options.intervalMs ?? 20, 16, 120);
   const scheduler =
     options.scheduler ??
     (defaultFrameScheduler() as unknown as BatchScheduler<Handle>);
@@ -85,7 +85,7 @@ export function createAgentDeltaBatcher(
 
 export function createRoomDeltaBatcher(
   commit: (events: readonly UiRoomEvent[]) => void,
-  intervalMs = 20,
+  intervalMs = 80,
 ): EventBatcher<UiRoomEvent> {
   return createEventBatcher({
     commit,

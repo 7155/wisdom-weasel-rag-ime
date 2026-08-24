@@ -12,7 +12,6 @@ import {
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
-import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roomCollaborationRoleLabel } from '../room-copy';
 
 interface ComposerParticipant {
@@ -40,7 +39,8 @@ interface RoomMentionDraft {
 
 export function RoomComposer({
   room,
-  personas,
+  participantAliases = {},
+  personas: _personas,
   draft,
   attachments,
   sending,
@@ -55,6 +55,7 @@ export function RoomComposer({
   onPickAttachments,
 }: {
   room?: ComposerRoom;
+  participantAliases?: Readonly<Record<string, string>>;
   personas: AgentPersonaV1[];
   draft: string;
   attachments: RoomAttachmentReceipt[];
@@ -85,11 +86,12 @@ export function RoomComposer({
     (participant) => participant.status === 'active',
   ) ?? [];
   const mentionCandidates = mention
-    ? participants.filter((participant) => roomMentionMatches(participant, mention.query))
+    ? participants.filter((participant) => roomMentionMatches(participant, mention.query, participantAliases))
     : [];
   const addressedParticipantId = roomMentionedParticipants(
     participants,
     composerDraft,
+    participantAliases,
   )[0]?.id ?? '';
   const canSend = Boolean(
     roomCanSend
@@ -136,15 +138,16 @@ export function RoomComposer({
   ): void {
     let next: string;
     let caret: number;
+    const mentionName = roomParticipantMentionName(participant, participantAliases);
     if (currentMention) {
-      const inserted = `@${participant.displayName} `;
+      const inserted = `@${mentionName} `;
       const suffix = composerDraft.slice(currentMention.end).replace(/^ /, '');
       next = `${composerDraft.slice(0, currentMention.start)}${inserted}${suffix}`;
       caret = currentMention.start + inserted.length;
     } else {
-      const body = stripLeadingRoomMention(composerDraft, participants);
-      next = `@${participant.displayName}${body ? ` ${body}` : ' '}`;
-      caret = `@${participant.displayName} `.length;
+      const body = stripLeadingRoomMention(composerDraft, participants, participantAliases);
+      next = `@${mentionName}${body ? ` ${body}` : ' '}`;
+      caret = `@${mentionName} `.length;
     }
     setComposerDraft(next);
     publishDraft(next);
@@ -212,7 +215,12 @@ export function RoomComposer({
         aria-label="选择要点名的伙伴"
       >
         <header><AtSign size={14} /><span><strong>想请谁加入</strong><small>继续输入名字可以筛选</small></span></header>
-        {mentionCandidates.map((participant, index) => <button
+        {mentionCandidates.map((participant, index) => {
+          const mentionName = roomParticipantMentionName(participant, participantAliases);
+          const secondary = mentionName === participant.displayName
+            ? roomCollaborationRoleLabel(participant.collaborationRole)
+            : `${participant.displayName} · ${roomCollaborationRoleLabel(participant.collaborationRole)}`;
+          return <button
           type="button"
           id={`room-mention-${participant.id}`}
           role="option"
@@ -223,16 +231,11 @@ export function RoomComposer({
             chooseParticipant(participant);
           }}
         >
-          <PersonaAvatar
-            persona={personas.find((item) => (
-              item.roleId === participant.roleId
-              && item.version === participant.roleVersion
-            ))}
-            size="small"
-          />
-          <span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
-          <kbd>{index === activeIndex ? 'Enter' : `@${participant.displayName}`}</kbd>
-        </button>)}
+          <span aria-hidden="true" className="room-mention-menu__marker"><AtSign size={14} /></span>
+          <span><strong>{mentionName}</strong><small>{secondary}</small></span>
+          <kbd>{index === activeIndex ? 'Enter' : `@${mentionName}`}</kbd>
+        </button>;
+        })}
       </div> : null}
       {attachments.length ? <div className="room-composer__attachments" aria-label="待发送图片">
         {attachments.map((attachment) => <span key={attachment.mediaId}>
@@ -254,7 +257,7 @@ export function RoomComposer({
             ? '当前任务已暂停。发送文字可以告诉主持伙伴怎样继续，停止按钮会终止整条协作。'
             : '当前任务仍在执行。现在发送文字会立即干预主持伙伴的当前回合。'}
       </p> : null}
-      <div className="room-composer">
+      <div className="room-composer paw-unified-composer">
         <textarea
           ref={setTextareaRef}
           rows={1}
@@ -367,21 +370,25 @@ export function RoomComposer({
 export function roomMentionedParticipants<T extends ComposerParticipant>(
   participants: T[],
   value: string,
+  participantAliases: Readonly<Record<string, string>> = {},
 ): T[] {
   const matched: T[] = [];
   for (const participant of participants) {
-    const token = `@${participant.displayName}`;
-    let offset = value.indexOf(token);
-    while (offset >= 0) {
-      const previous = offset > 0 ? value[offset - 1] : '';
-      const next = value[offset + token.length] ?? '';
-      const startsAtBoundary = !previous || /[\s([{（【「『，。！？、,:：；;]/u.test(previous);
-      const endsAtBoundary = !next || /[\s)\]}）】」』，。！？、,.!?:：；;]/u.test(next);
-      if (startsAtBoundary && endsAtBoundary) {
-        matched.push(participant);
-        break;
+    for (const name of roomParticipantMentionNames(participant, participantAliases)) {
+      const token = `@${name}`;
+      let offset = value.indexOf(token);
+      while (offset >= 0) {
+        const previous = offset > 0 ? value[offset - 1] : '';
+        const next = value[offset + token.length] ?? '';
+        const startsAtBoundary = !previous || /[\s([{（【「『，。！？、,:：；;]/u.test(previous);
+        const endsAtBoundary = !next || /[\s)\]}）】」』，。！？、,.!?:：；;]/u.test(next);
+        if (startsAtBoundary && endsAtBoundary) {
+          matched.push(participant);
+          break;
+        }
+        offset = value.indexOf(token, offset + token.length);
       }
-      offset = value.indexOf(token, offset + token.length);
+      if (matched.at(-1) === participant) break;
     }
   }
   return matched;
@@ -399,23 +406,46 @@ function activeRoomMention(value: string, caret: number): RoomMentionDraft | und
   return { start, end: boundedCaret, query };
 }
 
-function roomMentionMatches(participant: ComposerParticipant, query: string): boolean {
+function roomMentionMatches(
+  participant: ComposerParticipant,
+  query: string,
+  participantAliases: Readonly<Record<string, string>>,
+): boolean {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return true;
-  return participant.displayName.toLocaleLowerCase().includes(needle)
+  return roomParticipantMentionNames(participant, participantAliases)
+    .some((name) => name.toLocaleLowerCase().includes(needle))
     || participant.roleId.toLocaleLowerCase().includes(needle);
 }
 
 function stripLeadingRoomMention(
   value: string,
   participants: ComposerParticipant[],
+  participantAliases: Readonly<Record<string, string>>,
 ): string {
   const body = value.trimStart();
   for (const participant of participants) {
-    const token = `@${participant.displayName}`;
-    if (body.startsWith(token)) return body.slice(token.length).trimStart();
+    for (const name of roomParticipantMentionNames(participant, participantAliases)) {
+      const token = `@${name}`;
+      if (body.startsWith(token)) return body.slice(token.length).trimStart();
+    }
   }
   return body;
+}
+
+function roomParticipantMentionName(
+  participant: ComposerParticipant,
+  participantAliases: Readonly<Record<string, string>>,
+): string {
+  return participantAliases[participant.id]?.trim() || participant.displayName;
+}
+
+function roomParticipantMentionNames(
+  participant: ComposerParticipant,
+  participantAliases: Readonly<Record<string, string>>,
+): string[] {
+  const preferred = roomParticipantMentionName(participant, participantAliases);
+  return preferred === participant.displayName ? [preferred] : [preferred, participant.displayName];
 }
 
 function composerPlaceholder(room?: ComposerRoom): string {

@@ -30,6 +30,23 @@ describe('ApprovalsFeature', () => {
     expect(card).not.toBeNull();
     expect(within(card!).getByText('R3')).toBeVisible();
     expect(within(card!).getByText('控制中心迁移')).toBeVisible();
+    expect(within(card!).queryByText('保留当前安装包，可按安装回执恢复')).not.toBeInTheDocument();
+
+    await user.click(within(card!).getByText('完整预览'));
+    expect(within(card!).getByText('以下完整预览与本次审批哈希绑定')).toBeInTheDocument();
+    expect(within(card!).getByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).toBeInTheDocument();
+    expect(within(card!).getByText(/"apiToken": "已隐藏"/)).toBeInTheDocument();
+    expect(within(card!).queryByText(/PRIVATE_APPROVAL_TOKEN/)).not.toBeInTheDocument();
+    expect(within(card!).getByText('a'.repeat(64))).toBeInTheDocument();
+
+    const previewDetails = within(card!).getByText('完整预览').closest('details');
+    await user.click(within(card!).getByText('完整预览'));
+    expect(within(card!).getByText('完整预览').closest('summary')).toHaveAttribute('aria-expanded', 'false');
+    expect(previewDetails).toHaveAttribute('open');
+    expect(previewDetails?.querySelector('.approvals-preview__reveal')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(card!).getByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).toBeInTheDocument();
+    await waitFor(() => expect(previewDetails).not.toHaveAttribute('open'));
+    expect(within(card!).queryByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).not.toBeInTheDocument();
 
     const listRequest = transport.requests.find((call) => call.request.pathId === 'agent.approvals.list');
     expect(listRequest?.request.query).toEqual({ limit: 500 });

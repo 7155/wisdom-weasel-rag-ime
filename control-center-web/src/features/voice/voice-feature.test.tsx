@@ -16,11 +16,13 @@ afterEach(cleanup);
 
 describe('VoiceFeature', () => {
   it('shows provider response evidence and the independent third-pass result', async () => {
+    const user = userEvent.setup();
     renderVoiceWithHotwordWrites();
 
+    await user.click(await screen.findByText('文字定稿状态'));
     expect(await screen.findByText('本次已纠错')).toBeInTheDocument();
     expect(screen.getByText('已完成保守校对')).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByText('高级：本次定稿记录', { selector: 'summary' }));
+    await user.click(screen.getByText('高级：本次定稿记录', { selector: 'summary' }));
     expect(screen.getByText(/本次处理经过 2 个阶段/)).toBeInTheDocument();
     expect(screen.getByText(/识别到 1 个语句片段/)).toBeInTheDocument();
     expect(screen.getByText(/服务返回了额外信息/)).toBeInTheDocument();
@@ -89,7 +91,7 @@ describe('VoiceFeature', () => {
     renderVoice(false);
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
-    expect(await screen.findByText('网页端不能启动听写或打开系统授权；请回到已安装的澄。')).toBeInTheDocument();
+    expect(await screen.findByText('网页端不能启动听写或打开系统授权；请回到已安装的PAW。')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '听写服务' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '麦克风' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '辅助功能' })).toBeInTheDocument();

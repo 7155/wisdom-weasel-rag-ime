@@ -6,6 +6,8 @@ import {
   FileClock,
   FileText,
   History,
+  PanelsTopLeft,
+  Plus,
   RefreshCw,
   RotateCcw,
   Search,
@@ -23,6 +25,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Disclosure,
   EmptyState,
   Field,
   Input,
@@ -51,6 +54,7 @@ import {
   formatTime,
   publicErrorText,
 } from '@/features/overview/management-ui';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import {
   requestWorkDocumentCommand,
   requestWorkDocumentErasePreview,
@@ -67,6 +71,7 @@ const ERASE_CONFIRMATION = '永久清除';
 const EMPTY_WORK_DOCUMENTS: readonly WorkDocumentV1[] = [];
 
 export function WorkDocumentsFeature() {
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const scope: WorkDocumentScope = searchParams.get('scope') === 'history' ? 'history' : 'active';
   const requestedDocumentId = searchParams.get('document') ?? '';
@@ -78,6 +83,28 @@ export function WorkDocumentsFeature() {
   const items = scope === 'history' ? historyItems : activeItems;
   const listPending = scope === 'history' ? workspace.history.isPending : workspace.active.isPending;
   const listError = scope === 'history' ? workspace.history.error : workspace.active.error;
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [authorityKind, setAuthorityKind] = useState<'session_todo' | 'session_goal' | 'room_work_item'>('session_todo');
+  const [authorityId, setAuthorityId] = useState('');
+  const [authorityRevision, setAuthorityRevision] = useState('');
+  const [workspaceRoot, setWorkspaceRoot] = useState('');
+  const [sourcePath, setSourcePath] = useState('');
+  const [registerTitle, setRegisterTitle] = useState('');
+  const registerMutation = useMutation({
+    mutationFn: (input: Extract<WorkDocumentCommandInput, { operation: 'register' }>) => (
+      requestWorkDocumentCommand(workspace.transport, input)
+    ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: workDocumentQueryKeys.root });
+    },
+  });
+  const registrationReady = Boolean(
+    authorityId.trim()
+    && /^\d+$/.test(authorityRevision)
+    && workspaceRoot.trim()
+    && sourcePath.trim().startsWith('docs/')
+    && sourcePath.trim().endsWith('.md'),
+  );
 
   useEffect(() => {
     if (scope !== 'history' || !workspace.capabilityKnown || workspace.access.history) return;
@@ -130,9 +157,24 @@ export function WorkDocumentsFeature() {
   return (
     <ManagementPage
       actions={(
-        <Button leadingIcon={<RefreshCw size={16} />} loading={workspace.active.isFetching || workspace.history.isFetching} onClick={refresh} size="small">
-          刷新
-        </Button>
+        <>
+          {workspace.capabilityKnown && workspace.access.register ? (
+            <Button
+              leadingIcon={<Plus size={16} />}
+              onClick={() => {
+                registerMutation.reset();
+                setRegisterOpen(true);
+              }}
+              size="small"
+              variant="primary"
+            >
+              登记工作文档
+            </Button>
+          ) : null}
+          <Button leadingIcon={<RefreshCw size={16} />} loading={workspace.active.isFetching || workspace.history.isFetching} onClick={refresh} size="small">
+            刷新
+          </Button>
+        </>
       )}
       description="查看仍在处理中的文档；归档后也能在历史中找到、恢复或处理异常。"
       eyebrow="工作记录"
@@ -157,9 +199,9 @@ export function WorkDocumentsFeature() {
               <TabsTrigger value="active">活跃文档</TabsTrigger>
               <TabsTrigger disabled={!workspace.access.history} value="history">历史归档</TabsTrigger>
             </TabsList>
-            {!workspace.access.archive || !workspace.access.repair || !workspace.access.reopen || !workspace.access.erase ? (
-            <InlineNotice title="当前应用以阅读为主" tone="info">
-                文档与状态可以正常查看；当前应用未提供的归档、修复、恢复或永久清除操作会保持禁用。
+            {!workspace.access.register || !workspace.access.archive || !workspace.access.repair || !workspace.access.reopen || !workspace.access.erase ? (
+              <InlineNotice title="当前应用以阅读为主" tone="info">
+                文档与状态可以正常查看；当前应用未提供的登记、归档、修复、恢复或永久清除操作会保持禁用。
               </InlineNotice>
             ) : null}
             <TabsContent value="active">
@@ -205,13 +247,110 @@ export function WorkDocumentsFeature() {
           </Tabs>
         )}
       </QueryState>
+      {workspace.access.register ? (
+        <Dialog
+          onOpenChange={(open) => {
+            setRegisterOpen(open);
+            if (!open) registerMutation.reset();
+          }}
+          open={registerOpen}
+        >
+          <DialogContent className="work-documents__register-dialog">
+            <DialogHeader>
+              <DialogTitle>登记工作文档</DialogTitle>
+              <DialogDescription>
+                将已有 Markdown 文件绑定到当前真实任务、目标或 Room WorkItem。登记不会创建第二套任务状态。
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              className="work-documents__register-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!registrationReady) return;
+                registerMutation.mutate({
+                  operation: 'register',
+                  authorityKind,
+                  authorityId: authorityId.trim(),
+                  authorityRevision: Number(authorityRevision),
+                  workspaceRoot: workspaceRoot.trim(),
+                  sourcePath: sourcePath.trim(),
+                  title: registerTitle.trim(),
+                });
+              }}
+            >
+              <Field htmlFor="work-document-register-kind" label="来源类型" required>
+                <Select
+                  aria-label="来源类型"
+                  id="work-document-register-kind"
+                  onValueChange={(value) => setAuthorityKind(value as typeof authorityKind)}
+                  options={[
+                    { label: '对话任务', value: 'session_todo' },
+                    { label: '对话目标', value: 'session_goal' },
+                    { label: 'Room WorkItem', value: 'room_work_item' },
+                  ]}
+                  value={authorityKind}
+                />
+              </Field>
+              <div className="work-documents__register-grid">
+                <Field htmlFor="work-document-register-authority" label="来源编号" required>
+                  <Input id="work-document-register-authority" onChange={(event) => setAuthorityId(event.target.value)} value={authorityId} />
+                </Field>
+                <Field htmlFor="work-document-register-revision" label="来源版本" required>
+                  <Input id="work-document-register-revision" min="0" onChange={(event) => setAuthorityRevision(event.target.value)} type="number" value={authorityRevision} />
+                </Field>
+              </div>
+              <Field htmlFor="work-document-register-root" label="工作区根目录" required>
+                <Input id="work-document-register-root" onChange={(event) => setWorkspaceRoot(event.target.value)} placeholder="/path/to/project" value={workspaceRoot} />
+              </Field>
+              <Field
+                description="必须是工作区内 docs/ 下已经存在的 Markdown 文件。"
+                htmlFor="work-document-register-source"
+                label="Markdown 来源路径"
+                required
+              >
+                <Input id="work-document-register-source" onChange={(event) => setSourcePath(event.target.value)} placeholder="docs/agent/work/current.md" value={sourcePath} />
+              </Field>
+              <Field htmlFor="work-document-register-title" label="标题（可选）">
+                <Input id="work-document-register-title" onChange={(event) => setRegisterTitle(event.target.value)} value={registerTitle} />
+              </Field>
+              {registerMutation.error ? (
+                <InlineNotice title="登记未完成" tone="danger">
+                  {publicErrorText(registerMutation.error)} 列表已保持原状，可以核对来源与版本后重试。
+                </InlineNotice>
+              ) : null}
+              {registerMutation.data?.receipt?.status === 'applied' ? (
+                <InlineNotice title="登记完成" tone="success">
+                  工作文档已由 Registry 接受，活跃列表正在同步。
+                </InlineNotice>
+              ) : null}
+              {registerMutation.data?.receipt?.status === 'accepted' ? (
+                <InlineNotice title="登记已接受" tone="info">
+                  Registry 已接受登记请求；活跃列表正在同步。
+                </InlineNotice>
+              ) : null}
+              {registerMutation.data?.receipt?.status === 'failed' ? (
+                <InlineNotice title="登记未完成" tone="danger">
+                  Registry 返回失败收据；列表已重新同步，请修正来源后重试。
+                </InlineNotice>
+              ) : null}
+              <DialogFooter>
+                <Button onClick={() => setRegisterOpen(false)} type="button">取消</Button>
+                <Button disabled={!registrationReady || registerMutation.isPending} loading={registerMutation.isPending} type="submit" variant="primary">
+                  确认登记
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </ManagementPage>
   );
 }
 
 type WorkspaceQuery = WorkDocumentWorkspace['detail'];
 type WorkspaceTransport = WorkDocumentWorkspace['transport'];
-type CommandMutationInput = { command: WorkDocumentCommandInput; fence: string };
+type DetailWorkDocumentCommandInput = Exclude<WorkDocumentCommandInput, { operation: 'register' }>;
+type CommandMutationInput = { command: DetailWorkDocumentCommandInput; fence: string };
 type CommandMutation = UseMutationResult<WorkDocumentCommandV1, Error, CommandMutationInput>;
 type PreviewMutationInput = { documentId: string; fence: string; sessionId: string };
 type PreviewMutationResult = { input: PreviewMutationInput; result: WorkDocumentErasePreviewV1 };
@@ -301,6 +440,7 @@ function WorkDocumentDetail({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const pawOsDesktop = usePawOsDesktop();
   const eraseTriggerRef = useRef<HTMLButtonElement>(null);
   const document = detail.data?.document;
   const reopen = detail.data?.reopen;
@@ -394,7 +534,27 @@ function WorkDocumentDetail({
                 <span className="work-documents__kicker">工作文档</span>
                 <h2>{document.title || '未命名工作文档'}</h2>
               </div>
-              <StatusBadge label={stateLabel(document.state)} tone={stateTone(document.state)} />
+              <div className="work-documents__detail-window-actions">
+                {pawOsDesktop ? (
+                  <Button
+                    leadingIcon={<PanelsTopLeft size={15} />}
+                    onClick={() => pawOsDesktop.openWindow({
+                      appId: 'project-workbench',
+                      target: {
+                        kind: 'work-document',
+                        id: document.documentId,
+                        title: document.title || '未命名工作文档',
+                        subtitle: document.path || document.authorityId,
+                      },
+                    })}
+                    size="small"
+                    variant="quiet"
+                  >
+                    独立窗口
+                  </Button>
+                ) : null}
+                <StatusBadge label={stateLabel(document.state)} tone={stateTone(document.state)} />
+              </div>
             </header>
 
             <section className="work-documents__progress" aria-labelledby="work-document-progress-heading">
@@ -412,8 +572,7 @@ function WorkDocumentDetail({
               </dl>
             </section>
 
-            <details className="work-documents__technical-details">
-              <summary>高级：来源与技术信息</summary>
+            <Disclosure className="work-documents__technical-details" summary="高级：来源与技术信息">
               <section className="work-documents__facts" aria-labelledby="work-document-authority-heading">
                 <h3 id="work-document-authority-heading">记录来源</h3>
                 <dl>
@@ -435,7 +594,7 @@ function WorkDocumentDetail({
                   <Fact label="工作区根目录" value={document.workspaceRoot || '暂无'} code wide />
                 </dl>
               </section>
-            </details>
+            </Disclosure>
 
             {receipt && (!eraseOpen || receipt.operation !== 'erase') ? <CommandReceipt receipt={receipt} /> : null}
             {command.error ? (

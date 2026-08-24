@@ -1,4 +1,5 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyAgentSnapshot, createAgentProjection, type AgentSnapshot } from '@/contracts/agent-reducer';
 import type { AgentEventV1 } from '@/contracts/generated/agent-event.v1';
@@ -105,7 +106,8 @@ describe('WorkspaceLspStatusView', () => {
     expect(degraded.failure).toEqual({ code: 'server_degraded', message: 'Initialization failed' });
   });
 
-  it('renders ready roots and server state only inside disclosure', () => {
+  it('renders ready roots and server state only inside disclosure', async () => {
+    const user = userEvent.setup();
     const status = runtimeStatus({ roots: readyRoots() });
     render(
       <WorkspaceLspStatusView
@@ -118,7 +120,9 @@ describe('WorkspaceLspStatusView', () => {
     const liveStatus = screen.getByRole('status');
     expect(liveStatus).toHaveTextContent('workspace_lsp · 就绪');
     expect(liveStatus).toHaveTextContent('1 个语言服务器覆盖 1 个活动工作区');
-    expect(screen.getByText(/查看 1 个活动工作区与 1 个语言服务器/).closest('details')).not.toHaveAttribute('open');
+    const disclosure = screen.getByText(/查看 1 个活动工作区与 1 个语言服务器/);
+    expect(disclosure.closest('details')).not.toHaveAttribute('open');
+    await user.click(disclosure);
     expect(screen.getByText('/workspace/app')).toBeInTheDocument();
     expect(screen.getByText('typescript-language-server')).toBeInTheDocument();
     expect(screen.getByText(/rename 与代码动作仍会先生成预览并等待审批/)).toBeInTheDocument();
@@ -147,7 +151,8 @@ describe('WorkspaceLspStatusView', () => {
     expect(view.guidance).toContain('审批卡片');
   });
 
-  it('renders a stale preview refusal as a refusal rather than success', () => {
+  it('renders a stale preview refusal as a refusal rather than success', async () => {
+    const user = userEvent.setup();
     const projection = snapshotProjection(event(1, 'tool_finished', {
       toolCallId: 'lsp-write-stale',
       toolName: 'workspace_lsp',
@@ -174,6 +179,7 @@ describe('WorkspaceLspStatusView', () => {
     expect(screen.getByRole('status')).toHaveTextContent('没有写入文件');
     const failureDisclosure = screen.getByText('查看失败信息').closest('details');
     expect(failureDisclosure).not.toHaveAttribute('open');
+    await user.click(screen.getByText('查看失败信息'));
     expect(failureDisclosure).toHaveTextContent('workspace_lsp file changed after approval preview');
   });
 
@@ -225,7 +231,8 @@ describe('WorkspaceLspStatusView', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('reconnects from the replacement catalog instance and epoch, never an older mismatched receipt', () => {
+  it('reconnects from the replacement catalog instance and epoch, never an older mismatched receipt', async () => {
+    const user = userEvent.setup();
     const historical = snapshotProjection(statusEvent(1, runtimeStatus({
       runtimeInstanceId: runtimeA,
       runtimeEpoch: 99,
@@ -249,6 +256,7 @@ describe('WorkspaceLspStatusView', () => {
         projection={historical}
       />,
     );
+    await user.click(screen.getByText(/查看 1 个活动工作区与 1 个语言服务器/));
     expect(screen.getByText('/workspace/old')).toBeInTheDocument();
     expect(screen.queryByText('/workspace/history')).not.toBeInTheDocument();
 

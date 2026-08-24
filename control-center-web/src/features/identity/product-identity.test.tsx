@@ -59,8 +59,8 @@ describe('product identity', () => {
         },
       },
     })).toEqual({
-      productName: '澄',
-      assistantName: '澄',
+      productName: 'PAW',
+      assistantName: 'Agent',
       tagline: '仍然在这里',
     });
   });

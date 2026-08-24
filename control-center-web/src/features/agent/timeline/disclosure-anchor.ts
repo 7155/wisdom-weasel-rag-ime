@@ -1,7 +1,9 @@
 import {
   useCallback,
+  useId,
   useLayoutEffect,
   useRef,
+  useState,
   type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -9,6 +11,30 @@ import {
   type UIEvent as ReactUIEvent,
 } from 'react';
 import { flushSync } from 'react-dom';
+
+/** One disclosure contract for every rich result. Native `details` behaviour
+ * is not consistent once React owns `open`, especially for Space in WebKit.
+ * This hook keeps pointer and keyboard activation on the same state path and
+ * exposes the real controlled content through aria-controls. */
+export function useDisclosureControl(initialOpen = false) {
+  const [open, setOpen] = useState(initialOpen);
+  const contentId = `agent-disclosure-${useId().replace(/:/gu, '')}`;
+  return {
+    contentId,
+    open,
+    setOpen,
+    summaryProps: {
+      'aria-controls': contentId,
+      'aria-expanded': open,
+      onClick: (event: ReactMouseEvent<HTMLElement>) => {
+        toggleDisclosurePreservingAnchor(event, setOpen);
+      },
+      onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+        toggleDisclosureOnKeyPreservingAnchor(event, setOpen);
+      },
+    },
+  };
+}
 
 /**
  * Toggles an inline disclosure without letting its virtualized row move the

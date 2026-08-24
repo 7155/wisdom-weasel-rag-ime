@@ -3,7 +3,7 @@ import { ArrowLeft, Expand, ExternalLink, GitBranch, Network, RefreshCw, Search,
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Virtuoso } from 'react-virtuoso';
-import { Button, EmptyState, IconButton, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
+import { Button, Disclosure, EmptyState, IconButton, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
 import type { ControlTransport } from '@/platform/transport';
 import {
@@ -146,15 +146,52 @@ function GraphList({ edges, mode, nodes, onSelect, selection }: { edges: readonl
 
 function GraphBuildStatus({ base, extractorMode, graph, onRebuild, rebuilding }: { base: DocumentKnowledgeBase; extractorMode: KnowledgeGraphExtractorMode; graph: NonNullable<ReturnType<typeof useKnowledgeGraphQuery>['data']>; onRebuild: () => void; rebuilding: boolean }) {
   const extractor = graph.extractor;
-  return <section className="knowledge-graph__build-status"><header><div><span>图谱构建状态</span><h3>{rebuilding ? '构建中' : graphStatusLabel(graph.status, false)}</h3></div><Button disabled={rebuilding} leadingIcon={<RefreshCw className={rebuilding ? 'ui-spin' : ''} size={14} />} onClick={onRebuild} variant="primary">重建图谱</Button></header><dl><div><dt>已索引材料</dt><dd>{graph.stats.indexedDocumentCount || graph.stats.documentCount}</dd></div><div><dt>待处理材料</dt><dd>{graph.stats.pendingDocumentCount}</dd></div><div><dt>已发现内容</dt><dd>{graph.stats.nodeCount} 个节点 · {graph.stats.edgeCount} 条关系</dd></div><div><dt>当前方式</dt><dd>{extractor?.mode === 'model' ? '模型整理' : extractor?.mode === 'deterministic' ? '规则整理' : '尚未报告'}</dd></div><div><dt>下次重建</dt><dd>{extractorMode === 'model' ? '模型整理（推荐）' : '规则整理'}</dd></div><div><dt>处理结果</dt><dd>{extractor?.degraded ? '部分材料使用了备用方式' : extractor ? '已完成当前方式处理' : '等待构建'}</dd></div><div><dt>更新时间</dt><dd>{graph.updatedAtMs ? formatTime(graph.updatedAtMs) : '未报告'}</dd></div></dl>{extractor?.lastError ? <InlineNotice title="部分材料未能按首选方式整理" tone="warning">已保留可用结果；重新构建后会再次尝试。</InlineNotice> : null}<details className="knowledge-graph__advanced"><summary>高级：构建详情</summary><dl><div><dt>整理模型</dt><dd>{extractor?.model || (extractorMode === 'model' ? '由当前配置决定' : '不使用')}</dd></div><div><dt>抽取上限</dt><dd>5 实体 / 4 关系 / 2 主题</dd></div><div><dt>批处理</dt><dd>{extractor ? `${extractor.batchSize || 4} 片段/批 · 并发 ${extractor.extractionConcurrency || 1}` : '尚未报告'}</dd></div><div><dt>处理片段</dt><dd>{extractor ? `${extractor.modelChunkCount} 模型整理 · ${extractor.cachedChunkCount} 已复用` : '尚未报告'}</dd></div><div><dt>来源版本</dt><dd>{String(graph.sourceRevision || base.revision)}</dd></div></dl></details><InlineNotice title="独立文档图谱" tone="info">图谱从当前文档知识库构建，用于管理，并在回答时提供参考；它不与个人记忆图谱合并。</InlineNotice></section>;
+  return <section className="knowledge-graph__build-status"><header><div><span>图谱构建状态</span><h3>{rebuilding ? '构建中' : graphStatusLabel(graph.status, false)}</h3></div><Button disabled={rebuilding} leadingIcon={<RefreshCw className={rebuilding ? 'ui-spin' : ''} size={14} />} onClick={onRebuild} variant="primary">重建图谱</Button></header><dl><div><dt>已索引材料</dt><dd>{graph.stats.indexedDocumentCount || graph.stats.documentCount}</dd></div><div><dt>待处理材料</dt><dd>{graph.stats.pendingDocumentCount}</dd></div><div><dt>已发现内容</dt><dd>{graph.stats.nodeCount} 个节点 · {graph.stats.edgeCount} 条关系</dd></div><div><dt>当前方式</dt><dd>{extractor?.mode === 'model' ? '模型整理' : extractor?.mode === 'deterministic' ? '规则整理' : '尚未报告'}</dd></div><div><dt>下次重建</dt><dd>{extractorMode === 'model' ? '模型整理（推荐）' : '规则整理'}</dd></div><div><dt>处理结果</dt><dd>{extractor?.degraded ? '部分材料使用了备用方式' : extractor ? '已完成当前方式处理' : '等待构建'}</dd></div><div><dt>更新时间</dt><dd>{graph.updatedAtMs ? formatTime(graph.updatedAtMs) : '未报告'}</dd></div></dl>{extractor?.lastError ? <InlineNotice title="部分材料未能按首选方式整理" tone="warning">已保留可用结果；重新构建后会再次尝试。</InlineNotice> : null}<Disclosure className="knowledge-graph__advanced" summary="高级：构建详情"><dl><div><dt>整理模型</dt><dd>{extractor?.model || (extractorMode === 'model' ? '由当前配置决定' : '不使用')}</dd></div><div><dt>抽取上限</dt><dd>5 实体 / 4 关系 / 2 主题</dd></div><div><dt>批处理</dt><dd>{extractor ? `${extractor.batchSize || 4} 片段/批 · 并发 ${extractor.extractionConcurrency || 1}` : '尚未报告'}</dd></div><div><dt>处理片段</dt><dd>{extractor ? `${extractor.modelChunkCount} 模型整理 · ${extractor.cachedChunkCount} 已复用` : '尚未报告'}</dd></div><div><dt>来源版本</dt><dd>{String(graph.sourceRevision || base.revision)}</dd></div></dl></Disclosure><InlineNotice title="独立文档图谱" tone="info">图谱从当前文档知识库构建，用于管理，并在回答时提供参考；它不与个人记忆图谱合并。</InlineNotice></section>;
 }
 
 function GraphInspector({ edge, edges, node, nodes, onOpenSource, onSelect }: { edge: KnowledgeGraphEdge | null; edges: readonly KnowledgeGraphEdge[]; node: KnowledgeGraphNode | null; nodes: readonly KnowledgeGraphNode[]; onOpenSource: (node: KnowledgeGraphNode) => void; onSelect: (selection: Selection) => void }) {
   if (!node && !edge) return null;
   const close = <IconButton className="knowledge-graph__inspector-close" icon={<X size={14} />} label="关闭图谱详情" onClick={() => onSelect(null)} size="small" tooltip />;
   if (edge) return <aside aria-label="关系详情" className="knowledge-graph__inspector">{close}<span className="knowledge-graph-kind" data-kind="edge">关系</span><h3>{publicKnowledgeRelationLabel(edge.label, edge.kind)}</h3><dl><div><dt>起点</dt><dd>{nodeName(nodes, edge.source)}</dd></div><div><dt>终点</dt><dd>{nodeName(nodes, edge.target)}</dd></div><div><dt>类型</dt><dd>{publicKnowledgeRelationKind(edge.kind)}</dd></div><div><dt>权重</dt><dd>{score(edge.weight)}</dd></div></dl></aside>;
-  const related = edges.filter((candidate) => candidate.source === node!.id || candidate.target === node!.id).slice(0, 8);
-  return <aside aria-label="节点详情" className="knowledge-graph__inspector">{close}<span className="knowledge-graph-kind" data-kind={node?.kind}>{kindLabel(node!.kind)}</span><h3>{publicKnowledgeText(node!.label)}</h3><p>{publicKnowledgeText(node!.excerpt) || '该节点没有可显示的摘录。'}</p><dl><div><dt>材料</dt><dd>{publicKnowledgeText(node!.documentName) || '跨文档概念'}</dd></div><div><dt>标题</dt><dd>{publicKnowledgeText(node!.heading) || '未记录'}</dd></div><div><dt>页码</dt><dd>{node!.page ?? '未记录'}</dd></div><div><dt>权重</dt><dd>{score(node!.weight)}</dd></div></dl>{related.length ? <section className="knowledge-graph__evidence"><header><strong>关联证据</strong><span>{related.length}</span></header>{related.map((relation) => <button key={relation.id} onClick={() => onSelect({ type: 'edge', id: relation.id })} type="button"><span>{publicKnowledgeRelationLabel(relation.label, relation.kind)}</span><small>{nodeName(nodes, relation.source === node!.id ? relation.target : relation.source)}</small></button>)}</section> : null}{node!.documentId ? <Button leadingIcon={<ExternalLink size={14} />} onClick={() => onOpenSource(node!)} size="small" variant="primary">打开材料来源</Button> : null}</aside>;
+  const related = edges.filter((candidate) => candidate.source === node!.id || candidate.target === node!.id);
+  const visibleRelated = related.slice(0, 8);
+  const renderRelation = (relation: KnowledgeGraphEdge) => (
+    <button key={relation.id} onClick={() => onSelect({ type: 'edge', id: relation.id })} type="button">
+      <span>{publicKnowledgeRelationLabel(relation.label, relation.kind)}</span>
+      <small>{nodeName(nodes, relation.source === node!.id ? relation.target : relation.source)}</small>
+    </button>
+  );
+  return (
+    <aside aria-label="节点详情" className="knowledge-graph__inspector">
+      {close}
+      <span className="knowledge-graph-kind" data-kind={node?.kind}>{kindLabel(node!.kind)}</span>
+      <h3>{publicKnowledgeText(node!.label)}</h3>
+      <p>{publicKnowledgeText(node!.excerpt) || '该节点没有可显示的摘录。'}</p>
+      <dl>
+        <div><dt>材料</dt><dd>{publicKnowledgeText(node!.documentName) || '跨文档概念'}</dd></div>
+        <div><dt>标题</dt><dd>{publicKnowledgeText(node!.heading) || '未记录'}</dd></div>
+        <div><dt>页码</dt><dd>{node!.page ?? '未记录'}</dd></div>
+        <div><dt>权重</dt><dd>{score(node!.weight)}</dd></div>
+      </dl>
+      {related.length ? (
+        <section className="knowledge-graph__evidence">
+          <header><strong>关联证据</strong><span>显示 {visibleRelated.length} / 共 {related.length} 条</span></header>
+          {visibleRelated.map(renderRelation)}
+          {related.length > visibleRelated.length ? (
+            <Disclosure
+              className="knowledge-graph__evidence-more"
+              summary={`查看其余 ${related.length - visibleRelated.length} 条关系`}
+            >
+              <div className="knowledge-graph__evidence-more-list">
+                {related.slice(visibleRelated.length).map(renderRelation)}
+              </div>
+            </Disclosure>
+          ) : null}
+        </section>
+      ) : null}
+      {node!.documentId ? <Button leadingIcon={<ExternalLink size={14} />} onClick={() => onOpenSource(node!)} size="small" variant="primary">打开材料来源</Button> : null}
+    </aside>
+  );
 }
 
 function nodeName(nodes: readonly KnowledgeGraphNode[], id: string) { return publicKnowledgeText(nodes.find((node) => node.id === id)?.label ?? id); }

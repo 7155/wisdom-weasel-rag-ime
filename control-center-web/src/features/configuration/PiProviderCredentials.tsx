@@ -1,5 +1,5 @@
 import { ExternalLink, KeyRound, LogOut, RefreshCw, Unplug, UserRoundCheck } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -41,7 +41,9 @@ export function PiProviderCredentials() {
   const [login, setLogin] = useState<Record<string, unknown> | null>(null);
   const [loginStatusError, setLoginStatusError] = useState('');
   const [statusChecking, setStatusChecking] = useState(false);
+  const [modelsExpanded, setModelsExpanded] = useState(false);
   const loginEpochRef = useRef(0);
+  const modelListId = useId();
   const loginId = stringValue(login?.loginId);
   const loginState = stringValue(login?.state);
   const loginWaiting = isPendingLoginState(loginState);
@@ -86,6 +88,12 @@ export function PiProviderCredentials() {
   const selected = providers.find((item) => stringValue(item.id) === providerId) ?? providers[0] ?? {};
   const auth = asRecord(selected.auth);
   const models = arrayRecords(selected.availableModels);
+  const modelPreviewLimit = 8;
+  const declaredModelCount = finiteNonNegativeNumber(selected.availableModelCount);
+  const modelTotal = Math.max(models.length, declaredModelCount ?? 0);
+  const loadedModels = modelsExpanded ? models : models.slice(0, modelPreviewLimit);
+  const hasAdditionalLoadedModels = models.length > modelPreviewLimit;
+  const modelCatalogTruncated = selected.modelsTruncated === true || modelTotal > models.length;
   const canUseBrowserOAuth = auth.oauthBrowserSupported === true
     && authChangesSupported
     && oauthStatusSupported;
@@ -105,6 +113,7 @@ export function PiProviderCredentials() {
     setLogin(null);
     setError('');
     setLoginStatusError('');
+    setModelsExpanded(false);
   }
 
   async function openPreview(action: ProviderAction): Promise<void> {
@@ -297,11 +306,15 @@ export function PiProviderCredentials() {
         <div className="mgmt-stack">
           <div className="mgmt-toolbar">
             <strong>{providerDisplayName(selected)}</strong>
-            <span className="mgmt-muted">{Number(selected.availableModelCount || 0)} 个可用模型</span>
+            <span className="mgmt-muted">
+              {models.length > modelPreviewLimit
+                ? `${modelsExpanded ? '已显示' : '当前'} ${loadedModels.length} / ${modelCatalogTruncated ? '已加载 ' : '共 '}${models.length}${modelCatalogTruncated ? ` · 共 ${modelTotal}` : ''} 个可用模型`
+                : `${modelCatalogTruncated ? `已加载 ${models.length} · 共 ${modelTotal}` : modelTotal} 个可用模型`}
+            </span>
           </div>
           {models.length ? (
-            <div className="mgmt-list">
-              {models.slice(0, 8).map((model) => (
+            <div aria-live="polite" className="mgmt-list configuration-provider-models" data-expanded={modelsExpanded || undefined} id={modelListId}>
+              {loadedModels.map((model) => (
                 <div className="mgmt-list__row" key={stringValue(model.id)}>
                   <span>{modelDisplayName(model)}</span>
                   {model.reasoning === true ? <StatusBadge label="推理" tone="info" /> : null}
@@ -310,7 +323,18 @@ export function PiProviderCredentials() {
               ))}
             </div>
           ) : <InlineNotice title="还没有可用模型">连接这个模型服务后刷新，即可看到实际可用的模型。</InlineNotice>}
-          {selected.modelsTruncated === true || models.length > 8 ? <span className="mgmt-muted">这里只展示前 8 个；对话中的模型菜单会读取完整可用目录。</span> : null}
+          {hasAdditionalLoadedModels ? (
+            <button
+              aria-controls={modelListId}
+              aria-expanded={modelsExpanded}
+              className="configuration-provider-models__toggle"
+              onClick={() => setModelsExpanded((current) => !current)}
+              type="button"
+            >
+              {modelsExpanded ? `收起到最近 ${modelPreviewLimit} 个模型` : `显示全部 ${models.length} 个模型`}
+            </button>
+          ) : null}
+          {modelCatalogTruncated ? <span className="mgmt-muted">当前目录已加载 {models.length} 项；服务报告共 {modelTotal} 项，刷新后可检查是否有新增可用模型。</span> : null}
         </div>
       </div>
       {error ? <InlineNotice title="操作没有完成" tone="danger">{error}</InlineNotice> : null}
@@ -350,6 +374,10 @@ export function PiProviderCredentials() {
       </Dialog>
     </ManagementSection>
   );
+}
+
+function finiteNonNegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function OAuthStatus({

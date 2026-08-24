@@ -265,6 +265,42 @@ describe('Pi provider credential UI', () => {
     expect(screen.queryByText(/secret|token/i)).not.toBeInTheDocument();
   });
 
+  it('keeps the model catalog in an explicit, keyboard-expandable local window', async () => {
+    const user = userEvent.setup();
+    const baseCatalog = providerCatalog();
+    const catalog = {
+      ...baseCatalog,
+      providers: [{
+        ...baseCatalog.providers[0],
+        availableModelCount: 10,
+        availableModels: Array.from({ length: 10 }, (_, index) => ({
+          id: `model-${index + 1}`,
+          name: `模型 ${index + 1}`,
+          reasoning: index % 2 === 0,
+        })),
+      }],
+    };
+    const transport = new MockControlTransport({
+      capabilities: { features: { piProviderCredentials: true } },
+      routes: { 'agent.providers.get': catalog },
+    });
+
+    renderProvider(transport);
+
+    expect(await screen.findByText('当前 8 / 共 10 个可用模型')).toBeInTheDocument();
+    expect(screen.queryByText('模型 9')).not.toBeInTheDocument();
+    const disclosure = screen.getByRole('button', { name: '显示全部 10 个模型' });
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    disclosure.focus();
+    await user.keyboard('{Enter}');
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('已显示 10 / 共 10 个可用模型')).toBeInTheDocument();
+    expect(screen.getByText('模型 9')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '收起到最近 8 个模型' }));
+    expect(screen.getByText('当前 8 / 共 10 个可用模型')).toBeInTheDocument();
+    expect(screen.queryByText('模型 9')).not.toBeInTheDocument();
+  });
+
   it('offers real recovery actions when account management is unavailable', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({

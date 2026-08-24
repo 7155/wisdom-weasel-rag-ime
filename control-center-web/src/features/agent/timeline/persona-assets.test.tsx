@@ -35,9 +35,9 @@ describe('Persona timeline assets', () => {
 
   it('renders the timeline names with their manifest-selected portraits', () => {
     render(<>{previewPersonas.map((persona) => <PersonaAvatar key={persona.roleId} persona={persona} />)}</>);
-    expect(screen.getByAltText('澄·今头像').getAttribute('src')).toBe('/companions/personas/companion-present-v9.webp');
-    expect(screen.getByAltText('澄·初头像').getAttribute('src')).toBe('/companions/personas/companion-firstlight-v9.webp');
-    expect(screen.getByAltText('澄·远头像').getAttribute('src')).toBe('/companions/personas/companion-future-v9.webp');
-    expect(screen.getByAltText('澄·瞬头像').getAttribute('src')).toBe('/companions/personas/companion-flash-v9.webp');
+    expect(screen.getByAltText('Agent 1头像').getAttribute('src')).toBe('/companions/personas/companion-present-v9.webp');
+    expect(screen.getByAltText('Agent 2头像').getAttribute('src')).toBe('/companions/personas/companion-firstlight-v9.webp');
+    expect(screen.getByAltText('Agent 3头像').getAttribute('src')).toBe('/companions/personas/companion-future-v9.webp');
+    expect(screen.getByAltText('Agent 4头像').getAttribute('src')).toBe('/companions/personas/companion-flash-v9.webp');
   });
 });

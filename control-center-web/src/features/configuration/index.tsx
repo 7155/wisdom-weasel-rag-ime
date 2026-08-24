@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Button, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
+import { Button, Disclosure, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
 import {
   configurationMutationPathIds,
   isSecretConfigurationKey,
@@ -347,11 +347,13 @@ export function ConfigurationFeature() {
         </ManagementSection>
 
         <ManagementSection title="迁移与恢复">
-          <details className="configuration-transfer">
-            <summary>
+          <Disclosure
+            className="configuration-transfer"
+            summary={<>
               <span><strong>导入、备份与恢复</strong><small>平时无需打开；执行前会先列出具体影响</small></span>
               <ChevronRight size={16} />
-            </summary>
+            </>}
+          >
             <PortabilityWorkflows
               capabilities={queries.capabilities.data}
               currentSettings={settings}
@@ -360,7 +362,7 @@ export function ConfigurationFeature() {
               }}
               transport={queries.transport}
             />
-          </details>
+          </Disclosure>
         </ManagementSection>
       </QueryState>
     </ManagementPage>
@@ -623,6 +625,5 @@ const settingDestinations = [
   { path: '/knowledge', label: '知识库', detail: '材料、检索与图谱', icon: Library },
   { path: '/plugins', label: '插件管理', detail: '技能、工具、扩展与安装状态', icon: PlugZap },
   { path: '/configuration?section=subagents', label: '子 Agent', detail: '模板、上下文、工具与权限边界', icon: UsersRound },
-  { path: '/roles', label: '模型与插件', detail: '普通对话、Room Partner 与 Tool Agent 的默认模型', icon: Bot },
   { path: '/rooms', label: '多人协作', detail: '伙伴、任务和交接', icon: UsersRound },
 ] as const;

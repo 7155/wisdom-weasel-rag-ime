@@ -880,7 +880,19 @@
 .context-debug-reader__disclosure > summary small { color: var(--color-text-tertiary); font-size: 11px; }
 .context-debug-reader__disclosure > summary::after { color: var(--color-text-tertiary); content: '展开'; font-size: 11px; }
 .context-debug-reader__disclosure[open] > summary::after { content: '收起'; }
-.context-debug-reader__disclosure > div { padding: 0 11px 11px; border-top: 1px solid var(--color-border-soft); }
+.context-debug-reader__reveal > div {
+  min-height: 0;
+  padding: 0 11px;
+  overflow: hidden;
+  border-top: 0 solid var(--color-border-soft);
+  transition:
+    padding-bottom 190ms cubic-bezier(.16, 1, .3, 1),
+    border-top-width 190ms cubic-bezier(.16, 1, .3, 1);
+}
+.context-debug-reader__reveal[data-open] > div {
+  padding-bottom: 11px;
+  border-top-width: 1px;
+}
 .context-debug-reader__disclosure[data-tone='system'] { box-shadow: inset 2px 0 var(--color-info); }
 .context-debug-reader__disclosure[data-tone='messages'] { box-shadow: inset 2px 0 var(--color-accent); }
 .context-debug-reader__disclosure[data-tone='tools'] { box-shadow: inset 2px 0 var(--color-warning); }
@@ -928,6 +940,67 @@
   .context-debug-session-tree label,
   .context-debug-session-tree button,
   .context-debug-turns button { transition: none; }
+}
+
+main.context-debug-feature[data-paw-os-app='system-monitor'] {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--color-paper);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+main.context-debug-feature[data-paw-os-app='system-monitor'] > .context-debug-header[data-native-actions] {
+  min-height: 48px;
+  justify-content: flex-end;
+  padding: 7px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-paper) 92%, transparent);
+  backdrop-filter: blur(16px) saturate(1.06);
+}
+
+main.context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-controls {
+  flex-wrap: wrap;
+}
+
+main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+  .ui-button,
+  .ui-select__trigger,
+  .ui-switch-field__label,
+  .context-debug-back,
+  button,
+  input,
+  select,
+  textarea,
+  label,
+  summary
+) { font-size: 14px; }
+
+main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+  small,
+  dt,
+  time,
+  .context-debug-reader__call-status
+) { font-size: 13px; }
+
+main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+  .context-debug-reader__messages > li > div,
+  .context-debug-reader__code--text,
+  .context-debug-reader__masthead p,
+  .context-debug-session-message__body,
+  .context-debug-assembly__title p
+) { font-size: 15px; }
+
+@container paw-window (max-width: 720px) {
+  main.context-debug-feature[data-paw-os-app='system-monitor'] > .context-debug-header[data-native-actions] { justify-content: flex-start; }
+  main.context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-controls { justify-content: flex-start; }
+  main.context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-select--session { width: min(100%, 320px); }
 }
 
 /* OMP-style session viewer. This uses the local OMP export source as the
@@ -1458,12 +1531,13 @@
   font: 10px/1.5 var(--font-mono);
 }
 .context-debug-session-viewer .context-debug-reader__disclosure[open] > summary::after { content: '收起'; }
-.context-debug-session-viewer .context-debug-reader__disclosure > div {
-  padding: 0 14px 10px;
-  border-top: 1px solid var(--context-reader-hairline-soft);
+.context-debug-session-viewer .context-debug-reader__disclosure > .context-debug-reader__reveal > div {
+  padding-inline: 14px;
+  border-top-color: var(--context-reader-hairline-soft);
 }
-
-.context-debug-feature details:not([open]) > :not(summary) { display: none !important; }
+.context-debug-session-viewer .context-debug-reader__disclosure > .context-debug-reader__reveal[data-open] > div {
+  padding-bottom: 10px;
+}
 .context-debug-session-viewer .context-debug-reader__disclosure .context-debug-reader__disclosure {
   margin-top: 6px;
   border-radius: 6px;
@@ -2013,5 +2087,65 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .context-debug-turns button { transition: none; }
+  .context-debug-turns button,
+  .context-debug-reader__reveal > div { transition: none; }
 }
+
+@container paw-window (max-width: 900px) {
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-header { align-items: stretch; flex-direction: column; }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-controls { justify-content: flex-start; flex-wrap: wrap; }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-select--session { width: min(100%, 420px); }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-viewer {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-tree {
+    width: 100%;
+    height: auto;
+    max-height: 390px;
+    grid-template-rows: minmax(160px, 1fr) auto minmax(110px, 1fr) auto;
+  }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-content { height: auto; overflow: visible; padding-inline: 22px; }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__layers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container paw-window (max-width: 560px) {
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-heading small,
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__title > em { display: none; }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__title { grid-template-columns: 34px minmax(0, 1fr); }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics > div { border-right: 0; padding-inline: 0; }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__layers { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-content { padding-inline: 12px; }
+}
+
+/* UR-102 monitor-context semantic typography */
+main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+  .context-debug-turns > header strong,
+  .context-debug-turns__copy strong,
+  .context-debug-session-tree > ol button > strong,
+  .context-debug-assembly__layers strong,
+  .context-debug-session-call__marker > h3,
+  .context-debug-session-message-list > li > header strong,
+  .context-debug-reader__disclosure > summary strong
+) { font-size: 14px; }
+main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+  .context-debug-turns > header small,
+  .context-debug-turns__copy time,
+  .context-debug-turns__copy small,
+  .context-debug-session-tree > ol button > small,
+  .context-debug-assembly__title small,
+  .context-debug-assembly__title > em,
+  .context-debug-assembly__metrics dt,
+  .context-debug-assembly__layers li > span,
+  .context-debug-assembly__layers em,
+  .context-debug-session-message-list > li > header small
+) { font-size: 13px; }
+main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+  .context-debug-assembly__title p,
+  .context-debug-assembly__layers small,
+  .context-debug-session-message__body
+) { font-size: 15px; }
+/* UR-102 monitor-context semantic typography end */

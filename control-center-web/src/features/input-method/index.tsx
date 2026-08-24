@@ -7,7 +7,7 @@ import {
   TextCursorInput,
   type LucideIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Button, EmptyState, Field, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
 import {
   inputSettingsMutationPathIds,
@@ -38,6 +38,7 @@ import {
 } from './input-method-presentation';
 import { LexiconWorkflow } from './lexicon-workflow';
 import { DiagnosticsRuntimeWorkflow } from '@/features/diagnostics/runtime-actions';
+import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import {
   ManagementMutationWorkflow,
   parseManagementWorkPreview,
@@ -120,7 +121,9 @@ const commonInputSettingKeys = new Set([
 ]);
 
 export function InputMethodFeature() {
-  const queries = useInputMethodQueries();
+  const desktop = usePawOsDesktop();
+  const openDiagnostics = () => openPawOsRoute(desktop, '/diagnostics');
+  const queries = useInputMethodQueries('input');
   const source = asRecord(queries.source.data);
   const overview = asRecord(queries.overview.data);
   const components = asRecord(overview.components);
@@ -222,30 +225,18 @@ export function InputMethodFeature() {
     queries.settings,
     queries.schema,
     queries.capabilities,
-    queries.lexiconReview,
   ].some((query) => query.isFetching);
 
   const refresh = () => {
-    const jobs: Promise<unknown>[] = [
+    void Promise.all([
       queries.source.refetch(),
       queries.overview.refetch(),
       queries.models.refetch(),
       queries.settings.refetch(),
       queries.schema.refetch(),
       queries.capabilities.refetch(),
-    ];
-    if (queries.lexiconAvailable) jobs.push(queries.lexiconReview.refetch());
-    void Promise.all(jobs);
+    ]);
   };
-
-  const lexiconState = lexiconSectionStatus({
-    capabilityError: Boolean(queries.capabilities.error),
-    capabilityPending: queries.capabilities.isPending,
-    entryCount: queries.lexiconReview.data?.entryCount,
-    reviewError: Boolean(queries.lexiconReview.error),
-    reviewPending: queries.lexiconReview.isPending,
-    supported: queries.lexiconAvailable,
-  });
 
   return (
     <ManagementPage
@@ -259,10 +250,10 @@ export function InputMethodFeature() {
           刷新
         </Button>
       )}
-      description="调整输入体验和个人词库。普通拼音输入仍由系统输入法负责，常用词和补全建议由你决定是否采用。"
+      description="检查输入链路，选择补全方式，并核对每一项设置在保存前后的变化。普通拼音输入仍由系统输入法负责。"
       eyebrow="输入体验"
       routeId="input"
-      title="输入体验与个人词库"
+      title="输入法"
     >
       <ManagementSection
         description="确认输入法、补全建议和当前输入环境是否已经准备好。"
@@ -643,8 +634,48 @@ export function InputMethodFeature() {
         )}
       </ManagementSection>
 
+    </ManagementPage>
+  );
+}
+
+export function InputLexiconFeature() {
+  const desktop = usePawOsDesktop();
+  const openDiagnostics = () => openPawOsRoute(desktop, '/diagnostics');
+  const queries = useInputMethodQueries('lexicon');
+  const lexiconState = lexiconSectionStatus({
+    capabilityError: Boolean(queries.capabilities.error),
+    capabilityPending: queries.capabilities.isPending,
+    entryCount: queries.lexiconReview.data?.entryCount,
+    reviewError: Boolean(queries.lexiconReview.error),
+    reviewPending: queries.lexiconReview.isPending,
+    supported: queries.lexiconAvailable,
+  });
+  const isRefreshing = queries.capabilities.isFetching || queries.lexiconReview.isFetching;
+  const refresh = () => {
+    const jobs: Promise<unknown>[] = [queries.capabilities.refetch()];
+    if (queries.lexiconAvailable) jobs.push(queries.lexiconReview.refetch());
+    void Promise.all(jobs);
+  };
+
+  return (
+    <ManagementPage
+      actions={(
+        <Button
+          leadingIcon={<RefreshCw size={15} />}
+          loading={isRefreshing}
+          onClick={refresh}
+          size="small"
+        >
+          刷新审阅
+        </Button>
+      )}
+      description="审阅本机选词反馈整理出的常用词建议。只有你勾选并确认的词条才会写入，写入后仍可撤销。"
+      eyebrow="输入体验"
+      routeId="input-lexicon"
+      title="个人词库"
+    >
       <ManagementSection
-        description="查看适合加入个人词库的常用词；只会处理本次勾选的词条，之后也可以撤销。"
+        description="逐条核对建议、来源与采用记录；本页不会静默改写 Rime 的解码与排序。"
         title="常用词建议"
         trailing={<StatusBadge label={lexiconState.label} tone={lexiconState.tone} />}
       >
@@ -673,7 +704,6 @@ export function InputMethodFeature() {
           <>
             <LexiconOrganizationState organization={queries.lexiconReview.data.organization} />
             <LexiconWorkflow
-              isFetching={queries.lexiconReview.isFetching}
               onRefresh={() => void queries.lexiconReview.refetch()}
               review={queries.lexiconReview.data}
               transport={queries.transport}
@@ -716,80 +746,129 @@ function InputSettingsGroup({
     return !validInputSettingValue(field, changes[key]);
   });
   const needsAttention = changedKeys.length > 0 || invalidKeys.length > 0;
-  const open = userOpen || needsAttention;
+  const open = userOpen;
   const advancedNeedsAttention = advancedFields.some((field) => changedKeys.includes(stringValue(field.key)));
-  const advancedOpen = advancedUserOpen || advancedNeedsAttention;
+  const advancedOpen = advancedUserOpen;
   const status = invalidKeys.length
     ? `${invalidKeys.length} 项需修正`
     : changedKeys.length
       ? `${changedKeys.length} 项待保存`
       : `共 ${fields.length} 项`;
+  const triggerId = `input-settings-trigger-${id}`;
+  const panelId = `input-settings-panel-${id}`;
+  const advancedTriggerId = `input-settings-advanced-trigger-${id}`;
+  const advancedPanelId = `input-settings-advanced-panel-${id}`;
 
   return (
-    <details
+    <section
       aria-labelledby={`input-settings-${id}`}
       className="input-settings-group"
       data-attention={needsAttention || undefined}
-      onToggle={(event) => {
-        if (!needsAttention) setUserOpen(event.currentTarget.open);
-      }}
-      open={open}
+      data-open={open ? 'true' : 'false'}
+      role="group"
     >
-      <summary onClick={(event) => {
-        if (needsAttention && open) event.preventDefault();
-      }}>
+      <button
+        aria-controls={panelId}
+        aria-expanded={open}
+        className="input-settings-group__summary"
+        id={triggerId}
+        onClick={() => setUserOpen((current) => !current)}
+        type="button"
+      >
         <span className="input-settings-group__copy">
-          <h3 id={`input-settings-${id}`}>{sectionLabel(id)}</h3>
+          <span aria-level={3} id={`input-settings-${id}`} role="heading">{sectionLabel(id)}</span>
           <small>{inputSettingsGroupDescription(id)}</small>
         </span>
         <span className="input-settings-group__meta">
           <span>{status}</span>
           <ChevronDown aria-hidden="true" size={16} />
         </span>
-      </summary>
-      <div className="input-setting-list">
-        {dailyFields.map((field) => {
-          const key = stringValue(field.key);
-          return (
-            <InputSettingField
-              disabled={disabled}
-              edited={key in changes && !Object.is(valueAt(settings, key), changes[key])}
-              field={field}
-              key={key}
-              modelIds={key === 'models.modelId' ? modelIds : undefined}
-              onChange={(value) => onChange(key, value)}
-              value={changes[key] ?? valueAt(settings, key)}
-            />
-          );
-        })}
-        {advancedFields.length ? (
-          <details
-            className="input-settings-advanced"
-            onToggle={(event) => {
-              if (!advancedNeedsAttention) setAdvancedUserOpen(event.currentTarget.open);
-            }}
-            open={advancedOpen}
-          >
-            <summary onClick={(event) => {
-              if (advancedNeedsAttention && advancedOpen) event.preventDefault();
-            }}>高级：模型文件位置</summary>
-            {advancedFields.map((field) => {
-              const key = stringValue(field.key);
-              return (
-                <InputSettingField
-                  disabled={disabled}
-                  edited={key in changes && !Object.is(valueAt(settings, key), changes[key])}
-                  field={field}
-                  key={key}
-                  onChange={(value) => onChange(key, value)}
-                  value={changes[key] ?? valueAt(settings, key)}
-                />
-              );
-            })}
-          </details>
-        ) : null}
+      </button>
+      <InputSettingsDisclosure id={panelId} labelledBy={triggerId} open={open}>
+        <div className="input-setting-list">
+          {dailyFields.map((field) => {
+            const key = stringValue(field.key);
+            return (
+              <InputSettingField
+                disabled={disabled}
+                edited={key in changes && !Object.is(valueAt(settings, key), changes[key])}
+                field={field}
+                key={key}
+                modelIds={key === 'models.modelId' ? modelIds : undefined}
+                onChange={(value) => onChange(key, value)}
+                value={changes[key] ?? valueAt(settings, key)}
+              />
+            );
+          })}
+          {advancedFields.length ? (
+            <section
+              className="input-settings-advanced"
+              data-attention={advancedNeedsAttention || undefined}
+              data-open={advancedOpen ? 'true' : 'false'}
+            >
+              <button
+                aria-controls={advancedPanelId}
+                aria-expanded={advancedOpen}
+                id={advancedTriggerId}
+                onClick={() => setAdvancedUserOpen((current) => !current)}
+                type="button"
+              >
+                <span>高级：模型文件位置</span>
+                <ChevronDown aria-hidden="true" size={14} />
+              </button>
+              <InputSettingsDisclosure
+                id={advancedPanelId}
+                labelledBy={advancedTriggerId}
+                open={advancedOpen}
+              >
+                <div className="input-settings-advanced__content">
+                  {advancedFields.map((field) => {
+                    const key = stringValue(field.key);
+                    return (
+                      <InputSettingField
+                        disabled={disabled}
+                        edited={key in changes && !Object.is(valueAt(settings, key), changes[key])}
+                        field={field}
+                        key={key}
+                        onChange={(value) => onChange(key, value)}
+                        value={changes[key] ?? valueAt(settings, key)}
+                      />
+                    );
+                  })}
+                </div>
+              </InputSettingsDisclosure>
+            </section>
+          ) : null}
+        </div>
+      </InputSettingsDisclosure>
+    </section>
+  );
+}
+
+function InputSettingsDisclosure({
+  children,
+  id,
+  labelledBy,
+  open,
+}: {
+  children: ReactNode;
+  id: string;
+  labelledBy: string;
+  open: boolean;
+}) {
+  return (
+    <div
+      aria-hidden={!open}
+      aria-labelledby={labelledBy}
+      className="input-settings-disclosure"
+      data-open={open ? 'true' : 'false'}
+      id={id}
+      inert={open ? undefined : true}
+    >
+      <div>
+        <div className="input-settings-disclosure__content">{children}</div>
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -844,10 +923,6 @@ function formatLexiconRunTime(value: number, fallback: string): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
-}
-
-function openDiagnostics(): void {
-  window.location.hash = '#/diagnostics';
 }
 
 function InputSettingField({

@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
-import { InputMethodFeature } from './index';
+import { InputLexiconFeature, InputMethodFeature } from './index';
 import { modeSettingLabel } from './input-method-presentation';
+import inputMethodCss from './input-method.css?raw';
 
 const settings = {
   ok: true,
@@ -152,6 +154,7 @@ describe('InputMethodFeature', () => {
   });
 
   it('groups settings by backend schema responsibility and keeps controls disabled without the write contract', async () => {
+    const user = userEvent.setup();
     renderFeature(new MockControlTransport({
       routes: {
         'input.source.get': {
@@ -232,10 +235,21 @@ describe('InputMethodFeature', () => {
 
     expect(await screen.findByRole('heading', { level: 3, name: '输入体验' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: '候选界面' })).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: '输入体验' })).toHaveAttribute('open');
-    expect(screen.getByRole('heading', { level: 3, name: '输入体验' }).closest('details')).toHaveAttribute('open');
-    expect(screen.getByRole('heading', { level: 3, name: '候选界面' }).closest('details')).not.toHaveAttribute('open');
-    expect(document.querySelectorAll('.input-settings-group[open]')).toHaveLength(1);
+    const interactionTrigger = screen.getByRole('button', { name: /^输入体验/ });
+    const displayTrigger = screen.getByRole('button', { name: /^候选界面/ });
+    expect(interactionTrigger).toHaveAttribute('aria-expanded', 'true');
+    expect(displayTrigger).toHaveAttribute('aria-expanded', 'false');
+    const interactionPanel = document.getElementById(interactionTrigger.getAttribute('aria-controls')!);
+    const displayPanel = document.getElementById(displayTrigger.getAttribute('aria-controls')!);
+    expect(interactionPanel).not.toHaveAttribute('inert');
+    expect(displayPanel).toHaveAttribute('inert');
+    await user.click(displayTrigger);
+    expect(displayTrigger).toHaveAttribute('aria-expanded', 'true');
+    await user.click(interactionTrigger);
+    expect(interactionTrigger).toHaveAttribute('aria-expanded', 'false');
+    expect(interactionPanel).toHaveAttribute('inert');
+    expect(document.querySelectorAll(".input-settings-group[data-open='true']")).toHaveLength(1);
+    await user.click(interactionTrigger);
     expect(document.querySelector('.input-settings-save')?.compareDocumentPosition(document.querySelector('.input-settings-grid')!))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.getByRole('list', { name: '输入法运行链状态' }).children).toHaveLength(4);
@@ -248,6 +262,50 @@ describe('InputMethodFeature', () => {
     expect(screen.getByText(/需重新载入/)).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: '提交后预测' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the advanced model path in a reversible nested disclosure', async () => {
+    const user = userEvent.setup();
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': {
+          ok: true,
+          settings: { models: { modelId: 'local-model', path: '/Models/local.gguf' } },
+        },
+        'configuration.schema': {
+          ok: true,
+          sections: [{
+            id: 'models',
+            fields: [
+              { key: 'models.modelId', type: 'string', applyMode: 'reload' },
+              { key: 'models.path', type: 'string', applyMode: 'reload' },
+            ],
+          }],
+        },
+      },
+    }));
+
+    const modelsTrigger = await screen.findByRole('button', { name: /^本机补全/ });
+    expect(modelsTrigger).toHaveAttribute('aria-expanded', 'false');
+    await user.click(modelsTrigger);
+    const advancedTrigger = screen.getByRole('button', { name: '高级：模型文件位置' });
+    expect(advancedTrigger).toHaveAttribute('aria-expanded', 'false');
+    const advancedPanel = document.getElementById(advancedTrigger.getAttribute('aria-controls')!);
+    expect(advancedPanel).toHaveAttribute('inert');
+    await user.click(advancedTrigger);
+    expect(advancedTrigger).toHaveAttribute('aria-expanded', 'true');
+    expect(advancedPanel).not.toHaveAttribute('inert');
+    await user.click(advancedTrigger);
+    expect(advancedTrigger).toHaveAttribute('aria-expanded', 'false');
+    expect(advancedPanel).toHaveAttribute('inert');
+    expect(inputMethodCss).toMatch(
+      /\.input-settings-disclosure\s*\{[^}]*grid-template-rows:\s*0fr;[^}]*grid-template-rows var\(--motion-disclose\)/s,
+    );
+    expect(inputMethodCss).toMatch(
+      /\.input-settings-disclosure\[data-open='true'\]\s*\{[^}]*grid-template-rows:\s*1fr;/s,
+    );
   });
 
   it('switches runtime mode only after preview and explicit approval, then supports rollback', async () => {
@@ -430,7 +488,7 @@ describe('InputMethodFeature', () => {
 
     await user.click(await screen.findByRole('combobox', { name: 'Option+数字行为' }));
     await user.click(await screen.findByRole('option', { name: '关闭' }));
-    await user.click(screen.getByRole('heading', { level: 3, name: '候选界面' }).closest('summary')!);
+    await user.click(screen.getByRole('button', { name: /^候选界面/ }));
     const candidateCount = screen.getByLabelText('续写候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');
@@ -562,7 +620,7 @@ describe('InputMethodFeature', () => {
     expect(await screen.findByText('配置已生效')).toBeInTheDocument();
     expect(screen.getAllByText('minimind-ime-v2').length).toBeGreaterThan(0);
     expect(screen.queryByLabelText('普通数字键')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('heading', { level: 3, name: '本机补全' }).closest('summary')!);
+    await user.click(screen.getByRole('button', { name: /^本机补全/ }));
     await user.click(screen.getByRole('combobox', { name: '本机补全模型' }));
     await user.click(screen.getByRole('option', { name: 'minimind-ime-v2' }));
     expect(screen.getByLabelText('本机模型目录')).toHaveValue('/tmp/minimind-ime-v2');
@@ -587,7 +645,7 @@ describe('InputMethodFeature', () => {
     });
   });
 
-  it('keeps a changed or invalid settings group open with inline recovery feedback', async () => {
+  it('keeps pending status visible while allowing a changed group to collapse and reopen', async () => {
     const user = userEvent.setup();
     renderFeature(new MockControlTransport({
       capabilities: {
@@ -621,30 +679,38 @@ describe('InputMethodFeature', () => {
       },
     }));
 
-    const group = (await screen.findByRole('heading', { level: 3, name: '候选界面' })).closest('details')!;
-    const summary = group.querySelector('summary')!;
-    expect(group).not.toHaveAttribute('open');
-    await user.click(summary);
+    const group = (await screen.findByRole('heading', { level: 3, name: '候选界面' })).closest('.input-settings-group')!;
+    const trigger = screen.getByRole('button', { name: /^候选界面/ });
+    const panel = document.getElementById(trigger.getAttribute('aria-controls')!)!;
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await user.click(trigger);
     const candidateCount = screen.getByLabelText('续写候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '12');
 
-    expect(group).toHaveAttribute('open');
-    expect(summary).toHaveTextContent('1 项需修正');
+    expect(group).toHaveAttribute('data-open', 'true');
+    expect(trigger).toHaveTextContent('1 项需修正');
     expect(screen.getByRole('alert')).toHaveTextContent('请输入 1 到 8 之间的数值。');
     expect(candidateCount).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText('需要修正')).toBeInTheDocument();
 
-    await user.click(summary);
-    expect(group).toHaveAttribute('open');
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(group).toHaveAttribute('data-open', 'false');
+    expect(panel).toHaveAttribute('inert');
+    expect(panel).toHaveTextContent('请输入 1 到 8 之间的数值。');
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('alert')).toBeVisible();
 
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');
-    expect(summary).toHaveTextContent('1 项待保存');
+    expect(trigger).toHaveTextContent('1 项待保存');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    await user.click(summary);
-    expect(group).toHaveAttribute('open');
+    await user.click(trigger);
+    expect(group).toHaveAttribute('data-open', 'false');
+    expect(panel).toHaveAttribute('inert');
   });
 
   it('does not enable input setting writes when any settings work-contract route is missing', async () => {
@@ -707,7 +773,7 @@ describe('InputMethodFeature', () => {
     expect(screen.getByRole('switch', { name: '提交后预测' })).toBeChecked();
   });
 
-  it('refreshes every page query through the live transport', async () => {
+  it('refreshes the input page queries without pulling the separate lexicon page', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
@@ -720,9 +786,9 @@ describe('InputMethodFeature', () => {
     });
     renderFeature(transport);
 
-    await screen.findByText('暂无待审词条');
+    await screen.findByText('提交后预测');
     const before = new Map(
-      ['input.source.get', 'overview.get', 'configuration.settings', 'configuration.schema', 'input.lexicon.review']
+      ['input.source.get', 'overview.get', 'configuration.settings', 'configuration.schema']
         .map((pathId) => [pathId, transport.requests.filter((call) => call.request.pathId === pathId).length]),
     );
     await user.click(screen.getByRole('button', { name: '刷新' }));
@@ -732,6 +798,7 @@ describe('InputMethodFeature', () => {
         expect(transport.requests.filter((call) => call.request.pathId === pathId).length).toBeGreaterThan(count);
       }
     });
+    expect(transport.requests.some((call) => call.request.pathId === 'input.lexicon.review')).toBe(false);
   });
 
   it('offers a focused retry when the local model status cannot be read', async () => {
@@ -757,7 +824,7 @@ describe('InputMethodFeature', () => {
   });
 
   it('fails closed when the host does not expose all lexicon pathIds', async () => {
-    renderFeature(new MockControlTransport({
+    renderLexiconFeature(new MockControlTransport({
       capabilities: {
         routeIds: ['input.source.get', 'overview.get', 'configuration.settings', 'configuration.schema'],
       },
@@ -784,7 +851,7 @@ describe('InputMethodFeature', () => {
       },
     });
     vi.spyOn(transport, 'capabilities').mockRejectedValue(new Error('能力接口不可用'));
-    renderFeature(transport);
+    renderLexiconFeature(transport);
 
     expect(await screen.findByText('无法确认词库能力')).toBeInTheDocument();
     expect(screen.getByText('能力接口不可用')).toBeInTheDocument();
@@ -792,7 +859,7 @@ describe('InputMethodFeature', () => {
   });
 
   it('projects the persisted cadence and a real failure receipt without changing Rime ownership', async () => {
-    renderFeature(new MockControlTransport({
+    renderLexiconFeature(new MockControlTransport({
       routes: {
         'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
         'overview.get': { ok: true, profile: '标准模式' },
@@ -818,6 +885,8 @@ describe('InputMethodFeature', () => {
     expect(screen.getByText('运行失败')).toBeInTheDocument();
     expect(screen.getByText('上次定期整理失败')).toBeInTheDocument();
     expect(screen.getByText(/本机数据库暂时不可写。/)).toBeInTheDocument();
+    const failureNotice = screen.getByText('上次定期整理失败').closest('.mgmt-notice');
+    expect(failureNotice?.textContent?.match(/本机数据库暂时不可写。/gu)).toHaveLength(1);
     expect(screen.getByText('已启用，结果会先交给你审阅。')).toBeInTheDocument();
   });
 
@@ -849,7 +918,7 @@ describe('InputMethodFeature', () => {
         'input.lexicon.rollback': rollback,
       },
     });
-    renderFeature(transport);
+    renderLexiconFeature(transport);
 
     expect(await screen.findByRole('checkbox', { name: '选择 表情包' })).toBeChecked();
     expect(screen.getByText(/待审 1 条 · 已选 1 条/)).toBeInTheDocument();
@@ -874,9 +943,49 @@ describe('InputMethodFeature', () => {
     expect(rollbackRequest?.body).toEqual({ rollbackId: 'rollback-lexicon-1' });
   });
 
+  it('keeps lexicon review rows and the first app viewport readable at wide and narrow widths', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+        'input.lexicon.review': review,
+      },
+    });
+    renderLexiconFeature(transport);
+
+    const checkbox = await screen.findByRole('checkbox', { name: '选择 表情包' });
+    const row = checkbox.closest('label');
+    expect(row).toHaveAttribute('data-input-lexicon-row', 'true');
+    expect(row?.children).toHaveLength(3);
+    expect(row?.querySelector('.mgmt-list__content')).toBeInTheDocument();
+    expect(row?.querySelector('.mgmt-status')).toBeInTheDocument();
+    expect(row?.querySelector('.mgmt-list__content strong')).toHaveAttribute('title', '表情包');
+    expect(row?.querySelector('.mgmt-list__content span')).toHaveAttribute('title', expect.stringContaining('被采用 3 次'));
+    expect(screen.getAllByRole('button', { name: '刷新审阅' })).toHaveLength(1);
+    expect(transport.requests.some(({ request }) => [
+      'input.source.get',
+      'overview.get',
+      'diagnostics.models',
+      'configuration.settings',
+      'configuration.schema',
+    ].includes(request.pathId))).toBe(false);
+
+    expect(inputMethodCss).toMatch(
+      /main:is\(\[data-route-id='input'\], \[data-route-id='input-lexicon'\]\)\[data-paw-os-app\] > \.mgmt-page__body\s*\{[^}]*padding-top:/s,
+    );
+    expect(inputMethodCss).toMatch(
+      /@container paw-window \(max-width: 860px\)[\s\S]*?\.input-lexicon-review__row\s*\{[^}]*grid-template-columns:\s*minmax\(20px, max-content\) minmax\(0, 1fr\) max-content/s,
+    );
+    expect(inputMethodCss).toMatch(
+      /@container paw-window \(max-width: 560px\)[\s\S]*?\.input-lexicon-review__row\s*\{[\s\S]*?grid-template-areas:/s,
+    );
+  });
+
   it('does not render a write receipt when the server rejects a stale review token', async () => {
     const user = userEvent.setup();
-    renderFeature(new MockControlTransport({
+    renderLexiconFeature(new MockControlTransport({
       routes: {
         'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
         'overview.get': { ok: true, profile: '标准模式' },
@@ -902,6 +1011,14 @@ describe('InputMethodFeature', () => {
 });
 
 function renderFeature(transport: MockControlTransport) {
+  renderInputFeature(transport, <InputMethodFeature />);
+}
+
+function renderLexiconFeature(transport: MockControlTransport) {
+  renderInputFeature(transport, <InputLexiconFeature />);
+}
+
+function renderInputFeature(transport: MockControlTransport, feature: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -909,7 +1026,7 @@ function renderFeature(transport: MockControlTransport) {
     <TooltipProvider delayDuration={0}>
       <ControlTransportProvider transport={transport}>
         <QueryClientProvider client={client}>
-          <InputMethodFeature />
+          {feature}
         </QueryClientProvider>
       </ControlTransportProvider>
     </TooltipProvider>,

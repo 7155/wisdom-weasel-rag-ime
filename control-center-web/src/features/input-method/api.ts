@@ -88,18 +88,24 @@ export const inputMethodQueryKeys = {
   lexiconReview: () => [...inputMethodQueryKeys.root, 'lexicon-review'] as const,
 };
 
-export function useInputMethodQueries() {
+export type InputMethodQueryScope = 'input' | 'lexicon';
+
+export function useInputMethodQueries(scope: InputMethodQueryScope = 'input') {
   const transport = useControlTransport();
+  const inputEnabled = scope === 'input';
   const source = useQuery({
+    enabled: inputEnabled,
     queryKey: inputMethodQueryKeys.source(),
     queryFn: ({ signal }) => transport.request({ pathId: 'input.source.get', signal }),
     refetchInterval: 10_000,
   });
   const overview = useQuery({
+    enabled: inputEnabled,
     queryKey: inputMethodQueryKeys.overview(),
     queryFn: ({ signal }) => transport.request({ pathId: 'overview.get', signal }),
   });
   const models = useQuery({
+    enabled: inputEnabled,
     queryKey: inputMethodQueryKeys.models(),
     queryFn: async ({ signal }) => {
       try {
@@ -115,10 +121,12 @@ export function useInputMethodQueries() {
     },
   });
   const settings = useQuery({
+    enabled: inputEnabled,
     queryKey: inputMethodQueryKeys.settings(),
     queryFn: ({ signal }) => transport.request({ pathId: 'configuration.settings', signal }),
   });
   const schema = useQuery({
+    enabled: inputEnabled,
     queryKey: inputMethodQueryKeys.schema(),
     queryFn: ({ signal }) => transport.request({ pathId: 'configuration.schema', signal }),
   });
@@ -132,7 +140,7 @@ export function useInputMethodQueries() {
       && lexiconPathIds.every((pathId) => capabilities.data.routeIds.includes(pathId)),
   );
   const lexiconReview = useQuery({
-    enabled: lexiconAvailable,
+    enabled: scope === 'lexicon' && lexiconAvailable,
     queryKey: inputMethodQueryKeys.lexiconReview(),
     queryFn: async ({ signal }) => parseLexiconReview(await transport.request({
       pathId: 'input.lexicon.review',

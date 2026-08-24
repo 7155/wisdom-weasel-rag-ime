@@ -4,7 +4,9 @@ import {
   Database,
   ExternalLink,
   FileSearch,
+  Files,
   FolderPlus,
+  Network,
   RefreshCw,
   Search,
   ServerCog,
@@ -23,6 +25,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Disclosure,
   EmptyState,
   Field,
   IconButton,
@@ -88,11 +91,13 @@ import {
 import { KnowledgeDocumentViewer, KnowledgeJobsPanel, KnowledgeMaterialsPanel, type KnowledgeUploadItem } from './document-workspace';
 import { KnowledgeGraphPanel } from './knowledge-graph';
 import { publicKnowledgeText } from './public-copy';
+import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import './knowledge.css';
 
 type DetailTab = 'materials' | 'viewer' | 'search' | 'graph' | 'jobs' | 'settings';
 
 export function KnowledgeFeature() {
+  const appSurface = usePawOsAppSurface();
   const [selectedBaseId, setSelectedBaseId] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = asDetailTab(searchParams.get('tab') ?? 'materials');
@@ -313,31 +318,49 @@ export function KnowledgeFeature() {
   };
 
   return (
-    <main className="knowledge-feature" data-route-id="knowledge">
+    <main
+      className="knowledge-feature knowledge-feature--migrated-v1"
+      data-knowledge-view={tab}
+      data-paw-os-app={appSurface?.appId}
+      data-paw-os-compact={appSurface?.compact || undefined}
+      data-route-id="knowledge"
+    >
       <h1 className="knowledge-feature__title">知识库</h1>
       <QueryState error={pageError} isPending={queries.bases.isPending} onRetry={refresh}>
-        <div className="knowledge-library" data-empty={!bases.length || undefined}>
-          <KnowledgeBaseRail
-            bases={bases}
-            onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
-            onRefresh={refresh}
-            onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
-            refreshing={queries.bases.isFetching || queries.worker.isFetching}
-            selectedBaseId={selectedBaseId}
-            worker={worker}
-          />
+        <div className="knowledge-library" data-empty={!bases.length || undefined} data-native-layout={appSurface ? 'app' : undefined}>
+          {appSurface ? (
+            <KnowledgeBaseSwitcher
+              bases={bases}
+              onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
+              onRefresh={refresh}
+              onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
+              refreshing={queries.bases.isFetching || queries.worker.isFetching}
+              selectedBaseId={selectedBaseId}
+              worker={worker}
+            />
+          ) : (
+            <KnowledgeBaseRail
+              bases={bases}
+              onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
+              onRefresh={refresh}
+              onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
+              refreshing={queries.bases.isFetching || queries.worker.isFetching}
+              selectedBaseId={selectedBaseId}
+              worker={worker}
+            />
+          )}
           <section className="knowledge-library__detail" aria-label="知识库详情">
             {selectedBase ? (
               <>
                 <KnowledgeBaseHeader base={selectedBase} onDelete={(trigger) => { rememberDialogTrigger(trigger); setDeleteBaseOpen(true); }} worker={worker} />
                 <Tabs className="knowledge-library__tabs" onValueChange={(value) => selectTab(asDetailTab(value))} value={tab}>
                   <TabsList aria-label="知识库管理视图">
-                    <TabsTrigger value="materials">资料</TabsTrigger>
-                    <TabsTrigger value="viewer">查看材料</TabsTrigger>
-                    <TabsTrigger value="search">检索测试</TabsTrigger>
-                    <TabsTrigger value="graph">知识图谱</TabsTrigger>
-                    <TabsTrigger value="jobs">处理记录</TabsTrigger>
-                    <TabsTrigger value="settings">设置</TabsTrigger>
+                    <TabsTrigger value="materials"><Files aria-hidden="true" size={14} />资料</TabsTrigger>
+                    <TabsTrigger aria-label="查看材料" value="viewer"><BookOpen aria-hidden="true" size={14} />材料</TabsTrigger>
+                    <TabsTrigger aria-label="检索测试" value="search"><Search aria-hidden="true" size={14} />检索</TabsTrigger>
+                    <TabsTrigger aria-label="知识图谱" value="graph"><Network aria-hidden="true" size={14} />图谱</TabsTrigger>
+                    <TabsTrigger aria-label="处理记录" value="jobs"><RefreshCw aria-hidden="true" size={14} />处理</TabsTrigger>
+                    <TabsTrigger value="settings"><Settings2 aria-hidden="true" size={14} />设置</TabsTrigger>
                   </TabsList>
                   <TabsContent value="materials">
                     <KnowledgeMaterialsPanel
@@ -576,6 +599,49 @@ function KnowledgeBaseRail({
   );
 }
 
+function KnowledgeBaseSwitcher({
+  bases,
+  onCreate,
+  onRefresh,
+  onSelect,
+  refreshing,
+  selectedBaseId,
+  worker,
+}: {
+  bases: readonly DocumentKnowledgeBase[];
+  onCreate: (trigger: HTMLElement) => void;
+  onRefresh: () => void;
+  onSelect: (baseId: string) => void;
+  refreshing: boolean;
+  selectedBaseId: string;
+  worker: WorkerState;
+}) {
+  return (
+    <section aria-label="切换文档知识库" className="knowledge-base-switcher">
+      <Field htmlFor="knowledge-native-base" label="当前知识库">
+        <Select
+          disabled={!bases.length}
+          id="knowledge-native-base"
+          onValueChange={onSelect}
+          options={bases.map((base) => ({
+            value: base.id,
+            label: `${base.name} · ${base.documentCount} 个文件`,
+          }))}
+          value={selectedBaseId || bases[0]?.id || ''}
+        />
+      </Field>
+      <span className="knowledge-base-switcher__worker" data-state={worker.tone}>
+        <i aria-hidden="true" />
+        知识服务：{worker.label}
+      </span>
+      <div className="knowledge-base-switcher__actions">
+        <IconButton disabled={refreshing} icon={<RefreshCw size={15} />} label="刷新知识库" onClick={onRefresh} size="small" tooltip />
+        <Button leadingIcon={<FolderPlus size={15} />} onClick={(event) => onCreate(event.currentTarget)} size="small">新建知识库</Button>
+      </div>
+    </section>
+  );
+}
+
 function KnowledgeBaseHeader({ base, onDelete, worker }: { base: DocumentKnowledgeBase; onDelete: (trigger: HTMLElement) => void; worker: WorkerState }) {
   return (
     <header className="knowledge-base-header">
@@ -655,6 +721,8 @@ function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKn
 
 function KnowledgeHitDetail({ baseId, hit, onOpen, transport }: { baseId: string; hit: KnowledgeSearchHit; onOpen: (hit: KnowledgeSearchHit) => void; transport: ReturnType<typeof useKnowledgeLibraryQueries>['transport'] }) {
   const openMutation = useMutation({ mutationFn: () => openKnowledgeHit(transport, baseId, hit), onSuccess: () => onOpen(hit) });
+  const graphPaths = hit.diagnostics.graphPaths;
+  const visibleGraphPaths = graphPaths.slice(0, 2);
   return (
     <article className="knowledge-search__detail">
       <span>{publicKnowledgeText(hit.documentName)}</span>
@@ -665,14 +733,32 @@ function KnowledgeHitDetail({ baseId, hit, onOpen, transport }: { baseId: string
         <div><dt>相关程度</dt><dd>{relevanceLabel(hit.score, false)}</dd></div>
         <div><dt>标题路径</dt><dd>{publicKnowledgeText(hit.heading) || '未提供'}</dd></div>
       </dl>
-      <details className="knowledge-search__advanced">
-        <summary>高级：检索详情</summary>
+      <Disclosure className="knowledge-search__advanced" summary="高级：检索详情">
         <dl>
           <div><dt>相关度分数</dt><dd>{scorePoints(hit.score)} / 100</dd></div>
           <div><dt>命中方式</dt><dd>{retrievalEvidenceLabel(hit)}</dd></div>
-          {hit.diagnostics.graphPaths.length ? <div><dt>关联路径</dt><dd>{publicKnowledgeText(hit.diagnostics.graphPaths.slice(0, 2).join('；'))}</dd></div> : null}
+          {graphPaths.length ? (
+            <div>
+              <dt>关联路径</dt>
+              <dd>
+                <span>{publicKnowledgeText(visibleGraphPaths.join('；'))}</span>
+                {graphPaths.length > visibleGraphPaths.length ? (
+                  <Disclosure
+                    className="knowledge-search__path-disclosure"
+                    summary={`显示 ${visibleGraphPaths.length} / 共 ${graphPaths.length} 条 · 查看全部`}
+                  >
+                    <ol>
+                      {graphPaths.map((path, index) => (
+                        <li key={`${index}:${path}`}>{publicKnowledgeText(path)}</li>
+                      ))}
+                    </ol>
+                  </Disclosure>
+                ) : null}
+              </dd>
+            </div>
+          ) : null}
         </dl>
-      </details>
+      </Disclosure>
       <Button leadingIcon={<ExternalLink size={14} />} loading={openMutation.isPending} onClick={() => openMutation.mutate()} size="small">打开来源</Button>
       {openMutation.error ? <p className="knowledge-inline-error">当前无法打开来源。</p> : null}
     </article>
@@ -818,8 +904,11 @@ function KnowledgeSettingsPanel({
           <Field htmlFor="knowledge-retrieval-topk" label="返回数量"><Input id="knowledge-retrieval-topk" max={100} min={1} onChange={(event) => setRetrieval({ ...retrieval, topK: Number(event.target.value) })} type="number" value={retrieval.topK} /></Field>
           <Field htmlFor="knowledge-retrieval-threshold" label="最低相关度"><Input id="knowledge-retrieval-threshold" max={1} min={0} onChange={(event) => setRetrieval({ ...retrieval, threshold: Number(event.target.value) })} step={0.05} type="number" value={retrieval.threshold} /></Field>
         </div>
-        <details className="knowledge-settings__advanced-details">
-          <summary>高级：检索调优</summary>
+        <Disclosure
+          className="knowledge-settings__advanced-details"
+          contentClassName="knowledge-settings__advanced-content"
+          summary="高级：检索调优"
+        >
           <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
             <Field htmlFor="knowledge-lexical-weight" label="关键词权重"><Input id="knowledge-lexical-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, lexicalWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.lexicalWeight} /></Field>
             <Field htmlFor="knowledge-dense-weight" label="向量权重"><Input id="knowledge-dense-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, denseWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.denseWeight} /></Field>
@@ -828,7 +917,7 @@ function KnowledgeSettingsPanel({
             <Field htmlFor="knowledge-rrf-k" label="融合系数"><Input id="knowledge-rrf-k" max={1_000} min={1} onChange={(event) => setRetrieval({ ...retrieval, rrfK: Number(event.target.value) })} type="number" value={retrieval.rrfK} /></Field>
             <Field htmlFor="knowledge-candidate-multiplier" label="候选范围"><Input id="knowledge-candidate-multiplier" max={20} min={1} onChange={(event) => setRetrieval({ ...retrieval, candidateMultiplier: Number(event.target.value) })} type="number" value={retrieval.candidateMultiplier} /></Field>
           </div>
-        </details>
+        </Disclosure>
         {retrievalError ? <p className="knowledge-inline-error" role="alert">{retrievalError}</p> : null}
         <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button></div>
       </section>
@@ -959,8 +1048,11 @@ function KnowledgeEmbeddingSettings({
         <dt>索引状态</dt><dd>{indexCoverageLabel}</dd>
       </dl>
       <InlineNotice title="下一步" tone={phase === 'active' ? 'success' : 'info'}>{phase === 'active' ? '可以直接使用知识检索。需要更换向量模型时，再打开高级设置。' : '打开高级设置检查连接并更新配置；完成后按提示重建索引。'}</InlineNotice>
-      <details className="knowledge-embedding-advanced">
-        <summary>高级：连接与索引设置</summary>
+      <Disclosure
+        className="knowledge-embedding-advanced"
+        contentClassName="knowledge-embedding-advanced__content"
+        summary="高级：连接与索引设置"
+      >
         <div className="knowledge-settings-fields knowledge-settings-fields--index">
         <Field htmlFor="knowledge-embedding-provider" label="向量模型服务">
           <Select
@@ -983,8 +1075,11 @@ function KnowledgeEmbeddingSettings({
           <Input disabled={candidate.provider !== 'openai-compatible'} id="knowledge-embedding-secret-reference" maxLength={128} onChange={(event) => updateCandidate({ secretReference: event.target.value })} placeholder="PAW_EMBEDDING_API_KEY" value={candidate.secretReference} />
         </Field>
         </div>
-        <details className="knowledge-embedding-advanced">
-          <summary>高级：索引参数</summary>
+        <Disclosure
+          className="knowledge-embedding-advanced"
+          contentClassName="knowledge-embedding-advanced__content"
+          summary="高级：索引参数"
+        >
         <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
           <Field htmlFor="knowledge-embedding-backend" label="向量索引方式">
             <Select disabled={['environment', 'none'].includes(candidate.provider)} id="knowledge-embedding-backend" onValueChange={(value) => updateCandidate({ denseBackend: value === 'usearch' ? 'usearch' : 'sqlite-exact' })} options={[{ value: 'sqlite-exact', label: 'SQLite exact' }, { value: 'usearch', label: 'USearch ANN' }]} value={candidate.denseBackend} />
@@ -996,7 +1091,7 @@ function KnowledgeEmbeddingSettings({
             <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-document-prefix" maxLength={500} onChange={(event) => updateCandidate({ documentPrefix: event.target.value })} value={candidate.documentPrefix} />
           </Field>
         </div>
-        </details>
+        </Disclosure>
       {validationError ? <p className="knowledge-inline-error" role="alert">{validationError}</p> : null}
       <div className="knowledge-settings__actions">
         <Button disabled={Boolean(validationError) || !state} loading={probeMutation.isPending} onClick={() => probeMutation.mutate(candidate)} size="small">测试连接</Button>
@@ -1078,7 +1173,7 @@ function KnowledgeEmbeddingSettings({
         <Field htmlFor="knowledge-config-revision" label="配置版本"><Input disabled id="knowledge-config-revision" readOnly value={baseRevision} /></Field>
       </div>
       <InlineNotice title="何时生效" tone="info">当前索引服务与保存的向量模型配置一致，并且向量覆盖全部段落后，才会显示“已生效”；保存配置不代表索引已经重建完成。</InlineNotice>
-      </details>
+      </Disclosure>
     </section>
   );
 }

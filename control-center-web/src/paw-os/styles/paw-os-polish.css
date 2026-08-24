@@ -1,0 +1,368 @@
+/* ============================================================================
+ * PAWOS · Composition OS —— 第二轮打磨（2026-08-22 晚）
+ * 四个目标：卫星窗消息流动可视化 / Agent 界面深度优化 / 消除前端闪烁 / 应用内部美化
+ * 原则：舒服、漂亮、对话交互好；不强行套用构成母题。
+ * ========================================================================== */
+
+/* ============================================================================
+ * 1. 消除前端闪烁
+ * 根因与对策：
+ *  · 拖动/缩放窗口时 backdrop-filter 每帧重栅格 → 交互期间暂停毛玻璃；
+ *  · 频繁重绘合成层抖动 → 给关键层独立的合成提示；
+ *  · 消息流 SVG 与房间事件重投影 → 流层只走 transform/opacity。
+ * ========================================================================== */
+
+.paw-window {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.paw-window-shell[data-interaction] .paw-window,
+.paw-window-shell[data-interaction] .paw-window-titlebar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.paw-window-body {
+  transform: translateZ(0);
+}
+.paw-room-window-flow,
+.paw-composition-field {
+  will-change: opacity;
+  backface-visibility: hidden;
+}
+/* 开窗揭幕只在挂载时跑一次：动画结束后交还合成层 */
+.paw-window-shell:not([data-overview]) .paw-window {
+  animation-fill-mode: backwards;
+}
+
+/* ============================================================================
+ * 2. 卫星窗口与消息流动（本轮重点）
+ * 让"消息在窗口间流动"真正可见：
+ *  · 空闲路径几乎隐形；真实流动时路径亮起、虚线朝目标行进（行进方向=消息方向）、
+ *    光包带拖尾、目标窗边缘发光并伴随标题点闪烁；
+ *  · 卫星窗有明确的伙伴身份（色环+名字）与"正在输入"三形态指示。
+ * ========================================================================== */
+
+/* —— 空闲路径：极淡静态虚线 —— */
+.paw-room-window-flow__base {
+  stroke: rgba(27, 21, 18, .12);
+  stroke-width: 1.3;
+  stroke-dasharray: 2 7;
+}
+
+/* —— 活跃路径：类型色亮起 + 虚线朝目标匀速行进（marching ants=方向） —— */
+.paw-room-window-flow g[data-live='true'] .paw-room-window-flow__base,
+.paw-room-window-flow g[data-live] .paw-room-window-flow__base {
+  stroke: color-mix(in srgb, var(--paw-accent) 55%, transparent);
+  stroke-width: 1.6;
+  stroke-dasharray: 4 6;
+  animation: paw-comp8-flow-march 620ms linear infinite;
+}
+@keyframes paw-comp8-flow-march {
+  to { stroke-dashoffset: -10; }
+}
+
+/* —— 光包：更大的双色辉光，像彗星 —— */
+.paw-room-window-flow__packet {
+  filter:
+    drop-shadow(0 0 4px color-mix(in srgb, var(--paw-accent) 85%, transparent))
+    drop-shadow(0 0 10px color-mix(in srgb, var(--paw-accent) 45%, transparent));
+}
+
+/* —— 到达反馈：目标窗边缘伙伴色发光 + 标题点三次短闪 —— */
+.paw-desktop-root .paw-window-shell[data-flow-state='arrival'] .paw-window {
+  animation: paw-polish-arrival-glow 900ms var(--paw-ease-out) both;
+}
+@keyframes paw-polish-arrival-glow {
+  0% {
+    box-shadow:
+      0 0 0 2.5px color-mix(in srgb, var(--paw-accent) 70%, transparent),
+      0 18px 55px -8px color-mix(in srgb, var(--paw-accent) 40%, transparent);
+  }
+  100% { box-shadow: var(--paw-shadow); }
+}
+.paw-window-shell[data-flow-state='arrival'] .paw-window-title > strong::after {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--paw-accent);
+  content: '';
+  animation: paw-polish-arrival-blink 900ms ease both;
+}
+@keyframes paw-polish-arrival-blink {
+  0%, 55%, 100% { opacity: 0; }
+  15%, 40%, 75% { opacity: 1; }
+}
+
+/* —— 卫星窗身份：标题前伙伴色环（身份一眼可辨，文字仍是墨色） —— */
+.paw-window-shell[data-collaboration-role='satellite'] .paw-window-title {
+  position: relative;
+  padding-left: 14px;
+}
+.paw-window-shell[data-collaboration-role='satellite'] .paw-window-title::before {
+  position: absolute;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--paw-satellite-color, var(--comp8-violet));
+  border-radius: 50%;
+  content: '';
+}
+/* 伙伴忙碌/正在输入：色环内点呼吸 */
+.paw-window-shell[data-collaboration-role='satellite'][data-partner-busy] .paw-window-title::before {
+  animation: paw-comp8-tool-pulse 1.15s ease-in-out infinite;
+}
+
+/* —— 卫星窗输入/输出分家：发进卫星的指派/提问用浅色泡；伙伴产出保持文档级 —— */
+.paw-desktop-root .paw-participant-chat__timeline article[data-direction='in'][data-kind='message'] {
+  padding-inline: 10px;
+  border-radius: 12px 12px 12px 4px;
+  background: color-mix(in srgb, var(--paw-accent) 5%, var(--paw-panel));
+  box-shadow: 0 1px 3px rgba(27, 21, 18, .05);
+}
+/* 新消息入场：从下方 8px 浮入（事件驱动，单次） */
+.paw-desktop-root .paw-participant-chat__timeline article[data-fresh] {
+  animation: paw-polish-msg-in 260ms var(--comp8-spring) both;
+}
+@keyframes paw-polish-msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* —— 卫星窗"正在输入"条（内容区底部，不遮消息） —— */
+.paw-desktop-root .paw-participant-chat__typing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 8px;
+  color: var(--paw-muted);
+  font-size: 11px;
+}
+.paw-desktop-root .paw-participant-chat__typing i,
+.paw-desktop-root .paw-participant-chat__typing i::before {
+  /* 三个小几何形接力由组件给三个 <i>；此处只统一颜色与节奏 */
+}
+.paw-desktop-root .paw-participant-chat__typing .paw-comp8-shape {
+  width: 7px;
+  height: 7px;
+  background: var(--paw-satellite-color, var(--comp8-violet));
+  border-radius: 50%;
+  animation: paw-comp8-shape-hop 1.1s ease-in-out infinite;
+}
+.paw-desktop-root .paw-participant-chat__typing .paw-comp8-shape:nth-child(2) { animation-delay: 150ms; border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.paw-desktop-root .paw-participant-chat__typing .paw-comp8-shape:nth-child(3) { animation-delay: 300ms; border-radius: 0; }
+
+/* ============================================================================
+ * 3. Agent 界面深度优化（舒服、漂亮、对话交互好）
+ * ========================================================================== */
+
+/* —— 对话节奏：轮次之间更清晰的呼吸；同日分隔线 —— */
+.paw-desktop-root .agent-timeline > * + * { margin-top: 2px; }
+.paw-desktop-root .agent-timeline [class*='date-divider'],
+.paw-desktop-root .agent-timeline [class*='day-divider'] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 4px;
+  color: var(--paw-muted);
+  font-size: 11px;
+}
+.paw-desktop-root .agent-timeline [class*='date-divider']::before,
+.paw-desktop-root .agent-timeline [class*='date-divider']::after,
+.paw-desktop-root .agent-timeline [class*='day-divider']::before,
+.paw-desktop-root .agent-timeline [class*='day-divider']::after {
+  flex: 1;
+  height: 1px;
+  background: var(--paw-line);
+  content: '';
+}
+
+/* —— 长代码块：墨面纸字 + 圆角，行内 code 纸纹底 —— */
+.paw-desktop-root .agent-markdown pre,
+.paw-desktop-root .agent-markdown [class*='code-block'] {
+  border: 1px solid rgba(250, 247, 236, .14);
+  border-radius: 10px;
+  background: rgba(27, 21, 18, .94);
+  color: #efe9d8;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+.paw-desktop-root .agent-markdown code:not(pre code) {
+  border: 1px solid var(--paw-line-soft);
+  border-radius: 5px;
+  background: rgba(27, 21, 18, .05);
+  padding: 1px 5px;
+  font-size: .92em;
+}
+
+/* —— 引用块：紫罗兰细线 + 斜体易读 —— */
+.paw-desktop-root .agent-markdown blockquote {
+  margin: 6px 0;
+  border-left: 2.5px solid var(--comp8-violet);
+  padding: 2px 0 2px 12px;
+  color: var(--paw-muted);
+}
+
+/* —— 消息操作：右对齐小墨块，悬停浮现（已有），聚焦也可达 —— */
+.paw-desktop-root .agent-message-actions :is(button, [role='button']) {
+  border: 1px solid var(--paw-line);
+  border-radius: 7px;
+  background: rgba(250, 247, 236, .9);
+  color: var(--paw-muted);
+}
+.paw-desktop-root .agent-message-actions :is(button, [role='button']):hover {
+  border-color: var(--comp8-ink);
+  color: var(--comp8-ink);
+}
+
+/* —— 工具行整行可点感：悬停墨色，展开箭头旋转 —— */
+.paw-desktop-root .agent-activity-row { cursor: pointer; }
+.paw-desktop-root .agent-activity-row [class*='chevron'] { transition: transform 150ms var(--paw-ease-out); }
+.paw-desktop-root .agent-activity-row[data-open] [class*='chevron'] { transform: rotate(90deg); }
+
+/* —— Composer 附件条：纸面胶囊 chip —— */
+.paw-desktop-root .agent-composer__attachment-chip {
+  border: 1px solid var(--paw-line);
+  border-radius: 999px;
+  background: rgba(250, 247, 236, .85);
+}
+.paw-desktop-root .agent-composer__attachment-chip:hover {
+  border-color: var(--comp8-ink-soft);
+}
+
+/* ============================================================================
+ * 4. 应用内部美化（真实功能类钩子；舒服干净的阅读面）
+ * ========================================================================== */
+
+/* —— 通用：页内标签页 → 纸面胶囊分段控件（Knowledge 文档页签等） —— */
+.paw-window-shell[data-app]:not([data-app='browser']) [class*='document-tabs'],
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='terminal']) [class*='-tabs'] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--paw-line);
+  border-radius: 10px;
+  background: rgba(244, 239, 221, .6);
+  width: fit-content;
+}
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='terminal']) [class*='-tabs'] :is(button, [role='tab']) {
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--paw-muted);
+  font-weight: 600;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='terminal']) [class*='-tabs'] :is(button, [role='tab']):hover {
+  color: var(--comp8-ink);
+}
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='terminal']) [class*='-tabs'] :is(button[aria-selected='true'], [role='tab'][aria-selected='true'], button[data-active]) {
+  background: var(--comp8-ink);
+  color: var(--comp8-paper-hi);
+}
+
+/* —— 通用：统计行 → 展示字重大数字 + 淡墨标签 —— */
+.paw-window-shell[data-app] [class*='material-stats'],
+.paw-window-shell[data-app] [class*='-stats'] {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+.paw-window-shell[data-app] [class*='-stats'] :is(span, div) {
+  color: var(--paw-muted);
+}
+.paw-window-shell[data-app] [class*='-stats'] :is(strong, b, [class*='count'], [class*='value']) {
+  color: var(--comp8-ink);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+
+/* —— 通用：行内小图标操作按钮 → 28px 墨线幽灵按钮 —— */
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='row'] :is(button, [role='button']),
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='actions'] :is(button, [role='button']) {
+  min-width: 28px;
+  min-height: 28px;
+  border: 1px solid var(--paw-line);
+  border-radius: 7px;
+  background: rgba(250, 247, 236, .7);
+  color: var(--paw-muted);
+}
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='row'] :is(button, [role='button']):hover,
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='actions'] :is(button, [role='button']):hover {
+  border-color: var(--comp8-ink);
+  color: var(--comp8-ink);
+}
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='row'] :is(button, [role='button'])[data-danger]:hover,
+.paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='actions'] :is(button, [role='button'])[data-danger]:hover {
+  border-color: var(--comp8-red);
+  color: var(--comp8-red);
+}
+
+/* —— 通用：下拉选择 → 纸面墨线 —— */
+.paw-window-shell[data-app] select {
+  border: 1px solid var(--comp8-ink-soft);
+  border-radius: 9px;
+  background: rgba(250, 247, 236, .9);
+  color: var(--comp8-ink);
+  padding: 7px 10px;
+}
+
+/* —— Knowledge 内部 —— */
+.paw-window-shell[data-app='knowledge'] .knowledge-base-switcher select,
+.paw-window-shell[data-app='knowledge'] .knowledge-base-switcher [class*='select'] {
+  border-radius: 999px;
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-material-row {
+  border: 1px solid var(--paw-line-soft);
+  border-radius: 10px;
+  background: rgba(250, 247, 236, .6);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-material-row:hover {
+  border-color: var(--comp8-ink-soft);
+  background: rgba(250, 247, 236, .92);
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-material-row[data-selected] {
+  border-color: var(--comp8-ink);
+  box-shadow: inset 3px 0 0 var(--paw-app-accent);
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-panel {
+  border-left: 1px solid var(--paw-line);
+  background: rgba(246, 242, 230, .55);
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-panel :is(dt, [class*='label']) {
+  color: var(--paw-muted);
+  font-size: 11px;
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-panel :is(dd, [class*='value']) {
+  color: var(--comp8-ink);
+  font-variant-numeric: tabular-nums;
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-index-status {
+  border-radius: 999px;
+}
+.paw-window-shell[data-app='knowledge'] .knowledge-base-row[data-selected] {
+  background: color-mix(in srgb, var(--paw-app-accent) 10%, transparent);
+  box-shadow: inset 2.5px 0 0 var(--paw-app-accent);
+}
+.paw-window-shell[data-app='knowledge'] details[class*='advanced'] > summary {
+  color: var(--paw-muted);
+  font-weight: 600;
+}
+
+/* ============================================================================
+ * reduced-motion：流动行进、闪烁、入场全部静止（状态仍由颜色/徽标表达）
+ * ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .paw-room-window-flow g[data-live] .paw-room-window-flow__base,
+  .paw-desktop-root .paw-participant-chat__timeline article[data-fresh],
+  .paw-window-shell[data-flow-state='arrival'] .paw-window,
+  .paw-window-shell[data-flow-state='arrival'] .paw-window-title > strong::after {
+    animation: none !important;
+  }
+}

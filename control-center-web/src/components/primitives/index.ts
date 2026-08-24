@@ -1,5 +1,6 @@
 export * from './Button';
 export * from './Dialog';
+export * from './Disclosure';
 export * from './EmptyState';
 export * from './Field';
 export * from './IconButton';

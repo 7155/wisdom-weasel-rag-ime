@@ -3,7 +3,17 @@ import { Columns2, Rows3 } from 'lucide-react';
 import { SegmentedControl } from '@/components/primitives';
 import { pairDiffLines, parseUnifiedDiff, type DiffFile, type DiffLine } from './unified-diff';
 
-export function DiffPreview({ content, fileName = '' }: { content: string; fileName?: string }) {
+export function DiffPreview({
+  content,
+  disclosureRegionId,
+  disclosureRegionLabel,
+  fileName = '',
+}: {
+  content: string;
+  disclosureRegionId?: string;
+  disclosureRegionLabel?: string;
+  fileName?: string;
+}) {
   const [mode, setMode] = useState<'unified' | 'split'>('unified');
   const files = useMemo(() => {
     const parsed = parseUnifiedDiff(content);
@@ -16,10 +26,25 @@ export function DiffPreview({ content, fileName = '' }: { content: string; fileN
     return parseUnifiedDiff(`--- a/${fileName}\n+++ b/${fileName}\n${content}`);
   }, [content, fileName]);
   if (!files.length) {
-    return <pre className="agent-file-preview__plain"><code>{content || '没有可展示的变更。'}</code></pre>;
+    return (
+      <pre
+        aria-label={fileName ? `${fileName} 变更内容` : 'Diff 变更内容'}
+        className="agent-file-preview__plain"
+        id={disclosureRegionId}
+        role="region"
+        tabIndex={0}
+      >
+        <code>{content || '没有可展示的变更。'}</code>
+      </pre>
+    );
   }
   return (
-    <div className="agent-diff-preview">
+    <div
+      aria-label={disclosureRegionLabel}
+      className="agent-diff-preview"
+      id={disclosureRegionId}
+      role={disclosureRegionId ? 'region' : undefined}
+    >
       <header>
         <small>{files.length} 个文件</small>
         <SegmentedControl
@@ -33,7 +58,12 @@ export function DiffPreview({ content, fileName = '' }: { content: string; fileN
           value={mode}
         />
       </header>
-      <div className="agent-diff-preview__files">
+      <div
+        aria-label="Diff 文件列表"
+        className="agent-diff-preview__files"
+        role="region"
+        tabIndex={0}
+      >
         {files.map((file, index) => <FileDiff key={`${file.path}:${index}`} file={file} mode={mode} />)}
       </div>
     </div>
@@ -44,7 +74,12 @@ function FileDiff({ file, mode }: { file: DiffFile; mode: 'unified' | 'split' })
   return (
     <section className="agent-diff-file" data-status={file.status}>
       <header><strong>{file.path}</strong><span>{statusLabel(file.status)}</span></header>
-      <div className="agent-diff-file__scroll">
+      <div
+        aria-label={`${file.path} 变更内容`}
+        className="agent-diff-file__scroll"
+        role="region"
+        tabIndex={0}
+      >
         {file.hunks.map((hunk, index) => (
           <div className="agent-diff-hunk" key={`${hunk.header}:${index}`}>
             <div className="agent-diff-hunk__header">{hunk.header}</div>

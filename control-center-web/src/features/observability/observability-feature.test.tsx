@@ -74,6 +74,51 @@ describe('ObservabilityFeature', () => {
     await user.click(screen.getByRole('button', { name: '清除筛选' }));
     expect((await screen.findAllByText('记忆工具 已完成')).length).toBeGreaterThan(0);
   });
+
+  it('names a truncated snapshot and progressively reveals complete facts and real tool progress', async () => {
+    const user = userEvent.setup();
+    const item = observationEvent({
+      sequence: 9,
+      category: 'tool',
+      phase: 'tool_progress',
+      status: 'running',
+      summary: '已扫描 24 / 48 段',
+      durationMs: 1_420,
+      attributes: { model: 'gpt-test', provider: 'openai' },
+      metrics: {
+        progressCurrent: 24,
+        progressTotal: 48,
+        argumentFieldCount: 2,
+        resultFieldCount: 4,
+        evidenceCount: 7,
+        candidateCount: 9,
+        eventCount: 12,
+        compactionCount: 1,
+      },
+    });
+    renderFeature(observationTransport({ items: [item], total: 48, truncated: true }));
+
+    expect(await screen.findByText('当前显示最近 1 / 共 48 条')).toBeVisible();
+    const progress = screen.getByRole('progressbar', { name: '工具进度 24 / 48' });
+    expect(progress).toHaveAttribute('value', '24');
+    expect(progress).toHaveAttribute('max', '48');
+
+    const disclosure = screen.getByText(/查看其余 \d+ 项事实/).closest('summary') as HTMLElement;
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    const reveal = document.getElementById(disclosure.getAttribute('aria-controls') ?? '') as HTMLElement;
+    expect(reveal).toHaveAttribute('aria-hidden', 'true');
+    expect(reveal).toHaveAttribute('inert');
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(reveal).toHaveAttribute('aria-hidden', 'false');
+    expect(reveal).not.toHaveAttribute('inert');
+    disclosure.focus();
+    await user.keyboard('{Enter}');
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(reveal).toHaveAttribute('aria-hidden', 'true');
+    expect(reveal).toHaveAttribute('inert');
+    expect(reveal).toHaveTextContent('压缩次数');
+  });
 });
 
 function renderFeature(
@@ -96,12 +141,16 @@ function renderFeature(
   );
 }
 
-function observationTransport(): MockControlTransport {
+function observationTransport(options: {
+  items?: ObservationEventV1[];
+  total?: number;
+  truncated?: boolean;
+} = {}): MockControlTransport {
   return new MockControlTransport({
     routes: {
       'observability.snapshot': (request: ControlRequest) => {
         const category = String(request.query?.category ?? '');
-        const items = [
+        const items = (options.items ?? [
           observationEvent({
             sequence: 2,
             category: 'tool',
@@ -119,16 +168,16 @@ function observationTransport(): MockControlTransport {
             status: 'running',
             summary: 'Agent 正在分析',
           }),
-        ].filter((item) => !category || item.category === category);
+        ]).filter((item) => !category || item.category === category);
         return {
           schemaVersion: 'rag-ime.observation-snapshot.v1',
           generatedAtMs: 1_000,
           firstSequence: 1,
           lastSequence: 2,
           resumeToken: 'observation:2',
-          truncated: false,
+          truncated: options.truncated ?? false,
           filters: {},
-          counts: { total: items.length, byCategory: {}, byStatus: {} },
+          counts: { total: options.total ?? items.length, byCategory: {}, byStatus: {} },
           items,
         };
       },

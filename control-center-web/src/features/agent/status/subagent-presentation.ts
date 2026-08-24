@@ -79,6 +79,9 @@ export function subagentFailurePolicy(run: AgentSubagentRunV1): string {
   if (failureClass === 'tool_error') {
     return '工具或权限错误；等待修复工具输入、工作区边界或改派，不会自动重试。';
   }
+  if (run.error.toLowerCase().includes('token budget exceeded')) {
+    return 'Token 预算已耗尽；由上级缩小任务、提高预算或改派，不会自动重试。';
+  }
   return '逻辑或验收未通过；等待显式修复或改派，不会自动重试。';
 }
 

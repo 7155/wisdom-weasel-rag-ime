@@ -32,12 +32,14 @@ export function AgentWorkflowPanel({
   fallbackTodo,
   fallbackGoal,
   fallbackActGate,
+  compactEmpty = false,
   onWorkflowResolved,
 }: {
   sessionId: string;
   fallbackTodo?: AgentTodoProjection;
   fallbackGoal?: Goal;
   fallbackActGate?: ActGate;
+  compactEmpty?: boolean;
   onWorkflowResolved?: (workflow: AgentWorkflowStateV1) => void;
 }) {
   const transport = useControlTransport();
@@ -151,6 +153,14 @@ export function AgentWorkflowPanel({
           </div>
         </section>
       </div>
+    );
+  }
+
+  if (compactEmpty && workflow.todo.counts.total === 0 && !workflow.goal.configured) {
+    return (
+      <p className="agent-workflow-panel agent-workflow-panel--compact-empty" role="status">
+        当前没有 Todo 或长期目标；需要时可直接在对话中说明目标。
+      </p>
     );
   }
 

@@ -10,6 +10,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Disclosure,
 } from '@/components/primitives';
 import { publicToolName } from '@/features/agent/tool-presentation';
 import { publicErrorText } from '@/features/overview/management-ui';
@@ -137,8 +138,10 @@ export function RoomMemberBoundaryDialog({
                 </div>
               ) : <p className="room-policy-empty">这个协作空间不会访问项目目录。</p>}
             </fieldset>
-            <details className="room-policy-tools-disclosure">
-              <summary>看看可以使用哪些工具 <small>{loading ? '4 项基础工具，扩展能力确认中' : `${availableToolCount} 项`}</small></summary>
+            <Disclosure
+              className="room-policy-tools-disclosure"
+              summary={<>看看可以使用哪些工具 <small>{loading ? '4 项基础工具，扩展能力确认中' : `${availableToolCount} 项`}</small></>}
+            >
               <p className="room-policy-tools-heading"><strong>Session 基础工具</strong><small>由 Pi 原生暴露，真实执行仍受当前目录与工作权限约束。</small></p>
               <div className="room-policy-tools">
                 {PI_SESSION_BASE_TOOLS.map((tool) => (
@@ -159,7 +162,7 @@ export function RoomMemberBoundaryDialog({
                   ))}
                 </div>
               </> : <p className="room-policy-empty room-policy-tools-empty">当前没有额外启用的扩展能力。</p>}
-            </details>
+            </Disclosure>
           </div>
         ) : null}
         <DialogFooter><Button variant="primary" onClick={onClose}>知道了</Button></DialogFooter>

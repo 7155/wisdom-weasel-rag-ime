@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
   Activity,
   Brain,
@@ -12,7 +12,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { Button } from '@/components/primitives';
+import { Button, Disclosure } from '@/components/primitives';
 import type { UiAgentBlock } from '@/contracts/ui-events';
 import {
   approvalDecisionView,
@@ -20,10 +20,8 @@ import {
 } from '@/contracts/approval-decision';
 import { publicAgentErrorText } from '../public-error';
 import { MarkdownBody } from './MarkdownRenderer';
-import {
-  toggleDisclosureOnKeyPreservingAnchor,
-  toggleDisclosurePreservingAnchor,
-} from './disclosure-anchor';
+import { SmoothDisclosureReveal } from './SmoothDisclosureReveal';
+import { useDisclosureControl } from './disclosure-anchor';
 import { publicToolLabel } from './public-tool-result';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import {
@@ -72,26 +70,27 @@ export function ChecklistBlockRenderer({ block }: AgentBlockRenderProps) {
         checked: value.checked === true
           || ['done', 'completed', 'passed'].includes(text(value.status)),
       };
-    })
-    .slice(0, 100);
+    });
+  const [visibleCount, setVisibleCount] = useState(24);
+  const visibleItems = items.slice(0, visibleCount);
   const title = text(data.title) || '检查清单';
   const completed = items.filter((item) => item.checked).length;
   const tone = items.length > 0 && completed === items.length ? 'success' : 'warning';
   return (
-    <details
+    <Disclosure
       className="agent-rich-checklist agent-rich-collapsible"
       data-tone={tone}
-      open={items.length <= 8}
-    >
-      <summary>
+      defaultOpen={items.length <= 8}
+      summary={<>
         <span className="agent-insert-icon"><ListChecks size={16} /></span>
         <span>{title}</span>
-        <small>{completed}/{items.length}</small>
+        <small>{completed}/{items.length} · 显示 {visibleItems.length}/{items.length}</small>
         <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
-      </summary>
+      </>}
+    >
       {items.length ? (
-        <ul>
-          {items.map((item) => (
+        <ul aria-label={`${title}明细`}>
+          {visibleItems.map((item) => (
             <li key={item.id} data-checked={item.checked}>
               <span aria-hidden="true">
                 {item.checked
@@ -103,7 +102,8 @@ export function ChecklistBlockRenderer({ block }: AgentBlockRenderProps) {
           ))}
         </ul>
       ) : <p>暂无清单项。</p>}
-    </details>
+      {visibleItems.length < items.length ? <Button className="agent-rich-load-more" onClick={() => setVisibleCount((count) => Math.min(items.length, count + 24))} size="small" variant="quiet">加载更多（{visibleItems.length}/{items.length}）</Button> : null}
+    </Disclosure>
   );
 }
 
@@ -116,33 +116,36 @@ export function TableBlockRenderer({ block }: AgentBlockRenderProps) {
         key: text(value.key) || text(column) || String(index),
         label: text(value.label ?? value.title) || text(column) || `列 ${index + 1}`,
       };
-    })
-    .slice(0, 12);
-  const rows = (Array.isArray(data.rows) ? data.rows : []).slice(0, 100);
+    });
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const [visibleColumnCount, setVisibleColumnCount] = useState(8);
+  const [visibleRowCount, setVisibleRowCount] = useState(24);
+  const visibleColumns = columns.slice(0, visibleColumnCount);
+  const visibleRows = rows.slice(0, visibleRowCount);
   const title = text(data.title ?? data.caption) || '数据表';
   return (
-    <details
+    <Disclosure
       className="agent-rich-table agent-rich-collapsible"
       data-tone="info"
-      open={rows.length <= 8}
-    >
-      <summary>
+      defaultOpen={rows.length <= 8}
+      summary={<>
         <span className="agent-insert-icon"><Table2 size={16} /></span>
         <span>{title}</span>
-        <small>{rows.length} 行</small>
+        <small>显示 {visibleRows.length}/{rows.length} 行 · {visibleColumns.length}/{columns.length} 列</small>
         <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
-      </summary>
+      </>}
+    >
       {columns.length ? (
-        <div>
+        <div aria-label={`${title}内容`} role="region" tabIndex={0}>
           <table>
-            <thead><tr>{columns.map((column) => <th scope="col" key={column.key}>{column.label}</th>)}</tr></thead>
+            <thead><tr>{visibleColumns.map((column) => <th scope="col" key={column.key}>{column.label}</th>)}</tr></thead>
             <tbody>
-              {rows.map((row, rowIndex) => {
+              {visibleRows.map((row, rowIndex) => {
                 const rowRecord = record(row);
                 const rowArray = Array.isArray(row) ? row : [];
                 return (
                   <tr key={rowIndex}>
-                    {columns.map((column, columnIndex) => (
+                    {visibleColumns.map((column, columnIndex) => (
                       <TableCell
                         key={column.key}
                         value={rowArray[columnIndex] ?? rowRecord[column.key]}
@@ -155,7 +158,11 @@ export function TableBlockRenderer({ block }: AgentBlockRenderProps) {
           </table>
         </div>
       ) : <p>表格缺少可展示的列。</p>}
-    </details>
+      {visibleRows.length < rows.length || visibleColumns.length < columns.length ? <div className="agent-rich-load-more" role="group" aria-label={`${title}加载更多`}>
+        {visibleRows.length < rows.length ? <Button onClick={() => setVisibleRowCount((count) => Math.min(rows.length, count + 24))} size="small" variant="quiet">加载更多行（{visibleRows.length}/{rows.length}）</Button> : null}
+        {visibleColumns.length < columns.length ? <Button onClick={() => setVisibleColumnCount((count) => Math.min(columns.length, count + 8))} size="small" variant="quiet">加载更多列（{visibleColumns.length}/{columns.length}）</Button> : null}
+      </div> : null}
+    </Disclosure>
   );
 }
 
@@ -241,33 +248,24 @@ export function ApprovalBlockRenderer({
     setLatched({ id: approvalId, decision });
     onApprovalDecision(approvalId, decision, hash);
   };
+  const detailText = text(data.detail ?? data.action) || (approvalDecision.mode === 'model' ? '审批模型不能扩大工具、目录或系统权限。' : '');
   return (
-    <section className="agent-approval-block">
-      <DecisionIcon size={18} />
-      <span>
-        <strong>{text(data.title ?? data.summary) || (approvalDecision.mode === 'model' ? 'Luna Max 正在评估' : '需要批准')}</strong>
-        <small>{text(data.detail ?? data.action) || (approvalDecision.mode === 'model' ? '审批模型不能扩大工具、目录或系统权限。' : '')}</small>
-      </span>
-      {pending && approvalNeedsHumanDecision(data) && onApprovalDecision && approvalId && hash ? (
-        <span className="agent-approval-block__actions">
-          <Button
-            size="small"
-            variant="quiet"
-            disabled={submitted !== null}
-            onClick={() => decide('rejected')}
-          >
-            {submitted === 'rejected' ? '已拒绝' : '拒绝'}
-          </Button>
-          <Button
-            size="small"
-            variant="primary"
-            disabled={submitted !== null}
-            onClick={() => decide('approved')}
-          >
-            {submitted === 'approved' ? '已批准' : '批准'}
-          </Button>
-        </span>
-      ) : null}
+    <section className="fx-approval" data-state={submitted ?? (pending ? 'pending' : state || 'pending')}>
+      <div className="bd">
+        <div className="fx-approval__title">
+          <b>{text(data.title ?? data.summary) || (approvalDecision.mode === 'model' ? 'Luna Max 正在评估' : '需要批准')}</b>
+          {submitted === 'approved' ? <span className="fx-pill ok"><i aria-hidden="true" />已批准</span>
+            : submitted === 'rejected' ? <span className="fx-pill danger"><i aria-hidden="true" />已拒绝</span>
+              : pending ? <span className="fx-pill wait"><i aria-hidden="true" />等待你</span> : null}
+        </div>
+        {detailText ? <p>{detailText}</p> : null}
+        {pending && approvalNeedsHumanDecision(data) && onApprovalDecision && approvalId && hash ? (
+          <div className="ops">
+            <button className="fx-btn primary" disabled={submitted !== null} onClick={() => decide('approved')} type="button">{submitted === 'approved' ? '已批准' : '批准并继续'}</button>
+            <button className="fx-btn ghost" disabled={submitted !== null} onClick={() => decide('rejected')} type="button">{submitted === 'rejected' ? '已拒绝' : '拒绝'}</button>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -283,35 +281,33 @@ export function ErrorBlockRenderer({ block }: AgentBlockRenderProps) {
 }
 
 export function ReasoningSummaryBlockRenderer({ block }: AgentBlockRenderProps) {
-  const [open, setOpen] = useState(false);
   if (text(block.data.source) !== 'provider_reasoning_summary') return null;
   const values = Array.isArray(block.data.items) ? block.data.items : [];
   const items = values
     .filter((value): value is string => typeof value === 'string')
     .map((value) => value.replace(/\s+/gu, ' ').trim())
-    .filter(Boolean)
-    .slice(0, 12);
+    .filter(Boolean);
+  const [visibleCount, setVisibleCount] = useState(8);
+  const visibleItems = items.slice(0, visibleCount);
   const fallback = text(block.data.summary ?? block.data.text ?? block.data.detail);
   if (!items.length && !fallback) return null;
   const state = text(block.data.state ?? block.status) || 'completed';
   return (
-    <details
+    <Disclosure
       className="agent-rich-collapsible agent-reasoning-summary"
       data-tone="info"
-      open={open}
-    >
-      <summary
-        aria-expanded={open}
-        onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
-        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-      >
+      summary={<>
         <span className="agent-insert-icon"><CircleDashed size={16} /></span>
         <span>思考摘要</span>
-        <small>{state === 'running' ? '思考中' : `${items.length || 1} 项`}</small>
+        <small>{state === 'running' ? `思考中 · 显示 ${visibleItems.length}/${items.length || 1}` : `显示 ${visibleItems.length || 1}/${items.length || 1} 项`}</small>
         <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
-      </summary>
-      {items.length ? <ol>{items.map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol> : <p>{fallback}</p>}
-    </details>
+      </>}
+    >
+      {items.length
+        ? <ol aria-label="思考摘要明细">{visibleItems.map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol>
+        : <p>{fallback}</p>}
+      {visibleItems.length < items.length ? <Button className="agent-rich-load-more" onClick={() => setVisibleCount((count) => Math.min(items.length, count + 8))} size="small" variant="quiet">加载更多（{visibleItems.length}/{items.length}）</Button> : null}
+    </Disclosure>
   );
 }
 
@@ -323,21 +319,33 @@ export function ProgressBlockRenderer({ block }: AgentBlockRenderProps) {
   const percent = typeof data.percent === 'number'
     ? Math.max(0, Math.min(100, Math.round(data.percent)))
     : null;
+  const tone = state === 'running' ? 'run' : ['failed', 'blocked'].includes(state) ? 'danger' : state === 'completed' ? 'ok' : 'wait';
+  const stateLabel = state === 'running' ? '运行中' : ['failed', 'blocked'].includes(state) ? '失败' : state === 'completed' ? '完成' : state;
   return (
-    <section
-      aria-label={title}
-      className="agent-rich-status agent-rich-progress"
-      data-state={state}
-      data-tone={['failed', 'blocked'].includes(state) ? 'danger' : 'info'}
-    >
-      <span className="agent-insert-icon">
-        <CircleDashed className={state === 'running' ? 'agent-tool-activity__spinner' : undefined} size={16} />
-      </span>
-      <span><strong>{title}</strong><small>{detail}</small></span>
-      {percent === null ? null : (
-        <strong className="agent-rich-status__metric">{percent}%</strong>
-      )}
-    </section>
+    <div aria-label={title} className="paw-tool-card fx-progress-card" data-state={state}>
+      <div className="paw-tool-panel" style={{ paddingTop: 12 }}>
+        <div className="fx-progress-head">
+          <strong>{title}</strong>
+          <span className={`fx-pill ${tone}`}><i aria-hidden="true" />{stateLabel}</span>
+        </div>
+        {detail ? <div className="fx-progress__detail">{detail}</div> : null}
+        {percent === null ? null : (
+          <>
+            <div
+              aria-label={`${title}：${percent}%`}
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={percent}
+              className="fx-track"
+              role="progressbar"
+            >
+              <div className="fill" style={{ width: `${percent}%` }} />
+            </div>
+            <div className="fx-runrow"><span className="fx-meta">{percent}%</span><span className="fx-meta">真实比例 · 已确认进展</span></div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -366,10 +374,12 @@ function ToolActivityBlock({
     : ['waiting', 'pending', 'paused'].includes(status)
       ? 'warning'
       : running ? 'info' : 'success';
-  const [open, setOpen] = useState(running);
+  const disclosure = useDisclosureControl(running);
+  const [presence, setPresence] = useState(disclosure.open);
+  const contentId = `agent-structured-tool-${useId().replace(/:/gu, '')}`;
   useEffect(() => {
-    if (running) setOpen(true);
-  }, [running]);
+    if (running) disclosure.setOpen(true);
+  }, [disclosure.setOpen, running]);
   const summary = text(data.summary ?? data.title)
     || (type === 'tool_call' ? `${label}正在处理` : `${label}已返回`);
   return (
@@ -377,13 +387,9 @@ function ToolActivityBlock({
       className="agent-tool-activity agent-structured-block"
       data-state={status}
       data-tone={tone}
-      open={open}
+      open={disclosure.open || presence}
     >
-      <summary
-        aria-expanded={open}
-        onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
-        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-      >
+      <summary {...disclosure.summaryProps}>
         <span className="agent-insert-icon">
           {running ? <CircleDashed className="agent-tool-activity__spinner" size={15} /> : <Wrench size={15} />}
         </span>
@@ -391,7 +397,9 @@ function ToolActivityBlock({
         <small>{running ? '进行中' : publicStructuredValue(status)}</small>
         <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
       </summary>
-      <SafeFieldList data={data} />
+      <SmoothDisclosureReveal id={contentId} onPresenceChange={setPresence} open={disclosure.open}>
+        <SafeFieldList ariaLabel={`${summary}明细`} contentId={contentId} data={data} />
+      </SmoothDisclosureReveal>
     </details>
   );
 }
@@ -403,18 +411,26 @@ function StructuredSummaryBlock({
   type: UiAgentBlock['type'];
   data: Record<string, unknown>;
 }) {
+  const label = text(data.summary ?? data.title ?? data.label) || structuredLabel(type);
   return (
-    <details className="agent-structured-block" data-tone="info">
-      <summary>
-        <span>{text(data.summary ?? data.title ?? data.label) || structuredLabel(type)}</span>
+    <Disclosure className="agent-structured-block" data-tone="info" summary={<>
+        <span>{label}</span>
         <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
-      </summary>
-      <SafeFieldList data={data} />
-    </details>
+      </>}>
+      <SafeFieldList ariaLabel={`${label}明细`} data={data} />
+    </Disclosure>
   );
 }
 
-export function SafeFieldList({ data }: { data: Record<string, unknown> }) {
+export function SafeFieldList({
+  ariaLabel,
+  contentId,
+  data,
+}: {
+  ariaLabel?: string;
+  contentId?: string;
+  data: Record<string, unknown>;
+}) {
   const allowed = [
     'query',
     'status',
@@ -429,9 +445,9 @@ export function SafeFieldList({ data }: { data: Record<string, unknown> }) {
     .filter((key) => Object.hasOwn(data, key))
     .map((key) => [key, safeFieldValue(data[key])] as const)
     .filter((entry) => entry[1]);
-  if (entries.length === 0) return <p>暂无可展示的结构化明细。</p>;
+  if (entries.length === 0) return <p aria-label={ariaLabel} id={contentId}>暂无可展示的结构化明细。</p>;
   return (
-    <dl className="agent-safe-fields">
+    <dl aria-label={ariaLabel} className="agent-safe-fields" id={contentId}>
       {entries.map(([key, value]) => (
         <div key={key}><dt>{fieldLabel(key)}</dt><dd>{value}</dd></div>
       ))}

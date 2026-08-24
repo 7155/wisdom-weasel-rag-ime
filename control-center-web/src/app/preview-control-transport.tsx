@@ -1,12 +1,22 @@
 import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/routes';
 import type {
   AgentImagePasteOptions,
+  ControlEventObserver,
   ControlRequest,
+  ControlSubscription,
   ControlTransport,
   PickedFile,
 } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
-import { previewBackgroundJobs, previewModelCatalog, previewPersonas, previewTemplates, PREVIEW_REPORT_HTML } from '@/features/agent/preview-data';
+import {
+  previewAgentEvents,
+  previewAgentSnapshot,
+  previewBackgroundJobs,
+  previewModelCatalog,
+  previewPersonas,
+  previewTemplates,
+  PREVIEW_REPORT_HTML,
+} from '@/features/agent/preview-data';
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
 import type { AgentApprovalV1 } from '@/contracts/generated/agent-approval.v1';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
@@ -38,6 +48,53 @@ import {
   previewLexiconReview,
 } from './preview-input-data';
 
+/**
+ * The mock transport has one broadcast event bus for convenience. Preview
+ * sessions still need the production ownership boundary: an event emitted by
+ * one Session must never hydrate another Session's reducer. Keep that rule at
+ * the preview transport seam so fixtures exercise the same scoped behavior as
+ * the native transport.
+ */
+class PreviewControlTransport extends MockControlTransport {
+  override subscribe<Event = unknown>(
+    request: ControlSubscription,
+    observer: ControlEventObserver<Event>,
+  ): () => void {
+    const sessionId = request.pathId === 'agent.session.events'
+      ? stringValue(request.params?.sessionId)
+      : '';
+    if (!sessionId) return super.subscribe(request, observer);
+
+    const scopedObserver: ControlEventObserver<Event> = {
+      ...observer,
+      next: (event) => {
+        if (eventSessionId(event) === sessionId) observer.next(event);
+      },
+      ...(observer.snapshotRequired
+        ? {
+            snapshotRequired: (event: Event) => {
+              if (eventSessionId(event) === sessionId) observer.snapshotRequired?.(event);
+            },
+          }
+        : {}),
+    };
+    const unsubscribe = super.subscribe(request, scopedObserver);
+
+    // The states fixture is intentionally empty at sequence zero so the UI
+    // can demonstrate a genuine running/failed/aborted event stream. Replay
+    // only events newer than the caller's cursor and only for this Session.
+    if (sessionId === 'session-states') {
+      const lastSequence = resumeSequence(request.lastEventId, sessionId);
+      queueMicrotask(() => {
+        for (const event of previewAgentEvents(sessionId)) {
+          if (event.sequence > lastSequence) this.emit('agent.session.events', event);
+        }
+      });
+    }
+    return unsubscribe;
+  }
+}
+
 export function createPreviewTransport(): MockControlTransport {
   let nextSessionId = 1;
   let nextRoleId = 1;
@@ -65,6 +122,9 @@ export function createPreviewTransport(): MockControlTransport {
   let previewLexiconRollbackId = '';
   let nextKnowledgeBaseId = 1;
   let nextKnowledgeJobId = 1;
+  let nextTerminalId = 1;
+  let previewTerminals: Record<string, unknown>[] = [];
+  const previewTerminalOutput = new Map<string, string>();
   let previewKnowledgeBases = [previewKnowledgeBase()];
   const previewKnowledgeDocuments: Record<string, unknown>[] = [{
     id: 'file:preview-yuxi',
@@ -97,11 +157,12 @@ export function createPreviewTransport(): MockControlTransport {
     previewSession('session-report', '报告交付', 'companion-present-v1', Date.now() - 240_000, '1', { messageCount: 2, lastMessagePreview: '生成的 HTML 报告与原始数据一并交付。' }),
     previewSession('session-models', '模型切换', 'companion-present-v1', Date.now() - 180_000, '1', { messageCount: 4, lastMessagePreview: '同一串对话里从快模型换到强模型。' }),
     previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000, '1', { messageCount: 12, lastMessagePreview: '已把最近输入整理为 3 个主题。' }),
+    previewSession('session-work-disclosure', '过程折叠验收', 'companion-present-v1', Date.now() - 90_000, '1', { messageCount: 3, lastMessagePreview: '最终结果保持可见，推理与工具过程可按需展开。', workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'] }),
   ];
   const roomSessions: Record<string, unknown>[] = [
-    previewRoomSession('session-room-present', '迁移作战室 · 澄·今', 'companion-present-v1', 'participant-present'),
-    previewRoomSession('session-room-firstlight', '迁移作战室 · 澄·初', 'companion-firstlight-v1', 'participant-firstlight'),
-    previewRoomSession('session-room-future', '迁移作战室 · 澄·远', 'companion-future-v1', 'participant-future'),
+    previewRoomSession('session-room-present', '迁移作战室 · Agent 1', 'companion-present-v1', 'participant-present'),
+    previewRoomSession('session-room-firstlight', '迁移作战室 · Agent 2', 'companion-firstlight-v1', 'participant-firstlight'),
+    previewRoomSession('session-room-future', '迁移作战室 · Agent 3', 'companion-future-v1', 'participant-future'),
   ];
   let personas: AgentPersonaV1[] = previewPersonas.map((persona) => ({
     ...persona,
@@ -109,18 +170,11 @@ export function createPreviewTransport(): MockControlTransport {
     runtimeCharacteristics: { ...persona.runtimeCharacteristics },
   }));
   let companionConfigurationRevision = 1;
+  let modelRouting = previewDefaultModelRouting();
   let capabilityGlobalPreferences: Record<string, string> = {};
   let capabilityProjectPreferences: Record<string, Record<string, string>> = {};
   const capabilitySessionPreferences = new Map<string, Record<string, string>>();
   const previewModelCatalogs = new Map<string, ReturnType<typeof previewModelCatalog>>();
-  let modelRouting = {
-    sessionModelProfile: 'gpt/gpt-5.6-sol',
-    sessionThinkingLevel: 'max',
-    roomPartnerModelProfile: 'gpt/gpt-5.6-terra',
-    roomPartnerThinkingLevel: 'high',
-    toolAgentModelProfile: 'gpt/gpt-5.6-luna',
-    toolAgentThinkingLevel: 'low',
-  };
   let defaultCompanion = {
     roleId: personas.find((persona) => persona.runtimeCharacteristics.isDefault)?.roleId ?? personas[0]?.roleId ?? '',
     roleVersion: '1',
@@ -131,6 +185,48 @@ export function createPreviewTransport(): MockControlTransport {
       .filter((pathId) => !controlRoute(pathId).subscription)
       .map((pathId) => [pathId, previewResponse(pathId)]),
   ) as Partial<Record<ControlPathId, MockRouteHandler>>;
+  routes['agent.session.snapshot'] = (request: ControlRequest) => (
+    previewAgentSnapshot(stringValue(record(request.params).sessionId) || 'session-preview')
+  );
+  routes['terminal.sessions.list'] = () => ({ schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: previewTerminals });
+  routes['terminal.session.create'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const terminalId = `term_preview_${nextTerminalId++}`;
+    const terminal = {
+      terminalId,
+      title: stringValue(body.title) || 'System Terminal',
+      cwd: stringValue(body.cwd) || '/Users/example/Projects/personal-agent-workbench',
+      shell: '/bin/zsh', pid: 42000 + nextTerminalId, cols: Number(body.cols) || 104,
+      rows: Number(body.rows) || 30, status: 'running', exitCode: null, baseCursor: 0,
+      nextCursor: 0, createdAtMs: Date.now(),
+    };
+    previewTerminals = [...previewTerminals, terminal];
+    previewTerminalOutput.set(terminalId, 'PAWOS system terminal\n❯ ');
+    return { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal };
+  };
+  routes['terminal.session.read'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const terminalId = stringValue(body.terminalId);
+    const terminal = previewTerminals.find((item) => stringValue(item.terminalId) === terminalId);
+    if (!terminal) throw new Error('terminal session was not found');
+    const text = previewTerminalOutput.get(terminalId) || '';
+    const cursor = Math.max(0, Number(body.cursor) || 0);
+    return { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor, nextCursor: text.length, truncated: false, text: text.slice(cursor) };
+  };
+  routes['terminal.session.write'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const terminalId = stringValue(body.terminalId);
+    const text = stringValue(body.text);
+    if (!previewTerminalOutput.has(terminalId)) throw new Error('terminal session was not found');
+    previewTerminalOutput.set(terminalId, `${previewTerminalOutput.get(terminalId) || ''}${text}preview: command accepted\n❯ `);
+    return { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, writtenBytes: text.length };
+  };
+  routes['terminal.session.resize'] = () => ({ schemaVersion: 'rag-ime.system-terminal.v1', ok: true });
+  routes['terminal.session.close'] = (request: ControlRequest) => {
+    const terminalId = stringValue(record(request.body).terminalId);
+    previewTerminals = previewTerminals.map((item) => stringValue(item.terminalId) === terminalId ? { ...item, status: 'closed', exitCode: 0 } : item);
+    return { schemaVersion: 'rag-ime.system-terminal.v1', ok: true };
+  };
   routes['agent.session.models'] = (request: ControlRequest) => {
     const sessionId = stringValue(record(request.params).sessionId) || 'session-preview';
     const current = previewModelCatalogs.get(sessionId) ?? previewModelCatalog(sessionId);
@@ -518,22 +614,25 @@ export function createPreviewTransport(): MockControlTransport {
     const body = record(request.body);
     if (Number(body.expectedRevision) !== companionConfigurationRevision) throw new Error('Preview companion configuration changed.');
     const changes = record(body.changes);
-    if (Object.hasOwn(changes, 'sessionDefaults.capabilityDisclosurePreferences')) {
+    const modelRouteChange = Object.entries(changes).find(([key]) => key.startsWith('modelRouting.'));
+    if (modelRouteChange) {
+      const routeId = modelRouteChange[0].slice('modelRouting.'.length);
+      if (!Object.hasOwn(modelRouting, routeId)) throw new Error('Preview model route is invalid.');
+      const route = record(modelRouteChange[1]);
+      const modelProfile = stringValue(route.modelProfile);
+      const thinkingLevel = stringValue(route.thinkingLevel);
+      if (!modelProfile || !thinkingLevel) throw new Error('Preview model route is incomplete.');
+      modelRouting = {
+        ...modelRouting,
+        [routeId]: { modelProfile, thinkingLevel },
+      };
+    } else if (Object.hasOwn(changes, 'sessionDefaults.capabilityDisclosurePreferences')) {
       capabilityGlobalPreferences = previewCapabilityPreferences(changes['sessionDefaults.capabilityDisclosurePreferences']);
     } else if (Object.hasOwn(changes, 'capabilityDisclosure.projectPreferences')) {
       capabilityProjectPreferences = Object.fromEntries(
         Object.entries(record(changes['capabilityDisclosure.projectPreferences']))
           .map(([projectId, preferences]) => [projectId, previewCapabilityPreferences(preferences)]),
       );
-    } else if (Object.keys(changes).some((key) => key.startsWith('modelRouting.'))) {
-      modelRouting = {
-        sessionModelProfile: stringValue(changes['modelRouting.sessionModelProfile']) || modelRouting.sessionModelProfile,
-        sessionThinkingLevel: previewThinkingLevel(changes['modelRouting.sessionThinkingLevel'] ?? modelRouting.sessionThinkingLevel),
-        roomPartnerModelProfile: stringValue(changes['modelRouting.roomPartnerModelProfile']) || modelRouting.roomPartnerModelProfile,
-        roomPartnerThinkingLevel: previewThinkingLevel(changes['modelRouting.roomPartnerThinkingLevel'] ?? modelRouting.roomPartnerThinkingLevel),
-        toolAgentModelProfile: stringValue(changes['modelRouting.toolAgentModelProfile']) || modelRouting.toolAgentModelProfile,
-        toolAgentThinkingLevel: previewThinkingLevel(changes['modelRouting.toolAgentThinkingLevel'] ?? modelRouting.toolAgentThinkingLevel),
-      };
     } else {
       const roleId = stringValue(changes['sessionDefaults.roleId']);
       const roleVersion = stringValue(changes['sessionDefaults.roleVersion']) || '1';
@@ -1103,7 +1202,7 @@ export function createPreviewTransport(): MockControlTransport {
   const routeIds = Array.from(new Set<ControlPathId>(
     Object.keys(routes) as ControlPathId[],
   ));
-  previewTransport = new MockControlTransport({
+  previewTransport = new PreviewControlTransport({
     routes,
     capabilities: {
       routeIds,
@@ -1327,19 +1426,23 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'agent.session.contextItems.list':
       return { ok: true, items: [] };
     case 'agent.session.contextTraces.list':
-      return {
-        ok: true,
-        items: [{
-          traceId: 'context-trace:preview',
-          sessionId: 'session-preview',
-          turnId: 'turn-preview',
-          sourceKind: 'user',
-          status: 'accepted',
-          finalFingerprint: 'sha256:0123456789abcdef',
-          nodeCount: 5,
-          createdAtMs: Date.now() - 18_000,
-          updatedAtMs: Date.now() - 17_000,
-        }],
+      return (request: ControlRequest) => {
+        const sessionId = stringValue(record(request.params).sessionId) || 'session-preview';
+        const now = Date.now();
+        return {
+          ok: true,
+          items: ['turn-initial', 'turn-steady', 'turn-recovered'].map((turnId, index) => ({
+            traceId: `context-trace:${turnId}`,
+            sessionId,
+            turnId,
+            sourceKind: 'user',
+            status: 'accepted',
+            finalFingerprint: 'sha256:0123456789abcdef',
+            nodeCount: 5,
+            createdAtMs: now - (18_000 - index * 2_000),
+            updatedAtMs: now - (17_000 - index * 2_000),
+          })),
+        };
       };
     case 'agent.session.contextTrace.get':
       return (request: ControlRequest) => previewContextTrace(
@@ -1517,33 +1620,34 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'browser.status':
       return {
         ok: true,
-        mode: 'codrive',
+        connected: true,
         clients: [{
-          deviceId: 'chrome-preview',
-          displayName: '我的 Chrome',
-          clientKind: 'user',
+          deviceId: 'paw-browser',
+          displayName: 'PAW Browser',
+          clientKind: 'managed',
           connected: true,
           activeTabId: 23,
         }],
         latestSnapshot: previewBrowserSnapshot(),
         managedBrowser: {
-          running: false,
-          profilePath: '~/Library/Application Support/RagIme/BrowserCopilot/managed-profile',
+          running: true,
+          connected: true,
+          controlProtocol: 'ego-browser',
+          browserTransport: 'cdp',
+          profilePath: '~/Library/Application Support/RagIme/Browser/runtime-profile',
+          egoBrowser: {
+            available: true,
+            hostRunning: true,
+            taskSpacesPath: '~/Library/Application Support/RagIme/Browser/ego-browser/spaces.json',
+            secondBrowserProcess: false,
+          },
         },
-      };
-    case 'browser.pairing':
-      return {
-        ok: true,
-        pairingToken: 'preview-pairing-token',
-        tokenFingerprint: 'preview-4d7a',
-        extensionPath: '~/Library/Application Support/RagIme/BrowserCopilot/extension',
-        bridgeUrl: 'http://127.0.0.1:8766',
       };
     case 'browser.tabs':
       return {
         ok: true,
         items: [{
-          deviceId: 'chrome-preview',
+          deviceId: 'paw-browser',
           tabId: 23,
           title: '浏览器协作指南',
           url: 'https://docs.example.com/browser-guide',
@@ -1552,38 +1656,25 @@ function previewResponse(pathId: ControlPathId): unknown {
       };
     case 'browser.snapshot.latest':
       return previewBrowserSnapshot();
-    case 'browser.permissions':
-      return {
-        ok: true,
-        items: [{
-          promptId: 'bperm-preview',
-          deviceId: 'chrome-preview',
-          origin: 'https://research.example.com',
-          action: 'domain_transition',
-          reason: '首次进入调研站点',
-          status: 'pending',
-          decision: '',
-          createdAtMs: Date.now() - 36_000,
-        }],
-      };
     case 'browser.traces':
       return {
         ok: true,
         items: [{
           commandId: 'bcmd-preview',
           action: 'snapshot',
+          sourceKind: 'agent',
           status: 'completed',
+          target: '浏览器协作指南',
+          createdAtMs: Date.now() - 624,
+          completedAtMs: Date.now() - 440,
           durationMs: 184,
           result: { summary: '已读取 3 个页面区域和 18 个可交互元素' },
         }],
       };
-    case 'browser.mode.update':
-    case 'browser.pairing.rotate':
     case 'browser.command':
     case 'browser.stop':
     case 'browser.managed.start':
     case 'browser.managed.stop':
-    case 'browser.permission.decide':
       return { ok: true };
     case 'input.source.get':
       return {
@@ -1642,7 +1733,7 @@ function previewBrowserSnapshot(): Record<string, unknown> {
   return {
     ok: true,
     snapshotId: 'snap-preview-runtime',
-    deviceId: 'chrome-preview',
+    deviceId: 'paw-browser',
     tabId: 23,
     url: 'https://docs.example.com/browser-guide',
     title: '浏览器协作指南',
@@ -2141,6 +2232,9 @@ function applyPreviewExtensionChange(
       : [...installed, next];
   }
   if (!existing) return installed;
+  if (action === 'uninstall') {
+    return installed.filter((item) => stringValue(item.id) !== pluginId);
+  }
   if (action === 'enable' || action === 'disable') {
     return installed.map((item) => stringValue(item.id) === pluginId
       ? { ...item, enabled: action === 'enable' }
@@ -2500,6 +2594,12 @@ function previewContextTrace(
   traceId: string,
 ): Record<string, unknown> {
   const createdAtMs = Date.now() - 18_000;
+  const traceTurnId = traceId.startsWith('context-trace:')
+    ? traceId.slice('context-trace:'.length)
+    : '';
+  const turnId = ['turn-initial', 'turn-steady', 'turn-recovered'].includes(traceTurnId)
+    ? traceTurnId
+    : 'turn-recovered';
   const nodes = [
     previewContextNode('node:1:input', 1, 'input', '当前消息', 'user', '收到本轮用户输入', 126, 32, 0, createdAtMs),
     previewContextNode('node:2:session', 2, 'session', '角色与会话', 'gateway', '装配角色、模型和会话策略', 860, 215, 2, createdAtMs + 2),
@@ -2511,7 +2611,7 @@ function previewContextTrace(
     schemaVersion: 'rag-ime.agent-context-trace.v1',
     traceId,
     sessionId,
-    turnId: 'turn-preview',
+    turnId,
     sourceKind: 'user',
     status: 'accepted',
     finalFingerprint: 'sha256:0123456789abcdef',
@@ -2885,6 +2985,11 @@ function previewApprovalItems(now = Date.now()): AgentApprovalV1[] {
         summary: '构建并安装 Control Center 开发版本',
         command: 'scripts/install_product_stack.sh --include-pi --skip-mlx',
         path: '/Volumes/undo 4t/git/personal-agent-workbench',
+        target: 'Control Center.app',
+        scope: '当前用户的开发安装',
+        changes: ['重新构建前端', '替换开发版应用', '保留现有个人数据'],
+        rollback: '保留当前安装包，可按安装回执恢复',
+        apiToken: 'PRIVATE_APPROVAL_TOKEN',
       },
       riskLevel: 'R3',
       state: 'pending',
@@ -3009,7 +3114,7 @@ function previewCapabilityCatalog(
     previewTool('planning', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
     previewTool('memory', '个人上下文记忆', '查询已治理的长期记忆与来源链路', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'search']),
     previewTool('knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
-    previewTool('browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'navigate', 'click', 'type', 'stop']),
+    previewTool('browser', 'PAW Browser', '通过开放 ego-browser 内核操作 PAW 内置 Chromium 与 Task Space', 'browser', 'R0', ['status', 'tabs', 'snapshot', 'run', 'navigate', 'click', 'type', 'stop']),
     {
       ...previewTool(
         'workspace_lsp',
@@ -3194,7 +3299,7 @@ function previewThinkingLevel(value: unknown): NonNullable<AgentPersonaV1['defau
 function previewCompanionConfiguration(
   revision: number,
   defaults: { roleId: string; roleVersion: string },
-  modelRouting: Record<string, string>,
+  modelRouting: Record<string, { modelProfile: string; thinkingLevel: string }>,
   capabilityGlobalPreferences: Record<string, string>,
   capabilityProjectPreferences: Record<string, Record<string, string>>,
 ): Record<string, unknown> {
@@ -3215,6 +3320,18 @@ function previewCompanionConfiguration(
       },
     },
   };
+}
+
+function previewDefaultModelRouting(): Record<string, { modelProfile: string; thinkingLevel: string }> {
+  return Object.fromEntries([
+    'primary',
+    'toolAgent',
+    'subagent',
+    'roomCoordinator',
+  ].map((routeId) => [routeId, {
+    modelProfile: 'inherit',
+    thinkingLevel: 'inherit',
+  }]));
 }
 
 function previewCreatedRoomSnapshot(
@@ -3381,4 +3498,15 @@ function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function eventSessionId(value: unknown): string {
+  return stringValue(record(value).sessionId);
+}
+
+function resumeSequence(value: string, sessionId: string): number {
+  const prefix = `${sessionId}:`;
+  if (!value.startsWith(prefix)) return 0;
+  const sequence = Number(value.slice(prefix.length));
+  return Number.isInteger(sequence) && sequence >= 0 ? sequence : 0;
 }

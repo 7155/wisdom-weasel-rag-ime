@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
-import { Check, RefreshCw, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
@@ -15,12 +15,10 @@ type WorkflowStage = 'select' | 'receipt' | 'rolled-back';
 type TimedReceipt = LexiconMutationReceipt & { atMs: number };
 
 export function LexiconWorkflow({
-  isFetching,
   onRefresh,
   review,
   transport,
 }: {
-  isFetching: boolean;
   onRefresh: () => void;
   review: LexiconReview;
   transport: ControlTransport;
@@ -72,7 +70,6 @@ export function LexiconWorkflow({
   if (review.entries.length === 0) {
     return (
       <EmptyState
-        action={<Button leadingIcon={<RefreshCw size={15} />} loading={isFetching} onClick={onRefresh} size="small">刷新审阅</Button>}
         description="当前没有待加入用户词库的条目。"
         headingLevel={3}
         icon={Check}
@@ -85,7 +82,6 @@ export function LexiconWorkflow({
     <div className="mgmt-stack">
       <div className="mgmt-toolbar">
         <span className="mgmt-muted">待审 {review.entryCount} 条 · 已选 {selectedEntries.length} 条</span>
-        <Button leadingIcon={<RefreshCw size={15} />} loading={isFetching} onClick={onRefresh} size="small">刷新审阅</Button>
       </div>
 
       <InlineNotice title="筛选规则" tone="info">
@@ -94,22 +90,25 @@ export function LexiconWorkflow({
       </InlineNotice>
 
       {stage === 'select' ? (
-        <div className="mgmt-list">
-          {review.entries.map((entry) => (
-            <label className="mgmt-list__row" key={entry.reviewKey}>
-              <input
-                aria-label={`选择 ${entry.text}`}
-                checked={selectedKeys.has(entry.reviewKey)}
-                onChange={(event) => setSelectedKeys((current) => toggled(current, entry.reviewKey, event.target.checked))}
-                type="checkbox"
-              />
-              <span className="mgmt-list__content">
-                <strong>{entry.text}</strong>
-                <span>{entry.pinyin || '无拼音'} · 被采用 {entry.positiveCount} 次 · 被跳过 {entry.negativeCount} 次 · {entry.riskLabel || '待你判断'}</span>
-              </span>
-              <StatusBadge label={reviewSourceLabel(entry.reviewSource)} tone="info" />
-            </label>
-          ))}
+        <div className="mgmt-list input-lexicon-review__list">
+          {review.entries.map((entry) => {
+            const detail = reviewEntryDetail(entry);
+            return (
+              <label className="mgmt-list__row input-lexicon-review__row" data-input-lexicon-row="true" key={entry.reviewKey}>
+                <input
+                  aria-label={`选择 ${entry.text}`}
+                  checked={selectedKeys.has(entry.reviewKey)}
+                  onChange={(event) => setSelectedKeys((current) => toggled(current, entry.reviewKey, event.target.checked))}
+                  type="checkbox"
+                />
+                <span className="mgmt-list__content">
+                  <strong title={entry.text}>{entry.text}</strong>
+                  <span title={detail}>{detail}</span>
+                </span>
+                <StatusBadge label={reviewSourceLabel(entry.reviewSource)} tone="info" />
+              </label>
+            );
+          })}
         </div>
       ) : null}
 
@@ -194,4 +193,8 @@ function selectionPolicyLabel(value?: string): string {
 
 function reviewSourceLabel(value: string): string {
   return ({ usage: '输入记录', local_feedback: '本机选词反馈', manual: '手动添加', imported: '已导入' } as Record<string, string>)[value] ?? '待审词条';
+}
+
+function reviewEntryDetail(entry: LexiconReview['entries'][number]): string {
+  return `${entry.pinyin || '无拼音'} · 被采用 ${entry.positiveCount} 次 · 被跳过 ${entry.negativeCount} 次 · ${entry.riskLabel || '待你判断'}`;
 }

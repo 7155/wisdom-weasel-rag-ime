@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   BookOpen,
   ChevronRight,
   EyeOff,
@@ -18,6 +19,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Disclosure,
   EmptyState,
   Field,
   Input,
@@ -32,6 +34,7 @@ import {
 } from '@/components/primitives';
 import { useControlTransport } from '@/app/control-transport';
 import { useProductIdentity } from '@/features/identity/product-identity';
+import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import {
   memoryBookArchivePathIds,
   memoryQueryKeys,
@@ -43,6 +46,7 @@ import { MemoryRelations } from './MemoryRelations';
 import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
 import { ActivityTimeline } from './ActivityTimeline';
 import { MemorySystemOverview } from './MemorySystemOverview';
+import { MemoryPreferences } from './MemoryPreferences';
 import { RoleBookLayer } from './RoleBookLayer';
 import {
   MemoryReferenceDialog,
@@ -72,7 +76,7 @@ import './memory.css';
 
 type MemoryLayer = 'evidence' | 'atoms' | 'books';
 type MemoryRouteLayer = MemoryLayer | 'timelines' | 'role-books';
-type MemoryView = 'catalog' | 'roleBooks' | 'timeline' | 'relations' | 'organize';
+type MemoryView = 'catalog' | 'roleBooks' | 'timeline' | 'relations' | 'organize' | 'preferences';
 
 const layers = [
   { value: 'evidence', label: '记录来源' },
@@ -90,6 +94,7 @@ function defaultMemoryStatus(kind: MemoryKind): string {
 export function MemoryFeature() {
   const queryClient = useQueryClient();
   const identity = useProductIdentity();
+  const appSurface = usePawOsAppSurface();
   const location = useLocation();
   const navigate = useNavigate();
   const routeSelection = useMemo(() => memoryRouteSelection(location.search), [location.search]);
@@ -164,15 +169,21 @@ export function MemoryFeature() {
 
   return (
     <ManagementPage
-      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>}
+      actions={<>
+        <span className="memory-second-brain__mode" data-view={view}>
+          <i aria-hidden="true" />
+          <span><strong>{memoryViewLabel(view)}</strong><small>{memoryViewStatus(view, rows.length, summaryPayload)}</small></span>
+        </span>
+        <Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>
+      </>}
       description="查看已整理的记忆、它们的来源和主题；需要时可以回到原始记录核对。"
       eyebrow="关于我"
       routeId="memory"
       title="我的记忆"
     >
-      <QueryState error={error} isPending={pending} onRetry={refresh}>
-        <details className="memory-system-summary">
-          <summary>查看记忆整理状态</summary>
+      <div className="memory-second-brain" data-layer={layer} data-view={view}>
+        <QueryState error={error} isPending={pending} onRetry={refresh}>
+        <Disclosure className="memory-system-summary" summary="查看记忆整理状态">
           <MemorySystemOverview
             activeLayer={layer}
             onOpenLayer={openCatalogLayer}
@@ -181,20 +192,23 @@ export function MemoryFeature() {
             onOpenTimeline={() => openView('timeline')}
             summary={summaryPayload}
           />
-        </details>
+        </Disclosure>
 
         <ViewTabs
           className="memory-view-tabs"
           onValueChange={(next) => openView(normalizeMemoryView(next))}
           value={view}
         >
-          <TabsList aria-label="记忆视图">
-            <TabsTrigger value="catalog">记忆</TabsTrigger>
-            <TabsTrigger value="roleBooks">伙伴记忆</TabsTrigger>
-            <TabsTrigger value="timeline">时间线</TabsTrigger>
-            <TabsTrigger value="relations">关系图</TabsTrigger>
-            <TabsTrigger value="organize">让{identity.assistantName}整理</TabsTrigger>
-          </TabsList>
+          {!appSurface ? (
+            <TabsList aria-label="记忆视图">
+              <TabsTrigger value="catalog">记忆</TabsTrigger>
+              <TabsTrigger value="roleBooks">伙伴记忆</TabsTrigger>
+              <TabsTrigger value="timeline">时间线</TabsTrigger>
+              <TabsTrigger value="relations">关系图</TabsTrigger>
+              <TabsTrigger value="organize">让{identity.assistantName}整理</TabsTrigger>
+              <TabsTrigger value="preferences">记忆偏好</TabsTrigger>
+            </TabsList>
+          ) : null}
           <TabsContent value="catalog">
             <ManagementSection
               title={`${kindLabel(kind)} 目录`}
@@ -241,7 +255,7 @@ export function MemoryFeature() {
                   ) : null}
                 </div>
               </div>
-              <div className="memory-layer-workspace">
+              <div className="memory-layer-workspace" data-detail-open={selected ? true : undefined}>
                 <aside className="memory-layer-list" aria-label={`${kindLabel(kind)}目录`}>
                   {rows.length ? (
                     <>
@@ -274,6 +288,10 @@ export function MemoryFeature() {
                 <div className="memory-layer-detail">
                   {selected ? (
                     <>
+                      <button aria-label="返回记忆目录" className="memory-layer-detail__back" onClick={() => {
+                        setSelectedId('');
+                        setEditOpen(false);
+                      }} type="button"><ArrowLeft aria-hidden size={15} />返回目录</button>
                       <MemoryCatalogDetail
                         assistantName={identity.assistantName}
                         kind={kind}
@@ -366,7 +384,7 @@ export function MemoryFeature() {
             <RoleBookLayer
               enabled={view === 'roleBooks'}
               initialReferenceId={routeSelection.routeLayer === 'role-books' ? routeSelection.id : ''}
-              onOpenGovernance={() => setView('organize')}
+              onOpenGovernance={() => openView('organize')}
             />
           </TabsContent>
           <TabsContent value="relations">
@@ -380,6 +398,9 @@ export function MemoryFeature() {
               enabled={view === 'organize'}
               onOpenTimeline={openTimeline}
             />
+          </TabsContent>
+          <TabsContent value="preferences">
+            {view === 'preferences' ? <MemoryPreferences /> : null}
           </TabsContent>
         </ViewTabs>
         <MemoryEditDialog
@@ -401,7 +422,8 @@ export function MemoryFeature() {
             }}
           />
         ) : null}
-      </QueryState>
+        </QueryState>
+      </div>
     </ManagementPage>
   );
 
@@ -432,6 +454,8 @@ export function MemoryFeature() {
       navigate({ pathname: location.pathname, search: '?layer=timelines' }, { replace: true });
     } else if (next === 'roleBooks') {
       navigate({ pathname: location.pathname, search: '?layer=role-books' }, { replace: true });
+    } else {
+      navigate({ pathname: location.pathname, search: `?view=${next}` }, { replace: true });
     }
   }
 
@@ -497,11 +521,14 @@ function memoryRouteSelection(search: string): MemoryRouteSelection {
   const routeLayer: MemoryRouteLayer = isMemoryRouteLayer(rawLayer) ? rawLayer : 'atoms';
   const id = (params.get('id') ?? '').trim().slice(0, 500);
   const requestedDate = (params.get('date') ?? '').trim();
-  const view: MemoryView = routeLayer === 'timelines'
-    ? 'timeline'
-    : routeLayer === 'role-books'
-      ? 'roleBooks'
-      : 'catalog';
+  const requestedView = normalizeMemoryView(params.get('view') ?? '');
+  const view: MemoryView = requestedView !== 'catalog'
+    ? requestedView
+    : routeLayer === 'timelines'
+      ? 'timeline'
+      : routeLayer === 'role-books'
+        ? 'roleBooks'
+        : 'catalog';
   const layer: MemoryLayer = routeLayer === 'evidence' || routeLayer === 'books'
     ? routeLayer
     : 'atoms';
@@ -533,9 +560,29 @@ function referenceKindForRoute(layer: MemoryRouteLayer, id: string): MemoryRefer
 }
 
 function normalizeMemoryView(value: string): MemoryView {
-  return value === 'roleBooks' || value === 'timeline' || value === 'relations' || value === 'organize'
+  return value === 'roleBooks' || value === 'timeline' || value === 'relations' || value === 'organize' || value === 'preferences'
     ? value
     : 'catalog';
+}
+
+function memoryViewLabel(view: MemoryView): string {
+  return ({
+    catalog: '记忆库',
+    roleBooks: '伙伴记忆',
+    timeline: '时间线',
+    relations: '关系图',
+    organize: '记忆整理',
+    preferences: '记忆偏好',
+  } as const)[view];
+}
+
+function memoryViewStatus(view: MemoryView, visibleRows: number, summary: Record<string, unknown>): string {
+  if (view === 'catalog') return `${visibleRows} 条当前结果`;
+  if (view === 'roleBooks') return `${numberValue(summary.roleBookCount, numberValue(summary.roleBookRevisionCount))} 个伙伴记忆`;
+  if (view === 'timeline') return `${numberValue(summary.activityTimelineCount, numberValue(summary.timelineCount))} 条活动记录`;
+  if (view === 'relations') return `${numberValue(summary.memoryAtomCount)} 条记忆参与关联`;
+  if (view === 'organize') return `${numberValue(summary.ownerCurationPendingSourceCount, numberValue(asRecord(summary.ownerCuration).pendingSourceCount))} 条待整理`;
+  return '本机设置持久化';
 }
 
 function normalizeMemoryRow(item: Record<string, unknown>): Record<string, unknown> {
@@ -710,12 +757,16 @@ function MemoryCatalogDetail({
   const rootReference = catalogRootReference(row, kind);
   const status = stringValue(row.status);
   const redacted = row.sensitive === true;
+  const content = memoryCatalogContent(kind, row);
   return (
     <section className="memory-catalog-detail" aria-label={`${publicMemoryText(stringValue(row.title, '记忆'))} 详情`}>
       <div className="memory-catalog-detail__identity">
         <span><Fingerprint aria-hidden="true" size={16} />{kindLabel(kind)}</span>
         <h3>{publicMemoryText(stringValue(row.title, '未命名记忆'))}</h3>
-        <p>{redacted ? '正文因为隐私策略已隐藏，只保留可审计的来源和状态。' : publicMemoryText(stringValue(row.detail, '暂无摘要'))}</p>
+        <div className="memory-catalog-detail__body" data-content={content.kind}>
+          <small>{redacted ? '内容状态' : content.label}</small>
+          <p>{redacted ? '正文因为隐私策略已隐藏，只保留可审计的来源和状态。' : publicMemoryText(content.text)}</p>
+        </div>
       </div>
       <dl>
         <div><dt>状态</dt><dd>{catalogStatusLabel(kind, status)}</dd></div>
@@ -725,9 +776,26 @@ function MemoryCatalogDetail({
         ) : null}
         <div><dt>更新</dt><dd>{formatUpdatedAt(numberValue(row.updatedAtMs))}</dd></div>
         <div><dt>标签</dt><dd>{values.length ? `${values.length} 项` : '暂无'}</dd></div>
-        <div><dt>来源</dt><dd>{references.length ? `${references.length} 条` : '暂无'}</dd></div>
+        <div><dt>关联来源</dt><dd>{references.length ? `${references.length} 条` : '暂无'}</dd></div>
       </dl>
-      {values.length ? <div className="memory-catalog-detail__tags">{values.slice(0, 8).map((value) => <span key={value}>{publicMemoryText(value)}</span>)}</div> : null}
+      {values.length ? (
+        <>
+          <div className="memory-catalog-detail__tags">
+            {values.slice(0, 8).map((value) => <span key={value}>{publicMemoryText(value)}</span>)}
+          </div>
+          {values.length > 8 ? (
+            <Disclosure
+              className="memory-catalog-detail__tag-disclosure"
+              contentClassName="memory-catalog-detail__tag-disclosure-body"
+              summary={`查看其余 ${values.length - 8} 项标签`}
+            >
+              <div className="memory-catalog-detail__tags">
+                {values.slice(8).map((value) => <span key={value}>{publicMemoryText(value)}</span>)}
+              </div>
+            </Disclosure>
+          ) : null}
+        </>
+      ) : null}
       {redacted ? (
         <InlineNotice title="敏感内容已脱敏" tone="warning">
           此处不会显示原文。来源标识、处理时间和处理状态仍可供核对。
@@ -763,6 +831,25 @@ function MemoryCatalogDetail({
       </div>
     </section>
   );
+}
+
+function memoryCatalogContent(
+  kind: MemoryKind,
+  row: Record<string, unknown>,
+): { kind: 'full' | 'summary'; label: string; text: string } {
+  const fullText = stringValue(row.text).trim();
+  if (fullText) {
+    return {
+      kind: 'full',
+      label: kind === 'evidence' ? '来源内容' : kind === 'books' ? '主题内容' : '记忆正文',
+      text: fullText,
+    };
+  }
+  return {
+    kind: 'summary',
+    label: kind === 'evidence' ? '来源说明' : kind === 'books' ? '主题摘要' : '记忆摘要',
+    text: stringValue(row.detail, '暂无可显示内容'),
+  };
 }
 
 function catalogRootReference(
@@ -1228,7 +1315,7 @@ function UnavailableMemoryAction({
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
-        <Button disabled size="small">暂未开放</Button>
+        <StatusBadge label="当前不可用" tone="neutral" />
       </div>
       <p className="memory-action-unavailable">{reason}</p>
     </div>
@@ -1276,6 +1363,7 @@ function memoryStatusOptions(kind: MemoryKind) {
 function statusLabel(status: string): string {
   return {
     active: '使用中',
+    current: '当前记忆',
     approved: '已确认',
     archived: '已归档',
     hidden: '历史保留',
@@ -1305,7 +1393,7 @@ function catalogStatusTone(kind: MemoryKind, status: string): 'success' | 'warni
 }
 
 function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
-  if (status === 'active' || status === 'approved' || status === 'consolidated') return 'success';
+  if (status === 'active' || status === 'current' || status === 'approved' || status === 'consolidated') return 'success';
   if (status === 'archived' || status === 'hidden' || status === 'source_archive' || status === 'inactive' || status === 'not_for_memory' || status === 'expired') return 'info';
   if (status === 'disabled' || status === 'suppressed' || status === 'pending' || status === 'needs_review' || status === 'remember') return 'warning';
   if (status === 'tombstoned') return 'danger';

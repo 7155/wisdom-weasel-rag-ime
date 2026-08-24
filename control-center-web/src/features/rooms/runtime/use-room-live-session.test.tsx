@@ -98,6 +98,59 @@ describe('useRoomLiveSession snapshot recovery', () => {
     unmount();
   });
 
+  it('keeps the live Room healthy when an optional metadata refresh times out', async () => {
+    const onConnectionError = vi.fn();
+    const onEvents = vi.fn();
+    const onRecoveryState = vi.fn();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': roomSnapshot([]),
+        'agent.room.get': () => { throw new Error('request timed out'); },
+      },
+    });
+
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError,
+      onRecoveryState,
+      onEvents,
+    }));
+
+    const metadataEvent = {
+      schemaVersion: 'rag-ime.agent-room-event.v1',
+      eventId: 'room-1:1',
+      roomId: 'room-1',
+      sequence: 1,
+      turnId: 'room-turn-1',
+      eventType: 'participant_activity',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-room-1',
+      createdAtMs: 10,
+      payload: { messageId: 'room-message-1', activityKind: 'work', summary: '工作状态已更新' },
+      resumeToken: 'room-1:1',
+    };
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(1));
+    expect(transport.subscriptionCalls[0]?.request.pathId).toBe('agent.room.events');
+    expect(transport.activeSubscriptionCount()).toBe(1);
+    act(() => {
+      expect(transport.emit('agent.room.events', metadataEvent)).toBe(1);
+    });
+    await flushAsyncWork();
+
+    await waitFor(() => expect(
+      transport.requests.some(({ request }) => request.pathId === 'agent.room.get'),
+    ).toBe(true));
+    expect(onConnectionError).not.toHaveBeenCalled();
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+    expect(onEvents).toHaveBeenCalled();
+    unmount();
+  });
+
   it('automatically retries a failed snapshot after a bounded delay', async () => {
     vi.useFakeTimers();
     let snapshotCalls = 0;

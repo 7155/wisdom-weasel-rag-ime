@@ -274,8 +274,7 @@
 
 /* The status chip is the part that actually changes when a tool advances, so
    it is the only part that moves. */
-.agent-activity-row [data-state],
-.agent-tool-step [data-state] {
+.agent-activity-row [data-state] {
   animation: paper-restate var(--motion-exit) var(--ease-standard) both;
 }
 

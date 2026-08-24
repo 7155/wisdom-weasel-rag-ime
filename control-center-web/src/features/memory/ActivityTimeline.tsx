@@ -26,6 +26,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Disclosure,
   Field,
   IconButton,
   Input,
@@ -142,9 +143,6 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const payload = asRecord(timeline.data);
   const calendarPayload = asRecord(calendar.data);
   const calendarSummary = asRecord(calendarPayload.summary);
-  const calendarAutomation = asRecord(calendarPayload.automation);
-  const calendarJob = asRecord(calendarAutomation.job);
-  const calendarJobProgress = asRecord(calendarJob.progress);
   const calendarDays = useMemo(
     () => normalizeCalendarDays(calendarPayload),
     [calendarPayload],
@@ -160,65 +158,21 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const status = stringValue(item.status);
   const buildRunning = Boolean(buildJobState) && buildJobState !== 'completed' && buildJobState !== 'failed';
   const buildAwaitingStatus = buildJob.isFetching && !buildJobState;
-  const localBuildActive = build.isPending || buildAwaitingStatus || buildRunning;
-  const calendarJobState = stringValue(calendarJob.state);
-  const calendarJobMode = stringValue(calendarJob.mode);
-  const calendarJobActive = calendarJobState === 'queued' || calendarJobState === 'running';
-  const buildThroughToday = build.variables?.throughToday === true;
-  const buildTargetDate = build.variables?.targetDate || date;
-  const organizeThroughTodayActive = (
-    (localBuildActive && buildThroughToday)
-    || (calendarJobActive && calendarJobMode !== 'single_day')
-  );
-  const singleDayBuildActive = (
-    (localBuildActive && !buildThroughToday)
-    || (calendarJobActive && calendarJobMode === 'single_day')
-  );
-  const busy = localBuildActive || approve.isPending || reject.isPending;
-  const writeBusy = busy || calendarJobActive;
+  const buildActive = build.isPending || buildAwaitingStatus || buildRunning;
+  const busy = buildActive || approve.isPending || reject.isPending;
   const buildError = build.error ?? buildJobError;
   const error = timeline.error ?? approve.error ?? reject.error;
   const buildProgressMessage = buildError
     ? friendlyTimelineError(buildError)
     : build.isPending
-      ? buildThroughToday
-        ? '正在提交“整理到今天”任务…'
-        : `正在提交 ${buildTargetDate} 的单日整理任务…`
+      ? '正在提交整理任务…'
       : buildAwaitingStatus
         ? '整理任务已受理，正在读取进度…'
         : buildRunning && stringValue(buildJobProgress.phase) === 'activity_timeline_catch_up'
           ? catchUpProgressCopy(buildJobProgress)
           : buildRunning
-            ? buildJobState === 'queued'
-              ? buildThroughToday
-                ? '“整理到今天”任务已进入队列，等待运行…'
-                : `${buildTargetDate} 的单日整理任务已进入队列，等待运行…`
-              : `正在整理 ${stringValue(buildJobProgress.currentDate, buildTargetDate)}；模型整理与校验可能需要几分钟。`
+            ? '整理任务已进入队列，等待开始…'
             : '';
-  const recoveredJobMessage = !buildProgressMessage && calendarJobActive
-    ? calendarJobMode === 'manual_catch_up'
-      ? catchUpProgressCopy(calendarJobProgress)
-      : calendarJobMode === 'single_day'
-        ? `正在整理 ${stringValue(calendarJobProgress.currentDate, date)}；模型整理与校验可能需要几分钟。`
-        : automaticCatchUpCopy(calendarAutomation, calendarSummary)
-    : '';
-  const automaticStatusMessage = automaticCatchUpCopy(
-    calendarAutomation,
-    calendarSummary,
-  );
-  const organizeMessage = buildProgressMessage || recoveredJobMessage || automaticStatusMessage;
-  const automationState = stringValue(calendarAutomation.state);
-  const organizeTone = buildError
-    ? 'danger'
-    : localBuildActive || calendarJobActive
-      ? 'info'
-      : automationState === 'caught_up'
-        ? 'success'
-        : automationState === 'retry_scheduled'
-          || automationState === 'disabled'
-          || automationState === 'unavailable'
-          ? 'warning'
-          : 'info';
   const semanticReady = timelineId
     ? calendarDays.some((day) => (
       day.date === date && day.organized && day.modelOrganized
@@ -280,7 +234,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
       </header>
 
       <ActivityTimelineCalendar
-        busy={writeBusy}
+        busy={busy}
         canWrite={canWrite}
         date={date}
         days={calendarDays}
@@ -288,10 +242,9 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         isLoading={capabilities.isPending || (canReadCalendar && calendar.isPending)}
         onMoveMonth={moveMonth}
         onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
-        organizeActive={organizeThroughTodayActive}
-        organizeActiveStatus={localBuildActive || calendarJobActive}
-        organizeMessage={organizeMessage}
-        organizeTone={organizeTone}
+        organizeActive={buildActive}
+        organizeFailed={Boolean(buildError)}
+        organizeMessage={buildProgressMessage}
         onSelect={chooseDate}
         summary={calendarSummary}
         today={today}
@@ -316,7 +269,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         status={status}
         tasks={tasks}
         timelineId={timelineId}
-        busy={writeBusy}
+        busy={busy}
       />
 
       {error ? (
@@ -400,13 +353,11 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
                 <Button
                   disabled={busy || !canWrite}
                   leadingIcon={<Sparkles size={15} />}
-                  loading={singleDayBuildActive}
+                  loading={build.isPending}
                   onClick={() => build.mutate({ targetDate: date })}
                   size="small"
                 >
-                  {singleDayBuildActive
-                    ? semanticReady ? '正在重新整理' : '正在语义整理'
-                    : semanticReady ? '重新整理' : '语义整理'}
+                  {semanticReady ? '重新整理' : '语义整理'}
                 </Button>
               )}
             </div>
@@ -627,9 +578,8 @@ function ActivityTimelineCalendar({
   onMoveMonth,
   onOrganizeThroughToday,
   organizeActive,
-  organizeActiveStatus,
+  organizeFailed,
   organizeMessage,
-  organizeTone,
   onSelect,
   summary,
   today,
@@ -644,9 +594,8 @@ function ActivityTimelineCalendar({
   onMoveMonth: (offset: number) => void;
   onOrganizeThroughToday: () => void;
   organizeActive: boolean;
-  organizeActiveStatus: boolean;
+  organizeFailed: boolean;
   organizeMessage: string;
-  organizeTone: 'danger' | 'info' | 'success' | 'warning';
   onSelect: (date: string) => void;
   summary: Record<string, unknown>;
   today: string;
@@ -706,17 +655,10 @@ function ActivityTimelineCalendar({
         <div
           aria-label="历史日记整理进度"
           className="activity-calendar__organize-status"
-          data-active={organizeActiveStatus || undefined}
-          data-tone={organizeTone}
-          role={organizeTone === 'danger' ? 'alert' : 'status'}
+          data-tone={organizeFailed ? 'danger' : 'info'}
+          role={organizeFailed ? 'alert' : 'status'}
         >
-          {organizeTone === 'danger'
-            ? <X aria-hidden="true" size={15} />
-            : organizeTone === 'success'
-              ? <Check aria-hidden="true" size={15} />
-              : organizeActiveStatus
-                ? <RefreshCw aria-hidden="true" size={15} />
-                : <Clock3 aria-hidden="true" size={15} />}
+          {organizeFailed ? <X aria-hidden="true" size={15} /> : <RefreshCw aria-hidden="true" size={15} />}
           <span>{organizeMessage}</span>
         </div>
       ) : null}
@@ -916,8 +858,11 @@ function TaskDetailDialog({
   onOpenReference: (reference: MemoryReferenceSelection) => void;
   task: SemanticTimelineTask | undefined;
 }) {
+  const [visibleEventCount, setVisibleEventCount] = useState(24);
+  useEffect(() => setVisibleEventCount(24), [task?.id]);
   if (!task) return null;
-  const visibleEvents = task.events.slice(0, 24);
+  const visibleEvents = task.events.slice(0, visibleEventCount);
+  const remainingEventCount = task.events.length - visibleEvents.length;
   const eventReferenceKeys = new Set(
     task.events.flatMap((event) => event.sourceRefs.map(sourceReferenceKey)),
   );
@@ -966,59 +911,71 @@ function TaskDetailDialog({
             ) : null}
             <div className="activity-timeline__event-list">
               {visibleEvents.map((event, index) => (
-                <details key={`${event.id}-${index}`} className="activity-timeline__event">
-                  <summary>
-                    <span>事件 {index + 1}</span>
-                    <strong>{event.summary || `记录 #${event.id}`}</strong>
-                    <ChevronDown aria-hidden="true" size={15} />
-                  </summary>
-                  <div className="activity-timeline__event-body">
-                    <div className="activity-timeline__event-meta">
-                      {event.timestampMs ? <time dateTime={new Date(event.timestampMs).toISOString()}>{formatTimestamp(event.timestampMs)}</time> : null}
-                      {event.appName ? <span>{event.appName}</span> : null}
-                      {event.sourceKind ? <span>{sourceLabel(event.sourceKind)}</span> : null}
-                      {event.redacted ? <span data-tone="warning">内容已脱敏</span> : null}
-                    </div>
-                    {event.summary ? <p>{event.summary}</p> : (
-                      <p>这条记录暂时没有可展示的摘要。</p>
-                    )}
-                    {event.referenceId ? (
-                      <button
-                        className="activity-timeline__open-event"
-                        onClick={() => onOpenReference({
-                          kind: 'event',
-                          referenceId: event.referenceId,
-                          label: event.summary || `记录 #${event.id}`,
-                        })}
-                        type="button"
-                      >
-                        <ExternalLink aria-hidden="true" size={13} />
-                        <span>打开来源记录</span>
-                        <ChevronRight aria-hidden="true" size={13} />
-                      </button>
-                    ) : null}
-                    {event.sourceRefs.length ? (
-                      <SourceReferenceDetails
-                        onOpenReference={onOpenReference}
-                        refs={event.sourceRefs}
-                        title={`相关来源 · ${event.sourceRefs.length}`}
-                      />
-                    ) : (
-                      <p className="activity-timeline__source-unavailable">
-                        这条记录暂时没有可打开的来源。
-                      </p>
-                    )}
+                <Disclosure
+                  className="activity-timeline__event"
+                  contentClassName="activity-timeline__event-body"
+                  key={`${event.id}-${index}`}
+                  summary={
+                    <>
+                      <span>事件 {index + 1}</span>
+                      <strong>{event.summary || `记录 #${event.id}`}</strong>
+                      <ChevronDown aria-hidden="true" size={15} />
+                    </>
+                  }
+                >
+                  <div className="activity-timeline__event-meta">
+                    {event.timestampMs ? <time dateTime={new Date(event.timestampMs).toISOString()}>{formatTimestamp(event.timestampMs)}</time> : null}
+                    {event.appName ? <span>{event.appName}</span> : null}
+                    {event.sourceKind ? <span>{sourceLabel(event.sourceKind)}</span> : null}
+                    {event.redacted ? <span data-tone="warning">内容已脱敏</span> : null}
                   </div>
-                </details>
+                  {event.summary ? <p>{event.summary}</p> : (
+                    <p>这条记录暂时没有可展示的摘要。</p>
+                  )}
+                  {event.referenceId ? (
+                    <button
+                      className="activity-timeline__open-event"
+                      onClick={() => onOpenReference({
+                        kind: 'event',
+                        referenceId: event.referenceId,
+                        label: event.summary || `记录 #${event.id}`,
+                      })}
+                      type="button"
+                    >
+                      <ExternalLink aria-hidden="true" size={13} />
+                      <span>打开来源记录</span>
+                      <ChevronRight aria-hidden="true" size={13} />
+                    </button>
+                  ) : null}
+                  {event.sourceRefs.length ? (
+                    <SourceReferenceDetails
+                      onOpenReference={onOpenReference}
+                      refs={event.sourceRefs}
+                      title={`相关来源 · ${event.sourceRefs.length}`}
+                    />
+                  ) : (
+                    <p className="activity-timeline__source-unavailable">
+                      这条记录暂时没有可打开的来源。
+                    </p>
+                  )}
+                </Disclosure>
               ))}
             </div>
             {!visibleEvents.length ? (
               <div className="activity-timeline__evidence-empty">没有可展开的来源记录。</div>
             ) : null}
-            {task.events.length > visibleEvents.length ? (
-              <p className="activity-timeline__evidence-limit">
-                已显示前 {visibleEvents.length} 条，另有 {task.events.length - visibleEvents.length} 条保留在原始记录中。
-              </p>
+            {remainingEventCount > 0 ? (
+              <div className="activity-timeline__evidence-limit">
+                <span>当前 {visibleEvents.length} / {task.events.length} 条</span>
+                <Button
+                  aria-label={`再显示 ${Math.min(24, remainingEventCount)} 条事件，当前 ${visibleEvents.length} / ${task.events.length}`}
+                  onClick={() => setVisibleEventCount((count) => Math.min(task.events.length, count + 24))}
+                  size="small"
+                  variant="quiet"
+                >
+                  再显示 {Math.min(24, remainingEventCount)} 条
+                </Button>
+              </div>
             ) : null}
           </section>
         </div>
@@ -1041,11 +998,11 @@ function SourceReferenceDetails({
   title: string;
 }) {
   return (
-    <details className="activity-timeline__source-refs">
-      <summary>
-        <span>{title}</span>
-        <ChevronDown aria-hidden="true" size={14} />
-      </summary>
+    <Disclosure
+      className="activity-timeline__source-refs"
+      contentClassName="activity-timeline__source-refs-body"
+      summary={<><span>{title}</span><ChevronDown aria-hidden="true" size={14} /></>}
+    >
       <ul>
         {refs.map((ref, index) => (
           <li key={`${ref.id}-${index}`}>
@@ -1070,7 +1027,7 @@ function SourceReferenceDetails({
           </li>
         ))}
       </ul>
-    </details>
+    </Disclosure>
   );
 }
 
@@ -1522,49 +1479,6 @@ function catchUpProgressCopy(progress: Record<string, unknown>): string {
   const currentDate = stringValue(progress.currentDate);
   const count = total ? `已完成 ${completed} / ${total} 天` : '正在计算待整理日期';
   return `正在整理历史日记：${count}${currentDate ? `，当前 ${currentDate}` : ''}。`;
-}
-
-function automaticCatchUpCopy(
-  automation: Record<string, unknown>,
-  summary: Record<string, unknown>,
-): string {
-  if (!Object.keys(automation).length) return '';
-  const state = stringValue(automation.state);
-  const completed = numberValue(summary.organizedDayCount);
-  const total = numberValue(summary.activityDayCount);
-  const remaining = numberValue(summary.waitingDayCount);
-  const batchLimit = Math.max(1, numberValue(automation.batchDayLimit, 1));
-  const job = asRecord(automation.job);
-  const progress = asRecord(job.progress);
-  const currentDate = stringValue(progress.currentDate);
-  const monthProgress = `本月已完成 ${completed} / ${total} 天，剩余 ${remaining} 天。`;
-
-  if (state === 'running') {
-    return currentDate
-      ? `自动补齐中：正在整理 ${currentDate}；${monthProgress}`
-      : `自动补齐已进入本轮后台维护；${monthProgress}`;
-  }
-  if (state === 'retry_scheduled') {
-    const failedDate = stringValue(asRecord(job.result).failedDate);
-    return `自动补齐上次未完成${failedDate ? `（${failedDate}）` : ''}；后台会在下一轮重试。${monthProgress}`;
-  }
-  if (state === 'scheduled') {
-    return `自动补齐已开启：后台维护每轮最多整理 ${batchLimit} 天；${monthProgress}`;
-  }
-  if (state === 'caught_up') {
-    return total
-      ? `自动补齐已完成：本月 ${completed} / ${total} 个活动日已整理。`
-      : '自动补齐已开启：本月暂时没有需要整理的活动日。';
-  }
-  if (state === 'disabled') {
-    return remaining
-      ? `自动补齐未开启；本月仍有 ${remaining} 天待整理，可使用“整理到今天”立即处理。`
-      : '自动补齐未开启；当前月份没有待整理活动。';
-  }
-  if (state === 'unavailable') {
-    return `自动补齐状态暂时不可读；月历数据仍可查看，本月还有 ${remaining} 天待整理。`;
-  }
-  return '';
 }
 
 function formatDateHeading(value: string): string {

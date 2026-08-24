@@ -1,6 +1,6 @@
 import { Check, ChevronRight, Clipboard, Code2, FileDiff } from 'lucide-react';
 import { useState } from 'react';
-import { IconButton } from '@/components/primitives';
+import { Disclosure, IconButton } from '@/components/primitives';
 import { writeClipboardText } from '@/platform/clipboard';
 import { DiffPreview } from '../file-preview/DiffPreview';
 import type { AgentBlockRenderProps } from './renderer-contract';
@@ -23,19 +23,23 @@ export function DiffBlockRenderer({ block }: AgentBlockRenderProps) {
   const title = text(data.fileName ?? data.title) || '代码变更';
   const lineCount = content ? content.split('\n').length : 0;
   return (
-    <details
+    <Disclosure
       className="agent-inline-diff agent-rich-collapsible"
       data-tone="project"
-      open={lineCount <= 80}
-    >
-      <summary>
+      defaultOpen={lineCount <= 80}
+      summary={<>
         <span className="agent-insert-icon"><FileDiff size={15} /></span>
         <span>{title}</span>
         <small>{lineCount} 行</small>
         <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
-      </summary>
-      <DiffPreview content={content} fileName={title} />
-    </details>
+      </>}
+    >
+      <DiffPreview
+        content={content}
+        disclosureRegionLabel={`${title}完整变更`}
+        fileName={title}
+      />
+    </Disclosure>
   );
 }
 
@@ -51,6 +55,8 @@ export function CodeContentBlock({
   streamingTail?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const lineCount = code ? code.split('\n').length : 0;
+  const collapsed = !streamingTail && (lineCount > 32 || code.length > 4_000);
 
   async function copy(): Promise<void> {
     await writeClipboardText(code);
@@ -59,7 +65,11 @@ export function CodeContentBlock({
   }
 
   const figure = (
-    <figure className="agent-code-block">
+    <figure
+      aria-label={collapsed ? `${fileName || language}完整内容` : undefined}
+      className="agent-code-block"
+      role={collapsed ? 'region' : undefined}
+    >
       <figcaption>
         <span>
           <Code2 size={14} />
@@ -76,6 +86,7 @@ export function CodeContentBlock({
       <pre
         aria-label={fileName ? `${fileName} 代码内容` : `${language} 代码内容`}
         data-language={language}
+        role="region"
         tabIndex={0}
       >
         <code
@@ -88,18 +99,16 @@ export function CodeContentBlock({
       </pre>
     </figure>
   );
-  const lineCount = code ? code.split('\n').length : 0;
-  if (!streamingTail && (lineCount > 32 || code.length > 4_000)) {
+  if (collapsed) {
     return (
-      <details className="agent-code-collapse agent-rich-collapsible" data-tone="project">
-        <summary>
+      <Disclosure className="agent-code-collapse agent-rich-collapsible" data-tone="project" summary={<>
           <span className="agent-insert-icon"><Code2 size={15} /></span>
           <span>{fileName || language}</span>
           <small>{lineCount} 行</small>
           <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
-        </summary>
+        </>}>
         {figure}
-      </details>
+      </Disclosure>
     );
   }
   return figure;

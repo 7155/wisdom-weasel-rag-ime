@@ -87,7 +87,7 @@ export function roomWorkStateLabel(state: RoomWorkState): string {
   return {
     queued: '待接收',
     active: '执行中',
-    review: '待验收',
+    review: '等待汇合',
     blocked: '已阻塞',
     done: '已完成',
     failed: '未完成',

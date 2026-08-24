@@ -1,0 +1,484 @@
+import { createStore, type StoreApi } from 'zustand/vanilla';
+import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
+import { pawApp, type PawAppId } from './app-registry';
+
+export type PawWindowBounds = { x: number; y: number; width: number; height: number };
+export type PawWindowPlacement = 'maximized' | 'left' | 'right';
+export type PawWindowNode = {
+  id: string;
+  appId: PawAppId;
+  title: string;
+  entityId?: string;
+  initialRoute?: string;
+  target?: PawOsWindowTarget;
+  bounds: PawWindowBounds;
+  restoreBounds?: PawWindowBounds;
+  placement?: PawWindowPlacement;
+  minimized: boolean;
+};
+
+export type PawDesktopState = {
+  windows: Record<string, PawWindowNode>;
+  stack: string[];
+  activeWindowId: string | null;
+  collaborationFocusGroup: string | null;
+  collaborationFocusReturnWindowId: string | null;
+  launchpadOpen: boolean;
+  overviewOpen: boolean;
+  openApp: (appId: PawAppId, options?: { background?: boolean; entityId?: string; initialRoute?: string; title?: string; target?: PawOsWindowTarget }) => string;
+  bindAgentMain: (
+    windowId: string,
+    target?: Extract<PawOsWindowTarget, { kind: 'session' | 'room' }>,
+  ) => void;
+  bindRoomMain: (target: Extract<PawOsWindowTarget, { kind: 'room' }>) => void;
+  closeWindow: (windowId: string) => void;
+  closeAppWindows: (appId: PawAppId) => void;
+  closeAllWindows: () => void;
+  minimizeWindow: (windowId: string) => void;
+  focusWindow: (windowId: string) => void;
+  commitBounds: (windowId: string, bounds: PawWindowBounds) => void;
+  fitWindowsToViewport: () => void;
+  snapWindow: (windowId: string, placement: PawWindowPlacement) => void;
+  toggleMaximize: (windowId: string) => void;
+  showWayfinder: () => void;
+  setLaunchpadOpen: (open: boolean) => void;
+  setOverviewOpen: (open: boolean) => void;
+  setCollaborationFocusGroup: (group: string | null) => void;
+};
+
+export type PawDesktopStore = StoreApi<PawDesktopState>;
+export type PawDesktopSnapshot = Pick<PawDesktopState, 'windows' | 'stack' | 'activeWindowId'>;
+
+export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRoute?: string, snapshot?: PawDesktopSnapshot): PawDesktopStore {
+  const store = createStore<PawDesktopState>((set, get) => ({
+    windows: snapshot?.windows ?? {},
+    stack: snapshot?.stack ?? [],
+    activeWindowId: snapshot?.activeWindowId ?? null,
+    collaborationFocusGroup: null,
+    collaborationFocusReturnWindowId: null,
+    launchpadOpen: false,
+    overviewOpen: false,
+    openApp(appId, options = {}) {
+      const windowId = options.entityId ? `${appId}:${options.entityId}` : appId;
+      const current = get().windows[windowId];
+      if (current) {
+        set((state) => {
+          const nextFocusGroup = satelliteGroup(options.target);
+          return ({
+          windows: current.minimized || options.initialRoute !== undefined || options.target !== undefined || options.title !== undefined
+            ? {
+                ...state.windows,
+                [windowId]: {
+                  ...current,
+                  ...(options.initialRoute !== undefined ? { initialRoute: options.initialRoute } : {}),
+                  ...(options.target !== undefined ? { target: options.target } : {}),
+                  ...(options.title !== undefined ? { title: options.title } : {}),
+                  minimized: false,
+                },
+              }
+            : state.windows,
+          activeWindowId: options.background ? state.activeWindowId : windowId,
+          stack: options.background
+            ? backgroundStack(state.stack, windowId, state.activeWindowId)
+            : [...state.stack.filter((id) => id !== windowId), windowId],
+          launchpadOpen: false,
+          overviewOpen: false,
+          collaborationFocusGroup: nextFocusGroup || state.collaborationFocusGroup,
+          collaborationFocusReturnWindowId: nextFocusGroup && !state.collaborationFocusGroup
+            ? state.activeWindowId
+            : state.collaborationFocusReturnWindowId,
+          });
+        });
+        return windowId;
+      }
+      const currentState = get();
+      const participantTarget = options.target?.kind === 'participant' ? options.target : undefined;
+      const roomPanelTarget = options.target?.kind === 'room' && options.target.panel ? options.target : undefined;
+      const satelliteTarget = participantTarget
+        || roomPanelTarget
+        || (options.target?.kind === 'subagent' ? options.target : undefined);
+      const satelliteIndex = satelliteTarget
+        ? Object.values(currentState.windows).filter((window) => (
+            satelliteGroup(window.target) === satelliteGroup(satelliteTarget)
+          )).length
+        : 0;
+      const bounds = satelliteTarget
+        ? roomParticipantWindowBounds(satelliteIndex)
+        : initialWindowBounds(currentState.stack.length);
+      const node: PawWindowNode = {
+        id: windowId,
+        appId,
+        title: options.title ?? pawApp(appId).label,
+        entityId: options.entityId,
+        initialRoute: options.initialRoute,
+        target: options.target,
+        bounds,
+        minimized: false,
+      };
+      set((state) => {
+        const windows = { ...state.windows, [windowId]: node };
+        const nextFocusGroup = satelliteGroup(options.target);
+        return {
+          windows,
+          stack: options.background
+            ? backgroundStack(state.stack, windowId, state.activeWindowId)
+            : [...state.stack, windowId],
+          activeWindowId: options.background ? state.activeWindowId : windowId,
+          launchpadOpen: false,
+          overviewOpen: false,
+          collaborationFocusGroup: nextFocusGroup || state.collaborationFocusGroup,
+          collaborationFocusReturnWindowId: nextFocusGroup && !state.collaborationFocusGroup
+            ? state.activeWindowId
+            : state.collaborationFocusReturnWindowId,
+        };
+      });
+      return windowId;
+    },
+    bindAgentMain(windowId, target) {
+      set((state) => {
+        const mainWindow = state.windows[windowId];
+        if (!mainWindow || mainWindow.appId !== 'agent' || isAgentSatellite(mainWindow.target)) return state;
+        const title = target?.title ?? pawApp('agent').label;
+        const initialRoute = target
+          ? `/agent?${target.kind === 'room' ? 'room' : 'session'}=${encodeURIComponent(target.id)}`
+          : '/agent';
+        if (mainWindow.target?.kind === target?.kind
+          && mainWindow.target?.id === target?.id
+          && mainWindow.title === title
+          && mainWindow.initialRoute === initialRoute) return state;
+        const previousRoomId = mainWindow.target?.kind === 'room' ? mainWindow.target.id : '';
+        const leavingFocusedRoom = previousRoomId
+          && state.collaborationFocusGroup === `room:${previousRoomId}`
+          && (target?.kind !== 'room' || target.id !== previousRoomId);
+        return {
+          windows: {
+            ...state.windows,
+            [windowId]: {
+              ...mainWindow,
+              initialRoute,
+              target,
+              title,
+            },
+          },
+          ...(leavingFocusedRoom ? {
+            collaborationFocusGroup: null,
+            collaborationFocusReturnWindowId: null,
+          } : {}),
+        };
+      });
+    },
+    bindRoomMain(target) {
+      set((state) => {
+        const mainWindow = findRoomMainCandidate(state, target.id);
+        if (!mainWindow) return state;
+        if (mainWindow.target?.kind === 'room'
+          && mainWindow.target.id === target.id
+          && mainWindow.title === target.title
+          && mainWindow.target.subtitle === target.subtitle) return state;
+        return {
+          windows: {
+            ...state.windows,
+            [mainWindow.id]: { ...mainWindow, target, title: target.title },
+          },
+        };
+      });
+    },
+    closeWindow(windowId) {
+      set((state) => closeWindowsWhere(state, (node) => node.id === windowId));
+    },
+    closeAppWindows(appId) {
+      set((state) => closeWindowsWhere(state, (node) => node.appId === appId));
+    },
+    closeAllWindows() {
+      set((state) => closeWindowsWhere(state, () => true));
+    },
+    minimizeWindow(windowId) {
+      set((state) => {
+        const node = state.windows[windowId];
+        if (!node) return state;
+        const stack = state.stack.filter((id) => id !== windowId);
+        const windows = { ...state.windows, [windowId]: { ...node, minimized: true } };
+        const collaborationFocusGroup = state.collaborationFocusGroup
+          && Object.values(windows).some((candidate) => !candidate.minimized && satelliteGroup(candidate.target) === state.collaborationFocusGroup)
+          ? state.collaborationFocusGroup
+          : null;
+        return {
+          windows,
+          stack,
+          activeWindowId: stack.at(-1) ?? null,
+          collaborationFocusGroup,
+          collaborationFocusReturnWindowId: collaborationFocusGroup
+            ? state.collaborationFocusReturnWindowId
+            : null,
+        };
+      });
+    },
+    focusWindow(windowId) {
+      const state = get();
+      if (state.activeWindowId === windowId) return;
+      const node = state.windows[windowId];
+      if (!node) return;
+      const nextFocusGroup = satelliteGroup(node.target);
+      set({
+        windows: node.minimized
+          ? { ...state.windows, [windowId]: { ...node, minimized: false } }
+          : state.windows,
+        stack: [...state.stack.filter((id) => id !== windowId), windowId],
+        activeWindowId: windowId,
+        collaborationFocusGroup: nextFocusGroup || state.collaborationFocusGroup,
+        collaborationFocusReturnWindowId: nextFocusGroup && !state.collaborationFocusGroup
+          ? state.activeWindowId
+          : state.collaborationFocusReturnWindowId,
+        overviewOpen: false,
+      });
+    },
+    commitBounds(windowId, bounds) {
+      set((state) => {
+        const node = state.windows[windowId];
+        if (!node || sameBounds(node.bounds, bounds)) return state;
+        return { windows: { ...state.windows, [windowId]: { ...node, bounds, restoreBounds: undefined, placement: undefined } } };
+      });
+    },
+    fitWindowsToViewport() {
+      const viewport = desktopViewportBounds();
+      set((state) => {
+        let changed = false;
+        const windows = Object.fromEntries(Object.entries(state.windows).map(([windowId, node]) => {
+          const bounds = node.placement
+            ? placementBounds(node.placement)
+            : fitBoundsToViewport(node.bounds, viewport);
+          const restoreBounds = node.restoreBounds
+            ? fitBoundsToViewport(node.restoreBounds, viewport)
+            : undefined;
+          if (sameBounds(bounds, node.bounds)
+            && ((!restoreBounds && !node.restoreBounds) || (restoreBounds && node.restoreBounds && sameBounds(restoreBounds, node.restoreBounds)))) {
+            return [windowId, node];
+          }
+          changed = true;
+          return [windowId, { ...node, bounds, restoreBounds }];
+        }));
+        return changed ? { windows } : state;
+      });
+    },
+    snapWindow(windowId, placement) {
+      set((state) => {
+        const node = state.windows[windowId];
+        if (!node) return state;
+        const restoreBounds = node.restoreBounds ?? node.bounds;
+        return {
+          windows: {
+            ...state.windows,
+            [windowId]: {
+              ...node,
+              bounds: placementBounds(placement),
+              restoreBounds,
+              placement,
+            },
+          },
+        };
+      });
+    },
+    toggleMaximize(windowId) {
+      set((state) => {
+        const node = state.windows[windowId];
+        if (!node) return state;
+        const maximized = node.placement === 'maximized';
+        return {
+          windows: {
+            ...state.windows,
+            [windowId]: maximized
+              ? { ...node, bounds: node.restoreBounds ?? node.bounds, restoreBounds: undefined, placement: undefined }
+              : { ...node, restoreBounds: node.restoreBounds ?? node.bounds, bounds: placementBounds('maximized'), placement: 'maximized' },
+          },
+        };
+      });
+    },
+    showWayfinder() {
+      set({ activeWindowId: null, launchpadOpen: false, overviewOpen: false });
+    },
+    setLaunchpadOpen(open) { set({ launchpadOpen: open, overviewOpen: false }); },
+    setOverviewOpen(open) {
+      set({ overviewOpen: open, launchpadOpen: false });
+    },
+    setCollaborationFocusGroup(group) {
+      set((state) => {
+        if (group) {
+          return {
+            collaborationFocusGroup: group,
+            collaborationFocusReturnWindowId: state.collaborationFocusGroup
+              ? state.collaborationFocusReturnWindowId
+              : state.activeWindowId,
+          };
+        }
+        if (!state.collaborationFocusGroup) {
+          return { collaborationFocusGroup: null, collaborationFocusReturnWindowId: null };
+        }
+        const currentGroup = state.collaborationFocusGroup;
+        const main = Object.values(state.windows).find((node) => (
+          !node.minimized
+          && !satelliteGroup(node.target)
+          && (
+            (currentGroup.startsWith('room:') && node.target?.kind === 'room' && node.target.id === currentGroup.slice(5))
+            || (currentGroup.startsWith('session:') && node.target?.kind === 'session' && node.target.id === currentGroup.slice(8))
+          )
+        ));
+        const returnWindow = state.collaborationFocusReturnWindowId
+          ? state.windows[state.collaborationFocusReturnWindowId]
+          : undefined;
+        const restore = returnWindow && !returnWindow.minimized ? returnWindow : main;
+        return {
+          collaborationFocusGroup: null,
+          collaborationFocusReturnWindowId: null,
+          ...(restore ? {
+            activeWindowId: restore.id,
+            stack: [...state.stack.filter((id) => id !== restore.id), restore.id],
+          } : {}),
+        };
+      });
+    },
+  }));
+  if (initialAppId) store.getState().openApp(initialAppId, { initialRoute });
+  store.getState().fitWindowsToViewport();
+  return store;
+}
+
+function initialWindowBounds(offset: number): PawWindowBounds {
+  const viewport = desktopViewportBounds();
+  const inset = Math.min(48, (offset % 5) * 16);
+  const width = Math.min(viewport.width, 1280, Math.max(480, viewport.width * 0.82));
+  const height = Math.min(viewport.height, 860, Math.max(360, viewport.height * 0.82));
+  return fitBoundsToViewport({
+    x: viewport.x + (viewport.width - width) / 2 + inset,
+    y: viewport.y + (viewport.height - height) / 2 - 12 + inset,
+    width,
+    height,
+  }, viewport);
+}
+
+function backgroundStack(stack: string[], windowId: string, activeWindowId: string | null): string[] {
+  const next = stack.filter((id) => id !== windowId && id !== activeWindowId);
+  next.push(windowId);
+  if (activeWindowId) next.push(activeWindowId);
+  return next;
+}
+
+function closeWindowsWhere(
+  state: PawDesktopState,
+  shouldClose: (node: PawWindowNode) => boolean,
+): PawDesktopState | Partial<PawDesktopState> {
+  const closing = new Set(
+    Object.values(state.windows).filter(shouldClose).map((node) => node.id),
+  );
+  if (!closing.size) return state;
+  const windows = Object.fromEntries(
+    Object.entries(state.windows).filter(([windowId]) => !closing.has(windowId)),
+  );
+  const stack = state.stack.filter((windowId) => !closing.has(windowId));
+  const collaborationFocusGroup = state.collaborationFocusGroup
+    && Object.values(windows).some((node) => (
+      !node.minimized && satelliteGroup(node.target) === state.collaborationFocusGroup
+    ))
+    ? state.collaborationFocusGroup
+    : null;
+  const focusReturnWindowId = collaborationFocusGroup
+    && state.collaborationFocusReturnWindowId
+    && windows[state.collaborationFocusReturnWindowId]
+    ? state.collaborationFocusReturnWindowId
+    : null;
+  return {
+    windows,
+    stack,
+    activeWindowId: stack.at(-1) ?? null,
+    collaborationFocusGroup,
+    collaborationFocusReturnWindowId: focusReturnWindowId,
+    overviewOpen: false,
+  };
+}
+
+export function satelliteGroup(target?: PawOsWindowTarget): string {
+  if (target?.kind === 'participant') return `room:${target.roomId}`;
+  if (target?.kind === 'room' && target.panel) return `room:${target.id}`;
+  if (target?.kind === 'subagent') return `session:${target.sessionId}`;
+  if ((target?.kind === 'process-terminal' || target?.kind === 'browser-target') && target.roomId) return `room:${target.roomId}`;
+  return '';
+}
+
+function isAgentSatellite(target?: PawOsWindowTarget): boolean {
+  return target?.kind === 'participant'
+    || target?.kind === 'subagent'
+    || (target?.kind === 'room' && Boolean(target.panel));
+}
+
+function findRoomMainCandidate(state: PawDesktopState, roomId: string): PawWindowNode | undefined {
+  const candidates = state.stack
+    .map((id) => state.windows[id])
+    .filter((window): window is PawWindowNode => Boolean(
+      window
+      && window.appId === 'agent'
+      && window.target?.kind !== 'participant'
+      && window.target?.kind !== 'subagent'
+      && !(window.target?.kind === 'room' && Boolean(window.target.panel)),
+    ));
+  return candidates.reduce<PawWindowNode | undefined>((best, candidate) => {
+    if (!best || roomMainCandidateScore(candidate, roomId, state.activeWindowId) > roomMainCandidateScore(best, roomId, state.activeWindowId)) return candidate;
+    return best;
+  }, undefined);
+}
+
+function roomMainCandidateScore(window: PawWindowNode, roomId: string, activeWindowId: string | null): number {
+  if (window.target?.kind === 'room' && window.target.id === roomId && !window.target.panel) return 3;
+  if (window.id === activeWindowId) return 2;
+  return 1;
+}
+
+function roomParticipantWindowBounds(index: number): PawWindowBounds {
+  const viewport = desktopViewportBounds();
+  const width = Math.min(viewport.width, 300, Math.max(280, viewport.width * .22));
+  const height = Math.min(viewport.height, 240, Math.max(210, viewport.height * .27));
+  const right = viewport.x + viewport.width - width - 12;
+  const bottom = viewport.y + viewport.height - height - 18;
+  const positions = [
+    { x: viewport.x + 12, y: viewport.y + 18 },
+    { x: right, y: viewport.y + 18 },
+    { x: viewport.x + 12, y: bottom },
+    { x: right, y: bottom },
+    { x: viewport.x + (viewport.width - width) / 2, y: bottom },
+  ];
+  const position = positions[index % positions.length]!;
+  return fitBoundsToViewport({ ...position, width, height }, viewport);
+}
+
+function desktopViewportBounds(): PawWindowBounds {
+  const width = typeof window === 'undefined' ? 1280 : window.innerWidth;
+  const height = typeof window === 'undefined' ? 800 : window.innerHeight;
+  return { x: 8, y: 8, width: Math.max(280, width - 16), height: Math.max(210, height - 56) };
+}
+
+function fitBoundsToViewport(bounds: PawWindowBounds, viewport = desktopViewportBounds()): PawWindowBounds {
+  const width = Math.min(viewport.width, Math.max(Math.min(280, viewport.width), bounds.width));
+  const height = Math.min(viewport.height, Math.max(Math.min(210, viewport.height), bounds.height));
+  return {
+    x: Math.min(Math.max(viewport.x, bounds.x), viewport.x + viewport.width - width),
+    y: Math.min(Math.max(viewport.y, bounds.y), viewport.y + viewport.height - height),
+    width,
+    height,
+  };
+}
+
+function placementBounds(placement: PawWindowPlacement): PawWindowBounds {
+  const viewport = desktopViewportBounds();
+  if (placement === 'maximized') return viewport;
+  const gap = 6;
+  const width = (viewport.width - gap) / 2;
+  return {
+    x: placement === 'left' ? viewport.x : viewport.x + width + gap,
+    y: viewport.y,
+    width,
+    height: viewport.height,
+  };
+}
+
+function sameBounds(left: PawWindowBounds, right: PawWindowBounds): boolean {
+  return left.x === right.x && left.y === right.y
+    && left.width === right.width && left.height === right.height;
+}

@@ -7,9 +7,9 @@ import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import type { UiAgentEvent } from '@/contracts/ui-events';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 import { AgentComposer, type AgentComposerEditState, type AgentMessageDelivery } from './composer/AgentComposer';
-import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
 import { AgentPaneResizer } from './layout/AgentPaneResizer';
 import { SessionRail } from './sessions/SessionRail';
 import { AgentConversationState } from './sessions/AgentConversationState';
@@ -30,6 +30,7 @@ import { AgentTimeline } from './timeline/AgentTimeline';
 import { AgentSendTimingTracker, monotonicNow } from './send-stage-timing';
 import { toolIntentPrompt } from './tool-presentation';
 import { useProductIdentity } from '@/features/identity/product-identity';
+import { usePawOsAppSurface, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import {
   capabilityScopeLabel,
   requireSessionCapabilityCatalog,
@@ -62,22 +63,32 @@ import {
   type ToolManifest,
 } from './types';
 import './agent.css';
+import { resolveAgentSurfaceLayout } from './surface-layout';
 
-export function AgentFeature() {
-  return <AgentWorkspace />;
+export function AgentFeature({ pawOsWorkbench = false }: { pawOsWorkbench?: boolean } = {}) {
+  return <AgentWorkspace pawOsWorkbench={pawOsWorkbench} />;
 }
 
-function AgentWorkspace() {
+function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   const transport = useControlTransport();
   const identity = useProductIdentity();
-  const mobileViewport = useMediaQuery('(max-width: 760px)');
-  const statusOverlayViewport = useMediaQuery('(max-width: 1360px)');
+  const appSurface = usePawOsAppSurface();
+  const pawOsDesktop = usePawOsDesktop();
+  const browserMobileViewport = useMediaQuery('(max-width: 760px)');
+  const browserStatusOverlayViewport = useMediaQuery('(max-width: 1360px)');
+  const surfaceLayout = resolveAgentSurfaceLayout({
+    browserMobile: browserMobileViewport,
+    browserStatusOverlay: browserStatusOverlayViewport,
+    surface: appSurface?.appId === 'agent' ? appSurface : null,
+  });
+  const mobileViewport = surfaceLayout.compact;
+  const statusOverlayViewport = surfaceLayout.overlayInspectors;
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const requestedDraft = searchParams.get('draft')?.trim().slice(0, 4_000) ?? '';
   const requestedSubagentsOpen = searchParams.get('subagents') === 'open';
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [personas, setPersonas] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
+  const [personas, setPersonas] = useState<AgentPersonaV1[]>([]);
   // A Room task/owner deep link already carries the exact Session identity.
   // Start its snapshot in parallel with the slower rail catalog instead of
   // leaving the conversation blank until all projects and Sessions arrive.
@@ -115,7 +126,7 @@ function AgentWorkspace() {
   const [timelineAtBottom, setTimelineAtBottom] = useState(true);
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [snapshotReadySessionId, setSnapshotReadySessionId] = useState('');
-  const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
+  const [railOpen, setRailOpen] = useState(() => !mobileViewport);
   const [statusOpen, setStatusOpen] = useState(shouldOpenTaskCenterByDefault);
   const [filesOpen, setFilesOpen] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(requestedSubagentsOpen);
@@ -348,7 +359,7 @@ function AgentWorkspace() {
         query: { limit: 100, includeArchived: showArchived },
       });
       const nextSessions = sessionItems(sessionResponse);
-      const usableSessions = __CONTROL_PREVIEW__ && transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
+      const usableSessions = nextSessions;
       const railSessions = usableSessions.filter((item) => !item.roomParticipant);
       setSessions(usableSessions);
       setSessionLoadError('');
@@ -375,20 +386,7 @@ function AgentWorkspace() {
       });
       setError('');
     } catch (loadError) {
-      if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
-        setSessions(previewSessions);
-        const preferredSessionId = previewSessions.some((item) => item.id === preferredId) ? preferredId : '';
-        const railSessions = previewSessions.filter((item) => !item.roomParticipant);
-        setSelectedId((current) => {
-          const currentId = railSessions.some((item) => item.id === current) ? current : '';
-          const next = preferredSessionId || currentId || railSessions[0]?.id || '';
-          selectedIdRef.current = next;
-          return next;
-        });
-        setSessionLoadError('');
-      } else {
-        setSessionLoadError(errorText(loadError));
-      }
+      setSessionLoadError(errorText(loadError));
     } finally {
       setLoading(false);
     }
@@ -498,12 +496,7 @@ function AgentWorkspace() {
         }
         if (!active || requestId !== snapshotRequestId) return false;
         const hydrateSnapshotResponse = (value: unknown) => {
-          if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
-            useAgentLiveStore.getState().hydrateSnapshot(selectedId, previewAgentSnapshot(selectedId));
-            useAgentLiveStore.getState().applyEvents(selectedId, previewAgentEvents(selectedId));
-          } else {
-            useAgentLiveStore.getState().hydrate(selectedId, value);
-          }
+          useAgentLiveStore.getState().hydrate(selectedId, value);
         };
         const recentSnapshot = isRecentAgentSnapshot(snapshotResponse);
         if (!recentSnapshot || recentAgentSnapshotIsPresentable(snapshotResponse)) {
@@ -644,14 +637,6 @@ function AgentWorkspace() {
         publishNotice('model');
       }).catch((reason: unknown) => {
         if (!active) return;
-        if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
-          modelSelection.acceptConfirmedCatalog(
-            selectedId,
-            previewModelCatalog(selectedId),
-          );
-          publishNotice('model');
-          return;
-        }
         const cachedCatalog = modelCatalogCacheRef.current.get(selectedId);
         if (cachedCatalog) {
           modelSelection.acceptConfirmedCatalog(selectedId, cachedCatalog);
@@ -749,10 +734,16 @@ function AgentWorkspace() {
     return () => { active = false; };
   }, [isUserConversation, selectedId, snapshotReadySessionId, transport]);
 
-  const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
-    ?? personas.find((item) => item.roleId === 'companion-future-v1')
-    ?? personas[0];
-  const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
+  // Persona is optional Package data. Ordinary Sessions remain usable and
+  // visually neutral when that Package is absent; legacy role metadata is
+  // projected only for Room participant deep links that still own it.
+  const persona = isRoomParticipant
+    ? personas.find((item) => item.roleId === session?.roleId)
+    : undefined;
+  const subagentPackageEnabled = commands.some((command) => command.name === 'subagents');
+  useEffect(() => {
+    if (!subagentPackageEnabled) setSubagentsOpen(false);
+  }, [subagentPackageEnabled]);
   const busy = Boolean(activeTurnId);
   const branchBlocked = busy || sending;
   const rewriteBlocked = (
@@ -873,23 +864,27 @@ function AgentWorkspace() {
   }
 
   async function createSession(input: NewSessionInput): Promise<boolean> {
-    const creationPersona = defaultPersona;
-    if (!creationPersona) {
-      setError('角色目录尚未加载，暂时不能创建对话。');
-      return false;
-    }
     try {
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.sessions.create',
-        body: { title: input.title, mode: 'coordinator', roleId: creationPersona.roleId, roleVersion: creationPersona.version, toolProfileVersion: creationPersona.defaults.toolProfileVersion, workspaceRoots: input.workspaceRoots },
+        body: {
+          title: input.title,
+          mode: input.workspaceRoots.length ? 'coordinator' : 'assistant',
+          executionMode: input.executionMode,
+          toolProfileVersion: input.executionMode === 'read_only'
+            ? 'subagent-readonly-v1'
+            : 'control-center-v1',
+          workspaceRoots: input.workspaceRoots,
+          ...(input.executionMode === 'workspace_managed'
+            ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+            : {}),
+          ...(input.executionMode === 'full_trust' && input.dangerousModeConfirmed
+            ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+            : {}),
+        },
       });
       const created = isRecord(response.session) ? response.session as unknown as SessionSummary : undefined;
       if (created?.id) await loadSessions(created.id);
-      else if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
-        const mockSession = { ...previewSessions[0], id: `session-${Date.now()}`, title: input.title, mode: 'coordinator' as const, workspaceRoots: input.workspaceRoots, updatedAtMs: Date.now(), messageCount: 0, lastMessagePreview: '' };
-        setSessions((current) => [mockSession, ...current]);
-        selectSessionId(mockSession.id);
-      }
       setError('');
       return true;
     } catch (requestError) {
@@ -1024,7 +1019,13 @@ function AgentWorkspace() {
     if (value === '/permissions') { setSelectedDraft(''); setPermissionPickerRequest((current) => current + 1); return; }
     if (value === '/tools') { setSelectedDraft(''); openToolPicker(); return; }
     if (value === '/status' || value === '/session') { setSelectedDraft(''); setFilesOpen(false); setSubagentsOpen(false); setStatusOpen(true); return; }
-    if (value === '/subagents') { setSelectedDraft(''); setFilesOpen(false); setStatusOpen(false); setSubagentsOpen(true); return; }
+    if (value === '/subagents') {
+      if (!subagentPackageEnabled) {
+        setError('当前 Session 没有安装或启用 Subagent Package。');
+        return;
+      }
+      setSelectedDraft(''); setFilesOpen(false); setStatusOpen(false); setSubagentsOpen(true); return;
+    }
     if (value === '/settings') { setSelectedDraft(''); window.location.hash = '/configuration'; return; }
     if (value === '/help' || value === '/hotkeys') { setSelectedDraft(''); setHelpRequest((current) => current + 1); return; }
     if (value === '/stop') { setSelectedDraft(''); await stop(); return; }
@@ -1939,9 +1940,9 @@ function AgentWorkspace() {
   }
 
   return (
-    <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={sidePanelOpen} data-side-panel={subagentsOpen ? 'subagents' : filesOpen ? 'files' : statusOpen ? 'status' : 'none'}>
+    <main className="agent-feature" data-paw-agent-workbench={pawOsWorkbench || undefined} data-route-id="agent" data-rail-open={railOpen} data-status-open={sidePanelOpen} data-side-panel={subagentsOpen ? 'subagents' : filesOpen ? 'files' : statusOpen ? 'status' : 'none'}>
       <h1 className="agent-feature__title">Agent 任务中心</h1>
-      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} error={sessionLoadError} open={railOpen} modal={railModal} blocked={sidePanelModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => { if (mobileViewport) setRailOpen(false); setNewSessionOpen(true); }} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onRetry={() => void loadSessions(selectedIdRef.current || requestedSessionId)} onClose={closeMobileRail} />
+      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} error={sessionLoadError} open={railOpen} modal={railModal} blocked={sidePanelModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => { if (mobileViewport) setRailOpen(false); setNewSessionOpen(true); }} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onOpenWindow={pawOsDesktop ? (targetSession) => pawOsDesktop.openWindow({ appId: 'agent', target: { kind: 'session', id: targetSession.id, title: targetSession.title, subtitle: `${sessionProjectName(targetSession)} · ${sessionPermissionLabel(targetSession)}` } }) : undefined} onRetry={() => void loadSessions(selectedIdRef.current || requestedSessionId)} onClose={closeMobileRail} />
       <AgentPaneResizer side="rail" />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section
@@ -1968,12 +1969,12 @@ function AgentWorkspace() {
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
-            <IconButton ref={subagentsToggleRef} className="agent-subagents-toggle" aria-controls="agent-subagent-panel" aria-expanded={subagentsOpen} label={subagentsOpen ? '收起子 Agent 工作台' : '打开子 Agent 工作台'} icon={<Network size={17} />} disabled={!session} onClick={toggleSubagents} tooltip />
+            {subagentPackageEnabled ? <IconButton ref={subagentsToggleRef} className="agent-subagents-toggle" aria-controls="agent-subagent-panel" aria-expanded={subagentsOpen} label={subagentsOpen ? '收起子 Agent 工作台' : '打开子 Agent 工作台'} icon={<Network size={17} />} disabled={!session} onClick={toggleSubagents} tooltip /> : null}
             <IconButton ref={filesToggleRef} className="agent-files-toggle" aria-controls="agent-files-panel" aria-expanded={filesOpen} label={filesOpen ? '收起文件目录' : '展开文件目录'} icon={<FolderTree size={17} />} disabled={!session} onClick={toggleFiles} tooltip />
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && isUserConversation} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onContinueTurn={continueTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && isUserConversation} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onRetryTurn={retryTurn} onContinueTurn={continueTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
           <div className="agent-composer-dock">
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
@@ -2045,7 +2046,7 @@ function AgentWorkspace() {
         onClose={closeFilesPanel}
         onManageRoots={() => void manageWorkspaceRoots()}
       />
-      <SessionSubagentPanel
+      {subagentPackageEnabled ? <SessionSubagentPanel
         ref={subagentsRef}
         sessionId={selectedId}
         session={session}
@@ -2053,7 +2054,7 @@ function AgentWorkspace() {
         open={subagentsOpen}
         modal={subagentsModal}
         onClose={closeSubagentsPanel}
-      />
+      /> : null}
       <AgentStatusPanel
         ref={statusRef}
         sessionId={selectedId}
@@ -2217,7 +2218,6 @@ function modelCatalogNotice(value: unknown, usingCachedCatalog = false): string 
   }
   return '模型目录暂时不可用，对话记录仍可查看。';
 }
-function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }
 function shouldOpenTaskCenterByDefault(): boolean {
   return typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'

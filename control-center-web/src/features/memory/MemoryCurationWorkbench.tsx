@@ -10,8 +10,9 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useState } from 'react';
-import { Button, EmptyState } from '@/components/primitives';
+import { Button, Disclosure, EmptyState } from '@/components/primitives';
 import { useProductIdentity } from '@/features/identity/product-identity';
+import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import {
   ManagementMutationWorkflow,
   parseManagementWorkPreview,
@@ -42,6 +43,7 @@ export function MemoryCurationWorkbench({
   onOpenTimeline: (date: string) => void;
 }) {
   const identity = useProductIdentity();
+  const desktop = usePawOsDesktop();
   const queries = useMemoryCurationQueries(enabled);
   const mutationBoundary = useKnowledgeMutationBoundary();
   const [editingDiffId, setEditingDiffId] = useState(0);
@@ -245,8 +247,7 @@ export function MemoryCurationWorkbench({
                 </section>
               </div>
 
-              <details className="memory-curation__technical">
-                <summary>运行与索引详情</summary>
+              <Disclosure className="memory-curation__technical" summary="运行与索引详情">
                 <MetricStrip items={[
                   { label: '待整理来源', value: governedPending, detail: '等待分批整理', icon: RefreshCw, tone: governedPending ? 'warning' : 'success' },
                   { label: '需人工判定', value: governedNeedsReview, detail: '不会交给模型猜测', icon: ShieldCheck, tone: governedNeedsReview ? 'warning' : 'success' },
@@ -258,7 +259,7 @@ export function MemoryCurationWorkbench({
                 {stringValue(latestModelRun.lastError) ? (
                   <InlineNotice title="模型会话可继续" tone="warning">{modelRunErrorLabel(stringValue(latestModelRun.lastError))}；冻结输入和进度仍然保留。</InlineNotice>
                 ) : null}
-              </details>
+              </Disclosure>
             </>
           ) : (
             <InlineNotice title="可用整理范围" tone={booleanValue(statusPayload.due) ? 'warning' : 'info'}>
@@ -401,7 +402,7 @@ export function MemoryCurationWorkbench({
 
   function handoffToAgent() {
     const prompt = '请帮我稳妥地增量整理当前记忆：只准备一份可逐项审核的草案，保留原始来源，不要直接保存，也不要展示内部执行记录。完成后请告诉我可以回来审核。';
-    window.location.hash = `/agent?draft=${encodeURIComponent(prompt)}`;
+    openPawOsRoute(desktop, `/agent?draft=${encodeURIComponent(prompt)}`);
   }
 }
 

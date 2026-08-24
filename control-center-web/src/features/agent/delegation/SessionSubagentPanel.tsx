@@ -7,13 +7,14 @@ import {
   LoaderCircle,
   Network,
   PanelRightClose,
+  PanelsTopLeft,
   Settings2,
   ShieldAlert,
   TriangleAlert,
 } from 'lucide-react';
 import { forwardRef, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, IconButton } from '@/components/primitives';
+import { Button, Disclosure, IconButton } from '@/components/primitives';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { SessionSummary, ToolManifest } from '@/features/agent/types';
 import { usePageVisibility } from '@/platform/use-page-visibility';
@@ -39,14 +40,18 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
   session?: SessionSummary;
   tools: readonly ToolManifest[];
   open: boolean;
+  compactEmpty?: boolean;
   modal?: boolean;
+  onOpenRun?: (run: AgentSubagentRunV1) => void;
   onClose: () => void;
 }>(function SessionSubagentPanel({
   sessionId,
   session,
   tools,
   open,
+  compactEmpty = false,
   modal = false,
+  onOpenRun,
   onClose,
 }, ref) {
   const transport = useControlTransport();
@@ -85,6 +90,7 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
     isContractInvalid(run) || run.state === 'failed' || run.state === 'timed_out'
   )).length;
   const returnedCount = runs.filter((run) => !['queued', 'running'].includes(run.state)).length;
+  const showCompactEmpty = compactEmpty && !runsQuery.isPending && !runsQuery.error && runs.length === 0;
 
   return (
     <aside
@@ -114,7 +120,24 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
         </header>
 
         <div className="session-subagent-panel__body">
-          <section className="session-subagent-graph" aria-label="子 Agent 运行图">
+          {showCompactEmpty ? (
+            <Disclosure className="session-subagent-launch" data-compact-empty summary={<><CircleDashed size={14} /><span>当前没有子 Agent；需要时可在这里启动。</span></>}>
+              <SubagentLaunchPanel
+                availableTools={tools}
+                parents={[{
+                  sessionId,
+                  label: session?.title || '当前 Session',
+                  detail: session?.mode === 'coordinator' ? '主持 Session' : '助手 Session',
+                  canWrite: session?.mode === 'coordinator'
+                    && session.executionMode !== 'read_only'
+                    && Boolean(session.workspaceRoots?.length),
+                  workspaceRoots: session?.workspaceRoots ?? [],
+                  piSkillsEnabled: session?.piSkillsEnabled,
+                  codexSkillsEnabled: session?.codexSkillsEnabled,
+                }]}
+              />
+            </Disclosure>
+          ) : <><section className="session-subagent-graph" aria-label="子 Agent 运行图">
             <header>
               <span><Network size={17} /><strong>子 Agent 运行图</strong></span>
               <div aria-label="子 Agent 运行统计">
@@ -155,11 +178,11 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
               parent={selectedParent}
               run={selectedRun}
               sessionId={sessionId}
+              onOpen={onOpenRun ? () => onOpenRun(selectedRun) : undefined}
             />
           ) : null}
 
-          <details className="session-subagent-launch">
-            <summary><Settings2 size={14} /><span>启动与模板配置</span></summary>
+          <Disclosure className="session-subagent-launch" summary={<><Settings2 size={14} /><span>启动与模板配置</span></>}>
             <SubagentLaunchPanel
               availableTools={tools}
               parents={[{
@@ -174,7 +197,8 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
                 codexSkillsEnabled: session?.codexSkillsEnabled,
               }]}
             />
-          </details>
+          </Disclosure>
+          </>}
         </div>
       </> : null}
     </aside>
@@ -238,11 +262,13 @@ function SubagentNodeDetail({
   parent,
   childCount,
   sessionId,
+  onOpen,
 }: {
   run: AgentSubagentRunV1;
   parent?: AgentSubagentRunV1;
   childCount: number;
   sessionId: string;
+  onOpen?: () => void;
 }) {
   const failurePolicy = subagentFailurePolicy(run);
   const owner = parent ? subagentTemplateLabel(parent.templateId) : 'Root';
@@ -252,7 +278,10 @@ function SubagentNodeDetail({
       <header>
         <span className="session-subagent-node__icon"><RunIcon run={run} /></span>
         <span><strong>{subagentTemplateLabel(run.templateId)}</strong><small>第 {run.attemptNumber} 次尝试 · {subagentStateLabel(run)}</small></span>
-        <SubagentConsoleDialog run={run} sessionId={sessionId} triggerLabel={active ? '打开进度' : '打开结果'} />
+        <div className="session-subagent-detail__actions">
+          {onOpen ? <IconButton icon={<PanelsTopLeft size={15} />} label="弹成卫星窗" onClick={onOpen} tooltip /> : null}
+          <SubagentConsoleDialog run={run} sessionId={sessionId} triggerLabel={active ? '打开进度' : '打开结果'} />
+        </div>
       </header>
       <p className="session-subagent-detail__task">{run.task || '未公开任务说明'}</p>
       <div className="session-subagent-detail__flow" aria-label="节点流转">

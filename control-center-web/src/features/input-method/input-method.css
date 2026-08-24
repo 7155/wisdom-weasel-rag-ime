@@ -49,7 +49,8 @@ main[data-route-id='input'] .input-status-item[data-tone='danger'] .input-status
 @media (prefers-reduced-motion: reduce) {
   main[data-route-id='input'] .input-status-item__icon,
   main[data-route-id='input'] .input-settings-group__meta svg,
-  main[data-route-id='input'] .input-settings-advanced > summary::after { transition: none; }
+  main[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
+  main[data-route-id='input'] .input-settings-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
 }
 
 main[data-route-id='input'] .input-status-item__copy {
@@ -82,7 +83,7 @@ main[data-route-id='input'] .input-status-item__copy > span {
   -webkit-line-clamp: 2;
 }
 
-main[data-route-id='input'] .input-inline-action {
+main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action {
   display: grid;
   align-items: center;
   gap: var(--space-2);
@@ -90,7 +91,7 @@ main[data-route-id='input'] .input-inline-action {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-main[data-route-id='input'] .input-inline-action .mgmt-notice { margin: 0; }
+main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .mgmt-notice { margin: 0; }
 
 main[data-route-id='input'] .input-mode-layout {
   display: grid;
@@ -176,25 +177,29 @@ main[data-route-id='input'] .input-settings-group[data-attention='true'] {
   border-color: var(--color-accent-border);
 }
 
-main[data-route-id='input'] .input-settings-group[open] {
+main[data-route-id='input'] .input-settings-group[data-open='true'] {
   grid-column: 1 / -1;
 }
 
-main[data-route-id='input'] .input-settings-group > summary {
+main[data-route-id='input'] .input-settings-group__summary {
   display: flex;
+  width: 100%;
   min-height: 56px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
-  list-style: none;
+  font: inherit;
+  text-align: left;
   touch-action: manipulation;
+  transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-group > summary::-webkit-details-marker { display: none; }
-
-main[data-route-id='input'] .input-settings-group > summary:focus-visible {
+main[data-route-id='input'] .input-settings-group__summary:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
@@ -205,9 +210,10 @@ main[data-route-id='input'] .input-settings-group__copy {
   gap: 2px;
 }
 
-main[data-route-id='input'] .input-settings-group h3 {
+main[data-route-id='input'] .input-settings-group [role='heading'] {
   margin: 0;
   font-size: 14px;
+  font-weight: var(--font-weight-semibold);
   letter-spacing: 0;
 }
 
@@ -229,12 +235,37 @@ main[data-route-id='input'] .input-settings-group__meta {
 }
 
 main[data-route-id='input'] .input-settings-group__meta svg {
-  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-group[open] > summary .input-settings-group__meta svg {
+main[data-route-id='input'] .input-settings-group[data-open='true'] > .input-settings-group__summary .input-settings-group__meta svg {
   transform: rotate(180deg);
 }
+
+main[data-route-id='input'] .input-settings-disclosure {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    grid-template-rows var(--motion-disclose) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-settings-disclosure[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+main[data-route-id='input'] .input-settings-disclosure > div {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+main[data-route-id='input'] .input-settings-disclosure__content { min-width: 0; }
 
 main[data-route-id='input'] .input-setting-list {
   margin: 0;
@@ -245,39 +276,56 @@ main[data-route-id='input'] .input-settings-advanced {
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='input'] .input-settings-advanced > summary {
+main[data-route-id='input'] .input-settings-advanced > button {
   display: flex;
+  width: 100%;
   min-height: 44px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   padding: 0 12px;
+  border: 0;
+  background: transparent;
   cursor: pointer;
   color: var(--color-text-secondary);
+  font: inherit;
   font-size: 13px;
   font-weight: var(--font-weight-semibold);
-  list-style: none;
+  text-align: left;
+  touch-action: manipulation;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-advanced > summary::-webkit-details-marker { display: none; }
+main[data-route-id='input'] .input-settings-advanced > button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
 
-main[data-route-id='input'] .input-settings-advanced > summary::after {
-  width: 7px;
-  height: 7px;
+main[data-route-id='input'] .input-settings-advanced > button svg {
   flex: 0 0 auto;
-  border-right: 1.5px solid currentcolor;
-  border-bottom: 1.5px solid currentcolor;
-  content: '';
-  transform: rotate(45deg) translateY(-2px);
-  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-advanced[open] > summary {
+main[data-route-id='input'] .input-settings-advanced[data-open='true'] > button {
   color: var(--color-text-primary);
 }
 
-main[data-route-id='input'] .input-settings-advanced[open] > summary::after {
-  transform: rotate(225deg) translateY(-2px);
+main[data-route-id='input'] .input-settings-advanced[data-open='true'] > button svg {
+  transform: rotate(180deg);
+}
+
+main[data-route-id='input'] .input-settings-advanced[data-attention='true'] > button { color: var(--color-accent); }
+
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='input'] .input-settings-group__summary:hover,
+  main[data-route-id='input'] .input-settings-advanced > button:hover { background: var(--color-surface-subtle); }
+}
+
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-group__meta svg,
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
+
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-disclosure {
+  transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
 main[data-route-id='input'] .input-setting-row {
@@ -395,38 +443,78 @@ main[data-route-id='input'] .input-settings-diff-title {
 
 main[data-route-id='input'] .mgmt-toolbar { justify-content: space-between; }
 
-main[data-route-id='input'] label.mgmt-list__row {
+/* The system App owns the scroll viewport, while this route owns the reading
+   inset. Keeping the first body block below the sticky action strip prevents
+   the native chrome from visually cutting into the first section on short
+   windows. */
+main:is([data-route-id='input'], [data-route-id='input-lexicon'])[data-paw-os-app] > .mgmt-page__body {
+  padding-top: clamp(18px, 3vw, 28px);
+}
+
+main[data-route-id='input-lexicon'] label.mgmt-list__row {
   min-height: 44px;
   cursor: pointer;
   grid-template-columns: 20px minmax(0, 1fr) max-content;
 }
 
-main[data-route-id='input'] label.mgmt-list__row > input {
+/* The shared management grammar collapses its first row below 860px so
+   generic title/meta/status rows can breathe. Lexicon review rows have a
+   fixed leading control, however; restoring that track keeps the checkbox
+   out of the candidate title and leaves the status chip in its own column. */
+main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
+  grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) max-content;
+  grid-template-areas: 'check content status';
+  align-items: start;
+  min-height: 58px;
+  row-gap: 6px;
+}
+
+main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > input {
+  grid-area: check;
+  margin-top: 3px;
+}
+
+main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-list__content {
+  grid-area: content;
+  align-self: start;
+}
+
+main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-status {
+  grid-area: status;
+  align-self: start;
+  justify-self: start;
+}
+
+main[data-route-id='input-lexicon'] label.mgmt-list__row > input {
   width: 16px;
   height: 16px;
   margin: 0;
   accent-color: var(--color-accent);
 }
 
-main[data-route-id='input'] .mgmt-list__content {
+main[data-route-id='input-lexicon'] .mgmt-list__content {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-main[data-route-id='input'] .mgmt-list__content strong {
+main[data-route-id='input-lexicon'] .mgmt-list__content strong {
   overflow: hidden;
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .mgmt-list__content span {
+main[data-route-id='input-lexicon'] .mgmt-list__content span {
+  display: -webkit-box;
   overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--color-text-secondary);
   font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 @media (max-width: 980px) {
@@ -460,8 +548,8 @@ main[data-route-id='input'] .mgmt-list__content span {
   }
 
   main[data-route-id='input'] .input-status-item:last-child { border-bottom: 0; }
-  main[data-route-id='input'] .input-inline-action { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='input'] .input-inline-action .ui-button { justify-self: start; }
+  main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action { grid-template-columns: minmax(0, 1fr); }
+  main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .ui-button { justify-self: start; }
   main[data-route-id='input'] .input-setting-row { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='input'] .input-setting-row dd { justify-items: start; text-align: left; }
 
@@ -481,7 +569,7 @@ main[data-route-id='input'] .mgmt-list__content span {
   }
 
   main[data-route-id='input'] .input-settings-save__heading,
-  main[data-route-id='input'] .input-settings-group > summary {
+  main[data-route-id='input'] .input-settings-group__summary {
     align-items: flex-start;
   }
 
@@ -506,6 +594,41 @@ main[data-route-id='input'] .mgmt-list__content span {
   }
 }
 
-main[data-route-id='input'] details:not([open]) > :not(summary) {
-  display: none;
+@container paw-window (max-width: 900px) {
+  main[data-route-id='input'][data-paw-os-app] .input-mode-layout,
+  main[data-route-id='input'][data-paw-os-app] .input-settings-layout,
+  main[data-route-id='input'][data-paw-os-app] .input-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='input'][data-paw-os-app] .input-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container paw-window (max-width: 860px) {
+  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
+    grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) max-content;
+  }
+}
+
+@container paw-window (max-width: 560px) {
+  main[data-route-id='input'][data-paw-os-app] .input-status-grid,
+  main[data-route-id='input'][data-paw-os-app] .input-inline-action,
+  main[data-route-id='input'][data-paw-os-app] .input-setting-row,
+  main[data-route-id='input'][data-paw-os-app] .input-setting-editor-row .ui-field { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='input'][data-paw-os-app] .input-status-item { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  main[data-route-id='input'][data-paw-os-app] .input-setting-row dd { justify-items: start; text-align: left; }
+  main[data-route-id='input'][data-paw-os-app] .input-settings-save__heading { display: grid; }
+
+  main[data-route-id='input-lexicon'][data-paw-os-app] .input-inline-action {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
+    grid-template-columns: minmax(20px, max-content) minmax(0, 1fr);
+    grid-template-areas:
+      'check content'
+      '. status';
+    min-height: 78px;
+  }
+
+  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-status {
+    justify-self: start;
+  }
 }

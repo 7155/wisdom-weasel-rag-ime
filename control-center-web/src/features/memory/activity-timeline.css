@@ -25,7 +25,8 @@
 .activity-calendar__kicker {
   color: var(--color-accent);
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1.4;
   font-weight: 750;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -40,7 +41,8 @@
 .activity-calendar__header p {
   margin: 3px 0 0;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .activity-calendar__month-controls {
@@ -59,20 +61,15 @@
   border-bottom: 1px solid color-mix(in srgb, var(--color-info) 24%, var(--color-border));
   background: color-mix(in srgb, var(--color-info) 8%, var(--color-surface));
   color: var(--color-text-secondary);
-  font-size: 12px;
-}
-
-.activity-calendar__organize-status span {
-  min-width: 0;
-  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .activity-calendar__organize-status svg {
   flex: 0 0 auto;
   color: var(--color-info);
+  animation: daily-journal-spin 1s linear infinite;
 }
-
-.activity-calendar__organize-status[data-active='true'] svg { animation: daily-journal-spin 1s linear infinite; }
 
 .activity-calendar__organize-status[data-tone='danger'] {
   border-bottom-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
@@ -81,16 +78,6 @@
 }
 
 .activity-calendar__organize-status[data-tone='danger'] svg { animation: none; color: var(--color-danger); }
-.activity-calendar__organize-status[data-tone='warning'] {
-  border-bottom-color: color-mix(in srgb, var(--color-warning) 28%, var(--color-border));
-  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
-}
-.activity-calendar__organize-status[data-tone='warning'] svg { color: var(--color-warning); }
-.activity-calendar__organize-status[data-tone='success'] {
-  border-bottom-color: color-mix(in srgb, var(--color-success) 26%, var(--color-border));
-  background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface));
-}
-.activity-calendar__organize-status[data-tone='success'] svg { color: var(--color-success); }
 
 .activity-calendar__summary {
   display: flex;
@@ -101,7 +88,8 @@
   padding: 7px 14px;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
 
@@ -126,7 +114,8 @@
 .activity-calendar__weekdays span {
   padding: 6px 8px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1.4;
   font-weight: 650;
   text-align: center;
 }
@@ -190,11 +179,12 @@
 }
 
 .activity-calendar__state svg { flex: 0 0 auto; }
-.activity-calendar__state small { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-calendar__state small { overflow: hidden; font-size: 13px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .activity-calendar__day b {
   color: var(--color-text-tertiary);
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1.4;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
@@ -223,7 +213,8 @@
 .activity-calendar__message {
   padding: 12px 14px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .activity-calendar__loading { border-top: 1px solid var(--color-border); }
@@ -235,7 +226,8 @@
   gap: 7px 16px;
   padding: 8px 14px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .activity-calendar__legend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -247,7 +239,7 @@
   margin: 0;
   padding: 0 14px 10px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -304,7 +296,8 @@
 .daily-journal__identity > div { min-width: 0; }
 .daily-journal__identity > div > span {
   color: var(--color-accent);
-  font-size: 10px;
+  font-size: 13px;
+  line-height: 1.4;
   font-weight: 750;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -372,13 +365,14 @@
 .daily-journal__highlights time {
   color: var(--color-text-tertiary);
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
 
 .daily-journal__highlights button > span { display: grid; min-width: 0; gap: 2px; }
 .daily-journal__highlights strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.daily-journal__highlights small { overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.daily-journal__highlights small { overflow: hidden; color: var(--color-text-secondary); font-size: 14px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .daily-journal__highlights svg { color: var(--color-text-tertiary); }
 .daily-journal__highlights button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .daily-journal__highlights button:active { transform: scale(.995); }
@@ -395,7 +389,8 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .daily-journal__source svg:first-child { color: var(--color-accent); }
@@ -423,13 +418,14 @@
 }
 
 .daily-journal__facts dl > div:nth-child(2n) { border-right: 0; }
-.daily-journal__facts dt { color: var(--color-text-tertiary); font-size: 10px; }
+.daily-journal__facts dt { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; }
 .daily-journal__facts dd { margin: 3px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 700; }
 
 .daily-journal__apps { padding: 12px; }
 .daily-journal__apps > span {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 13px;
+  line-height: 1.4;
   font-weight: 700;
   letter-spacing: .06em;
 }
@@ -440,7 +436,8 @@
   min-width: 0;
   align-items: center;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1.45;
   grid-template-columns: 7px minmax(0, 1fr) auto;
   gap: 7px;
 }
@@ -463,16 +460,16 @@
 .daily-journal__loading { grid-template-columns: auto 1fr; align-items: center; }
 .daily-journal__loading svg { animation: daily-journal-spin 1s linear infinite; }
 .daily-journal__empty-copy strong { color: var(--color-text-primary); font-size: 15px; }
-.daily-journal__empty-copy span { max-width: 70ch; font-size: 12px; line-height: 1.55; }
+.daily-journal__empty-copy span { max-width: 70ch; font-size: 15px; line-height: 1.6; }
 .daily-journal__empty-copy button { margin-top: 5px; }
-.daily-journal__quiet { color: var(--color-text-tertiary); font-size: 12px; }
+.daily-journal__quiet { color: var(--color-text-tertiary); font-size: 14px; line-height: 1.45; }
 
 .daily-journal__boundary {
   margin: 0;
   padding: 7px 16px 8px 18px;
   border-top: 1px solid var(--color-border);
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -508,7 +505,8 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .activity-timeline__day-source svg:first-child { color: var(--color-accent); }
@@ -549,7 +547,7 @@
 .activity-day-map > header > div { display: inline-flex; align-items: center; gap: 7px; }
 .activity-day-map > header svg { color: var(--color-accent); }
 .activity-day-map > header strong { font-size: 13px; }
-.activity-day-map > header > span { color: var(--color-text-tertiary); font-size: 12px; }
+.activity-day-map > header > span { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; }
 
 .activity-day-map__axis {
   display: flex;
@@ -558,7 +556,7 @@
   color: var(--color-text-tertiary);
   font-family: var(--font-ui);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .activity-day-map__rows {
@@ -593,7 +591,7 @@
 .activity-day-map__row > button[data-period='evening'] { --period-color: var(--color-accent); }
 .activity-day-map__row > button[data-period='day'] { --period-color: var(--color-success); }
 .activity-day-map__row > button:focus-visible { outline: 2px solid var(--period-color); outline-offset: 2px; }
-.activity-day-map__row > button span { display: block; overflow: hidden; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.activity-day-map__row > button span { display: block; overflow: hidden; font-size: 14px; line-height: 1.4; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 
 .activity-timeline__period {
   display: grid;
@@ -650,7 +648,7 @@
 .activity-timeline__period-header p {
   margin: 2px 0 0;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -659,7 +657,7 @@
   color: var(--color-text-secondary);
   font-family: var(--font-ui);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -734,7 +732,7 @@
 .activity-timeline__task-time time {
   font-family: var(--font-ui);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
@@ -742,7 +740,8 @@
 
 .activity-timeline__task-time small {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .activity-timeline__task-main {
@@ -796,7 +795,8 @@
   border-radius: 3px;
   background: var(--color-canvas);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .activity-timeline__task-apps i,
@@ -836,7 +836,8 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .activity-timeline__task-stats svg { flex: 0 0 auto; }
@@ -899,7 +900,7 @@
 }
 
 .activity-timeline__task-detail-metrics > div:last-child { border-right: 0; }
-.activity-timeline__task-detail-metrics dt { color: var(--color-text-tertiary); font-size: 12px; }
+.activity-timeline__task-detail-metrics dt { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; }
 .activity-timeline__task-detail-metrics dd { margin: 0; font-size: 17px; font-weight: 800; }
 
 .activity-timeline__detail-section {
@@ -918,10 +919,10 @@
 }
 
 .activity-timeline__detail-section > h3 svg { color: var(--color-accent); }
-.activity-timeline__detail-section > p { margin: -3px 0 0; color: var(--color-text-tertiary); font-size: 12px; }
+.activity-timeline__detail-section > p { margin: -3px 0 0; color: var(--color-text-tertiary); font-size: 14px; line-height: 1.45; }
 .activity-timeline__detail-apps > span { padding: 6px 8px; }
-.activity-timeline__detail-apps strong { font-size: 12px; }
-.activity-timeline__detail-apps small { color: var(--color-text-tertiary); font-size: 12px; }
+.activity-timeline__detail-apps strong { font-size: 14px; line-height: 1.4; }
+.activity-timeline__detail-apps small { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; }
 
 .activity-timeline__event-list {
   display: grid;
@@ -957,11 +958,11 @@
   color: var(--color-text-tertiary);
   font-family: var(--font-ui);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .activity-timeline__event > summary > strong {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -986,7 +987,7 @@
 .activity-timeline__event-body > p {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 15px;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -1003,7 +1004,7 @@
   color: var(--color-accent);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -1021,7 +1022,7 @@
   color: var(--color-text-tertiary);
   font-family: var(--font-ui);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .activity-timeline__event-meta > [data-tone='warning'] { color: var(--color-warning); }
@@ -1037,7 +1038,7 @@
   min-height: 38px;
   padding: 7px 10px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   grid-template-columns: minmax(0, 1fr) 18px;
 }
@@ -1048,6 +1049,14 @@
   padding: 0 10px 10px;
   list-style: none;
   gap: 6px;
+}
+
+.activity-timeline__source-refs > .ui-disclosure__reveal > .activity-timeline__source-refs-body {
+  max-block-size: min(42vh, 248px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--color-border-strong) transparent;
+  scrollbar-width: thin;
 }
 
 .activity-timeline__source-refs li {
@@ -1075,15 +1084,16 @@
 .activity-timeline__source-refs li > button > svg:last-child { color: var(--color-text-tertiary); }
 .activity-timeline__source-refs li > button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -1px; }
 .activity-timeline__source-refs li > button > span { display: grid; min-width: 0; gap: 2px; }
-.activity-timeline__source-refs li strong { font-size: 12px; overflow-wrap: anywhere; }
+.activity-timeline__source-refs li strong { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
 .activity-timeline__source-refs li small,
-.activity-timeline__source-refs li time { color: var(--color-text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
+.activity-timeline__source-refs li time { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 
 .activity-timeline__source-unavailable,
 .activity-timeline__evidence-empty,
 .activity-timeline__evidence-limit {
   color: var(--color-text-tertiary) !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
+  line-height: 1.45;
 }
 
 .activity-timeline__evidence-empty {
@@ -1092,7 +1102,14 @@
   text-align: center;
 }
 
-.activity-timeline__evidence-limit { margin: 0 !important; }
+.activity-timeline__evidence-limit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 !important;
+  padding-top: 8px;
+}
 
 @media (hover: hover) and (pointer: fine) {
   .activity-calendar__day:hover:not(:disabled) {
@@ -1185,8 +1202,8 @@
   .activity-calendar__blank { min-height: 58px; }
   .activity-calendar__day { padding: 6px 4px; justify-items: center; text-align: center; }
   .activity-calendar__state { gap: 2px; }
-  .activity-calendar__state small { max-width: 34px; font-size: 9px; }
-  .activity-calendar__day b { font-size: 9px; }
+  .activity-calendar__state small { max-width: 44px; font-size: 12px; }
+  .activity-calendar__day b { font-size: 12px; }
   .activity-calendar__weekdays span { padding-inline: 2px; }
   .activity-timeline__day-source {
     min-height: 44px;
@@ -1233,5 +1250,12 @@
   .daily-journal__source svg:last-child,
   .activity-calendar__day,
   .activity-day-map__row > button,
-  .activity-timeline__task { animation: none; transition: none; }
+  .activity-timeline__task,
+  .activity-timeline__event summary svg,
+  .activity-timeline__source-refs summary svg { animation: none; transition: none; }
 }
+
+:root[data-reduce-motion='true'] .activity-timeline__event summary svg,
+:root[data-reduce-motion='true'] .activity-timeline__source-refs summary svg,
+:root[data-reduce-motion='true'] .activity-timeline__event .ui-disclosure__reveal,
+:root[data-reduce-motion='true'] .activity-timeline__source-refs .ui-disclosure__reveal { transition: none; }

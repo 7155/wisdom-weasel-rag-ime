@@ -10,12 +10,13 @@ import {
   LoaderCircle,
   Paperclip,
   PanelRightClose,
+  PanelsTopLeft,
   Radar,
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
-import { forwardRef, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { IconButton } from '@/components/primitives';
+import { forwardRef, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Disclosure, IconButton } from '@/components/primitives';
 import { selectRoomParticipantPublicProgress } from '@/contracts/room-reducer';
 import type {
   RoomActivityProjection,
@@ -30,6 +31,7 @@ import { ROOM_PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleDescription, roo
 import { roomActivityNeedsSessionAction } from './runtime/room-execution-lanes';
 import { roomProjection, useRoomLiveStore } from './state/live-store';
 import { publicToolName } from '../agent/tool-presentation';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import '../agent/agent.css';
 
 export const RoomStatusPanel = forwardRef<HTMLElement, {
@@ -38,7 +40,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   projection?: RoomProjectionState;
   open: boolean;
   modal?: boolean;
-  onClose: () => void;
+  onClose?: () => void;
 }>(function RoomStatusPanel({
   room,
   roomId = '',
@@ -65,8 +67,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   const activeTopics = (room?.topics ?? []).filter((topic) => topic.status === 'active');
   const workItems = room?.workItems ?? [];
   const visibleWorkItems = [...workItems]
-    .sort((left, right) => roomWorkPriority(left.state) - roomWorkPriority(right.state))
-    .slice(0, 8);
+    .sort((left, right) => roomWorkPriority(left.state) - roomWorkPriority(right.state));
   const activityGroups = collapseRoomStatusActivities(activities).slice(-8);
   const publicMessageCount = messages.filter((message) => message.projectionKind !== 'execution').length;
 
@@ -85,7 +86,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
     >
       <header>
         <span><strong>协作进展</strong><small>{turn ? roomProjectedStatusLabel(projectedStatus) : '等你开始新一轮'}</small></span>
-        <IconButton icon={<PanelRightClose size={17} />} label="收起进展面板" onClick={onClose} tooltip />
+        {onClose ? <IconButton icon={<PanelRightClose size={17} />} label="收起进展面板" onClick={onClose} tooltip /> : null}
       </header>
       <div className="agent-status-panel__body">
         <RoomStatusSection count={turn ? 1 : 0} icon={ListChecks} title="当前回合">
@@ -165,7 +166,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
         </RoomStatusSection>
 
         <RoomStatusSection count={room?.participants.filter((participant) => participant.status === 'active').length ?? 0} defaultOpen={false} icon={Bot} title="伙伴状态">
-          {room?.participants.some((participant) => participant.status === 'active') ? <div className="room-status-participants">{room.participants.filter((participant) => participant.status === 'active').map((participant) => <RoomParticipantTelemetry key={participant.id} participant={participant} />)}</div> : <RoomStatusEmpty>还没有伙伴加入</RoomStatusEmpty>}
+          {room?.participants.some((participant) => participant.status === 'active') ? <div className="room-status-participants">{room.participants.filter((participant) => participant.status === 'active').map((participant) => <RoomParticipantTelemetry key={participant.id} participant={participant} roomId={room.id} />)}</div> : <RoomStatusEmpty>还没有伙伴加入</RoomStatusEmpty>}
         </RoomStatusSection>
 
         {room ? (
@@ -347,10 +348,11 @@ function RoomParticipantPublicLanes({
   </div>;
 }
 
-function RoomParticipantTelemetry({ participant }: { participant: NonNullable<RoomSummary['participants']>[number] }) {
+function RoomParticipantTelemetry({ participant, roomId }: { participant: NonNullable<RoomSummary['participants']>[number]; roomId: string }) {
+  const pawOsDesktop = usePawOsDesktop();
   const telemetry = useAgentLiveStore((state) => state.projections[participant.sessionId]?.telemetry);
   if (!telemetry) {
-    return <RoomStatusRow detail={`${roomCollaborationRoleLabel(participant.collaborationRole)} · ${participant.status === 'active' ? '已加入' : '暂未参与'}`} icon={Bot} title={participant.displayName} />;
+    return <article className="room-participant-telemetry room-participant-telemetry--quiet"><header><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {participant.status === 'active' ? '已加入' : '暂未参与'}</small></span>{pawOsDesktop ? <IconButton label={`打开${participant.displayName}伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow({ appId: 'agent', target: { kind: 'participant', id: participant.id, roomId, title: participant.displayName, subtitle: `${roomCollaborationRoleLabel(participant.collaborationRole)} · Session ${participant.sessionId}` } })} tooltip /> : null}</header></article>;
   }
   const context = telemetry.context;
   const cumulative = telemetry.cumulativeUsage;
@@ -362,6 +364,7 @@ function RoomParticipantTelemetry({ participant }: { participant: NonNullable<Ro
       <header>
         <span><strong>{participant.displayName}</strong><small>{telemetry.model.name || telemetry.model.id} · {roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
         <i data-state={participant.status}>{telemetry.isCompacting ? '整理上下文' : participant.status === 'active' ? '已加入' : '暂未参与'}</i>
+        {pawOsDesktop ? <IconButton label={`打开${participant.displayName}伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow({ appId: 'agent', target: { kind: 'participant', id: participant.id, roomId, title: participant.displayName, subtitle: `${roomCollaborationRoleLabel(participant.collaborationRole)} · Session ${participant.sessionId}` } })} tooltip /> : null}
       </header>
       <div className="room-participant-telemetry__numbers">
         <span title="累计提示 Token">{roomTokenCount(promptTokens)} 输入</span>
@@ -369,7 +372,7 @@ function RoomParticipantTelemetry({ participant }: { participant: NonNullable<Ro
         <strong title="累计缓存命中率">缓存 {cachePercent}%</strong>
       </div>
       <div className="room-participant-telemetry__bar" aria-label={percent === null ? '上下文占用待校准' : `上下文已使用 ${Math.round(percent)}%`}>
-        <span style={{ width: `${percent ?? 0}%` }} />
+        <span style={{ '--room-context-progress': (percent ?? 0) / 100 } as CSSProperties} />
         <b>{percent === null ? '待校准' : `${Math.round(percent)}%`}</b>
       </div>
       <p>{context.tokensUntilCompact === null ? '下一轮响应后校准' : `距自动压缩约 ${roomTokenCount(context.tokensUntilCompact)}`}</p>
@@ -448,7 +451,17 @@ function RoomWorkRow({ room, work }: { room?: RoomSummary; work: RoomWorkItem })
       {work.acceptanceCriteria.length ? <p><span>检查</span>{work.acceptanceCriteria.length} 项标准</p> : null}
       {work.revision ? <p><span>修订</span>第 {work.revision} 次</p> : null}
       {blocker ? <p className="room-status-work__blocker"><span>阻塞</span>{blocker}</p> : null}
-      {showFullObjective ? <details className="room-status-work__full"><summary>查看完整任务</summary><p>{work.objective}</p></details> : null}
+      {showFullObjective || work.acceptanceCriteria.length ? (
+        <Disclosure
+          className="room-status-work__full"
+          summary={showFullObjective
+            ? work.acceptanceCriteria.length ? '查看完整任务与验收' : '查看完整任务'
+            : '查看验收条件'}
+        >
+          {showFullObjective ? <p>{work.objective}</p> : null}
+          {work.acceptanceCriteria.length ? <ul aria-label="验收条件">{work.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul> : null}
+        </Disclosure>
+      ) : null}
     </div>
   </article>;
 }
@@ -464,6 +477,7 @@ function latestRoomTurn(projection: RoomProjectionState): RoomTurnProjection | u
 type RoomProjectedStatus =
   | 'queued'
   | 'running'
+  | 'waiting_approval'
   | 'waiting_review'
   | 'waiting_select'
   | 'waiting_input'
@@ -583,6 +597,8 @@ function roomActivityStatus(
   const decision = text(activity.payload.decision)
     || text((activity.payload.approvalModelDecision as Record<string, unknown> | undefined)?.decision);
   const state = text(activity.payload.resolutionState || activity.payload.state);
+  const decisionMode = text(activity.payload.decisionMode || activity.payload.mode);
+  if (automatic && decisionMode === 'policy') return 'completed';
   if (
     automatic
     && !decision
@@ -623,9 +639,11 @@ function roomProjectedStatus(
   if (pending) {
     const requestKind = text(pending.payload.requestKind);
     if (
+      Boolean(text(pending.payload.approvalId))
+    ) return 'waiting_approval';
+    if (
       requestKind === 'plan_review'
       || requestKind === 'memory_review'
-      || Boolean(text(pending.payload.approvalId))
     ) return 'waiting_review';
     if (text(pending.payload.method) === 'select' || Array.isArray(pending.payload.options)) {
       return 'waiting_select';
@@ -652,6 +670,7 @@ function roomProjectedStatusLabel(status: RoomProjectedStatus): string {
   return {
     queued: '等待协作',
     running: '协作中',
+    waiting_approval: '等待审批',
     waiting_review: '等待审阅',
     waiting_select: '等待选择',
     waiting_input: '等待回答',
@@ -682,7 +701,7 @@ function roomWorkStateLabel(state: RoomWorkItem['state']): string {
   return {
     queued: '待接收',
     active: '执行中',
-    review: '一起检查',
+    review: '等待汇合',
     blocked: '已阻塞',
     done: '已完成',
     failed: '未完成',

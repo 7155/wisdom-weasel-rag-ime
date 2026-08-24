@@ -63,16 +63,24 @@ export function createConfiguredControlTransport(): ControlTransport {
     return new HttpControlTransport({
       baseUrl: developmentOverride === 'http'
         ? window.location.origin
-        : import.meta.env.VITE_CONTROL_BASE_URL ?? 'http://127.0.0.1:8766',
+        : isElectronPawHost()
+          ? window.location.origin
+          : import.meta.env.VITE_CONTROL_BASE_URL ?? 'http://127.0.0.1:8766',
     });
   }
   return createPreviewTransport();
 }
 
+function isElectronPawHost(): boolean {
+  return window.pawBrowserHost?.kind === 'electron-webview'
+    || new URLSearchParams(window.location.search).get('pawHost') === 'electron';
+}
+
 function developmentTransportOverride(): 'http' | 'mock' | null {
   if (!import.meta.env.DEV) return null;
   const requested = new URLSearchParams(window.location.search).get('controlTransport');
-  return requested === 'http' || requested === 'mock' ? requested : null;
+  if (requested === 'http' || requested === 'mock') return requested;
+  return 'http';
 }
 
 function detectTransport(): 'native' | 'http' | 'mock' {

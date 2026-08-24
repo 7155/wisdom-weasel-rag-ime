@@ -38,6 +38,7 @@ afterEach(cleanup);
 
 describe('DiagnosticsFeature runtime actions', () => {
   it('keeps backend failure reasons visible and names voice components', async () => {
+    const user = userEvent.setup();
     renderFeature(new MockControlTransport({ routes }));
 
     expect(await screen.findByText('实时转写')).toBeInTheDocument();
@@ -48,6 +49,28 @@ describe('DiagnosticsFeature runtime actions', () => {
     expect(screen.queryByText('已返回运行信息')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '等待前台验证' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重新检查' })).toBeInTheDocument();
+
+    const service = screen.getByText('实时转写').closest('details');
+    expect(service).toHaveClass('diagnostics-service');
+    expect(service).not.toHaveAttribute('open');
+    expect(within(service as HTMLElement).queryByText('建议处理')).not.toBeInTheDocument();
+
+    await user.click(within(service as HTMLElement).getByText('实时转写'));
+    expect(service).toHaveAttribute('open');
+    expect(within(service as HTMLElement).getByText('建议处理')).toBeInTheDocument();
+    expect(within(service as HTMLElement).getByText('先更新或重新部署受管输入法，再到真实应用中复测语音输入。')).toBeInTheDocument();
+
+    await user.click(within(service as HTMLElement).getByText('脱敏技术记录'));
+    expect(within(service as HTMLElement).getByText(/"component": "实时转写"/)).toBeInTheDocument();
+    expect(within(service as HTMLElement).queryByText(/voice was installed/i)).not.toBeInTheDocument();
+
+    await user.click(within(service as HTMLElement).getByText('实时转写'));
+    expect(within(service as HTMLElement).getByText('实时转写').closest('summary')).toHaveAttribute('aria-expanded', 'false');
+    expect(service).toHaveAttribute('open');
+    expect(service?.querySelector('.diagnostics-disclosure__reveal')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(service as HTMLElement).getByText('建议处理')).toBeInTheDocument();
+    await waitFor(() => expect(service).not.toHaveAttribute('open'));
+    expect(within(service as HTMLElement).queryByText('建议处理')).not.toBeInTheDocument();
   });
 
   it('keeps candidate source, install, connection, production, and foreground render evidence separate', async () => {

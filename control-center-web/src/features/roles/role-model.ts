@@ -60,14 +60,32 @@ export type AgentDefaultCompanion = {
   roleVersion: string;
 };
 
+export const modelRouteIds = [
+  'primary',
+  'toolAgent',
+  'subagent',
+  'roomCoordinator',
+] as const;
+
+export type ModelRouteId = typeof modelRouteIds[number];
+export type ModelRouteThinkingLevel =
+  | 'inherit'
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
+
+export type AgentModelRoute = {
+  modelProfile: string;
+  thinkingLevel: ModelRouteThinkingLevel;
+};
+
 export type AgentModelRouting = {
   revision: number;
-  sessionModelProfile: string;
-  sessionThinkingLevel: string;
-  roomPartnerModelProfile: string;
-  roomPartnerThinkingLevel: string;
-  toolAgentModelProfile: string;
-  toolAgentThinkingLevel: string;
+  routes: Record<ModelRouteId, AgentModelRoute>;
 };
 
 export const timelineOptions: ReadonlyArray<{
@@ -99,22 +117,21 @@ export function agentModelRouting(value: unknown): AgentModelRouting | null {
   const snapshot = record(record(value).configuration);
   const configuration = record(snapshot.configuration);
   const routing = record(configuration.modelRouting);
-  const legacyDefaults = record(configuration.sessionDefaults);
-  const legacyModel = textValue(legacyDefaults.modelProfile);
   const revision = numberValue(snapshot.revision);
-  const sessionModelProfile = textValue(routing.sessionModelProfile) || legacyModel;
-  const roomPartnerModelProfile = textValue(routing.roomPartnerModelProfile) || legacyModel;
-  const toolAgentModelProfile = textValue(routing.toolAgentModelProfile) || legacyModel;
-  if (!revision || !sessionModelProfile || !roomPartnerModelProfile || !toolAgentModelProfile) return null;
-  return {
-    revision,
-    sessionModelProfile,
-    sessionThinkingLevel: textValue(routing.sessionThinkingLevel) || 'off',
-    roomPartnerModelProfile,
-    roomPartnerThinkingLevel: textValue(routing.roomPartnerThinkingLevel) || 'off',
-    toolAgentModelProfile,
-    toolAgentThinkingLevel: textValue(routing.toolAgentThinkingLevel) || 'off',
-  };
+  if (revision <= 0) return null;
+  const routes = Object.fromEntries(modelRouteIds.map((routeId) => {
+    const route = record(routing[routeId]);
+    const thinkingLevel = textValue(route.thinkingLevel) || 'inherit';
+    return [routeId, {
+      modelProfile: textValue(route.modelProfile) || 'inherit',
+      thinkingLevel: isModelRouteThinkingLevel(thinkingLevel) ? thinkingLevel : 'inherit',
+    }];
+  })) as Record<ModelRouteId, AgentModelRoute>;
+  return { revision, routes };
+}
+
+function isModelRouteThinkingLevel(value: string): value is ModelRouteThinkingLevel {
+  return ['inherit', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value);
 }
 
 export function record(value: unknown): Record<string, unknown> {

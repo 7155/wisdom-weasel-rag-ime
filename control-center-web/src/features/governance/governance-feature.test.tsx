@@ -127,22 +127,19 @@ describe('GovernanceCenter', () => {
 
     const confirmed = screen.getByText('已确认信息').closest('article');
     expect(confirmed).not.toBeNull();
-    const ownerId = within(confirmed!).getByText('owner-a');
-    const scopeId = within(confirmed!).getByText('room-1');
-    expect(ownerId).not.toBeVisible();
-    expect(scopeId).not.toBeVisible();
+    expect(within(confirmed!).queryByText('owner-a')).not.toBeInTheDocument();
+    expect(within(confirmed!).queryByText('room-1')).not.toBeInTheDocument();
     expect(within(confirmed!).getByText('高级：记录详情').closest('details')).not.toHaveAttribute('open');
 
     fireEvent.click(within(confirmed!).getByText('高级：记录详情'));
-    expect(ownerId).toBeVisible();
-    expect(scopeId).toBeVisible();
+    expect(within(confirmed!).getByText('owner-a')).toBeVisible();
+    expect(within(confirmed!).getByText('room-1')).toBeVisible();
 
     const tombstone = screen.getByText('已退出检索').closest('article');
     expect(tombstone).not.toBeNull();
-    const sessionId = within(tombstone!).getByText('session-1');
-    expect(sessionId).not.toBeVisible();
+    expect(within(tombstone!).queryByText('session-1')).not.toBeInTheDocument();
     fireEvent.click(within(tombstone!).getByText('高级：记录详情'));
-    expect(sessionId).toBeVisible();
+    expect(within(tombstone!).getByText('session-1')).toBeVisible();
   });
 
   it('hides secret and external raw text, redacts sensitive object keys, and supports scoped filters', () => {
@@ -151,11 +148,16 @@ describe('GovernanceCenter', () => {
     render(<GovernanceCenter governance={governance()} knowledge={data} />);
     expect(screen.queryByText('DO_NOT_RENDER_EXTERNAL')).not.toBeInTheDocument();
     expect(screen.queryByText('DO_NOT_RENDER_SECRET')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('高级：规则管理与审计'));
     expect(screen.getAllByText('[外部内容仅作为数据引用，不展示原文]')).toHaveLength(2);
     expect(screen.getByText('[秘密内容已隐藏]')).toBeInTheDocument();
     expect(safeDisplay({ apiKey: 'RAW_KEY', nested: { password: 'RAW_PASSWORD', ok: 1 } })).toBe('{\n  "apiKey": "[已隐藏]",\n  "nested": {\n    "password": "[已隐藏]",\n    "ok": 1\n  }\n}');
+    fireEvent.click(screen.getByText('精确查找特定记录'));
     fireEvent.change(screen.getByLabelText('对话'), { target: { value: 'session-secret' } });
-    expect(screen.getByText('secret-key')).toBeInTheDocument();
+    const secretRecord = screen.getByText('[秘密内容已隐藏]').closest('article');
+    expect(secretRecord).not.toBeNull();
+    fireEvent.click(within(secretRecord!).getByText('高级：记录详情'));
+    expect(within(secretRecord!).getByText('secret-key')).toBeInTheDocument();
     expect(screen.queryByText('external-key')).not.toBeInTheDocument();
   });
 
@@ -170,10 +172,9 @@ describe('GovernanceCenter', () => {
     expect(container.querySelector('.governance-columns')).toBeInTheDocument();
     const incident = screen.getByText('重复路由').closest('article');
     expect(incident).not.toBeNull();
-    const signature = within(incident!).getByText('failure/'.repeat(80));
-    expect(signature).not.toBeVisible();
+    expect(within(incident!).queryByText('failure/'.repeat(80))).not.toBeInTheDocument();
     fireEvent.click(within(incident!).getByText('高级：记录详情'));
-    expect(signature).toBeVisible();
+    expect(within(incident!).getByText('failure/'.repeat(80))).toBeVisible();
   });
 });
 

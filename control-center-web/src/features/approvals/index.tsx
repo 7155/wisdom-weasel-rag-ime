@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, EmptyState, Field, Input, SegmentedControl, Select } from '@/components/primitives';
+import { Button, Disclosure, EmptyState, Field, Input, SegmentedControl, Select } from '@/components/primitives';
 import type { AgentApprovalV1 } from '@/contracts/generated/agent-approval.v1';
 import {
   ManagementPage,
@@ -201,6 +201,7 @@ function ApprovalCard({
 }) {
   const summary = previewSummary(item.preview) || `${item.toolId} · ${item.operation}`;
   const facts = previewFacts(item.preview);
+  const compactFacts = facts.slice(0, 5);
   return <li data-risk={item.riskLevel} data-state={item.state}>
     <header>
       <span className="approvals-list__risk">{item.riskLevel}</span>
@@ -212,7 +213,8 @@ function ApprovalCard({
       <span>请求于 {formatTime(item.requestedAtMs)}</span>
       <span>{item.state === 'pending' ? expiryLabel(item.expiresAtMs) : `决定于 ${formatTime(item.decidedAtMs ?? item.requestedAtMs)}`}</span>
     </div>
-    {facts.length ? <dl>{facts.map((fact) => <div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl> : null}
+    {compactFacts.length ? <dl>{compactFacts.map((fact) => <div key={fact.label}><dt>{fact.label}</dt><dd>{compactPreviewValue(fact.value)}</dd></div>)}</dl> : null}
+    {Object.keys(item.preview).length ? <ApprovalPreviewDisclosure item={item} /> : null}
     {confirming ? <p className="approvals-list__confirm"><AlertTriangle size={15} /><span><strong>确认批准 R3 高风险操作？</strong><small>只批准当前哈希绑定请求；不会自动批准同类操作。</small></span></p> : null}
     {error ? <p className="approvals-list__error" role="alert">{error}</p> : null}
     {item.state === 'pending' ? <footer>
@@ -221,6 +223,26 @@ function ApprovalCard({
       <Button loading={pending} leadingIcon={<Check size={14} />} onClick={() => onDecide('approve')} size="small" variant="primary">{confirming ? '确认批准' : '批准'}</Button>
     </footer> : null}
   </li>;
+}
+
+function ApprovalPreviewDisclosure({ item }: { item: AgentApprovalV1 }) {
+  const fieldCount = Object.keys(item.preview).length;
+  return (
+    <Disclosure
+      className="approvals-preview"
+      revealClassName="approvals-preview__reveal"
+      summary={<>
+        <span>完整预览</span>
+        <small>{fieldCount} 个字段 · SHA-256 绑定</small>
+      </>}
+    >
+      <div className="approvals-preview__body">
+        <p><ShieldCheck size={15} /><span>以下完整预览与本次审批哈希绑定</span></p>
+        <div className="approvals-preview__binding"><span>SHA-256</span><code>{item.payloadSha256}</code></div>
+        <pre>{JSON.stringify(redactApprovalPreview(item.preview), null, 2)}</pre>
+      </div>
+    </Disclosure>
+  );
 }
 
 function approvalItems(value: unknown): AgentApprovalV1[] {
@@ -257,11 +279,24 @@ function previewFacts(preview: Record<string, unknown>): Array<{ label: string; 
   return Object.entries(preview).flatMap(([key, value]) => {
     if (ignored.has(key)) return [];
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return [{ label: publicKey(key), value: String(value).slice(0, 240) }];
+      return [{ label: publicKey(key), value: String(value) }];
     }
     if (Array.isArray(value)) return [{ label: publicKey(key), value: `${value.length} 项` }];
     return [];
-  }).slice(0, 5);
+  });
+}
+
+function compactPreviewValue(value: string): string {
+  return value.length > 160 ? `${value.slice(0, 157)}…` : value;
+}
+
+function redactApprovalPreview(value: unknown, key = ''): unknown {
+  if (/token|secret|password|api.?key|authorization|cookie/i.test(key)) return value ? '已隐藏' : '未配置';
+  if (Array.isArray(value)) return value.map((item) => redactApprovalPreview(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([entryKey, item]) => (
+    [entryKey, redactApprovalPreview(item, entryKey)]
+  )));
 }
 
 function stateLabel(state: AgentApprovalV1['state']): string {

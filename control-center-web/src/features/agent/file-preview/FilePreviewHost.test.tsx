@@ -53,8 +53,9 @@ describe('file preview interaction', () => {
     const frame = within(dialog).getByTitle('project-intro.html 交互预览');
     expect(frame.getAttribute('sandbox')).toContain('allow-scripts');
     expect(frame.getAttribute('sandbox')).toContain('allow-forms');
-    expect(frame.getAttribute('srcdoc')).toContain('<h1>项目介绍</h1>');
-    expect(frame).not.toHaveAttribute('src');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect(previewSource(frame)).toContain('<h1>项目介绍</h1>');
+    expect(frame).not.toHaveAttribute('srcdoc');
     expect(createObjectUrl).not.toHaveBeenCalled();
   });
 
@@ -96,17 +97,12 @@ describe('file preview interaction', () => {
     expect(screen.queryByRole('region', { name: 'acceptance.md 内联预览' })).not.toBeInTheDocument();
   });
 
-  it('keeps the Blob transport for the native WebKit host', () => {
+  it('keeps the isolated loopback transport for the native WebKit host', () => {
     window.webkit = {
       messageHandlers: {
         ragImeNativeBridge: { postMessage: () => undefined },
       },
     };
-    const revoked: string[] = [];
-    let sequence = 0;
-    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:native-report-${sequence += 1}`);
-    vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url) => { revoked.push(url); });
-
     render(
       <StrictMode>
         <RichHtmlPreview content="<h1>原生报告</h1>" title="native-report.html" />
@@ -114,9 +110,10 @@ describe('file preview interaction', () => {
     );
 
     const frame = screen.getByTitle('native-report.html 交互预览');
-    expect(frame.getAttribute('src')).toMatch(/^blob:native-report-/u);
+    expect(frame.getAttribute('src')).toMatch(/^\/__paw_html_preview#/u);
+    expect(previewSource(frame)).toContain('<h1>原生报告</h1>');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin');
     expect(frame).not.toHaveAttribute('srcdoc');
-    expect(revoked).not.toContain(frame.getAttribute('src'));
   });
 
   it('keeps a file disabled when no authoritative parent session is available', () => {
@@ -124,6 +121,15 @@ describe('file preview interaction', () => {
     expect(screen.getByRole('button', { name: 'orphan.diff 的预览回执不可用' })).toBeDisabled();
   });
 });
+
+function previewSource(frame: HTMLElement): string {
+  const source = frame.getAttribute('src');
+  if (!source) throw new Error('preview URL is missing');
+  const encoded = new URL(source, window.location.href).hash.slice(1).replaceAll('-', '+').replaceAll('_', '/');
+  const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
+  const binary = window.atob(padded);
+  return new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
+}
 
 const MEDIA_ID = 'media_abcdefghijkl';
 const SESSION_ID = 'session-preview-1';

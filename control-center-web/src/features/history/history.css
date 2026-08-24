@@ -28,7 +28,22 @@
 }
 
 .history-detail__advanced-context { margin-top: var(--space-3); }
-.history-detail__advanced-context > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 13px; font-weight: var(--font-weight-semibold); }
+.history-detail__advanced-context > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  padding-inline: 10px;
+  border-radius: var(--radius-2);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+.history-detail__advanced-context > summary:hover,
+.history-detail__advanced-context[data-expanded='true'] > summary { background: var(--color-surface-subtle); color: var(--color-text-primary); }
+.history-detail__advanced-context > summary:focus-visible { box-shadow: var(--shadow-focus); outline: none; }
+.history-detail__advanced-context-body { padding: 8px 2px 2px; }
 
 .history-filter-toolbar .ui-input,
 .history-filter-toolbar .ui-select__trigger { padding-block: 4px; }
@@ -244,4 +259,22 @@
   .history-detail__feedback-grid { grid-template-columns: 1fr; }
   .history-detail__section-heading { align-items: flex-start; }
   .history-detail__section-heading > .ui-button { flex: 0 0 auto; }
+}
+
+@container paw-window (max-width: 620px) {
+  main[data-route-id='history'][data-paw-os-app] .history-table { min-width: 0; }
+  main[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(2),
+  main[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(2),
+  main[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(4),
+  main[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(4),
+  main[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(5),
+  main[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(5) { display: none; }
+  main[data-route-id='history'][data-paw-os-app] .history-filter-toolbar {
+    width: 100%;
+    grid-template-areas: 'search submit' 'source source';
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  main[data-route-id='history'][data-paw-os-app] .history-detail__facts,
+  main[data-route-id='history'][data-paw-os-app] .history-detail__context-grid,
+  main[data-route-id='history'][data-paw-os-app] .history-detail__feedback-grid { grid-template-columns: minmax(0, 1fr); }
 }

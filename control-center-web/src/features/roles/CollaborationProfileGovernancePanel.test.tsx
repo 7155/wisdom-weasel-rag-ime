@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import type { CollaborationProfileCommandReceiptV1 } from '@/contracts/generated/collaboration-profile-command-receipt.v1';
@@ -37,6 +39,33 @@ describe('CollaborationProfileGovernancePanel', () => {
     expect(screen.getByRole('dialog', { name: '确认撤销' })).toHaveTextContent('这个版本不能再次启用');
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(mock.requests.some((call) => call.request.pathId === 'agent.collaborationProfile.command')).toBe(false);
+  });
+
+  it('keeps role-book governance content mounted while its disclosure closes', async () => {
+    const user = userEvent.setup();
+    renderPanel(transport());
+    const summary = (await screen.findByText('高级：角色书管理')).closest('summary');
+    if (!summary) throw new Error('角色书管理 disclosure 缺少 summary');
+    const details = summary.closest('details');
+    if (!details) throw new Error('角色书管理 disclosure 缺少 details');
+
+    await user.click(summary);
+    await screen.findByText('角色书当前设置已同步');
+    expect(details).toHaveAttribute('open');
+    expect(summary).toHaveAttribute('aria-expanded', 'true');
+    await user.click(summary);
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('角色书当前设置已同步')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('角色书当前设置已同步')).not.toBeInTheDocument();
+      expect(details).not.toHaveAttribute('open');
+    });
+  });
+
+  it('stacks governance facts and controls in a narrow PAW window', () => {
+    const css = readFileSync('src/features/roles/collaboration-profile-governance.css', 'utf8');
+    expect(css).toMatch(/@container paw-window \(max-width: 620px\)[\s\S]*?\.profile-governance dl\s*\{[^}]*grid-template-columns:\s*1fr/s);
+    expect(css).toMatch(/@container paw-window \(max-width: 620px\)[\s\S]*?\.profile-governance__actions > \.ui-button\s*\{[^}]*flex:\s*1 1 92px/s);
   });
 
   it('fails closed on route hash mismatch and an unauthenticated remote caller', async () => {

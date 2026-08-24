@@ -1,6 +1,6 @@
 import { Activity, Clipboard, Cpu, Keyboard, RefreshCw, ServerCog } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Button, EmptyState } from '@/components/primitives';
+import { Button, Disclosure, EmptyState } from '@/components/primitives';
 import { writeClipboardText } from '@/platform/clipboard';
 import { useDiagnosticsQueries } from './api';
 import { DiagnosticsRuntimeWorkflow, type DiagnosticsRuntimeAction } from './runtime-actions';
@@ -163,13 +163,7 @@ export function DiagnosticsFeature() {
         )}
 
         <ManagementSection title="服务状态" trailing={<StatusBadge label={`${components.length} 项`} tone={components.every((item) => booleanValue(item.ok)) ? 'success' : 'warning'} />}>
-          {components.length ? <OperationalList items={components.map((item) => ({
-            id: stringValue(item.id),
-            title: componentLabel(stringValue(item.id)),
-            detail: componentDetail(item),
-            meta: serviceStatusLabel(stringValue(item.status)),
-            status: <StatusBadge label={booleanValue(item.ok) ? '正常' : '需要检查'} tone={booleanValue(item.ok) ? 'success' : 'warning'} />,
-          }))} /> : <EmptyState action={<Button onClick={refresh} size="small">重新检查</Button>} description="暂未收到本机服务状态。" headingLevel={3} icon={Activity} title="暂无服务状态" />}
+          {components.length ? <DiagnosticsServiceList components={components} /> : <EmptyState action={<Button onClick={refresh} size="small">重新检查</Button>} description="暂未收到本机服务状态。" headingLevel={3} icon={Activity} title="暂无服务状态" />}
         </ManagementSection>
 
         <div className="mgmt-grid-2">
@@ -189,8 +183,7 @@ export function DiagnosticsFeature() {
           </ManagementSection>
         </div>
 
-        <details className="diagnostics-boundary">
-          <summary>高级：诊断详情</summary>
+        <DiagnosticsDisclosure className="diagnostics-boundary" summary="高级：诊断详情">
           <div className="mgmt-grid-2">
             <ManagementSection title="本机预测证据">
               <dl className="mgmt-kv">
@@ -213,7 +206,7 @@ export function DiagnosticsFeature() {
               </dl>
             </ManagementSection>
           </div>
-        </details>
+        </DiagnosticsDisclosure>
 
         <ManagementSection
           title="可以尝试的修复"
@@ -262,13 +255,66 @@ export function DiagnosticsFeature() {
         </ManagementSection>
 
         <ManagementSection title="哪些操作需要确认">
-          <details className="diagnostics-boundary">
-            <summary>查看受保护操作</summary>
+          <DiagnosticsDisclosure className="diagnostics-boundary" summary="查看受保护操作">
             <p>清空历史、清空记忆、恢复默认、卸载，以及重新部署受管输入法都会改变本机内容或已安装组件。执行前需要单独查看影响并确认；查看状态和普通检查不需要确认。</p>
-          </details>
+          </DiagnosticsDisclosure>
         </ManagementSection>
       </QueryState>
     </ManagementPage>
+  );
+}
+
+function DiagnosticsServiceList({ components }: { components: Record<string, unknown>[] }) {
+  return (
+    <div aria-label="本机服务状态" className="diagnostics-service-list" role="list">
+      {components.map((item) => {
+        const id = stringValue(item.id);
+        const ok = booleanValue(item.ok);
+        const title = componentLabel(id);
+        const detail = componentDetail(item);
+        return (
+          <DiagnosticsDisclosure
+            className="diagnostics-service"
+            key={id}
+            summary={(
+              <>
+                <span className="diagnostics-service__copy"><strong>{title}</strong><small>{detail}</small></span>
+                <span className="diagnostics-service__meta">{serviceStatusLabel(stringValue(item.status))}</span>
+                <StatusBadge label={ok ? '正常' : '需要检查'} tone={ok ? 'success' : 'warning'} />
+              </>
+            )}
+          >
+            <div className="diagnostics-service__body">
+              <dl className="diagnostics-service__facts">
+                <dt>当前判断</dt><dd>{ok ? '服务已报告正常' : '服务需要进一步检查'}</dd>
+                <dt>检查说明</dt><dd>{detail}</dd>
+                <dt>最近检查</dt><dd>{componentUpdatedAtLabel(item)}</dd>
+                <dt>建议处理</dt><dd>{componentRecoveryLabel(id, ok)}</dd>
+              </dl>
+              <DiagnosticsDisclosure className="diagnostics-service__evidence" summary="脱敏技术记录">
+                <pre>{componentEvidence(item)}</pre>
+              </DiagnosticsDisclosure>
+            </div>
+          </DiagnosticsDisclosure>
+        );
+      })}
+    </div>
+  );
+}
+
+function DiagnosticsDisclosure({
+  children,
+  className,
+  summary,
+}: {
+  children: React.ReactNode;
+  className: string;
+  summary: React.ReactNode;
+}) {
+  return (
+    <Disclosure className={className} revealClassName="diagnostics-disclosure__reveal" summary={summary}>
+      {children}
+    </Disclosure>
   );
 }
 
@@ -350,6 +396,49 @@ function componentDetail(item: Record<string, unknown>): string {
   const detail = stringValue(item.detail).trim();
   if (!detail) return booleanValue(item.ok) ? '运行正常' : '请打开详情继续检查';
   return publicDiagnosticDetail(detail);
+}
+
+function componentUpdatedAtLabel(item: Record<string, unknown>): string {
+  const timestamp = [item.checkedAtMs, item.updatedAtMs, item.lastSeenAtMs, item.timestampMs]
+    .find((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
+  if (typeof timestamp !== 'number') return '随本轮刷新取得';
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'numeric',
+    second: '2-digit',
+    day: 'numeric',
+  });
+}
+
+function componentRecoveryLabel(id: string, ok: boolean): string {
+  if (ok) return '无需处理；状态变化时刷新本页重新核对。';
+  return ({
+    inputMethod: '先确认当前输入法，再尝试重新连接输入法。',
+    sidecar: '尝试重新连接本机补全服务，然后刷新状态。',
+    predictor: '检查模型设置，必要时应用设置并重启本机模型。',
+    foregroundContext: '回到真实应用输入一段文字，再刷新前台验证证据。',
+    assistantCandidateDelivery: '在真实应用输入并等待智能候选显示，再刷新本页。',
+    voiceRecognition: '先更新或重新部署受管输入法，再到真实应用中复测语音输入。',
+    deployment: '查看“重新部署受管输入法”的影响，确认后重新部署并复测。',
+    voiceMicrophone: '检查麦克风权限，然后重新尝试语音输入。',
+    voiceAccessibility: '打开辅助功能设置，人工确认授权后再复测。',
+  } as Record<string, string>)[id] ?? '先刷新状态；若仍异常，复制排查报告并按下方修复建议处理。';
+}
+
+function componentEvidence(item: Record<string, unknown>): string {
+  const metadata = redact(asRecord(item.metadata));
+  const evidence = metadata && typeof metadata === 'object' && Object.keys(metadata as Record<string, unknown>).length
+    ? { evidence: metadata }
+    : {};
+  return JSON.stringify({
+    component: componentLabel(stringValue(item.id)),
+    healthy: booleanValue(item.ok),
+    status: serviceStatusLabel(stringValue(item.status)),
+    detail: componentDetail(item),
+    checkedAt: componentUpdatedAtLabel(item),
+    ...evidence,
+  }, null, 2);
 }
 
 function publicDiagnosticDetail(detail: string): string {

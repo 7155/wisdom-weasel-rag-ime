@@ -1,7 +1,7 @@
 import { AlertTriangle, BookOpenCheck, DatabaseZap, ShieldCheck } from 'lucide-react';
 import { Children, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, Field, Input, Skeleton } from '@/components/primitives';
+import { Button, Disclosure, Field, Input, Skeleton } from '@/components/primitives';
 import {
   InlineNotice,
   ManagementPage,
@@ -127,10 +127,8 @@ export function GovernanceCenter({
         </dl>
       </ManagementSection>
 
-      <details className="governance-advanced">
-        <summary>高级：规则管理与审计</summary>
-        <details className="governance-filter-disclosure">
-          <summary>精确查找特定记录</summary>
+      <Disclosure className="governance-advanced" summary="高级：规则管理与审计">
+        <Disclosure className="governance-filter-disclosure" summary="精确查找特定记录">
           <p>手头已有完整记录编号时使用；日常查看无需填写。</p>
           <section className="governance-filters" aria-label="安全记录范围筛选">
             {(['root', 'owner', 'room', 'session'] as const).map((key) => (
@@ -144,7 +142,7 @@ export function GovernanceCenter({
               </Field>
             ))}
           </section>
-        </details>
+        </Disclosure>
 
       <ManagementSection title="异常与保护建议" description="系统会从失败中整理经验和保护建议；只有经过评估并明确启用的规则才会真正生效。">
         <div className="governance-columns">
@@ -242,7 +240,7 @@ export function GovernanceCenter({
       </ManagementSection>
 
       <KnowledgeGovernance projection={knowledge} filteredClaims={filteredClaims} filteredPromotionCandidates={filteredPromotionCandidates} />
-          </details>
+          </Disclosure>
         </>
       ) : null}
     </ManagementPage>
@@ -364,11 +362,10 @@ function RecordDetails({ rows, payloads = [] }: { rows: Array<[string, unknown]>
   const visibleRows = rows.filter(([, value]) => value !== undefined && value !== null && String(value).trim());
   if (!visibleRows.length && !payloads.length) return null;
   return (
-    <details className="governance-record-details">
-      <summary>高级：记录详情</summary>
+    <Disclosure className="governance-record-details" summary="高级：记录详情">
       {visibleRows.length ? <dl>{visibleRows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><code>{String(value)}</code></dd></div>)}</dl> : null}
       {payloads.map(([label, value]) => <section key={label}><h4>{label}</h4><pre>{safeDisplay(value)}</pre></section>)}
-    </details>
+    </Disclosure>
   );
 }
 

@@ -36,7 +36,7 @@ describe('approval decisions inside ordinary assistant messages', () => {
     const user = userEvent.setup();
     render(<AgentBlocks blocks={approvalBlock()} sessionId="s1" onApprovalDecision={onApprovalDecision} />);
 
-    await user.click(screen.getByRole('button', { name: '批准' }));
+    await user.click(screen.getByRole('button', { name: '批准并继续' }));
 
     expect(onApprovalDecision).toHaveBeenCalledTimes(1);
     expect(onApprovalDecision).toHaveBeenCalledWith('apr-1', 'approved', HASH);
@@ -57,7 +57,7 @@ describe('approval decisions inside ordinary assistant messages', () => {
     const user = userEvent.setup();
     render(<AgentBlocks blocks={approvalBlock()} sessionId="s1" onApprovalDecision={onApprovalDecision} />);
 
-    const approve = screen.getByRole('button', { name: '批准' });
+    const approve = screen.getByRole('button', { name: '批准并继续' });
     await user.click(approve);
     await user.click(approve);
     await user.click(screen.getByRole('button', { name: '拒绝' }));
@@ -73,7 +73,7 @@ describe('approval decisions inside ordinary assistant messages', () => {
       <AgentBlocks blocks={approvalBlock('pending', 'apr-1')} sessionId="s1" onApprovalDecision={onApprovalDecision} />,
     );
 
-    await user.click(screen.getByRole('button', { name: '批准' }));
+    await user.click(screen.getByRole('button', { name: '批准并继续' }));
     expect(screen.getByRole('button', { name: '已批准' })).toBeDisabled();
 
     // Same component position, different approval: React reuses the instance,
@@ -83,7 +83,7 @@ describe('approval decisions inside ordinary assistant messages', () => {
       <AgentBlocks blocks={approvalBlock('pending', 'apr-2')} sessionId="s1" onApprovalDecision={onApprovalDecision} />,
     );
 
-    const approve = screen.getByRole('button', { name: '批准' });
+    const approve = screen.getByRole('button', { name: '批准并继续' });
     expect(approve).toBeEnabled();
     await user.click(approve);
     expect(onApprovalDecision).toHaveBeenLastCalledWith('apr-2', 'approved', HASH);

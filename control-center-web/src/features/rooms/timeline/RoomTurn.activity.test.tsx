@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRoomProjection } from '@/contracts/room-reducer';
@@ -10,8 +11,42 @@ describe('RoomTurn public activity detail', () => {
     cleanup();
   });
 
+  it('uses a semantic run-state marker instead of a persona avatar', () => {
+    const view = render(roomTurn(roomProjection(), 'synced'));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
 
-  it('renders provider work summaries as flat incremental rows in the user language', () => {
+    expect(lane.querySelector('.agent-persona-avatar')).not.toBeInTheDocument();
+    expect(lane.querySelector('.room-agent-lane__state')).toHaveAttribute('data-state', 'running');
+    expect(lane.querySelector('.room-agent-lane__state')).toHaveAccessibleName('执行中');
+  });
+
+  it('smoothly closes a lane without removing its chronological records from the DOM', async () => {
+    const user = userEvent.setup();
+    const view = render(roomTurn(roomProjection()));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+    const summary = lane.querySelector<HTMLElement>(':scope > summary')!;
+    const reveal = lane.querySelector<HTMLElement>('.room-agent-lane__reveal')!;
+    const record = lane.querySelector<HTMLElement>('.room-agent-lane__activity')!;
+
+    expect(lane).not.toHaveAttribute('open');
+    expect(record).toBeInTheDocument();
+    await user.click(summary);
+    expect(summary).toHaveAttribute('aria-expanded', 'true');
+    expect(reveal).not.toHaveAttribute('aria-hidden', 'true');
+
+    fireEvent.keyDown(summary, { key: 'Enter' });
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    expect(lane).toHaveAttribute('open');
+    expect(reveal).toHaveAttribute('aria-hidden', 'true');
+    expect(reveal).toHaveAttribute('inert');
+    expect(record).toBeInTheDocument();
+    await waitFor(() => expect(lane).not.toHaveAttribute('open'));
+    expect(record).toBeInTheDocument();
+  });
+
+
+  it('reveals provider work summary steps only when the user opens the nested detail', async () => {
+    const user = userEvent.setup();
     const projection = roomProjection();
     projection.activitiesById['reasoning-a'] = {
       id: 'reasoning-a',
@@ -46,13 +81,33 @@ describe('RoomTurn public activity detail', () => {
     expect(update).toBeInTheDocument();
     expect(update?.tagName).toBe('DIV');
     expect(update).toHaveTextContent('正在检查相关代码和信息');
+    expect(update).not.toHaveTextContent('正在整理分工和下一步');
+    await user.click(within(update as HTMLElement).getByText('查看工作要点'));
     expect(update).toHaveTextContent('正在整理分工和下一步');
     expect(update).not.toHaveTextContent('Identifying');
     expect(update).not.toHaveTextContent('Designing non-overlapping parallel workwaves');
     expect(view.container.querySelector('.room-reasoning-summary')).not.toBeInTheDocument();
   });
 
-  it('pins the latest public thinking summary above the chronological tool feed', () => {
+  it('keeps a closing activity feed mounted until its reveal transition finishes', async () => {
+    const user = userEvent.setup();
+    const view = render(roomTurn(roomProjection()));
+    const activity = view.container.querySelector<HTMLElement>('.room-agent-lane__activity');
+    const summary = activity?.querySelector<HTMLElement>('summary');
+
+    if (!activity || !summary) throw new Error('工作流 disclosure 缺少语义 summary');
+    expect(activity).toHaveAttribute('open');
+    await user.click(summary);
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    expect(activity).toHaveAttribute('open');
+    expect(activity.querySelector('.room-agent-lane__activity-feed')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(activity).not.toHaveAttribute('open');
+      expect(activity.querySelector('.room-agent-lane__activity-feed')).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps public reasoning and Tool records in authoritative event order', () => {
     const projection = roomProjection();
     projection.activitiesById['reasoning-a'] = {
       id: 'reasoning-a',
@@ -83,7 +138,72 @@ describe('RoomTurn public activity detail', () => {
     const firstTool = activity.querySelector('.room-agent-activity--tool')!;
 
     expect(thinking).toHaveTextContent('最新思考摘要');
-    expect(thinking.compareDocumentPosition(firstTool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(firstTool.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps an old failed Root visible without a retry action after newer user input', () => {
+    const projection = roomProjection();
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      status: 'failed',
+      failure: '503 upstream request failed',
+    };
+    projection.messagesById['user-a'] = {
+      id: 'user-a',
+      roomId: projection.roomId,
+      turnId: 'turn-a',
+      participantId: null,
+      sourceSessionId: '',
+      role: 'user',
+      status: 'completed',
+      text: '旧回合请求',
+      createdAtMs: 500,
+    };
+    projection.turnsById['turn-a']!.messageIds = ['user-a'];
+    projection.turnOrder.push('turn-b');
+    projection.turnsById['turn-b'] = {
+      id: 'turn-b',
+      rootId: 'root-b',
+      status: 'queued',
+      messageIds: [],
+      activityIds: [],
+      participantIds: [],
+      dispatchIds: [],
+      dispatchParticipantIds: {},
+      createdAtMs: 4_000,
+      updatedAtMs: 4_000,
+    };
+    const onRetryTurn = vi.fn();
+
+    const view = render(<RoomTurn
+      roomSyncState="synced"
+      personas={[]}
+      projection={projection}
+      room={{ participants: [] }}
+      turnId="turn-a"
+      onRetryTurn={onRetryTurn}
+    />);
+
+    expect(view.container.querySelector('.room-turn__terminal')).toHaveTextContent('本轮未完成');
+    expect(screen.queryByRole('button', { name: '再试一次' })).not.toBeInTheDocument();
+
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      failure: '迟到的旧回合失败事件',
+      updatedAtMs: 5_000,
+    };
+    view.rerender(<RoomTurn
+      roomSyncState="synced"
+      personas={[]}
+      projection={projection}
+      room={{ participants: [] }}
+      turnId="turn-a"
+      onRetryTurn={onRetryTurn}
+    />);
+
+    expect(projection.turnOrder.at(-1)).toBe('turn-b');
+    expect(screen.queryByRole('button', { name: '再试一次' })).not.toBeInTheDocument();
+    expect(onRetryTurn).not.toHaveBeenCalled();
   });
 
 
@@ -96,6 +216,74 @@ describe('RoomTurn public activity detail', () => {
     expect(progress).toHaveAttribute('aria-valuenow', '2');
     expect(progress).toHaveAttribute('aria-valuemax', '3');
     expect(progress).toHaveTextContent('2 / 3');
+  });
+
+  it('does not keep a policy-owned automatic approval in the running count', () => {
+    const projection = roomProjection();
+    projection.activitiesById['wait-a'] = {
+      ...projection.activitiesById['wait-a']!,
+      status: 'completed',
+    };
+    projection.activitiesById['approval-a'] = {
+      id: 'approval-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '安全策略已自动处理',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'approval_required',
+        approvalId: 'approval:auto-a',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'pending',
+      },
+      createdAtMs: 3_200,
+      updatedAtMs: 3_200,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'approval-a'],
+    };
+
+    const view = render(roomTurn(projection));
+    const progress = view.container.querySelector<HTMLElement>('.room-agent-lane__meter')!;
+
+    expect(progress).toHaveAttribute('aria-label', '运行记录已返回 3 / 3');
+    expect(progress).toHaveTextContent('3 / 3');
+    expect(view.container).toHaveTextContent('安全策略已自动处理这次操作');
+  });
+
+  it('renders a new card when the same partner starts a later Pi loop', () => {
+    const projection = roomProjection();
+    projection.activitiesById['wait-a'] = {
+      ...projection.activitiesById['wait-a']!,
+      payload: {
+        ...projection.activitiesById['wait-a']!.payload,
+        sourceTurnId: 'turn:partner',
+        sourceLoopId: 'loop:partner-work',
+      },
+    };
+    projection.activitiesById['tool-a'] = {
+      ...projection.activitiesById['tool-a']!,
+      summary: '澄·今正在收尾',
+      payload: {
+        ...projection.activitiesById['tool-a']!.payload,
+        sourceTurnId: 'turn:partner',
+        sourceLoopId: 'loop:partner-final',
+      },
+    };
+
+    const view = render(roomTurn(projection));
+    const cards = [...view.container.querySelectorAll('.room-agent-lane')];
+
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toHaveTextContent('等待上游服务恢复');
+    expect(cards[1]).toHaveTextContent('src/runtime.ts');
+    expect(cards[1]).not.toHaveTextContent('等待上游服务恢复');
   });
 
   it('projects a Partner Tool child route as a host delegation', () => {
@@ -305,7 +493,7 @@ describe('RoomTurn public activity detail', () => {
 
     expect(lane).toHaveAttribute('data-motion', 'fresh');
     expect(lane).toHaveTextContent('1 秒前更新');
-    expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+    expect(lane.querySelector('.room-agent-lane__state')).toHaveAttribute('data-active', 'true');
 
     act(() => vi.advanceTimersByTime(2_000));
     expect(lane).toHaveTextContent('3 秒前更新');
@@ -314,7 +502,7 @@ describe('RoomTurn public activity detail', () => {
     expect(lane).toHaveAttribute('data-motion', 'stale');
     expect(lane).toHaveTextContent('正在等待下一条进展');
     expect(lane).not.toHaveTextContent('状态可能过期');
-    expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute('data-presence', 'thinking');
+    expect(lane.querySelector('.room-agent-lane__state')).not.toHaveAttribute('data-active');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'running');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');
 
@@ -326,7 +514,7 @@ describe('RoomTurn public activity detail', () => {
     view.rerender(roomTurn(projection));
     expect(lane).toHaveAttribute('data-motion', 'fresh');
     expect(lane).toHaveTextContent('刚刚更新');
-    expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+    expect(lane.querySelector('.room-agent-lane__state')).toHaveAttribute('data-active', 'true');
   });
 
   it('does not label a terminal lane as waiting for more progress', () => {
@@ -379,12 +567,12 @@ describe('RoomTurn public activity detail', () => {
     const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
 
     expect(lane).toHaveAttribute('data-motion', 'fresh');
-    expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+    expect(lane.querySelector('.room-agent-lane__state')).toHaveAttribute('data-active', 'true');
 
     view.rerender(roomTurn(projection, 'failed'));
     expect(lane).toHaveAttribute('data-motion', 'disconnected');
     expect(lane).toHaveTextContent('Room 对话实时更新暂时中断');
-    expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute('data-presence', 'thinking');
+    expect(lane.querySelector('.room-agent-lane__state')).not.toHaveAttribute('data-active');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');
 
     projection.activitiesById['progress-fresh'] = {
@@ -394,7 +582,7 @@ describe('RoomTurn public activity detail', () => {
     };
     view.rerender(roomTurn(projection, 'synced'));
     expect(lane).toHaveAttribute('data-motion', 'fresh');
-    expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+    expect(lane.querySelector('.room-agent-lane__state')).toHaveAttribute('data-active', 'true');
   });
 
 

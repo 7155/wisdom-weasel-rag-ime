@@ -17,6 +17,7 @@ import {
   LocateFixed,
   Map as MapIcon,
   MessageSquareText,
+  PanelsTopLeft,
   Rocket,
   RotateCcw,
   Search,
@@ -45,6 +46,7 @@ import {
   TransformWrapper,
   type ReactZoomPanPinchRef,
 } from 'react-zoom-pan-pinch';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { createRoomIslandGeometry } from './island-geometry';
 import { projectFieldZoomProjection } from './semantic-zoom';
 import {
@@ -283,6 +285,7 @@ export function projectFieldShouldReduceMotion(): boolean {
 }
 
 export function ProjectFieldFeature() {
+  const pawOsDesktop = usePawOsDesktop();
   const [activeProjectId, setActiveProjectId] = useState(projectFieldProjects[0].id);
   const [projectStates, setProjectStates] = useState(restoreProjectStates);
   const [searchQuery, setSearchQuery] = useState('');
@@ -347,7 +350,6 @@ export function ProjectFieldFeature() {
       .map((room) => ({ room, score: scoreRoom(searchQuery, room) }))
       .filter(({ score }) => score > 0)
       .sort((left, right) => right.score - left.score)
-      .slice(0, 5)
       .map(({ room }) => room);
   }, [project.rooms, searchQuery]);
 
@@ -608,6 +610,15 @@ export function ProjectFieldFeature() {
             setSearchOpen(true);
             window.requestAnimationFrame(() => searchInputRef.current?.focus());
           }}
+          onOpenProject={pawOsDesktop ? () => pawOsDesktop.openWindow({
+            appId: 'project-workbench',
+            target: {
+              kind: 'project',
+              id: project.id,
+              title: projectFieldText(project.compactTitle ?? project.name),
+              subtitle: projectFieldText(project.heading),
+            },
+          }) : undefined}
           onSearch={setSearchQuery}
           onSelectRoom={focusRoom}
           project={project}
@@ -830,7 +841,7 @@ function ProjectRail({
     <aside className="project-rail" aria-label="项目">
       <div className="project-rail__brand">
         <span aria-hidden="true"><Compass size={19} /></span>
-        <div><strong>澄</strong><small>个人助手工作台</small></div>
+        <div><strong>PAW</strong><small>Personal Agent Workbench</small></div>
       </div>
       <div className="project-rail__heading">
         <span>项目</span>
@@ -873,6 +884,7 @@ function FieldHeader({
   onDismissSearch,
   onFocusSearch,
   onOpenSearch,
+  onOpenProject,
   onSearch,
   onSelectRoom,
   project,
@@ -887,6 +899,7 @@ function FieldHeader({
   onDismissSearch: () => void;
   onFocusSearch: () => void;
   onOpenSearch: () => void;
+  onOpenProject?: () => void;
   onSearch: (query: string) => void;
   onSelectRoom: (roomId: string) => void;
   project: ProjectFieldProject;
@@ -938,12 +951,17 @@ function FieldHeader({
         <kbd>⌘K</kbd>
         {searchQuery ? (
           <div className="project-field__search-results" role="region" aria-label="搜索结果">
-            {searchResults.length ? searchResults.map((room) => (
-              <button key={room.id} onClick={() => onSelectRoom(room.id)} type="button">
-                <span><strong>{projectFieldText(room.title)}</strong><small>{projectFieldText(room.goal)}</small></span>
-                <ChevronRight size={15} aria-hidden="true" />
-              </button>
-            )) : (
+            {searchResults.length ? <>
+              <small className="project-field__search-summary">{searchResults.length} 个匹配目标</small>
+              <div className="project-field__search-list">
+                {searchResults.map((room) => (
+                  <button key={room.id} onClick={() => onSelectRoom(room.id)} type="button">
+                    <span><strong>{projectFieldText(room.title)}</strong><small>{projectFieldText(room.goal)}</small></span>
+                    <ChevronRight size={15} aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+            </> : (
               <div className="project-field__search-empty">
                 <p>没有找到匹配的协作目标</p>
                 <button onClick={onClearSearch} type="button">清除搜索</button>
@@ -953,6 +971,17 @@ function FieldHeader({
         ) : null}
       </div>
       <div className="project-field__header-actions">
+        {onOpenProject ? (
+          <button
+            aria-label="在独立窗口中打开当前项目"
+            className="project-field__icon-button"
+            onClick={onOpenProject}
+            title="打开项目工作台"
+            type="button"
+          >
+            <PanelsTopLeft size={16} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           aria-expanded={searchOpen}
           aria-label="打开协作目标搜索"

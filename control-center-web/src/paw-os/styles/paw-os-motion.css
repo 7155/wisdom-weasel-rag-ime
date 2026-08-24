@@ -1,0 +1,477 @@
+/* PAWOS motion authority ----------------------------------------------------
+ * Motion describes state, hierarchy and transfer. It deliberately stays out
+ * of idle surfaces: no ambient loops, no ornamental glow and no scroll show.
+ * Frequent controls receive short feedback; spatial surfaces retain enough
+ * travel to explain where they came from and where they went. */
+
+.paw-desktop-root {
+  --paw-ease-out: cubic-bezier(.23, 1, .32, 1);
+  --paw-ease-in-out: cubic-bezier(.77, 0, .175, 1);
+  --paw-motion-feedback: 140ms;
+  --paw-motion-chrome: 180ms;
+  --paw-motion-window: 240ms;
+}
+
+/* Window creation is a single, restrained spatial entrance. Existing WAAPI
+ * close/minimize paths remain authoritative for exits and stay interruptible. */
+.paw-window {
+  transition:
+    opacity var(--paw-motion-chrome) var(--paw-ease-out),
+    transform var(--paw-motion-window) var(--paw-ease-out),
+    box-shadow var(--paw-motion-chrome) ease,
+    border-color var(--paw-motion-chrome) ease;
+}
+
+@starting-style {
+  .paw-window {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(.985);
+  }
+}
+
+.paw-window-shell[data-active] .paw-window {
+  transition-duration: var(--paw-motion-chrome);
+}
+
+.paw-traffic-lights button,
+.paw-system-mark,
+.paw-dock button,
+.paw-desktop-shortcuts button > span,
+.paw-launchpad section > div > button {
+  transition-timing-function: var(--paw-ease-out);
+}
+
+.paw-system-mark:active,
+.paw-dock button:active,
+.paw-desktop-shortcuts button:active > span,
+.paw-launchpad section > div > button:active {
+  transform: scale(.96);
+  transition-duration: var(--paw-motion-feedback);
+}
+
+/* Menus and Launchpad originate from their trigger plane. The backdrop and
+ * content separate slightly so the hierarchy reads without a theatrical zoom. */
+.paw-launchpad {
+  opacity: 1;
+  transition: opacity var(--paw-motion-chrome) ease;
+}
+
+.paw-launchpad > section {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: 50% 74%;
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-window) var(--paw-ease-out);
+}
+
+.paw-context-menu {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: top left;
+  transition:
+    opacity var(--paw-motion-feedback) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out);
+}
+
+@starting-style {
+  .paw-launchpad { opacity: 0; }
+  .paw-launchpad > section {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(.985);
+  }
+  .paw-context-menu {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(.975);
+  }
+}
+
+/* Room Focus is one collaboration mode, not a pile of independent windows.
+ * The quiet layer sits above wallpaper/desktop chrome but below the Room
+ * window layer, creating one legible information plane. */
+.paw-desktop-viewport::before {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--paw-bg) 54%, rgba(10, 18, 28, .46));
+  opacity: 0;
+  content: '';
+  transition: opacity var(--paw-motion-window) ease;
+}
+
+.paw-desktop[data-collaboration-focus] .paw-desktop-viewport::before {
+  opacity: 1;
+}
+
+.paw-desktop[data-collaboration-focus] :is(.paw-wayfinder, .paw-dock, .paw-desktop-shortcuts) {
+  transition:
+    opacity var(--paw-motion-window) ease,
+    filter var(--paw-motion-window) ease,
+    transform var(--paw-motion-window) var(--paw-ease-out);
+}
+
+.paw-desktop[data-collaboration-focus] .paw-window-shell[data-collaboration-role='primary'] .paw-window,
+.paw-desktop[data-collaboration-focus] .paw-window-shell[data-collaboration-role='satellite'] .paw-window {
+  border-color: color-mix(in srgb, var(--paw-accent) 72%, var(--paw-line));
+}
+
+.paw-collaboration-focus-exit {
+  opacity: 1;
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out),
+    background-color var(--paw-motion-feedback) ease,
+    border-color var(--paw-motion-feedback) ease;
+}
+
+.paw-collaboration-focus-exit:active {
+  transform: translateX(-50%) scale(.97);
+}
+
+@starting-style {
+  .paw-collaboration-focus-exit {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px) scale(.98);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .paw-collaboration-focus-exit:hover {
+    border-color: color-mix(in srgb, var(--paw-accent) 66%, var(--paw-line));
+    background: var(--paw-panel-strong);
+    transform: translateX(-50%) translateY(-1px);
+  }
+}
+
+/* ContextRef/FlowPacket already travel only when a real Room event revision
+ * changes. Keep that one-shot signal crisp and diagrammatic instead of neon. */
+.paw-room-window-flow__base { opacity: .58; }
+.paw-room-window-flow__live,
+.paw-room-window-flow__packet {
+  filter: none;
+}
+
+.paw-room-window-flow__packet {
+  animation-timing-function: var(--paw-ease-in-out);
+}
+
+/* App state choreography ---------------------------------------------------
+ * These selectors bind to state already owned by each App. They do not add
+ * timers or alternate state machines; they only make the existing transition
+ * legible when content, selection, loading or an error surface changes. */
+
+/* Agent + Room: view changes cross-fade in place, while newly appended turns
+ * arrive from the direction of reading. Composer focus remains immediate. */
+.paw-session-workspace__conversation,
+.paw-session-workspace__trace,
+.paw-room-surface,
+.paw-room-conversation,
+.paw-room-flow,
+.paw-room-task-graph,
+.paw-room-governance {
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out);
+}
+
+.paw-session-workspace__conversation[data-active],
+.paw-session-workspace__trace[data-active] {
+  transform: translate3d(0, 0, 0);
+}
+
+.paw-session-workspace__conversation:not([data-active]),
+.paw-session-workspace__trace:not([data-active]) {
+  transform: translate3d(0, 3px, 0);
+}
+
+.paw-session-workspace__composer .agent-composer,
+.paw-room-workspace__composer .room-composer {
+  transition:
+    transform var(--paw-motion-chrome) var(--paw-ease-out),
+    border-color var(--paw-motion-feedback) ease,
+    box-shadow var(--paw-motion-chrome) ease;
+}
+
+.paw-session-workspace__composer .agent-composer:focus-within,
+.paw-room-workspace__composer .room-composer:focus-within {
+  transform: translate3d(0, -1px, 0);
+}
+
+.paw-session-workspace__error,
+.paw-session-workspace__loading,
+.paw-room-workspace__error,
+.paw-room-workspace__loading,
+.paw-room-workspace__empty,
+.paw-session-workspace__conversation .agent-turn,
+.paw-room-timeline__canvas .room-turn {
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out);
+}
+
+@starting-style {
+  .paw-session-workspace__error,
+  .paw-session-workspace__loading,
+  .paw-room-workspace__error,
+  .paw-room-workspace__loading,
+  .paw-room-workspace__empty,
+  .paw-session-workspace__conversation .agent-turn,
+  .paw-room-timeline__canvas .room-turn {
+    opacity: 0;
+    transform: translate3d(0, 5px, 0);
+  }
+}
+
+/* Browser: tabs and native internal pages retain Chrome-like immediacy;
+ * history/settings/menu appear as places, not blank replacements. */
+.paw-browser-tab,
+.paw-browser-setting-row {
+  transition:
+    color var(--paw-motion-feedback) ease,
+    background-color var(--paw-motion-feedback) ease,
+    border-color var(--paw-motion-feedback) ease,
+    box-shadow var(--paw-motion-feedback) ease,
+    transform var(--paw-motion-feedback) var(--paw-ease-out);
+}
+
+.paw-browser-menu,
+.paw-browser-history,
+.paw-browser-settings,
+.paw-browser-blank-page,
+.paw-browser-awaiting,
+.paw-browser-no-trace,
+.paw-browser-action-receipt {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out);
+}
+
+@starting-style {
+  .paw-browser-menu {
+    opacity: 0;
+    transform: translate3d(0, -5px, 0) scale(.98);
+  }
+
+  .paw-browser-history,
+  .paw-browser-settings,
+  .paw-browser-blank-page,
+  .paw-browser-awaiting,
+  .paw-browser-no-trace,
+  .paw-browser-action-receipt {
+    opacity: 0;
+    transform: translate3d(0, 5px, 0);
+  }
+}
+
+/* Files: selection stays fast, while a chosen document enters from its tree
+ * relationship. Loading/error/empty surfaces use the same short arrival. */
+.paw-files-tree__row[data-selected],
+.paw-files-preview__body,
+.paw-files-preview__empty,
+.paw-files-preview__state,
+.paw-files-tree__state,
+.paw-native-app__error {
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out),
+    background-color var(--paw-motion-feedback) ease,
+    color var(--paw-motion-feedback) ease;
+}
+
+@starting-style {
+  .paw-files-preview__body,
+  .paw-files-preview__empty,
+  .paw-files-preview__state,
+  .paw-files-tree__state,
+  .paw-native-app__error {
+    opacity: 0;
+    transform: translate3d(6px, 0, 0);
+  }
+}
+
+/* Terminal: PTY connection, selected tabs and command focus are functional
+ * signals. Existing running-state feedback remains owned by the Terminal App. */
+.paw-terminal-tab,
+.paw-terminal-state-tag,
+.paw-terminal-connecting,
+.paw-terminal-error,
+.paw-terminal-exited-badge,
+.paw-terminal-console__empty,
+.paw-terminal-input-bar label {
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out),
+    color var(--paw-motion-feedback) ease,
+    background-color var(--paw-motion-feedback) ease,
+    border-color var(--paw-motion-feedback) ease,
+    box-shadow var(--paw-motion-feedback) ease;
+}
+
+.paw-terminal-tab[data-selected] {
+  transform: translate3d(0, -1px, 0);
+}
+
+@starting-style {
+  .paw-terminal-connecting,
+  .paw-terminal-error,
+  .paw-terminal-exited-badge,
+  .paw-terminal-console__empty {
+    opacity: 0;
+    transform: translate3d(0, 5px, 0);
+  }
+}
+
+/* Native Apps, Memory and Knowledge share a page contract. Page swaps and
+ * selected resources move only a few pixels so dense data remains stable. */
+.paw-native-page,
+.paw-native-empty,
+.paw-memory-overview,
+.paw-memory-detail,
+.paw-memory-cards,
+.paw-knowledge-status,
+.paw-library-shelves,
+.paw-library-detail,
+.paw-library-document-preview,
+.paw-library-documents > button,
+.paw-memory-cards > button,
+.paw-library-shelves > button {
+  transition:
+    opacity var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-chrome) var(--paw-ease-out),
+    color var(--paw-motion-feedback) ease,
+    background-color var(--paw-motion-feedback) ease,
+    border-color var(--paw-motion-feedback) ease,
+    box-shadow var(--paw-motion-chrome) ease;
+}
+
+@starting-style {
+  .paw-native-page,
+  .paw-native-empty,
+  .paw-memory-overview,
+  .paw-memory-detail,
+  .paw-memory-cards,
+  .paw-knowledge-status,
+  .paw-library-shelves,
+  .paw-library-detail,
+  .paw-library-document-preview {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+}
+
+/* App identities keep their own silhouettes. Motion only clarifies selection
+ * and press state; it never grows a common tile around unrelated marks. */
+.paw-app-icon,
+.paw-app-icon__shape {
+  transition:
+    opacity var(--paw-motion-feedback) ease,
+    transform var(--paw-motion-feedback) var(--paw-ease-out),
+    fill var(--paw-motion-feedback) ease;
+  transform-origin: center;
+}
+
+:is(.paw-dock, .paw-desktop-shortcuts, .paw-launchpad) button:active .paw-app-icon {
+  transform: scale(.98);
+}
+
+/* Transparency is enhancement, never a legibility dependency. */
+@media (prefers-reduced-transparency: reduce) {
+  .paw-menu-bar,
+  .paw-dock,
+  .paw-launchpad,
+  .paw-launchpad > section,
+  .paw-context-menu,
+  .paw-collaboration-focus-exit {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--paw-panel-strong);
+  }
+
+  .paw-desktop[data-collaboration-focus] .paw-desktop-viewport::before {
+    background: color-mix(in srgb, var(--paw-bg) 24%, #26313d);
+    opacity: .9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-window,
+  .paw-launchpad,
+  .paw-launchpad > section,
+  .paw-context-menu,
+  .paw-collaboration-focus-exit,
+  .paw-session-workspace__conversation,
+  .paw-session-workspace__trace,
+  .paw-session-workspace__composer .agent-composer,
+  .paw-room-workspace__composer .room-composer,
+  .paw-session-workspace__error,
+  .paw-session-workspace__loading,
+  .paw-room-workspace__error,
+  .paw-room-workspace__loading,
+  .paw-room-workspace__empty,
+  .paw-browser-menu,
+  .paw-browser-history,
+  .paw-browser-settings,
+  .paw-files-preview__body,
+  .paw-files-preview__empty,
+  .paw-terminal-connecting,
+  .paw-terminal-error,
+  .paw-terminal-console__empty,
+  .paw-native-page,
+  .paw-native-empty,
+  .paw-memory-overview,
+  .paw-memory-detail,
+  .paw-memory-cards,
+  .paw-knowledge-status,
+  .paw-library-shelves,
+  .paw-library-detail,
+  .paw-library-document-preview,
+  .paw-desktop-viewport::before,
+  .paw-desktop[data-collaboration-focus] :is(.paw-wayfinder, .paw-dock, .paw-desktop-shortcuts) {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .paw-window,
+  .paw-launchpad > section,
+  .paw-context-menu,
+  .paw-collaboration-focus-exit,
+  .paw-session-workspace__conversation,
+  .paw-session-workspace__trace,
+  .paw-session-workspace__composer .agent-composer,
+  .paw-room-workspace__composer .room-composer,
+  .paw-browser-menu,
+  .paw-browser-history,
+  .paw-browser-settings,
+  .paw-files-preview__body,
+  .paw-files-preview__empty,
+  .paw-terminal-tab,
+  .paw-terminal-connecting,
+  .paw-terminal-error,
+  .paw-terminal-console__empty,
+  .paw-native-page,
+  .paw-native-empty,
+  .paw-memory-overview,
+  .paw-memory-detail,
+  .paw-memory-cards,
+  .paw-knowledge-status,
+  .paw-library-shelves,
+  .paw-library-detail,
+  .paw-library-document-preview,
+  .paw-app-icon {
+    transform: none !important;
+  }
+
+  .paw-collaboration-focus-exit {
+    transform: translateX(-50%) !important;
+  }
+
+  .paw-system-mark:active,
+  .paw-dock button:active,
+  .paw-desktop-shortcuts button:active > span,
+  .paw-launchpad section > div > button:active {
+    transform: none;
+  }
+}

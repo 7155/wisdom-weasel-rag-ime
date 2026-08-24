@@ -2,6 +2,7 @@ import { ArchiveRestore, CheckCircle2, Download, FileInput } from 'lucide-react'
 import { useMemo, useState } from 'react';
 import {
   Button,
+  Disclosure,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -192,8 +193,12 @@ function ConfigurationImportWorkflow({
             </InlineNotice>
           ) : null}
           {diffRows.length ? (
-            <details className="configuration-details" open={diffRows.length <= 8}>
-              <summary>查看 {diffRows.length} 项配置差异</summary>
+            <Disclosure
+              className="configuration-details"
+              defaultOpen={diffRows.length <= 8}
+              key={preview.configurationHash}
+              summary={`查看 ${diffRows.length} 项配置差异`}
+            >
               <DataTable
                 caption="配置导入差异"
                 columns={[
@@ -203,7 +208,7 @@ function ConfigurationImportWorkflow({
                 ]}
                 rows={diffRows}
               />
-            </details>
+            </Disclosure>
           ) : preview.valid ? (
             <InlineNotice title="没有设置差异" tone="info">
               文件可能只包含模型账号元数据，或与当前设置一致。

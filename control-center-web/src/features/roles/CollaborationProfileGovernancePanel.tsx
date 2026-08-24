@@ -1,7 +1,7 @@
 import { FileDiff, Fingerprint, LockKeyhole, ReceiptText, RotateCcw, ShieldCheck, ShieldX } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/primitives';
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Disclosure } from '@/components/primitives';
 import type { CollaborationProfileCommandReceiptV1 } from '@/contracts/generated/collaboration-profile-command-receipt.v1';
 import type { CollaborationProfileCommandV1 } from '@/contracts/generated/collaboration-profile-command.v1';
 import type { CollaborationProfileProjectionV1 } from '@/contracts/generated/collaboration-profile-projection.v1';
@@ -122,9 +122,11 @@ export function CollaborationProfileGovernancePanel({ profileId }: { profileId: 
   };
 
   return <section className="profile-governance" aria-label="高级：角色书管理" data-load-state={loadState}>
-    <details className="profile-governance__details">
-      <summary><span><LockKeyhole size={14} /><strong>高级：角色书管理</strong></span><small>{projection ? '已同步' : loadStateLabel(loadState)}</small></summary>
-      <div className="profile-governance__content">
+    <Disclosure
+      className="profile-governance__details"
+      contentClassName="profile-governance__content"
+      summary={<><span><LockKeyhole size={14} /><strong>高级：角色书管理</strong></span><small>{projection ? '已同步' : loadStateLabel(loadState)}</small></>}
+    >
         <p className="profile-governance__notice" role={loadState === 'denied' || loadState === 'error' ? 'alert' : 'status'}>{notice}</p>
         {projection?.normalAgentFallback ? <p className="profile-governance__fallback">普通伙伴和未绑定角色书的协作不会受影响；只有明确选择这份角色书的新对话才会使用它。</p> : null}
         {projection ? <>
@@ -167,8 +169,7 @@ export function CollaborationProfileGovernancePanel({ profileId }: { profileId: 
       <OperationReceipt operation={operation} />
       <section className="profile-governance__receipts" aria-label="角色书最近操作记录"><header><strong>最近操作记录</strong><small>{receipts.length} 项</small></header>{receipts.length ? receipts.map((receipt) => <p key={`${receipt.receiptId}:${receipt.action}:${receipt.commandId}`}><span><b>{actionLabel(receipt.action)}</b><small>{receipt.receiptId}</small></span><span><b data-status="applied">已应用</b><small>安全版本 {receipt.guardEpoch} · {shortHash(receipt.commandHash)}</small></span></p>) : <p>暂无操作记录。</p>}</section>
         </> : loadState === 'missing' ? <p className="profile-governance__fallback">普通伙伴和未绑定角色书的协作会继续按原有方式运行。</p> : null}
-      </div>
-    </details>
+    </Disclosure>
     <Dialog onOpenChange={(open) => { if (!open) setPendingConfirmationAction(null); }} open={Boolean(pendingConfirmationAction)}>
       <DialogContent className="profile-governance__confirmation">
         <DialogHeader>

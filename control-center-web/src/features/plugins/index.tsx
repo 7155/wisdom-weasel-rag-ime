@@ -6,6 +6,7 @@ import {
   History,
   MessageCircle,
   PackageCheck,
+  PackageX,
   PanelRightClose,
   Power,
   RefreshCw,
@@ -22,6 +23,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Button,
+  Disclosure,
   EmptyState,
   Field,
   IconButton,
@@ -59,6 +61,7 @@ import {
 } from './capability-policy';
 import { usePluginCatalog } from './api';
 import { useProductIdentity } from '@/features/identity/product-identity';
+import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import './plugins.css';
 
 type ToolRecord = CapabilityCatalogItem;
@@ -95,11 +98,13 @@ const operationLabels: Record<string, string> = {
   click: '点击页面元素', type: '向页面输入', scroll: '滚动页面', wait: '等待页面内容', stop: '停止浏览器操作',
 };
 
-export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}) {
+export function PluginsFeature() {
   const navigate = useNavigate();
   const identity = useProductIdentity();
+  const appSurface = usePawOsAppSurface();
   const [searchParams] = useSearchParams();
   const sessionContextId = searchParams.get('sessionId')?.trim() ?? '';
+  const packageContextId = searchParams.get('packageId')?.trim() ?? '';
   const {
     catalog,
     defaults,
@@ -127,7 +132,10 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
   const [lifecycleError, setLifecycleError] = useState('');
   const [defaultMutation, setDefaultMutation] = useState<DefaultMutationOutcome>();
   const [hookError, setHookError] = useState('');
-  const [showMaintenance, setShowMaintenance] = useState(false);
+  const [showMaintenance, setShowMaintenance] = useState(Boolean(packageContextId));
+  const nativeAppCenter = appSurface?.appId === 'app-center';
+  const nativePage = searchParams.get('view') === 'proposals' ? 'proposals' : 'installed';
+  const maintenanceVisible = nativeAppCenter || showMaintenance;
   const items = catalog.data?.items ?? [];
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
@@ -302,24 +310,10 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
     }
     await updateProjectPreference(item, defaultMutation.preference, refreshed.data);
   };
-  const previewInstalledAction = async (action: 'enable' | 'disable' | 'rollback', pluginId: string) => {
+  const previewInstalledAction = async (action: 'enable' | 'disable' | 'uninstall' | 'rollback', pluginId: string) => {
     setLifecycleError('');
     try {
       setPendingChange(asRecord(await preview.mutateAsync({ action, pluginId })));
-    } catch (error) {
-      setLifecycleError(errorMessage(error));
-    }
-  };
-
-  const applyInstalledAction = async (action: 'disable' | 'rollback', pluginId: string) => {
-    setLifecycleError('');
-    try {
-      const next = asRecord(await preview.mutateAsync({ action, pluginId }));
-      await apply.mutateAsync({
-        previewToken: stringValue(next.previewToken),
-        payloadSha256: stringValue(next.payloadSha256),
-        confirmText: 'apply',
-      });
     } catch (error) {
       setLifecycleError(errorMessage(error));
     }
@@ -398,32 +392,31 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
         <Button leadingIcon={<ShieldQuestion size={15} />} onClick={() => navigate('/approvals')} size="small" variant="quiet">审批中心</Button>
         <Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>
       </>}
-      description={embedded
-        ? '在同一页管理技能、工具与 Pi 扩展的发现、安装、启用范围和版本回退；高风险执行仍进入独立审批中心。'
-        : '管理技能、工具与 Pi 扩展的发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。'}
-      embedded={embedded}
-      eyebrow={embedded ? undefined : '伙伴能力'}
+      description="管理各类 Agent 可用的技能、工具与 Pi 扩展，包括发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。"
+      eyebrow="模型与扩展"
       routeId="plugins"
-      title={embedded ? '插件与工具' : '插件管理'}
+      title="插件管理"
     >
-      <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
+      {!nativeAppCenter ? <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection
-          description="在这里选择伙伴可以使用哪些能力。涉及文件、账户或其他敏感操作时，仍会在执行前征求你的同意。"
+          description="在这里选择各类 Agent 可以发现哪些能力。涉及文件、账户或其他敏感操作时，仍会在执行前征求你的同意。"
           title="能力概览"
         >
           <MetricStrip items={[
             { label: '可查看', value: items.length, detail: '技能、工具与扩展', icon: Wrench },
             { label: '当前可用', value: availableCount, detail: '连接正常', icon: ShieldCheck },
-            { label: '伙伴可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
+            { label: 'Agent 可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
           ]} />
-          <details className="plugins-policy-disclosure">
-            <summary>
+          <Disclosure
+            className="plugins-policy-disclosure"
+            summary={<>
               <span>
                 <strong>能力如何生效</strong>
                 <small>{catalog.data?.projectScope.supported ? '当前项目有独立默认设置' : '当前使用所有对话的默认设置'}</small>
               </span>
               <ChevronRight aria-hidden="true" size={16} />
-            </summary>
+            </>}
+          >
             <div className="capability-policy-notices">
               <InlineNotice title="显示出来，不等于自动执行" tone="info">
                 开启后，伙伴会在下一轮对话中知道这项能力；涉及风险的操作仍会按原有规则询问你。
@@ -438,7 +431,7 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
                 </InlineNotice>
               )}
             </div>
-          </details>
+          </Disclosure>
           <div className="capability-policy-feedback">
             {defaults.error ? (
               <InlineNotice title="默认设置暂时无法读取" tone="danger">
@@ -534,9 +527,9 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
             </div>
           ) : <EmptyState description={items.length ? '换一个关键词或筛选条件试试。' : '当前没有可用的技能或工具。'} icon={Search} title="没有找到能力" />}
         </ManagementSection>
-      </QueryState>
+      </QueryState> : null}
 
-      <div className="plugins-maintenance-entry">
+      {!nativeAppCenter ? <div className="plugins-maintenance-entry">
         <span>
           <strong>扩展与自动整理</strong>
           <small>安装额外能力，或调整任务完成、上下文整理和工具失败后的自动记录。</small>
@@ -550,11 +543,11 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
         >
           {showMaintenance ? '收起维护选项' : '管理扩展与自动整理'}
         </Button>
-      </div>
+      </div> : null}
 
-      {showMaintenance ? <ManagementSection
+      {maintenanceVisible ? <ManagementSection
         description="安装或启用新能力前会先说明来源、权限和影响；停用与恢复上一版本会直接生效。"
-        title="扩展管理"
+        title={nativePage === 'proposals' ? `${identity.assistantName}的建议` : '已安装与获取扩展'}
         trailing={<StatusBadge
           label={pluginQueryError ? '暂时无法读取' : !pluginRuntimeAvailable ? 'Pi 未连接' : `${installedItems.length} 个已安装`}
           tone={pluginQueryError || !pluginRuntimeAvailable ? 'warning' : 'neutral'}
@@ -569,6 +562,7 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
             插件清单仍可浏览，但已安装状态和安装操作要等 Pi Runtime 恢复后才能继续；页面不会再把断连伪装成“0 个已安装”。
           </InlineNotice> : null}
           <div className="plugin-lifecycle">
+            {nativePage !== 'proposals' ? <>
             <div className="plugin-lifecycle__install">
               <Field htmlFor="pi-package-source" label="Pi Package 来源">
                 <Input
@@ -637,8 +631,9 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
                 })}
               >获取或制作能力</Button>
             </div>
+            </> : null}
 
-            {proposalItems.length ? (
+            {nativePage === 'proposals' || !nativeAppCenter ? proposalItems.length ? (
               <div className="plugin-lifecycle__proposals">
                 <h3>{identity.assistantName}的建议</h3>
                 {proposalItems.map((proposal) => {
@@ -651,6 +646,13 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
                   );
                 })}
               </div>
+            ) : (
+              <EmptyState
+                action={<Button loading={proposals.isFetching} onClick={() => void proposals.refetch()} size="small">重新检查建议</Button>}
+                description={`有明确用途和来源的新能力建议会由${identity.assistantName}放在这里，安装前仍需你的确认。`}
+                icon={Sparkles}
+                title="暂时没有新建议"
+              />
             ) : null}
 
             {pendingChange.previewToken ? (
@@ -669,6 +671,9 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
                       {typeof pendingSummary.expectedEnabled === 'boolean'
                         ? ` · 当前${pendingSummary.expectedEnabled ? '已启用' : '已停用'}`
                         : ''}
+                      {stringValue(pendingSummary.action) === 'uninstall'
+                        ? ' · 只移除这个 Pi Package 的受管资源；不会删除项目文件、对话、WorkDocument 或个人数据。'
+                        : ''}
                     </small>
                   </span>
                   <div>
@@ -681,37 +686,51 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
 
             {lifecycleError ? <InlineNotice title="插件操作未完成" tone="danger">{lifecycleError}</InlineNotice> : null}
 
-            <div className="plugin-lifecycle__installed">
-              {installedItems.length ? installedItems.map((plugin) => (
-                <article className="installed-plugin" key={stringValue(plugin.id)}>
-                  <div><strong>{publicPluginDisplayName(stringValue(plugin.displayName, stringValue(plugin.id)))}</strong><span>v{stringValue(plugin.version)}</span></div>
+            {nativePage !== 'proposals' ? <div className="plugin-lifecycle__installed">
+              {installedItems.length ? installedItems.map((plugin) => {
+                const pluginId = stringValue(plugin.id);
+                const displayName = publicPluginDisplayName(stringValue(plugin.displayName, pluginId));
+                return (
+                <article
+                  aria-label={`${displayName} Package`}
+                  className="installed-plugin"
+                  data-selected={pluginId === packageContextId || undefined}
+                  key={pluginId}
+                >
+                  <div><strong>{displayName}</strong><span>v{stringValue(plugin.version)}</span></div>
                   <StatusBadge label={plugin.enabled === true ? '已启用' : '已停用'} tone={plugin.enabled === true ? 'success' : 'neutral'} />
                   <div className="installed-plugin__actions">
                     <Button
                       disabled={lifecyclePending}
                       leadingIcon={<Power size={15} />}
-                      onClick={() => void (plugin.enabled === true
-                        ? applyInstalledAction('disable', stringValue(plugin.id))
-                        : previewInstalledAction('enable', stringValue(plugin.id)))}
+                      onClick={() => void previewInstalledAction(plugin.enabled === true ? 'disable' : 'enable', stringValue(plugin.id))}
                       size="small"
                       variant="quiet"
                     >{plugin.enabled === true ? '停用' : '启用'}</Button>
                     <Button
                       disabled={plugin.rollbackAvailable !== true || lifecyclePending}
                       leadingIcon={<RotateCcw size={15} />}
-                      onClick={() => void applyInstalledAction('rollback', stringValue(plugin.id))}
+                      onClick={() => void previewInstalledAction('rollback', stringValue(plugin.id))}
                       size="small"
                       variant="quiet"
                     >恢复上一版本</Button>
+                    <Button
+                      disabled={lifecyclePending}
+                      leadingIcon={<PackageX size={15} />}
+                      onClick={() => void previewInstalledAction('uninstall', stringValue(plugin.id))}
+                      size="small"
+                      variant="quiet"
+                    >卸载</Button>
                   </div>
                 </article>
-              )) : <EmptyState description="需要新能力时，可以先查看来源和权限，再决定是否安装。" icon={PackageCheck} title="还没有额外扩展" />}
-            </div>
+                );
+              }) : <EmptyState description="需要新能力时，可以先查看来源和权限，再决定是否安装。" icon={PackageCheck} title="还没有额外扩展" />}
+            </div> : null}
           </div>
         </QueryState>
       </ManagementSection> : null}
 
-      {showMaintenance ? <ManagementSection
+      {!nativeAppCenter && showMaintenance ? <ManagementSection
         description="在一些关键时刻自动留下检查点或复盘建议。它不会替你写入长期记忆，也不会获得新的权限。"
         title="自动整理与提醒"
         trailing={<StatusBadge label={lifecycle.error ? '状态不可用' : `${lifecyclePolicies.filter((item) => item.enabled === true).length}/${lifecyclePolicies.length} 已启用`} tone={lifecycle.error ? 'warning' : 'neutral'} />}
@@ -743,13 +762,34 @@ export function PluginsFeature({ embedded = false }: { embedded?: boolean } = {}
               ))}
             </div>
             <div className="lifecycle-hooks__audit">
-              <h3>最近状态</h3>
+              <h3>
+                最近状态
+                {lifecycleEvents.length > 8 ? <small>最近 8 / 共 {lifecycleEvents.length} 条</small> : null}
+              </h3>
               {lifecycleEvents.length ? lifecycleEvents.slice(0, 8).map((event) => (
                 <div className="lifecycle-audit" key={stringValue(event.eventId)}>
                   <span><strong>{lifecycleEventLabel(stringValue(event.eventType))}</strong><small>最近一次对话</small></span>
                   <StatusBadge {...lifecycleStatusBadge(event)} />
                 </div>
               )) : <EmptyState description="功能在对话中触发后，运行记录会显示在这里。" icon={History} title="还没有触发记录" />}
+              {lifecycleEvents.length > 8 ? (
+                <Disclosure
+                  className="lifecycle-audit-more"
+                  summary={<>
+                    <span>查看其余 {lifecycleEvents.length - 8} 条记录</span>
+                    <ChevronRight aria-hidden="true" size={15} />
+                  </>}
+                >
+                  <div className="lifecycle-audit-more__items">
+                    {lifecycleEvents.slice(8).map((event) => (
+                      <div className="lifecycle-audit" key={stringValue(event.eventId)}>
+                        <span><strong>{lifecycleEventLabel(stringValue(event.eventType))}</strong><small>更早的对话</small></span>
+                        <StatusBadge {...lifecycleStatusBadge(event)} />
+                      </div>
+                    ))}
+                  </div>
+                </Disclosure>
+              ) : null}
             </div>
             {hookError ? <InlineNotice title="自动整理设置没有保存" tone="danger">{hookError}</InlineNotice> : null}
           </div>
@@ -963,10 +1003,13 @@ function ToolDetail({
 
       {Object.keys(schema).length ? (
         <section className="capability-disclosure">
-          <details>
-            <summary>查看技术参数</summary>
+          <Disclosure
+            className="capability-disclosure__technical"
+            contentClassName="capability-disclosure__technical-content"
+            summary="查看技术参数"
+          >
             <pre>{JSON.stringify(schema, null, 2)}</pre>
-          </details>
+          </Disclosure>
         </section>
       ) : null}
     </aside>
@@ -1022,7 +1065,7 @@ function availabilityBadge(item: ToolRecord): { label: string; tone: 'success' |
   if (status === 'unconfigured') return { label: capabilityStatusLabel(status), tone: 'warning' };
   return { label: capabilityStatusLabel(status), tone: 'neutral' };
 }
-function pluginActionLabel(action: string): string { if (action === 'install') return '安装插件'; if (action === 'update') return '更新插件'; if (action === 'enable') return '启用插件'; if (action === 'disable') return '停用插件'; if (action === 'rollback') return '回滚插件'; return '变更插件'; }
+function pluginActionLabel(action: string): string { if (action === 'install') return '安装插件'; if (action === 'update') return '更新插件'; if (action === 'enable') return '启用插件'; if (action === 'disable') return '停用插件'; if (action === 'uninstall') return '卸载插件'; if (action === 'rollback') return '回滚插件'; return '变更插件'; }
 function catalogStateBadge(item: Record<string, unknown>): { label: string; tone: 'success' | 'warning' | 'neutral' } { if (item.updateAvailable === true) return { label: '有更新', tone: 'warning' }; if (item.installed === true) return { label: '已是最新', tone: 'success' }; if (item.actionable === true) return { label: '可安装', tone: 'neutral' }; return { label: '仅供审阅', tone: 'neutral' }; }
 function lifecycleEventLabel(value: string): string { return ({ session_start: '开始对话', turn_end: '完成一轮回复', compaction: '整理长对话', project_complete: '任务完成', tool_failed: '工具没有成功', idle: '暂时空闲' } as Record<string, string>)[value] ?? value; }
 function lifecycleActionLabel(value: string): string { return ({ audit_only: '只记录发生了什么', context_checkpoint: '为下一轮保留上下文', memory_review_suggestion: '为下一轮准备记忆建议' } as Record<string, string>)[value] ?? value; }

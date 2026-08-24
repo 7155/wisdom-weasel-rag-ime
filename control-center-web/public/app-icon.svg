@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <defs>
+    <linearGradient id="sheen" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".24" />
+      <stop offset=".55" stop-color="#fff" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect x="1.5" y="1.5" width="45" height="45" rx="11.5" fill="#0a84ff" />
+  <rect x="1.5" y="1.5" width="45" height="45" rx="11.5" fill="url(#sheen)" />
+  <path d="M10 15a10 10 0 0 1 10-10h8a10 10 0 0 1 10 10v7a10 10 0 0 1-10 10h-9l-6.5 6v-6.2A10 10 0 0 1 10 25z" fill="#fff" transform="translate(0 4)" />
+  <circle cx="24" cy="22" r="5.2" fill="#0a84ff" />
+</svg>

@@ -34,8 +34,8 @@
 .session-subagent-graph > header > span svg { color: var(--color-accent); }
 .session-subagent-graph > header strong { font-size: 13px; }
 .session-subagent-graph > header > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; }
-.session-subagent-graph > header small { color: var(--color-text-tertiary); font-size: 11px; white-space: nowrap; }
-.session-subagent-graph > header small b { color: var(--color-text-secondary); font: 700 11px var(--font-mono); }
+.session-subagent-graph > header small { color: var(--color-text-tertiary); font-size: 12px; white-space: nowrap; }
+.session-subagent-graph > header small b { color: var(--color-text-secondary); font: 700 12px var(--font-mono); }
 .session-subagent-graph > header small[data-attention] b { color: var(--color-warning); }
 .session-subagent-tree { padding: 12px; }
 .session-subagent-tree ol { margin: 0; padding: 0; list-style: none; }
@@ -44,7 +44,7 @@
 .session-subagent-tree__root > span { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 50%; background: var(--color-surface); color: var(--color-accent); }
 .session-subagent-tree__root > div { display: grid; min-width: 0; gap: 2px; }
 .session-subagent-tree__root strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.session-subagent-tree__root small { color: var(--color-text-tertiary); font-size: 11px; }
+.session-subagent-tree__root small { color: var(--color-text-tertiary); font-size: 12px; }
 .session-subagent-tree li { position: relative; margin-top: 5px; padding-left: 18px; }
 .session-subagent-tree li > ol { margin-left: 12px; }
 .session-subagent-tree__edge { position: absolute; top: -6px; left: 5px; width: 12px; height: 28px; border-bottom: 1px solid var(--color-border-strong); border-left: 1px solid var(--color-border-strong); border-radius: 0 0 0 6px; }
@@ -63,27 +63,28 @@
 .session-subagent-node__identity { display: grid; min-width: 0; gap: 2px; }
 .session-subagent-node__identity strong, .session-subagent-node__identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-subagent-node__identity strong { font-size: 12px; }
-.session-subagent-node__identity small { display: inline-flex; align-items: center; gap: 3px; color: var(--color-text-tertiary); font-size: 10px; }
-.session-subagent-node__task { overflow: hidden; color: var(--color-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.session-subagent-node > i { color: var(--color-text-secondary); font-size: 10px; font-style: normal; font-weight: 650; white-space: nowrap; }
-.session-subagent-node > b { display: grid; min-width: 18px; height: 18px; place-items: center; border-radius: 9px; background: var(--color-surface-subtle); color: var(--color-text-tertiary); font: 700 10px var(--font-mono); }
+.session-subagent-node__identity small { display: inline-flex; align-items: center; gap: 3px; color: var(--color-text-tertiary); font-size: 12px; }
+.session-subagent-node__task { overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.session-subagent-node > i { color: var(--color-text-secondary); font-size: 12px; font-style: normal; font-weight: 650; white-space: nowrap; }
+.session-subagent-node > b { display: grid; min-width: 18px; height: 18px; place-items: center; border-radius: 9px; background: var(--color-surface-subtle); color: var(--color-text-tertiary); font: 700 12px var(--font-mono); }
 .session-subagent-graph__state { display: grid; min-height: 54px; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 7px; margin-top: 10px; padding: 9px; border: 1px dashed var(--color-border); border-radius: var(--radius-2); color: var(--color-text-tertiary); font-size: 12px; }
 .session-subagent-graph__state[data-spinning] > svg { color: var(--color-accent); animation: agent-status-spin 1.2s linear infinite; }
 .session-subagent-detail { margin-top: 10px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); }
 .session-subagent-detail > header { display: grid; min-height: 48px; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
 .session-subagent-detail > header > span:nth-child(2) { display: grid; min-width: 0; gap: 1px; }
 .session-subagent-detail > header strong { font-size: 13px; }
-.session-subagent-detail > header small { color: var(--color-text-tertiary); font-size: 10px; }
+.session-subagent-detail > header small { color: var(--color-text-tertiary); font-size: 12px; }
+.session-subagent-detail__actions { display: flex; align-items: center; gap: 5px; }
 .session-subagent-detail__task { margin: 0; padding: 10px 10px 8px; color: var(--color-text); font-size: 12px; font-weight: 620; line-height: 1.45; overflow-wrap: anywhere; }
-.session-subagent-detail__flow { display: grid; grid-template-columns: auto 14px auto minmax(0, 1fr); align-items: center; gap: 5px; margin: 0 10px 9px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-border)); border-radius: var(--radius-1); background: var(--color-accent-soft); color: var(--color-text-secondary); font-size: 10px; }
+.session-subagent-detail__flow { display: grid; grid-template-columns: auto 14px auto minmax(0, 1fr); align-items: center; gap: 5px; margin: 0 10px 9px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-border)); border-radius: var(--radius-1); background: var(--color-accent-soft); color: var(--color-text-secondary); font-size: 12px; }
 .session-subagent-detail__flow i { color: var(--color-accent); font-style: normal; }
 .session-subagent-detail__flow small { justify-self: end; color: var(--color-text-tertiary); }
 .session-subagent-detail dl { display: grid; margin: 0; border-top: 1px solid var(--color-border-soft); }
-.session-subagent-detail dl > div { display: grid; min-width: 0; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; padding: 6px 10px; font-size: 11px; }
+.session-subagent-detail dl > div { display: grid; min-width: 0; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; padding: 6px 10px; font-size: 12px; }
 .session-subagent-detail dl > div + div { border-top: 1px solid color-mix(in srgb, var(--color-border) 58%, transparent); }
 .session-subagent-detail dt { color: var(--color-text-tertiary); }
 .session-subagent-detail dd { min-width: 0; margin: 0; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-.session-subagent-detail__error, .session-subagent-detail__recovery { margin: 8px 10px 10px; padding: 7px 8px; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.session-subagent-detail__error, .session-subagent-detail__recovery { margin: 8px 10px 10px; padding: 7px 8px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .session-subagent-detail__error { border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border)); border-radius: var(--radius-1); background: var(--color-danger-soft); color: var(--color-danger); font-family: var(--font-mono); }
 .session-subagent-detail__recovery { display: grid; grid-template-columns: 15px minmax(0, 1fr); gap: 5px; border: 1px solid color-mix(in srgb, var(--color-warning) 30%, var(--color-border)); border-radius: var(--radius-1); background: var(--color-warning-soft); color: var(--color-text-secondary); }
 .session-subagent-detail__recovery svg { margin-top: 1px; color: var(--color-warning); }
@@ -92,7 +93,9 @@
 .session-subagent-launch > summary::-webkit-details-marker { display: none; }
 .session-subagent-launch > summary svg { color: var(--color-accent); }
 .session-subagent-launch[open] > summary { border-bottom: 1px solid var(--color-border); }
-.session-subagent-launch > :not(summary) { margin: 10px; }
+.session-subagent-launch > .ui-disclosure__reveal > div { margin: 10px; }
+.session-subagent-launch[data-compact-empty] { margin: 0; border: 0; background: transparent; }
+.session-subagent-launch[data-compact-empty] > summary { min-height: 38px; padding: 6px 2px; font-weight: 500; }
 
 @media (max-width: 1360px) {
   .session-subagent-panel { position: absolute; z-index: 14; top: 0; right: 0; bottom: 0; width: min(480px, 92vw); box-shadow: var(--shadow-menu); }

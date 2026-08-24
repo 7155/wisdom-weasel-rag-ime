@@ -62,7 +62,9 @@ describe('RoomTurn canonical conversation chronology', () => {
     const committedPosts = [...view.container.querySelectorAll<HTMLElement>('.room-agent-lane__post')];
     expect(committedPosts.every((post) => post.closest('.room-agent-lane'))).toBe(true);
     const lanes = [...view.container.querySelectorAll<HTMLDetailsElement>('.room-agent-lane')];
-    expect(lanes.every((lane) => !lane.open)).toBe(true);
+    // Public replies are the conversational result, so they stay visible by
+    // default while their lower-level work/tool details remain progressive.
+    expect(lanes.every((lane) => lane.open)).toBe(true);
     expect(lanes.map((lane) => lane.querySelector('summary')?.textContent)).toEqual([
       expect.stringContaining('澄·今先确认边界'),
       expect.stringContaining('澄·初补充独立检查'),

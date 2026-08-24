@@ -47,6 +47,7 @@ const canonicalPathIds = [
   'agent.session.ui.resolve',
   'agent.session.compact',
   'agent.session.commands',
+  'agent.session.command.invoke',
   'agent.session.models',
   'agent.session.model.select',
   'agent.session.thinking.select',
@@ -138,20 +139,20 @@ const canonicalPathIds = [
   'agent.wakeSchedule.runs',
   'agent.wakeSchedule.action',
   'browser.status',
-  'browser.pairing',
   'browser.tabs',
   'browser.snapshot.latest',
   'browser.snapshot.image',
   'browser.traces',
-  'browser.permissions',
-  'browser.permission.get',
-  'browser.permission.decide',
-  'browser.mode.update',
-  'browser.pairing.rotate',
   'browser.command',
   'browser.stop',
   'browser.managed.start',
   'browser.managed.stop',
+  'terminal.sessions.list',
+  'terminal.session.create',
+  'terminal.session.read',
+  'terminal.session.write',
+  'terminal.session.resize',
+  'terminal.session.close',
   'planning.dashboard',
   'planning.mutation.preview',
   'planning.task.save',
@@ -279,6 +280,19 @@ describe('control route policy', () => {
       pathId: 'agent.session.snapshot',
       params: { sessionId: 'session-1' },
     })).not.toThrow();
+  });
+
+  it('allows only the exact Room turn authority on the existing background-job cancel route', () => {
+    expect(() => assertControlRequest({
+      pathId: 'agent.session.backgroundJob.cancel',
+      params: { sessionId: 'session-room-worker', jobId: 'bg_123' },
+      body: { reason: 'control_center_requested', roomTurnId: 'room-root-1' },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'agent.session.backgroundJob.cancel',
+      params: { sessionId: 'session-room-worker', jobId: 'bg_123' },
+      body: { reason: 'control_center_requested', roomId: 'room-1' },
+    } as never)).toThrow(/body field/);
   });
 
   it('keeps configuration file paths behind the five local migration contracts', () => {

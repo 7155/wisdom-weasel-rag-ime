@@ -1,4 +1,4 @@
-import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Virtuoso,
@@ -17,10 +17,15 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import {
   ActivitySummary,
   ReasoningActivitySummary,
+  FxActivityStack,
 } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
-import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
 import { conversationMarkerIndexes } from './conversation-markers';
+import { AgentTurnWorkDisclosure } from './AgentTurnWorkDisclosure';
+import {
+  buildAgentTurnWorkModel,
+  type AgentTurnSequenceEntry,
+} from './agent-turn-work-model';
 import { useAgentLiveStore } from '../state/live-store';
 import { isAgentNetworkInterruption, publicAgentErrorText } from '../public-error';
 
@@ -157,14 +162,41 @@ function logicalRetryRootUserIds(
     .filter((messageId) => projection.messagesById[messageId]?.role === 'user');
 }
 
+const emptyTurnTimes: number[] = [];
+
+function agentDayKey(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/** 同日分隔投影：只读真实 turn createdAtMs，按日历日打标，不增删事件。 */
+function agentTurnDayStartLabels(turnIds: string[], createdAtList: number[]): Record<string, string> {
+  const labels: Record<string, string> = {};
+  let previousDay = '';
+  const today = agentDayKey(Date.now());
+  const yesterday = agentDayKey(Date.now() - 86_400_000);
+  turnIds.forEach((turnId, index) => {
+    const at = createdAtList[index] ?? 0;
+    if (!at) return;
+    const key = agentDayKey(at);
+    if (key === previousDay) return;
+    previousDay = key;
+    const datePart = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(new Date(at));
+    labels[turnId] = key === today ? `今天 · ${datePart}` : key === yesterday ? `昨天 · ${datePart}` : datePart;
+  });
+  return labels;
+}
+
+function fxClock(atMs: number): string {
+  return atMs ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(atMs)) : '';
+}
+
 export function AgentTimeline({
-  assistantName = '澄',
   sessionId,
   persona,
   loading = false,
   modelSelectionAvailable,
   turnRecoveryDisabled = false,
-  onSuggestion,
   onRetryTurn,
   onContinueTurn,
   onSwitchModel,
@@ -178,6 +210,9 @@ export function AgentTimeline({
   onAtBottomChange,
   onForkFromMessage,
   onEditMessage,
+  activityPresentation = 'grouped',
+  presentation = 'default',
+  showConversationNavigation = true,
 }: {
   assistantName?: string;
   sessionId: string;
@@ -185,7 +220,6 @@ export function AgentTimeline({
   loading?: boolean;
   modelSelectionAvailable: boolean;
   turnRecoveryDisabled?: boolean;
-  onSuggestion: (value: string) => void;
   onRetryTurn: (
     turnId: string,
     onAdmissionRolledBack?: () => void,
@@ -202,6 +236,9 @@ export function AgentTimeline({
   onAtBottomChange?: (atBottom: boolean) => void;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
+  activityPresentation?: 'grouped' | 'atomic';
+  presentation?: 'default' | 'fx';
+  showConversationNavigation?: boolean;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const liveFollowIntentRef = useRef(true);
@@ -219,9 +256,18 @@ export function AgentTimeline({
   const activeTurnIndex = Math.floor(
     (visibleRange.startIndex + visibleRange.endIndex) / 2,
   );
+  const turnCreatedAtList = useAgentLiveStore(useShallow((state) => {
+    const projection = state.projections[sessionId];
+    if (!projection) return emptyTurnTimes;
+    return turnOrder.map((turnId) => projection.turnsById[turnId]?.createdAtMs ?? 0);
+  }));
+  const dayStartLabels = useMemo(
+    () => agentTurnDayStartLabels(turnOrder, turnCreatedAtList),
+    [turnOrder, turnCreatedAtList],
+  );
   const markerIndexes = useMemo(
-    () => conversationMarkerIndexes(turnOrder.length, activeTurnIndex),
-    [activeTurnIndex, turnOrder.length],
+    () => showConversationNavigation ? conversationMarkerIndexes(turnOrder.length, activeTurnIndex) : [],
+    [activeTurnIndex, showConversationNavigation, turnOrder.length],
   );
   const markerKinds = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
     const projection = state.projections[sessionId];
@@ -393,7 +439,15 @@ export function AgentTimeline({
         </div>
       );
     }
-    return <AgentWelcome assistantName={assistantName} persona={persona} onSuggestion={onSuggestion} />;
+    return (
+      <div className="agent-timeline-empty" role="status" aria-label="空 Session">
+        <PencilLine aria-hidden="true" size={18} />
+        <span>
+          <strong>还没有消息</strong>
+          <small>在下方输入第一条消息，Agent 会在这里回复。</small>
+        </span>
+      </div>
+    );
   }
   return (
     <div className="agent-timeline" aria-label="对话时间线" role="log">
@@ -418,7 +472,6 @@ export function AgentTimeline({
         itemContent={(_index, turnId) => (
           <AgentTurn
             key={turnId}
-            assistantName={assistantName}
             sessionId={sessionId}
             turnId={turnId}
             persona={persona}
@@ -435,10 +488,13 @@ export function AgentTimeline({
             activeTargetId={activeTargetId}
             onForkFromMessage={onForkFromMessage}
             onEditMessage={onEditMessage}
+            activityPresentation={activityPresentation}
+            dayStartLabel={dayStartLabels[turnId] ?? ''}
+            presentation={presentation}
           />
         )}
       />
-      {turnOrder.length > 1 ? (
+      {showConversationNavigation && turnOrder.length > 1 ? (
         <nav
           className="agent-conversation-nav"
           aria-label="快速跳转对话"
@@ -501,7 +557,7 @@ export function AgentTimeline({
                   </span>
                   {userPreview ? <small><b>你</b><span>{userPreview}</span></small> : null}
                   <small>
-                    <b>{persona?.displayName ?? assistantName}</b>
+                    <b>Agent</b>
                     <span>{assistantPreview || turnMarkerLabel(markerKind)}</span>
                   </small>
                 </span>
@@ -540,7 +596,6 @@ function AgentTurnTombstone({
 }
 
 export function AgentTurn({
-  assistantName = '澄',
   sessionId,
   turnId,
   persona,
@@ -557,6 +612,9 @@ export function AgentTurn({
   activeTargetId = '',
   onForkFromMessage,
   onEditMessage,
+  activityPresentation = 'grouped',
+  dayStartLabel = '',
+  presentation = 'default',
 }: {
   assistantName?: string;
   sessionId: string;
@@ -578,6 +636,9 @@ export function AgentTurn({
   activeTargetId?: string;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
+  activityPresentation?: 'grouped' | 'atomic';
+  dayStartLabel?: string;
+  presentation?: 'default' | 'fx';
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
   const stopping = useAgentLiveStore((state) => {
@@ -638,64 +699,116 @@ export function AgentTurn({
   });
   if (!turn) return null;
   const rawFailure = turn.failure || blockFailure;
-  const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
+  /* A later user turn consumes the recovery surface for this failure. Keep the
+     failed turn and its evidence in history, but do not present an obsolete
+     alert as though it still blocks the current conversation. */
+  const failure = turn.status === 'failed' && latestTurnId === turnId
+    ? publicAgentErrorText(rawFailure)
+    : '';
   const networkInterrupted = turn.status === 'failed' && isAgentNetworkInterruption(rawFailure);
+  const terminalFailureActivity = [...activities].reverse().find((activity) => (
+    activity.kind === 'turn_failed' && activity.status === 'failed'
+  ));
+  const runtimeInterrupted = (
+    terminalFailureActivity?.payload.failureKind === 'runtime_host_exit'
+    || rawFailure.includes('Agent 运行时中断')
+  );
+  const retryExhausted = terminalFailureActivity?.payload.retryExhausted === true;
+  const providerRetryAttempts = numberValue(
+    terminalFailureActivity?.payload.providerRetryAttempts,
+  );
   const retainedResults = assistantMessages.some((message) => (
     message.blocks.some((block) => block.type === 'file' || block.type === 'artifact' || block.type === 'diff')
   ));
-  const failureTitle = networkInterrupted ? '网络中断' : '本轮未完成';
-  const failureDetail = networkInterrupted
+  const safeContinuation = runtimeInterrupted || networkInterrupted || retryExhausted;
+  const failureTitle = runtimeInterrupted
+    ? '运行时中断'
+    : networkInterrupted
+    ? '网络中断'
+    : retryExhausted
+      ? '模型服务请求失败'
+      : '本轮未完成';
+  const failureDetail = runtimeInterrupted
     ? retainedResults
-      ? '连接在最终回复生成前中断；已完成的工具与文件结果已保留。继续会基于当前 Session 接续，不重放原请求。'
-      : '连接在最终回复生成前中断；请继续当前对话，或切换模型后继续。'
-    : failure;
+      ? '运行时退出前已完成的工具与文件结果已保留。继续会在同一 Session 中接续，不重放原请求。'
+      : '运行时已保留当前 Session 历史。重新打开后可直接继续，不重放原请求。'
+    : retryExhausted && providerRetryAttempts > 0
+    ? retainedResults
+      ? `模型连接已自动重试 ${providerRetryAttempts} 次，仍未恢复；已完成的工具与文件结果已保留。继续会基于当前 Session 接续，不重放原请求。`
+      : `模型连接已自动重试 ${providerRetryAttempts} 次，仍未恢复；请稍后继续，或切换模型后继续。`
+    : networkInterrupted
+      ? retainedResults
+        ? '连接在最终回复生成前中断；已完成的工具与文件结果已保留。继续会基于当前 Session 接续，不重放原请求。'
+        : '连接在最终回复生成前中断；请继续当前对话，或切换模型后继续。'
+      : failure;
   const retryRequested = retryRequestedFor === `${turnId}:${turn.status}`;
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const turnSettled = turn.status === 'completed' || turn.status === 'failed' || turn.status === 'aborted';
-  const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
-  const timelineEntries = interleavedTurnEntries(assistantMessages, activities);
+  const timelineEntries = interleavedTurnEntries(assistantMessages, activities, activityPresentation);
+  const turnWorkModel = buildAgentTurnWorkModel(turn.status, timelineEntries);
   const streamingMessageId = activeStreamingMessageId(turn.status, assistantMessages);
+  const renderTimelineEntry = (entry: AgentTurnSequenceEntry) => entry.kind === 'message' ? (
+    <div data-timeline-kind="message" key={entry.message.id}>
+      <MessageView
+        sessionId={sessionId}
+        messageId={entry.message.id}
+        presentation={presentation}
+        forkAvailable={forkAvailable}
+        historyTarget={activeTargetId === entry.message.id}
+        streaming={entry.message.id === streamingMessageId}
+        onApprovalDecision={onApprovalDecision}
+        onForkFromMessage={onForkFromMessage}
+      />
+    </div>
+  ) : presentation === 'fx' ? (
+    <FxActivityStack
+      key={entry.key}
+      activities={entry.activities}
+      onApprovalDecision={onApprovalDecision}
+      onOpenApproval={onOpenApproval}
+      onRequestPermission={onRequestPermission}
+    />
+  ) : (
+    <div data-timeline-kind="activity" key={entry.key}>
+      <ActivityGroupView
+        activities={entry.activities}
+        onApprovalDecision={onApprovalDecision}
+        onOpenApproval={onOpenApproval}
+        onRequestPermission={onRequestPermission}
+      />
+    </div>
+  );
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
-      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
+      {dayStartLabel ? <div aria-hidden="true" className="agent-fx-day"><span>{dayStartLabel}</span></div> : null}
+      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
-          <PersonaAvatar fallbackName={assistantName} persona={persona} presence={showWorking ? 'thinking' : presence} size="small" />
           <div className="agent-assistant-turn__body">
-            <header><strong>{persona?.displayName ?? assistantName}</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
+            <header><strong>Agent</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
-            <div className="agent-turn-sequence" aria-label="本轮响应过程">
-              {timelineEntries.map((entry) => entry.kind === 'message' ? (
-                <div data-timeline-kind="message" key={entry.message.id}>
-                  <MessageView
-                    sessionId={sessionId}
-                    messageId={entry.message.id}
-                    forkAvailable={forkAvailable}
-                    historyTarget={activeTargetId === entry.message.id}
-                    streaming={entry.message.id === streamingMessageId}
-                    onApprovalDecision={onApprovalDecision}
-                    onForkFromMessage={onForkFromMessage}
-                  />
-                </div>
-              ) : (
-                <div data-timeline-kind="activity" key={entry.key}>
-                  <ActivityGroupView
-                    activities={entry.activities}
-                    onApprovalDecision={onApprovalDecision}
-                    onOpenApproval={onOpenApproval}
-                    onRequestPermission={onRequestPermission}
-                  />
-                </div>
-              ))}
-            </div>
+            {presentation === 'fx' ? (
+              <AgentTurnWorkDisclosure
+                createdAtMs={turn.createdAtMs}
+                model={turnWorkModel}
+                renderEntry={renderTimelineEntry}
+                sessionId={sessionId}
+                turnId={turnId}
+                updatedAtMs={turn.updatedAtMs}
+              />
+            ) : (
+              <div className="agent-turn-sequence" aria-label="本轮响应过程">
+                {timelineEntries.map(renderTimelineEntry)}
+              </div>
+            )}
             {turnSettled ? <AgentTurnUsage messages={assistantMessages} /> : null}
             {failure ? (
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
                 <span><strong>{failureTitle}</strong><small>{failureDetail}</small></span>
-                {onSwitchModel && !nonRetryableAdmission ? (
+                {onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId ? (
                   <div className="agent-turn__failure-actions">
-                    {networkInterrupted ? (
+                    {safeContinuation ? (
                       onContinueTurn && latestTurnId === turnId ? (
                         <Button
                           size="small"
@@ -752,13 +865,12 @@ type TurnTimelineItem = {
   fallbackOrder: number;
 };
 
-export type InterleavedTurnEntry =
-  | { kind: 'message'; message: AgentMessageProjection }
-  | { kind: 'activity-group'; key: string; activities: AgentActivityProjection[] };
+export type InterleavedTurnEntry = AgentTurnSequenceEntry;
 
 export function interleavedTurnEntries(
   messages: AgentMessageProjection[],
   activities: AgentActivityProjection[],
+  activityPresentation: 'grouped' | 'atomic' = 'grouped',
 ): InterleavedTurnEntry[] {
   const historicalReasoningSequenceByMessage = new Map<string, number>();
   for (const activity of activities) {
@@ -805,7 +917,7 @@ export function interleavedTurnEntries(
       return entries;
     }
     const previous = entries[entries.length - 1];
-    if (previous?.kind === 'activity-group') {
+    if (activityPresentation === 'grouped' && previous?.kind === 'activity-group') {
       previous.activities.push(item.activity);
       return entries;
     }
@@ -881,6 +993,7 @@ function MessageView({
   onApprovalDecision,
   onForkFromMessage,
   onEditMessage,
+  presentation = 'default',
 }: {
   sessionId: string;
   messageId: string;
@@ -895,6 +1008,7 @@ function MessageView({
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
+  presentation?: 'default' | 'fx';
 }) {
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
@@ -919,6 +1033,79 @@ function MessageView({
     && Boolean(onEditMessage);
   const showStreaming = !user && (streaming ?? message.status === 'streaming');
   const visibleStatus = showStreaming ? 'streaming' : message.status === 'streaming' ? 'completed' : message.status;
+  if (presentation === 'fx' && user) {
+    const visibleUserMeta = [
+      deliveryFeedback,
+      message.attachments.length ? `${message.attachments.length} 个附件` : '',
+    ].filter(Boolean).join(' · ');
+    const auditClock = fxClock(message.createdAtMs);
+    return (
+      <div className="paw-user-step paw-fx-message-shell" data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
+        {message.createdAtMs ? (
+          <time className="sr-only" dateTime={new Date(message.createdAtMs).toISOString()}>
+            用户消息{auditClock ? `，发送于 ${auditClock}` : ''}
+          </time>
+        ) : <span className="sr-only">用户消息</span>}
+        <div className="paw-user-message" data-status={message.status}>
+          <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} onApprovalDecision={onApprovalDecision} />
+        </div>
+        {visibleUserMeta ? (
+          <span className="fx-user-meta" aria-live={deliveryFeedback ? 'polite' : undefined} role={deliveryFeedback ? 'status' : undefined}>
+            {visibleUserMeta}
+          </span>
+        ) : null}
+        {canFork || canEdit ? (
+          <div className="agent-message-actions">
+            {canEdit ? (
+              <IconButton
+                label="修改这条消息"
+                icon={<PencilLine size={14} />}
+                size="small"
+                onClick={() => onEditMessage?.(messageId)}
+                tooltip
+                tooltipSide="left"
+              />
+            ) : null}
+            {canFork ? (
+              <IconButton
+                label="从这条消息创建分支"
+                icon={<GitBranch size={14} />}
+                size="small"
+                onClick={() => onForkFromMessage?.(messageId)}
+                tooltip
+                tooltipSide="left"
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  if (presentation === 'fx') {
+    return (
+      <div className="paw-fx-message-shell">
+        <div className="paw-assistant-text" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
+          <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} streaming={showStreaming} onApprovalDecision={onApprovalDecision} />
+          {showStreaming ? <>
+            <span className="agent-streaming-cursor" aria-label="正在生成" />
+            <EstimatedStreamingRate blocks={visibleBlocks} />
+          </> : null}
+        </div>
+        {canFork ? (
+          <div className="agent-message-actions">
+            <IconButton
+              label="从这条消息创建分支"
+              icon={<GitBranch size={14} />}
+              size="small"
+              onClick={() => onForkFromMessage?.(messageId)}
+              tooltip
+              tooltipSide="left"
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
   return user ? (
     <div className="agent-user-message-shell" data-actions={canFork || canEdit || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
@@ -1068,41 +1255,58 @@ function ActivityGroupView({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
 }) {
-  const compactions: AgentActivityProjection[] = [];
-  const reasonings: AgentActivityProjection[] = [];
-  const ordinaries: AgentActivityProjection[] = [];
-
-  for (const activity of activities) {
-    if (activity.kind === 'context_compaction') {
-      compactions.push(activity);
-    } else if (activity.kind === 'reasoning_summary') {
-      reasonings.push(activity);
-    } else {
-      if (isAgentTodoActivity(activity) && activity.status !== 'failed') continue;
-      ordinaries.push(activity);
-    }
-  }
+  const runs = activityDisplayRuns(activities);
 
   return (
     <>
-      {compactions.map((activity) => (
-        <ContextCompactionNotice key={activity.id} activity={activity} />
-      ))}
-      {reasonings.length > 0 ? (
-        <ReasoningActivitySummary key={`reasoning:${reasonings[0]?.id}`} activities={reasonings} />
-      ) : null}
-      {ordinaries.length > 0 ? (
-        <ActivitySummary
-          key={`ordinary:${ordinaries[0]?.id}`}
-          activities={ordinaries}
-          inline
-          onApprovalDecision={onApprovalDecision}
-          onOpenApproval={onOpenApproval}
-          onRequestPermission={onRequestPermission}
-        />
-      ) : null}
+      {runs.map((run) => {
+        if (run.kind === 'compaction') {
+          return <ContextCompactionNotice key={run.activity.id} activity={run.activity} />;
+        }
+        if (run.kind === 'reasoning') {
+          return <ReasoningActivitySummary key={`reasoning:${run.activities[0]?.id}`} activities={run.activities} />;
+        }
+        return (
+          <ActivitySummary
+            key={`ordinary:${run.activities[0]?.id}`}
+            activities={run.activities}
+            inline
+            onApprovalDecision={onApprovalDecision}
+            onOpenApproval={onOpenApproval}
+            onRequestPermission={onRequestPermission}
+          />
+        );
+      })}
     </>
   );
+}
+
+export type ActivityDisplayRun =
+  | { kind: 'compaction'; activity: AgentActivityProjection }
+  | { kind: 'reasoning' | 'ordinary'; activities: AgentActivityProjection[] };
+
+/** Keep compact same-family disclosures without moving an activity across a
+ * later Runtime event.  The previous three global buckets could turn
+ * `tool -> reasoning -> tool` into `reasoning -> tools`, which made the visible
+ * message flow disagree with the reducer even though the outer turn order was
+ * correct. */
+export function activityDisplayRuns(activities: AgentActivityProjection[]): ActivityDisplayRun[] {
+  const runs: ActivityDisplayRun[] = [];
+  for (const activity of activities) {
+    if (activity.kind === 'context_compaction') {
+      runs.push({ kind: 'compaction', activity });
+      continue;
+    }
+    if (isAgentTodoActivity(activity) && activity.status !== 'failed') continue;
+    const kind = activity.kind === 'reasoning_summary' ? 'reasoning' : 'ordinary';
+    const previous = runs[runs.length - 1];
+    if (previous?.kind === kind) {
+      previous.activities.push(activity);
+    } else {
+      runs.push({ kind, activities: [activity] });
+    }
+  }
+  return runs;
 }
 
 function isAgentTodoActivity(activity: AgentActivityProjection): boolean {
@@ -1130,33 +1334,6 @@ function ContextCompactionNotice({ activity }: { activity: AgentActivityProjecti
         </small>
       </span>
       {running ? <i className="agent-compaction-notice__pulse" aria-hidden="true" /> : null}
-    </div>
-  );
-}
-
-function AgentWelcome({
-  assistantName,
-  persona,
-  onSuggestion,
-}: {
-  assistantName: string;
-  persona?: AgentPersonaV1;
-  onSuggestion: (value: string) => void;
-}) {
-  const suggestions = [
-    ['回顾今天', '结合近期对话，帮我回顾今天的进展。'],
-    ['检查运行状态', '检查输入法、模型、RAG 与 Memory 的当前状态。'],
-    ['整理下一步', '根据当前项目上下文，整理三个可以立刻推进的下一步。'],
-  ];
-  return (
-    <div className="agent-welcome">
-      <PersonaAvatar fallbackName={assistantName} persona={persona} size="hero" />
-      <div><h2>今天想先从哪里开始？</h2><p>{persona?.tagline ?? '连续对话、检索和整理都从这里开始。'}</p></div>
-      <div className="agent-welcome__suggestions">
-        {suggestions.map(([title, prompt]) => (
-          <Button key={title} variant="quiet" leadingIcon={<Sparkles size={15} />} trailingIcon={<ArrowUpRight size={14} />} onClick={() => onSuggestion(prompt)}>{title}</Button>
-        ))}
-      </div>
     </div>
   );
 }

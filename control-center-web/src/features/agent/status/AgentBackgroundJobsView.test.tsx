@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
 import { MockControlTransport } from '@/test/mock-transport';
@@ -139,6 +139,26 @@ describe('AgentBackgroundJobsView', () => {
       cursor: expectedCursor,
       limitBytes: 131_072,
     });
+  });
+
+  it('opens the exact existing run only after the user asks to view it', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.backgroundJobs.list': jobList([runningJob]),
+        'agent.session.backgroundJob.logs': logResponse(runningJob),
+      },
+    });
+    const onOpenJob = vi.fn();
+    const user = userEvent.setup();
+    renderJobs(transport, [runningJob], onOpenJob);
+
+    expect(onOpenJob).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole('button', { name: /构建项目/ }));
+    expect(onOpenJob).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '在窗口查看' }));
+
+    expect(onOpenJob).toHaveBeenCalledTimes(1);
+    expect(onOpenJob).toHaveBeenCalledWith(runningJob);
   });
 
   it('projects the authoritative cancel receipt without waiting for SSE', async () => {
@@ -314,25 +334,32 @@ describe('AgentBackgroundJobsView', () => {
   });
 });
 
-function LiveJobs({ fallbackJobs }: { fallbackJobs?: AgentBackgroundJobV1[] }) {
+function LiveJobs({
+  fallbackJobs,
+  onOpenJob,
+}: {
+  fallbackJobs?: AgentBackgroundJobV1[];
+  onOpenJob?: (job: AgentBackgroundJobV1) => void;
+}) {
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const jobs = fallbackJobs ?? (projection
     ? projection.backgroundJobOrder
       .map((jobId) => projection.backgroundJobsById[jobId])
       .filter((job): job is AgentBackgroundJobV1 => Boolean(job))
     : []);
-  return <AgentBackgroundJobsView sessionId={sessionId} jobs={jobs} />;
+  return <AgentBackgroundJobsView sessionId={sessionId} jobs={jobs} onOpenJob={onOpenJob} />;
 }
 
 function renderJobs(
   transport: MockControlTransport,
   fallbackJobs?: AgentBackgroundJobV1[],
+  onOpenJob?: (job: AgentBackgroundJobV1) => void,
 ): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <ControlTransportProvider transport={transport}>
       <QueryClientProvider client={client}>
-        <LiveJobs fallbackJobs={fallbackJobs} />
+        <LiveJobs fallbackJobs={fallbackJobs} onOpenJob={onOpenJob} />
       </QueryClientProvider>
     </ControlTransportProvider>,
   );

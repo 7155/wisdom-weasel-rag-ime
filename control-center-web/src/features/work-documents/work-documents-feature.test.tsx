@@ -417,6 +417,7 @@ describe('WorkDocumentsFeature', () => {
 
     expect(await screen.findByRole('heading', { name: '只读宿主仍可查看' })).toBeInTheDocument();
     expect(screen.getByText('当前应用以阅读为主')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '登记工作文档' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '历史归档' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '当前宿主不支持归档' })).toBeDisabled();
     expect(transport.requests.some((call) => call.request.pathId === 'workDocuments.list')).toBe(true);

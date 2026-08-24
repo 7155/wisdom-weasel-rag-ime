@@ -1,0 +1,89 @@
+/* PAWOS full-colour App identities. Navigation and command icons stay monochrome. */
+
+.paw-app-icon {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+  filter: drop-shadow(0 2px 3px rgb(15 23 42 / .16));
+  shape-rendering: geometricPrecision;
+  transition: filter 180ms ease, transform 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.paw-app-icon__silhouette { transform-origin: center; }
+.paw-app-icon__primary { fill: var(--paw-app-icon-color); }
+.paw-app-icon__secondary { fill: var(--paw-app-icon-accent); }
+.paw-app-icon__tertiary { fill: color-mix(in srgb, var(--paw-app-icon-color) 52%, white); }
+.paw-app-icon__paper { fill: rgb(255 255 255 / .94); }
+
+.paw-app-icon[data-paw-app-icon='room'] .paw-app-icon__primary { opacity: .96; }
+.paw-app-icon[data-paw-app-icon='room'] .paw-app-icon__secondary { opacity: .82; }
+.paw-app-icon[data-paw-app-icon='room'] .paw-app-icon__tertiary { opacity: .7; }
+.paw-app-icon[data-paw-app-icon='terminal'] .paw-app-icon__primary { fill: #1d1d1f; }
+.paw-app-icon[data-paw-app-icon='files'] .paw-app-icon__paper { fill: #fff8e8; }
+.paw-app-icon[data-paw-app-icon='memory'] .paw-app-icon__paper { fill: #fff4f9; }
+.paw-app-icon[data-paw-app-icon='knowledge'] .paw-app-icon__paper { opacity: .8; }
+.paw-app-icon[data-paw-app-icon='system-monitor'] .paw-app-icon__primary { fill: #3e4c59; }
+.paw-app-icon[data-paw-app-icon='system-settings'] .paw-app-icon__paper { fill: #f7f7f8; }
+
+/* Ink identities need an optical lift on the dark Dock; their light-surface
+   colour and geometry remain unchanged. */
+.paw-dock .paw-app-icon[data-paw-app-icon='terminal'] .paw-app-icon__primary { fill: #7d818b; }
+.paw-dock .paw-app-icon[data-paw-app-icon='system-monitor'] .paw-app-icon__primary { fill: #687c8d; }
+
+/* Small placements retain the same geometry; contrast is strengthened without
+   replacing the identity with a generic tile. */
+.paw-app-icon[data-paw-icon-scale='small'] {
+  filter: drop-shadow(0 1px 1px rgb(15 23 42 / .2));
+}
+
+/* The placement owns spacing only; the identity itself owns its colour and silhouette. */
+.paw-desktop-shortcuts button > span,
+.paw-launchpad section > div > button > span,
+.paw-native-app .paw-native-nav > header > span {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.paw-desktop-shortcuts button > span { width: 56px; height: 56px; }
+.paw-desktop-shortcuts .paw-app-icon { width: 48px; height: 48px; }
+.paw-dock .paw-app-icon { width: 34px; height: 34px; }
+.paw-launchpad .paw-app-icon { width: 46px; height: 46px; }
+.paw-window-title .paw-app-icon { width: 18px; height: 18px; }
+.paw-native-nav > header .paw-app-icon { width: 34px; height: 34px; }
+.paw-menu-app .paw-app-icon { width: 17px; height: 17px; }
+.paw-overview-window-target > .paw-app-icon { width: 28px; height: 28px; }
+
+.paw-menu-bar > .paw-menu-app { display: inline-flex; align-items: center; gap: 7px; }
+.paw-menu-app > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paw-overview-window-target { gap: 9px; }
+.paw-overview-window-target > .paw-app-icon { flex: 0 0 auto; }
+
+.paw-app-boot.paw-app-boot {
+  grid-template-columns: auto minmax(0, max-content);
+  align-content: center;
+  justify-content: center;
+  gap: 13px;
+}
+.paw-app-boot.paw-app-boot > .paw-app-icon { grid-column: 1; grid-row: 1; }
+.paw-app-boot.paw-app-boot > span { grid-column: 2; grid-row: 1; margin-left: 0; }
+.paw-app-loading > .paw-app-icon { flex: 0 0 auto; }
+
+:is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:hover .paw-app-icon {
+  filter: drop-shadow(0 5px 8px rgb(15 23 42 / .24));
+  transform: translateY(-1px) scale(1.035);
+}
+.paw-desktop-root :is(button:disabled, [aria-disabled='true']) .paw-app-icon {
+  opacity: .42;
+  filter: saturate(.3);
+  transform: none;
+}
+.paw-desktop-shortcuts button:hover > span,
+.paw-desktop-shortcuts button[aria-selected='true'] > span { box-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-app-icon { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .paw-app-icon { forced-color-adjust: auto; }
+}

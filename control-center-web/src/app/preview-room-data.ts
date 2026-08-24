@@ -28,9 +28,9 @@ export function previewRoomSnapshot(roomId: string) {
   const rootId = `${roomId}:turn-1`;
   const waveId = `${roomId}:wave-implementation`;
   const participants = [
-    previewParticipant(roomId, 'participant-present', 'session-room-present', 'companion-present-v1', '澄·今', 0),
-    previewParticipant(roomId, 'participant-firstlight', 'session-room-firstlight', 'companion-firstlight-v1', '澄·初', 1),
-    previewParticipant(roomId, 'participant-future', 'session-room-future', 'companion-future-v1', '澄·远', 2),
+    previewParticipant(roomId, 'participant-present', 'session-room-present', 'companion-present-v1', 'Agent 1', 0),
+    previewParticipant(roomId, 'participant-firstlight', 'session-room-firstlight', 'companion-firstlight-v1', 'Agent 2', 1),
+    previewParticipant(roomId, 'participant-future', 'session-room-future', 'companion-future-v1', 'Agent 3', 2),
   ];
   const event = (
     sequence: number,
@@ -86,13 +86,13 @@ export function previewRoomSnapshot(roomId: string) {
     }),
     event(2, 'route_decision', 'participant-present', {
       rootId, dispatchId: 'dispatch-present',
-      targetParticipantId: 'participant-present', targetDisplayName: '澄·今',
-      reason: '负责任务图交互', summary: '澄·今已接手任务图交互',
+      targetParticipantId: 'participant-present', targetDisplayName: 'Agent 1',
+      reason: '负责任务图交互', summary: 'Agent 1 已接手任务图交互',
     }),
     event(3, 'route_decision', 'participant-firstlight', {
       rootId, dispatchId: 'dispatch-firstlight',
-      targetParticipantId: 'participant-firstlight', targetDisplayName: '澄·初',
-      reason: '负责依赖数据', summary: '澄·初已接手依赖数据',
+      targetParticipantId: 'participant-firstlight', targetDisplayName: 'Agent 2',
+      reason: '负责依赖数据', summary: 'Agent 2 已接手依赖数据',
     }),
     event(4, 'participant_activity', 'participant-present', {
       rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-start',

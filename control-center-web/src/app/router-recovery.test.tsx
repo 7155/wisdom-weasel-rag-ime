@@ -1,8 +1,8 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LegacyPluginsRedirect, RouteErrorBoundary, RouteLoading } from './router';
+import { RouteErrorBoundary, RouteLoading } from './router';
 
 function BrokenPage(): never {
   throw new Error('private implementation detail');
@@ -48,20 +48,4 @@ describe('route recovery', () => {
     expect(screen.getByText('打开得有点久')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重新载入' })).toBeInTheDocument();
   });
-
-  it('redirects the retired plugin route without dropping session context', async () => {
-    const testRouter = createMemoryRouter([
-      { path: '/plugins', element: <LegacyPluginsRedirect /> },
-      { path: '/roles', element: <LocationProbe /> },
-    ], { initialEntries: ['/plugins?sessionId=session-project'] });
-
-    render(<RouterProvider router={testRouter} />);
-
-    expect(await screen.findByTestId('redirect-location')).toHaveTextContent('/roles?sessionId=session-project');
-  });
 });
-
-function LocationProbe() {
-  const location = useLocation();
-  return <span data-testid="redirect-location">{`${location.pathname}${location.search}`}</span>;
-}

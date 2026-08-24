@@ -19,30 +19,22 @@ export interface AgentConfigurationV1 {
       resumeLastSession: boolean;
       roleId: string;
       roleVersion: string;
+      modelProfile: string;
       toolProfileVersion: string;
       capabilityDisclosurePreferences: {
         [k: string]: 'inherit' | 'enabled' | 'disabled';
       };
       [k: string]: unknown;
     };
-    modelRouting: {
-      sessionModelProfile: string;
-      sessionThinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-      roomPartnerModelProfile: string;
-      roomPartnerThinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-      toolAgentModelProfile: string;
-      toolAgentThinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-      [k: string]: unknown;
-    };
     coordination: {
       enabled: boolean;
       [k: string]: unknown;
     };
-    capabilityDisclosure: {
-      projectPreferences: {
-        [k: string]: unknown;
-      };
-      [k: string]: unknown;
+    modelRouting: {
+      primary: ModelRoute;
+      toolAgent: ModelRoute;
+      subagent: ModelRoute;
+      roomCoordinator: ModelRoute;
     };
     [k: string]: unknown;
   };
@@ -56,4 +48,8 @@ export interface AgentConfigurationV1 {
   updatedBy: string;
   lastEventId: string;
   [k: string]: unknown;
+}
+export interface ModelRoute {
+  modelProfile: string;
+  thinkingLevel: 'inherit' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 }

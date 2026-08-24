@@ -1,8 +1,8 @@
 export function previewConfigurationValues(): Record<string, unknown> {
   return {
     identity: {
-      productName: '澄',
-      assistantName: '澄',
+      productName: 'PAW',
+      assistantName: 'Agent',
       tagline: '记得你，也陪你做事',
     },
     interaction: {

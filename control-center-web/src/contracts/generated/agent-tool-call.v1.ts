@@ -46,6 +46,7 @@ export interface AgentToolCallV1 {
     | 'workspace_shell'
     | 'workspace_job';
   toolCallId: string;
+  sourceLoopId?: string;
   args: {
     [k: string]: unknown;
   };

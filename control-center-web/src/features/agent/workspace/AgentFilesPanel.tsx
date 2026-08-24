@@ -8,7 +8,6 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  FolderPlus,
   LoaderCircle,
   PanelRightClose,
   RefreshCw,
@@ -236,12 +235,10 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
               </ul>
             </nav>
           ) : (
-            <div className="agent-files-panel__empty">
-              <FolderPlus size={22} />
-              <strong>还没有工作区目录</strong>
-              <small>选择项目目录后，可以在这里按需展开文件结构。</small>
+            <p className="agent-files-panel__empty" role="status">
+              <span>当前没有文件；选择工作区目录后即可浏览。</span>
               <button type="button" onClick={onManageRoots}>选择目录</button>
-            </div>
+            </p>
           )}
         </div>
       </aside>

@@ -1,0 +1,721 @@
+/*
+ * PAWOS system Apps migration v1
+ *
+ * The supplied archive defines composition, hierarchy, and state grammar only.
+ * Every datum and action rendered below still comes from the existing PAWOS
+ * feature owners, transports, native bridges, and guarded mutation workflows.
+ */
+
+.paw-desktop-root .paw-system-app {
+  --paw-system-accent: #5e5ce6;
+  --paw-system-accent-soft: rgb(94 92 230 / 10%);
+  --paw-system-stage: #f4f5f7;
+  --paw-system-surface: #fff;
+  --paw-system-fill: rgb(24 32 44 / 4.5%);
+  --paw-system-line: rgb(24 32 44 / 9%);
+  --paw-system-ink: #1d222b;
+  --paw-system-muted: #707783;
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paw-system-stage);
+  color: var(--paw-system-ink);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='app-center'] {
+  --paw-system-accent: #0e9f8a;
+  --paw-system-accent-soft: rgb(14 159 138 / 10%);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] {
+  --paw-system-accent: #3e5969;
+  --paw-system-accent-soft: rgb(62 89 105 / 10%);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] {
+  --paw-system-accent: #64718c;
+  --paw-system-accent-soft: rgb(100 113 140 / 11%);
+}
+
+.paw-desktop-root .paw-system-app ::selection {
+  background: color-mix(in srgb, var(--paw-system-accent) 24%, transparent);
+  color: var(--paw-system-ink);
+}
+
+.paw-desktop-root .paw-system-app :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--paw-system-accent) 72%, white);
+  outline-offset: 2px;
+}
+
+.paw-desktop-root .paw-system-app__nav {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: rgb(255 255 255 / 94%);
+  border-right: 1px solid var(--paw-system-line);
+}
+
+.paw-desktop-root .paw-system-app__nav nav {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-height: 0;
+  padding: 11px 9px;
+  overflow: auto;
+  scrollbar-color: rgb(24 32 44 / 20%) transparent;
+  scrollbar-width: thin;
+}
+
+.paw-desktop-root .paw-system-app__nav nav button {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr) 13px;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--paw-system-muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+.paw-desktop-root .paw-system-app__nav nav button > svg:last-child {
+  justify-self: end;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+
+.paw-desktop-root .paw-system-app__nav nav button:hover {
+  background: var(--paw-system-fill);
+  color: var(--paw-system-ink);
+}
+
+.paw-desktop-root .paw-system-app__nav nav button[aria-current='page'] {
+  background: var(--paw-system-accent-soft);
+  color: var(--paw-system-ink);
+  font-weight: 650;
+}
+
+.paw-desktop-root .paw-system-app__nav nav button[aria-current='page'] > svg:first-child {
+  color: var(--paw-system-accent);
+}
+
+.paw-desktop-root .paw-system-app__nav nav button[aria-current='page'] > svg:last-child {
+  opacity: .62;
+  transform: none;
+}
+
+.paw-desktop-root .paw-system-app__stage,
+.paw-desktop-root .paw-system-app__page {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Shared operational canvas ------------------------------------------------ */
+
+.paw-desktop-root .paw-system-app .mgmt-page,
+.paw-desktop-root .paw-system-app .context-debug-feature {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: auto;
+  background: var(--paw-system-stage);
+  color: var(--paw-system-ink);
+  scrollbar-color: rgb(24 32 44 / 22%) transparent;
+  scrollbar-width: thin;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-page > * {
+  width: 100%;
+  max-width: none;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-page__native-actions,
+.paw-desktop-root .paw-system-app .context-debug-header {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 16px;
+  background: #f6f7f9;
+  border-bottom: 1px solid var(--paw-system-line);
+  backdrop-filter: none;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-page:not(:has(.mgmt-page__native-actions))::before {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: block;
+  height: 40px;
+  background: #f6f7f9;
+  border-bottom: 1px solid var(--paw-system-line);
+  backdrop-filter: none;
+  content: '';
+}
+
+.paw-desktop-root .paw-system-app .mgmt-page__body {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  max-width: none;
+  padding: 20px 24px 28px;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-section {
+  min-width: 0;
+  margin: 0;
+  padding: 16px 19px;
+  overflow: hidden;
+  background: var(--paw-system-surface);
+  border: 1px solid var(--paw-system-line);
+  border-radius: 14px;
+  animation: paw-system-arrive 340ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-section + .mgmt-section {
+  border-top-color: var(--paw-system-line);
+}
+
+.paw-desktop-root .paw-system-app .mgmt-page__body > :nth-child(2) { animation-delay: 35ms; }
+.paw-desktop-root .paw-system-app .mgmt-page__body > :nth-child(3) { animation-delay: 70ms; }
+.paw-desktop-root .paw-system-app .mgmt-page__body > :nth-child(4) { animation-delay: 105ms; }
+
+@keyframes paw-system-arrive {
+  from { opacity: .72; transform: translateY(7px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+.paw-desktop-root .paw-system-app .mgmt-section__header {
+  align-items: start;
+  margin: 0 0 13px;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-section__header h2 {
+  margin: 0 0 3px;
+  color: var(--paw-system-ink);
+  font-family: var(--font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif);
+  font-size: 16px;
+  font-weight: 720;
+  letter-spacing: -.01em;
+  line-height: 1.25;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-section__header h2::before { display: none; }
+
+.paw-desktop-root .paw-system-app :is(.mgmt-section__header p, .mgmt-muted, small, dt) {
+  color: var(--paw-system-muted);
+}
+
+.paw-desktop-root .paw-system-app .mgmt-section__header p {
+  margin-top: 2px;
+  max-width: 72ch;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.paw-desktop-root .paw-system-app :is(button, .ui-button, select, input, .ui-input, .ui-select__trigger) {
+  font-family: inherit;
+}
+
+.paw-desktop-root .paw-system-app :is(.ui-button, .ui-input, .ui-select__trigger, select) {
+  min-height: 30px;
+  border-radius: 8px;
+}
+
+.paw-desktop-root .paw-system-app :is(.ui-button, button):active:not(:disabled) {
+  transform: scale(.975);
+}
+
+.paw-desktop-root .paw-system-app .ui-button[data-tone='primary'],
+.paw-desktop-root .paw-system-app .ui-button[aria-variant='primary'] {
+  background: var(--paw-system-accent);
+  color: #fff;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-status {
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-status[data-tone='info'] {
+  background: var(--paw-system-accent-soft);
+  color: var(--paw-system-accent);
+}
+
+.paw-desktop-root .paw-system-app .mgmt-status[data-tone='success'] i,
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .mgmt-status[data-tone='warning'] i {
+  animation: paw-system-status-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes paw-system-status-pulse {
+  50% { opacity: .36; transform: scale(.78); }
+}
+
+.paw-desktop-root .paw-system-app .mgmt-notice {
+  border-radius: 11px;
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-metric {
+  min-width: 0;
+  padding: 12px 13px;
+  background: var(--paw-system-fill);
+  border: 0;
+  border-radius: 11px;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-metric dt {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 610;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-metric > dd:not(.mgmt-metric__detail) {
+  margin-top: 4px;
+  color: var(--paw-system-ink);
+  font-size: 22px;
+  font-weight: 735;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-metric__detail {
+  margin-top: 3px;
+  font-size: 13px;
+}
+
+.paw-desktop-root .paw-system-app .mgmt-loading,
+.paw-desktop-root .paw-system-app .ui-empty-state {
+  min-height: 180px;
+  border-radius: 14px;
+}
+
+.paw-desktop-root .paw-system-resource-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  background: var(--paw-system-fill);
+  border-radius: 9px;
+  color: var(--paw-system-muted);
+  font-size: 14px;
+}
+
+.paw-desktop-root .paw-system-resource-state[data-state='error'] { color: #b42332; }
+.paw-desktop-root .paw-system-resource-state svg { flex: none; }
+.paw-desktop-root .paw-system-resource-state[data-state='loading'] svg { animation: paw-system-spin 850ms linear infinite; }
+.paw-desktop-root .paw-system-resource-state button { margin-left: auto; }
+
+@keyframes paw-system-spin { to { transform: rotate(360deg); } }
+
+/* Input Studio ------------------------------------------------------------- */
+
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] :is(.input-status-grid, .mgmt-grid-2, .input-settings-grid) {
+  gap: 11px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] .input-status-item {
+  background: var(--paw-system-fill);
+  border: 0;
+  border-radius: 11px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] .input-status-item__icon,
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] .voice-native-action-group > span:first-child {
+  color: var(--paw-system-accent);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] :is(.input-mode-choice, .voice-service-choice, .input-settings-save) {
+  background: color-mix(in srgb, var(--paw-system-accent) 5%, white);
+  border-color: color-mix(in srgb, var(--paw-system-accent) 16%, transparent);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] :is(.history-table-wrap, .voice-connection-details, .voice-recognition-details, .voice-refinement-status) {
+  border-color: var(--paw-system-line);
+  border-radius: 11px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] .history-table th {
+  background: var(--paw-system-fill);
+  color: var(--paw-system-muted);
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: .055em;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='input-studio'] .history-table td {
+  border-bottom-color: var(--paw-system-line);
+  font-size: 14px;
+}
+
+/* App Center --------------------------------------------------------------- */
+
+.paw-desktop-root .paw-system-catalog-tools {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.paw-desktop-root .paw-system-catalog-tools > label:first-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: min(420px, 100%);
+  padding-left: 9px;
+  background: #fff;
+  border: 1px solid var(--paw-system-line);
+  border-radius: 9px;
+  color: var(--paw-system-muted);
+}
+
+.paw-desktop-root .paw-system-catalog-tools > label:first-child .ui-input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-system-package-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.paw-desktop-root .paw-system-package {
+  display: grid;
+  grid-template-rows: auto minmax(44px, auto) 1fr auto;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 15px;
+  background: #fff;
+  border: 1px solid var(--paw-system-line);
+  border-radius: 13px;
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out;
+}
+
+.paw-desktop-root .paw-system-package:hover {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 24%, var(--paw-system-line));
+  box-shadow: 0 8px 20px rgb(24 32 44 / 7%);
+  transform: translateY(-1px);
+}
+
+.paw-desktop-root .paw-system-package > header {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.paw-desktop-root .paw-system-package > header > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--paw-system-accent);
+  color: #fff;
+}
+
+.paw-desktop-root .paw-system-package > header > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.paw-desktop-root .paw-system-package > header strong,
+.paw-desktop-root .paw-system-package > header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-desktop-root .paw-system-package > header strong { font-size: 14.5px; }
+.paw-desktop-root .paw-system-package > header small { font-size: 13px; }
+
+.paw-desktop-root .paw-system-package > p {
+  margin: 0;
+  color: var(--paw-system-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.paw-desktop-root .paw-system-package dl {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  margin: 0;
+}
+
+.paw-desktop-root .paw-system-package dl > div {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 7px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.paw-desktop-root .paw-system-package dt {
+  display: flex;
+  align-items: start;
+  gap: 4px;
+}
+
+.paw-desktop-root .paw-system-package dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--paw-system-ink);
+}
+
+.paw-desktop-root .paw-system-package > footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 9px;
+  border-top: 1px solid var(--paw-system-line);
+  color: var(--paw-system-muted);
+  font-size: 13px;
+}
+
+.paw-desktop-root .paw-system-package > footer .ui-button { margin-left: auto; }
+
+.paw-desktop-root .paw-system-package-approval {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.paw-desktop-root .paw-system-package-approval > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.paw-desktop-root .paw-system-package-approval > span small { font-size: 13px; }
+.paw-desktop-root .paw-system-package-approval > div { display: flex; gap: 7px; margin-left: auto; }
+
+.paw-desktop-root .paw-system-app[data-system-app='app-center'] :is(.plugin-catalog__row, .installed-plugin, .plugin-proposal) {
+  border-color: var(--paw-system-line);
+  border-radius: 11px;
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='app-center'] .plugin-lifecycle__installed {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+
+/* System Monitor ----------------------------------------------------------- */
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .mgmt-page__body {
+  gap: 15px;
+  padding-inline: 20px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .mgmt-metric {
+  background: #fff;
+  border: 1px solid var(--paw-system-line);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .mgmt-metric dt svg {
+  color: var(--paw-system-accent);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .observation-controls {
+  padding: 9px 11px;
+  background: #fff;
+  border: 1px solid var(--paw-system-line);
+  border-radius: 11px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .observation-workspace {
+  gap: 13px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] :is(.observation-timeline, .observation-trace) li button {
+  transition: background-color 130ms ease-out, color 130ms ease-out;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] :is(.observation-timeline, .observation-trace) li[data-active='true'] button,
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] :is(.observation-timeline, .observation-trace) li[data-active] button {
+  background: var(--paw-system-accent-soft);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .context-debug-session-viewer {
+  background: #fff;
+  border-color: var(--paw-system-line);
+  border-radius: 13px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .context-debug-session-tree {
+  background: #f8f9fa;
+  border-right-color: var(--paw-system-line);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] :is(.context-debug-reader__code, pre) {
+  font-variant-numeric: tabular-nums;
+  scrollbar-color: rgb(255 255 255 / 24%) transparent;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .diagnostics-action-list {
+  display: grid;
+  gap: 10px;
+}
+
+/* System Settings ---------------------------------------------------------- */
+
+.paw-desktop-root .paw-system-agent-fields {
+  display: grid;
+  gap: 0;
+}
+
+.paw-desktop-root .paw-system-agent-fields > label {
+  display: grid;
+  grid-template-columns: minmax(130px, .42fr) minmax(220px, .58fr);
+  align-items: center;
+  gap: 3px 16px;
+  min-height: 66px;
+  padding: 9px 1px;
+  border-bottom: 1px dashed var(--paw-system-line);
+}
+
+.paw-desktop-root .paw-system-agent-fields > label:last-child { border-bottom: 0; }
+
+.paw-desktop-root .paw-system-agent-fields > label > span {
+  color: var(--paw-system-ink);
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.paw-desktop-root .paw-system-agent-fields select {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 30px 0 10px;
+  background: #fff;
+  border: 1px solid var(--paw-system-line);
+  color: var(--paw-system-ink);
+  font-size: 14px;
+}
+
+.paw-desktop-root .paw-system-agent-fields small {
+  grid-column: 2;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-settings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-option {
+  border-color: var(--paw-system-line);
+  border-radius: 12px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-option[data-selected] {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 44%, transparent);
+  box-shadow: 0 7px 18px rgb(24 32 44 / 7%);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.configuration-destinations, .configuration-editor, .governance-columns, .approvals-list) {
+  border-color: var(--paw-system-line);
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .approvals-list > li {
+  border-color: var(--paw-system-line);
+  border-radius: 11px;
+}
+
+/* Responsive composition -------------------------------------------------- */
+
+/* The System App fills a named PAW window. Query that parent: a container
+   cannot select and restyle itself, which previously left the 196px rail in
+   place even after its labels disappeared. */
+@container paw-window (max-width: 900px) {
+  .paw-desktop-root .paw-system-package-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .paw-desktop-root .paw-system-app .mgmt-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container paw-window (max-width: 720px) {
+  .paw-desktop-root .paw-system-app {
+    grid-template-columns: 54px minmax(0, 1fr);
+  }
+
+  .paw-desktop-root .paw-system-app__nav nav { padding-inline: 7px; }
+
+  .paw-desktop-root .paw-system-app__nav nav button {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    min-height: 38px;
+    padding: 0;
+  }
+
+  .paw-desktop-root .paw-system-app__nav nav button span,
+  .paw-desktop-root .paw-system-app__nav nav button > svg:last-child { display: none; }
+
+  .paw-desktop-root .paw-system-app .mgmt-page__body { padding: 14px 14px 20px; }
+  .paw-desktop-root .paw-system-app .mgmt-section { padding: 14px; border-radius: 12px; }
+  .paw-desktop-root .paw-system-package-grid { grid-template-columns: minmax(0, 1fr); }
+  .paw-desktop-root .paw-system-app[data-system-app='app-center'] .plugin-lifecycle__installed { grid-template-columns: minmax(0, 1fr); }
+  .paw-desktop-root .paw-system-catalog-tools { align-items: stretch; flex-direction: column; }
+  .paw-desktop-root .paw-system-catalog-tools > label:first-child { width: 100%; }
+  .paw-desktop-root .paw-system-package-approval { align-items: stretch; flex-direction: column; }
+  .paw-desktop-root .paw-system-package-approval > div { margin-left: 0; }
+}
+
+@container paw-window (max-width: 520px) {
+  .paw-desktop-root .paw-system-app .mgmt-metrics { grid-template-columns: minmax(0, 1fr); }
+  .paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-settings { grid-template-columns: minmax(0, 1fr); }
+  .paw-desktop-root .paw-system-agent-fields > label { grid-template-columns: minmax(0, 1fr); }
+  .paw-desktop-root .paw-system-agent-fields small { grid-column: 1; }
+  .paw-desktop-root .paw-system-package > header { grid-template-columns: 34px minmax(0, 1fr); }
+  .paw-desktop-root .paw-system-package > header .mgmt-status { grid-column: 2; justify-self: start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root .paw-system-app .mgmt-section { animation: none; }
+  .paw-desktop-root .paw-system-app .mgmt-status i,
+  .paw-desktop-root .paw-system-resource-state[data-state='loading'] svg { animation: none; }
+  .paw-desktop-root .paw-system-app__nav nav button,
+  .paw-desktop-root .paw-system-app__nav nav button > svg:last-child,
+  .paw-desktop-root .paw-system-package,
+  .paw-desktop-root .paw-system-app :is(.ui-button, button) { transition: none; }
+}

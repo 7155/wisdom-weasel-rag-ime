@@ -70,13 +70,14 @@ describe('ActivityTimeline activity projection', () => {
 
     await user.click(task);
     const dialog = await screen.findByRole('dialog', { name: '切换 Codex 账号并继续开发' });
-    expect(within(dialog).getAllByText('通过 cas 切换到工作账号。')).toHaveLength(2);
+    expect(within(dialog).getAllByText('通过 cas 切换到工作账号。')).toHaveLength(1);
 
     const eventSummary = within(dialog).getByText('事件 1').closest('summary');
     expect(eventSummary).not.toBeNull();
     await user.click(eventSummary!);
     const eventDetails = eventSummary!.closest('details');
     expect(eventDetails).not.toBeNull();
+    expect(within(eventDetails!).getAllByText('通过 cas 切换到工作账号。')).toHaveLength(2);
 
     const referenceSummary = within(eventDetails!).getByText('相关来源 · 1').closest('summary');
     expect(referenceSummary).not.toBeNull();
@@ -89,6 +90,44 @@ describe('ActivityTimeline activity projection', () => {
     expect(within(referenceDialog).getByText('通过 cas 切换到工作账号。')).toBeVisible();
     expect(within(referenceDialog).getByRole('region', { name: '整理使用的输入上下文' })).toBeVisible();
     expect(within(referenceDialog).getByText('准备切换工作账号')).toBeVisible();
+  });
+
+  it('keeps nested timeline details mounted through their closing transition', async () => {
+    const user = userEvent.setup();
+    renderTimeline(semanticTimeline());
+
+    await user.click(await screen.findByRole('button', { name: '查看任务：切换 Codex 账号并继续开发' }));
+    const dialog = await screen.findByRole('dialog', { name: '切换 Codex 账号并继续开发' });
+    const eventSummary = within(dialog).getByText('事件 1').closest('summary');
+    expect(eventSummary).not.toBeNull();
+    await user.click(eventSummary!);
+    const eventDetails = eventSummary!.closest('details');
+    expect(eventDetails).toHaveAttribute('open');
+
+    const sourceSummary = within(eventDetails!).getByText('相关来源 · 1').closest('summary');
+    expect(sourceSummary).not.toBeNull();
+    await user.click(sourceSummary!);
+    const sourceDetails = sourceSummary!.closest('details');
+    expect(sourceDetails).toHaveAttribute('open');
+    expect(within(sourceDetails!).getByText('Terminal 命令记录')).toBeVisible();
+
+    await user.click(sourceSummary!);
+    expect(sourceSummary).toHaveAttribute('aria-expanded', 'false');
+    expect(sourceDetails).toHaveAttribute('open');
+    expect(within(sourceDetails!).getByText('Terminal 命令记录')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(eventDetails!).queryByText('Terminal 命令记录')).not.toBeInTheDocument();
+      expect(sourceDetails).not.toHaveAttribute('open');
+    });
+
+    await user.click(eventSummary!);
+    expect(eventSummary).toHaveAttribute('aria-expanded', 'false');
+    expect(eventDetails).toHaveAttribute('open');
+    expect(eventDetails!.querySelector('.activity-timeline__event-body > p')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(eventDetails!.querySelector('.activity-timeline__event-body > p')).toBeNull();
+      expect(eventDetails).not.toHaveAttribute('open');
+    });
   });
 
   it('falls back to legacy segments and preserves expandable source event identities', async () => {
@@ -130,6 +169,30 @@ describe('ActivityTimeline activity projection', () => {
     expect(firstEventDetails).not.toBeNull();
     expect(within(firstEventDetails!).getByText('这条记录暂时没有可展示的摘要。')).toBeVisible();
     expect(within(firstEventDetails!).getByRole('button', { name: '打开来源记录' })).toBeVisible();
+  });
+
+  it('keeps every event reachable when a task has more than the initial evidence window', async () => {
+    const user = userEvent.setup();
+    const timeline = semanticTimeline();
+    const tasks = timeline.semanticTasks as Array<Record<string, unknown>>;
+    const baseEvent = (tasks[0]!.events as Array<Record<string, unknown>>)[0]!;
+    tasks[0]!.events = Array.from({ length: 30 }, (_, index) => ({
+      ...baseEvent,
+      eventId: 1_000 + index,
+      summary: `批量事件 ${index + 1}`,
+      sourceRefs: [],
+    }));
+    tasks[0]!.eventCount = 30;
+    renderTimeline(timeline);
+
+    await user.click(await screen.findByRole('button', { name: '查看任务：切换 Codex 账号并继续开发' }));
+    const dialog = await screen.findByRole('dialog', { name: '切换 Codex 账号并继续开发' });
+    expect(within(dialog).getByText('事件 24')).toBeInTheDocument();
+    expect(within(dialog).queryByText('事件 25')).not.toBeInTheDocument();
+    const more = within(dialog).getByRole('button', { name: '再显示 6 条事件，当前 24 / 30' });
+    await user.click(more);
+    expect(within(dialog).getByText('事件 30')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /再显示/ })).not.toBeInTheDocument();
   });
 
   it('groups a legacy task crossing noon as all-day and labels duration as a span', async () => {

@@ -1,15 +1,49 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
-import { ActivitySummary, PublicActivityFeed } from './ActivitySummary';
+import { ActivitySummary, FxActivityStack, PublicActivityFeed, ReasoningActivitySummary, resetActivityDisclosureOverrides } from './ActivitySummary';
 import { inspectableRawResultText } from './public-tool-result';
 
 afterEach(() => {
   cleanup();
+  resetActivityDisclosureOverrides();
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
 });
 
 describe('Agent tool activity details', () => {
+  it('renders only authoritative bounded Tool progress as a compact meter', () => {
+    const counted = {
+      ...toolActivity('tool_progress', 'running', {
+        toolCallId: 'call-counted-progress',
+        toolName: 'knowledge',
+        progress: 0.5,
+      }),
+      summary: '已扫描 24 / 48 段',
+    };
+    const invalid = {
+      ...toolActivity('tool_progress', 'running', {
+        toolCallId: 'call-invalid-progress',
+        toolName: 'browser',
+        progress: Number.NaN,
+      }),
+      summary: '正在检查页面',
+    };
+    const completedAtHalf = { ...counted, id: 'call-completed-half', status: 'completed' as const };
+
+    const { rerender } = render(<FxActivityStack activities={[counted, invalid]} />);
+
+    const meter = screen.getByRole('progressbar', { name: 'knowledge：24 / 48 段' });
+    expect(meter).toHaveAttribute('aria-valuenow', '50');
+    expect(meter).toHaveAttribute('aria-valuetext', '24 / 48 段');
+    expect(meter).toHaveStyle({ '--paw-activity-progress': '0.5' });
+    expect(screen.getByText('24 / 48 段')).toBeInTheDocument();
+    expect(screen.getAllByRole('progressbar')).toHaveLength(1);
+
+    rerender(<FxActivityStack activities={[completedAtHalf]} />);
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+  });
+
   it('bounds an inspectable receipt before it can be copied or rendered', () => {
     const text = inspectableRawResultText({
       rows: Array.from({ length: 500 }, (_, index) => ({
@@ -56,6 +90,31 @@ describe('Agent tool activity details', () => {
     expect(details).toHaveTextContent('运行状态已读取');
   });
 
+  it('keeps the opened group and tool evidence visible across a virtualized remount', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-remounted-disclosure',
+      toolName: 'overview',
+      args: { section: 'runtime' },
+      result: { details: { ok: true, result: { summary: '运行状态已读取' } } },
+    });
+    const first = render(<ActivitySummary activities={[activity]} inline />);
+    const firstGroup = first.container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(firstGroup.querySelector('summary')!);
+    const firstRow = firstGroup.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(firstRow.querySelector('summary')!);
+    expect(firstGroup).toHaveAttribute('open');
+    expect(firstRow).toHaveAttribute('open');
+    first.unmount();
+
+    const second = render(<ActivitySummary activities={[activity]} inline />);
+    const secondGroup = second.container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    const secondRow = secondGroup.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    expect(secondGroup).toHaveAttribute('open');
+    expect(secondRow).toHaveAttribute('open');
+    expect(secondRow).toHaveTextContent('运行状态已读取');
+    expect(secondRow).toHaveTextContent('完整返回');
+  });
+
   it('toggles a controlled disclosure by Enter and Space without native page activation', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-keyboard-disclosure',
@@ -69,6 +128,13 @@ describe('Agent tool activity details', () => {
     fireEvent.keyDown(summary, { key: 'Enter' });
     expect(group).toHaveAttribute('open');
     fireEvent.keyDown(summary, { key: ' ' });
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    const reveal = group.querySelector<HTMLElement>('.agent-smooth-reveal')!;
+    expect(reveal).toHaveAttribute('aria-hidden', 'true');
+    // The native details stays open for the 180ms exit so a multi-page body
+    // can shrink instead of disappearing before the height transition.
+    expect(group).toHaveAttribute('open');
+    fireEvent.transitionEnd(reveal, { propertyName: 'height' });
     expect(group).not.toHaveAttribute('open');
   });
 
@@ -134,7 +200,7 @@ describe('Agent tool activity details', () => {
     expect(group).not.toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     expect(group).toHaveAttribute('data-state', 'mixed');
-    expect(group).toHaveTextContent('33 已完成 · 1 未完成');
+    expect(group).toHaveTextContent('33 已完成 · 1 失败');
     fireEvent.click(group.querySelector('summary')!);
     const scrollRegion = within(group).getByRole('region', { name: '操作与思考过程' });
     expect(scrollRegion).toHaveAttribute('data-bounded-scroll', 'true');
@@ -190,7 +256,8 @@ describe('Agent tool activity details', () => {
     expect(group).toHaveAttribute('data-state', 'mixed');
     fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
-    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('搜索参数超出允许范围');
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('搜索参数超出允许范围');
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('失败原因');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
 
     rerender(<ActivitySummary activities={[{ ...activity, updatedAtMs: 3 }]} inline />);
@@ -284,6 +351,44 @@ describe('Agent tool activity details', () => {
     const result = within(row).getByRole('region', { name: '命令输出' });
     expect(result).toHaveAttribute('data-result-kind', 'terminal');
     expect(result).toHaveTextContent('Tests: 12 passed');
+  });
+
+  it('projects the latest non-empty subagent return into the activity card', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-subagent-return',
+      toolName: 'subagent',
+      result: {
+        details: {
+          results: [
+            { status: 'completed', output: '(no output)' },
+            { status: 'completed', output: 'RETURN_CHECK_7F3A\n独立子 Session 已完成只读检查。' },
+          ],
+        },
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    expect(group).toHaveTextContent('RETURN_CHECK_7F3A');
+    expect(group).not.toHaveTextContent('这条历史回执未包含可公开的调用参数或返回内容。');
+
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('RETURN_CHECK_7F3A');
+    expect(within(row).getByLabelText('完整工具返回')).toBeInTheDocument();
+  });
+
+  it('explains a completed subagent with no child output instead of showing an empty receipt', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-subagent-empty-return',
+      toolName: 'subagent',
+      result: { results: [{ status: 'completed', output: '(no output)' }] },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    expect(container).toHaveTextContent('子进程未返回内容');
+    expect(container).not.toHaveTextContent('这条历史回执未包含可公开的调用参数或返回内容。');
   });
 
   it('renders a read result as code with its safe file name and language', () => {
@@ -495,6 +600,7 @@ describe('Agent tool activity details', () => {
     expect(output).toHaveTextContent('完整结果仍由本机工具回执保留');
     expect(visibleOutput).toHaveTextContent('apiKey=[REDACTED_SECRET]');
     expect(visibleOutput).toHaveAttribute('tabindex', '0');
+    expect(visibleOutput).toHaveAttribute('role', 'region');
     fireEvent.click(within(output).getByRole('button', { name: '复制结果' }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(visibleOutput.textContent));
@@ -553,6 +659,44 @@ describe('Agent tool activity details', () => {
     expect(screen.getByRole('dialog')).toHaveTextContent('当前状态');
   });
 
+  it('labels the running activity preview and keeps every activity reachable in the full timeline', async () => {
+    const user = userEvent.setup();
+    const activities = Array.from({ length: 5 }, (_, index) => toolActivity('tool_started', 'running', {
+      toolCallId: `live-window-${index + 1}`,
+      toolName: 'knowledge',
+      summary: `实时步骤 ${index + 1}`,
+    }));
+    const { container } = render(<ActivitySummary activities={activities} />);
+
+    expect(screen.getByText('当前显示最近 3 / 共 5 项活动')).toBeInTheDocument();
+    expect(screen.queryByText('实时步骤 1')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看全部 5 项活动' }));
+    expect(screen.getByRole('dialog', { name: '正在处理' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveTextContent('实时步骤 1');
+    expect(container).toHaveTextContent('实时步骤 5');
+  });
+
+  it('keeps every public reasoning summary available from its compact strip', async () => {
+    const user = userEvent.setup();
+    const reasoningItems = Array.from({ length: 14 }, (_, index) => `公开推理 ${index + 1}`);
+    render(<ReasoningActivitySummary activities={[{
+      id: 'long-reasoning',
+      turnId: 'turn-long-reasoning',
+      kind: 'reasoning_summary',
+      status: 'running',
+      summary: '公开推理摘要',
+      payload: { source: 'provider_reasoning_summary', items: reasoningItems },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    }]} />);
+
+    expect(screen.getByRole('button', { name: /查看 Agent 思考摘要：公开推理 14/ })).toHaveTextContent('14 项');
+    await user.click(screen.getByRole('button', { name: /查看 Agent 思考摘要：公开推理 14/ }));
+    const dialog = screen.getByRole('dialog', { name: '正在思考' });
+    expect(dialog).toHaveTextContent('公开推理 1');
+    expect(dialog).toHaveTextContent('公开推理 14');
+  });
+
   it('labels provider turn failures as model service failures instead of tool operations', () => {
     const activity: AgentActivityProjection = {
       id: 'turn-provider-failed',
@@ -560,7 +704,12 @@ describe('Agent tool activity details', () => {
       kind: 'turn_failed',
       status: 'failed',
       summary: '400 Error from provider (Console Go): Upstream request failed',
-      payload: { error: '400 Error from provider (Console Go): Upstream request failed' },
+      payload: {
+        error: '400 Error from provider (Console Go): Upstream request failed',
+        retryExhausted: true,
+        providerRetryAttempts: 6,
+        providerRetryMaxAttempts: 6,
+      },
       createdAtMs: 1,
       updatedAtMs: 2,
     };
@@ -569,7 +718,7 @@ describe('Agent tool activity details', () => {
     expect(container).toHaveTextContent('模型服务请求失败');
     expect(container).not.toHaveTextContent('工具操作');
     openActivity(container);
-    expect(screen.getByRole('dialog')).toHaveTextContent('模型服务请求失败，请重试或切换模型。');
+    expect(screen.getByRole('dialog')).toHaveTextContent('已自动重试 6 次，模型服务仍未恢复；请稍后重试或切换模型。');
     expect(screen.queryByText(/Console Go|Upstream request failed/)).not.toBeInTheDocument();
   });
 
@@ -1034,8 +1183,8 @@ describe('Agent tool activity details', () => {
     );
     openActivity(container);
 
-    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('工作区不在授权目录内，当前权限不足。');
-    expect(within(screen.getByLabelText('工具未完成')).getByRole('button', { name: '复制错误' })).toBeInTheDocument();
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('工作区不在授权目录内，当前权限不足。');
+    expect(within(screen.getByLabelText('工具失败')).getByRole('button', { name: '复制错误' })).toBeInTheDocument();
     expect(container).not.toHaveTextContent('/Users/private/project');
     expect(container).not.toHaveTextContent('sk-do-not-render');
     fireEvent.click(screen.getByRole('button', { name: '请求权限' }));
@@ -1064,7 +1213,7 @@ describe('Agent tool activity details', () => {
     );
     openActivity(container);
 
-    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('该操作需要本机审批后继续。');
+    expect(screen.getByLabelText('工具失败')).toHaveTextContent('该操作需要本机审批后继续。');
     fireEvent.click(screen.getByRole('button', { name: '去审批' }));
     expect(onOpenApproval).toHaveBeenCalledOnce();
     expect(onOpenApproval).toHaveBeenCalledWith(activity);

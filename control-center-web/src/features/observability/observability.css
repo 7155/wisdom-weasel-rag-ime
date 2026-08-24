@@ -54,7 +54,8 @@ main[data-route-id='observability'] .observation-category-tabs button[data-activ
 
 main[data-route-id='observability'] .observation-category-tabs button:focus-visible,
 main[data-route-id='observability'] .observation-timeline button:focus-visible,
-main[data-route-id='observability'] .observation-trace li > button:focus-visible {
+main[data-route-id='observability'] .observation-trace__summary:focus-visible,
+main[data-route-id='observability'] .observation-facts__disclosure > summary:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
@@ -87,10 +88,6 @@ main[data-route-id='observability'] .observation-search input {
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
-}
-
-main[data-route-id='observability'] .observation-debug-context:not([open]) > :not(summary) {
-  display: none !important;
 }
 
 main[data-route-id='observability'] .observation-scope {
@@ -274,14 +271,19 @@ main[data-route-id='observability'] .observation-trace li {
   min-width: 0;
 }
 
-main[data-route-id='observability'] .observation-trace li > button {
+main[data-route-id='observability'] .observation-trace__card {
+  min-width: 0;
+  padding-block: 9px;
+}
+
+main[data-route-id='observability'] .observation-trace__summary {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 8px;
   width: 100%;
   min-width: 0;
-  min-height: 62px;
-  padding-block: 9px;
+  min-height: 44px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -289,7 +291,7 @@ main[data-route-id='observability'] .observation-trace li > button {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-trace li > button:hover {
+main[data-route-id='observability'] .observation-trace__summary:hover {
   background: color-mix(in srgb, var(--color-surface-muted) 66%, transparent);
 }
 
@@ -317,11 +319,16 @@ main[data-route-id='observability'] .observation-trace li[data-category='memory'
   color: var(--color-collaboration);
 }
 
-main[data-route-id='observability'] .observation-trace li > button > div {
+main[data-route-id='observability'] .observation-trace__summary > span:last-child {
   display: grid;
   align-content: start;
   min-width: 0;
   gap: 3px;
+}
+
+main[data-route-id='observability'] .observation-facts-shell {
+  min-width: 0;
+  margin-left: 38px;
 }
 
 main[data-route-id='observability'] .observation-facts {
@@ -331,6 +338,12 @@ main[data-route-id='observability'] .observation-facts {
   margin: 7px 0 0;
   padding-top: 7px;
   border-top: 1px dashed var(--color-border);
+}
+
+main[data-route-id='observability'] .observation-facts[data-nested] {
+  margin-top: 0;
+  padding-top: 4px;
+  border-top: 0;
 }
 
 main[data-route-id='observability'] .observation-facts div {
@@ -348,6 +361,77 @@ main[data-route-id='observability'] .observation-facts dd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+main[data-route-id='observability'] .observation-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(84px, .72fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--color-border);
+}
+
+main[data-route-id='observability'] .observation-progress > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-progress strong { color: var(--color-text-secondary); }
+main[data-route-id='observability'] .observation-progress small { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+main[data-route-id='observability'] .observation-progress progress {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  accent-color: var(--color-warning);
+}
+
+main[data-route-id='observability'] .observation-progress progress::-webkit-progress-bar { background: var(--color-surface-muted); }
+main[data-route-id='observability'] .observation-progress progress::-webkit-progress-value { border-radius: inherit; background: var(--color-warning); }
+main[data-route-id='observability'] .observation-progress progress::-moz-progress-bar { border-radius: inherit; background: var(--color-warning); }
+
+main[data-route-id='observability'] .observation-facts__disclosure > summary {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+main[data-route-id='observability'] .observation-facts__disclosure > summary:hover { color: var(--color-text); background: var(--color-surface-muted); }
+main[data-route-id='observability'] .observation-facts__disclosure > summary svg { transition: transform 190ms cubic-bezier(.16, 1, .3, 1); }
+main[data-route-id='observability'] .observation-facts__disclosure[data-expanded] > summary svg { transform: rotate(180deg); }
+
+main[data-route-id='observability'] .observation-facts__reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: grid-template-rows 190ms cubic-bezier(.16, 1, .3, 1), opacity 140ms ease-out, transform 190ms cubic-bezier(.16, 1, .3, 1);
+}
+
+main[data-route-id='observability'] .observation-facts__reveal[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: none;
+}
+
+main[data-route-id='observability'] .observation-facts__reveal > div { min-height: 0; overflow: hidden; }
 
 main[data-route-id='observability'] .observation-facts dt {
   color: var(--color-text-tertiary);
@@ -478,7 +562,7 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
     text-align: left;
   }
 
-  main[data-route-id='observability'] .observation-timeline .mgmt-status-badge {
+  main[data-route-id='observability'] .observation-timeline .mgmt-status {
     grid-column: 3;
     grid-row: 1 / 3;
   }
@@ -490,4 +574,57 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
 
 @media (prefers-reduced-motion: reduce) {
   main[data-route-id='observability'] .observation-category-tabs button { transition: none; }
+  main[data-route-id='observability'] .observation-facts__disclosure > summary svg,
+  main[data-route-id='observability'] .observation-facts__reveal { transition-duration: 1ms; }
 }
+
+@container paw-window (max-width: 900px) {
+  main[data-route-id='observability'][data-paw-os-app] .observation-controls { grid-template-columns: minmax(0, 1fr) minmax(190px, 260px); }
+  main[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: 1 / -1; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-workspace { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='observability'][data-paw-os-app] .observation-timeline { max-height: 520px; }
+}
+
+@container paw-window (max-width: 620px) {
+  main[data-route-id='observability'][data-paw-os-app] .observation-connection-notice { align-items: stretch; flex-direction: column; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-controls,
+  main[data-route-id='observability'][data-paw-os-app] .observation-facts { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='observability'][data-paw-os-app] .observation-search,
+  main[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: auto; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-category-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-category-tabs button { flex: 0 0 auto; min-height: 44px; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-timeline button { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-row__scope {
+    grid-column: 2 / 3;
+    grid-row: 2;
+    grid-template-columns: minmax(0, 1fr) auto;
+    text-align: left;
+  }
+  main[data-route-id='observability'][data-paw-os-app] .observation-timeline .mgmt-status {
+    grid-column: 3;
+    grid-row: 1 / 3;
+  }
+  main[data-route-id='observability'][data-paw-os-app] .observation-progress { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* UR-102 monitor-observability semantic typography */
+main[data-route-id='observability'][data-paw-os-app] :is(
+  .observation-category-tabs button,
+  .observation-row__copy strong,
+  .observation-trace strong,
+  .observation-trace-heading span,
+  .observation-debug-actions strong
+) { font-size: 14px; }
+main[data-route-id='observability'][data-paw-os-app] :is(
+  .observation-scope,
+  .observation-row__copy small,
+  .observation-row__scope small,
+  .observation-row__scope time,
+  .observation-trace small,
+  .observation-trace-heading small,
+  .observation-trace__index,
+  .observation-facts dt,
+  .observation-facts dd
+) { font-size: 13px; }
+main[data-route-id='observability'][data-paw-os-app] .observation-debug-actions small { font-size: 15px; }
+/* UR-102 monitor-observability semantic typography end */

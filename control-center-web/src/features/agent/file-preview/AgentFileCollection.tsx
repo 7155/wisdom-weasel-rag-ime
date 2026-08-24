@@ -1,4 +1,5 @@
 import { ChevronDown, Files, History } from 'lucide-react';
+import { Disclosure } from '@/components/primitives';
 import type { UiAgentBlock } from '@/contracts/ui-events';
 import { AgentFileBlock } from './AgentFileBlock';
 import './file-preview.css';
@@ -34,8 +35,7 @@ export function AgentFileCollection({ blocks, sessionId = '' }: AgentFileCollect
       </header>
       <div className="agent-file-collection__files">
         {groups.map((group) => (
-          <details className="agent-file-collection__file" key={group.name}>
-            <summary>
+          <Disclosure className="agent-file-collection__file" key={group.name} contentClassName="agent-file-collection__history" summary={<>
               <span className="agent-file-collection__file-icon"><History aria-hidden="true" size={16} /></span>
               <span>
                 <strong>{group.name}</strong>
@@ -44,8 +44,7 @@ export function AgentFileCollection({ blocks, sessionId = '' }: AgentFileCollect
               <span aria-hidden="true" className="agent-file-collection__toggle">
                 查看版本 <ChevronDown size={15} />
               </span>
-            </summary>
-            <div className="agent-file-collection__history">
+            </>}>
               <FileVersionSeries
                 blocks={group.snapshots}
                 currentLabel="当前文件"
@@ -58,8 +57,7 @@ export function AgentFileCollection({ blocks, sessionId = '' }: AgentFileCollect
                 historyLabel="修改记录"
                 sessionId={sessionId}
               />
-            </div>
-          </details>
+          </Disclosure>
         ))}
       </div>
     </section>

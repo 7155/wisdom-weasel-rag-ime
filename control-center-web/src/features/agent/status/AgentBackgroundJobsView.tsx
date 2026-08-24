@@ -90,9 +90,11 @@ const BACKGROUND_JOB_SORT_ORDER: Readonly<
 export function AgentBackgroundJobsView({
   sessionId,
   jobs: snapshotJobs,
+  onOpenJob,
 }: {
   sessionId: string;
   jobs: AgentBackgroundJobV1[];
+  onOpenJob?: (job: AgentBackgroundJobV1) => void;
 }) {
   const transport = useControlTransport();
   const listing = useQuery({
@@ -192,7 +194,14 @@ export function AgentBackgroundJobsView({
       ) : null}
       {jobs.length ? (
         <div className="agent-background-jobs__list">
-          {jobs.map((job) => <BackgroundJobRow key={job.jobId} job={job} sessionId={sessionId} />)}
+          {jobs.map((job) => (
+            <BackgroundJobRow
+              key={job.jobId}
+              job={job}
+              sessionId={sessionId}
+              onOpenJob={onOpenJob}
+            />
+          ))}
         </div>
       ) : (
         <p className="agent-status-empty">当前会话没有后台任务；后台运行命令后会显示在这里。</p>
@@ -201,7 +210,15 @@ export function AgentBackgroundJobsView({
   );
 }
 
-function BackgroundJobRow({ job, sessionId }: { job: AgentBackgroundJobV1; sessionId: string }) {
+function BackgroundJobRow({
+  job,
+  sessionId,
+  onOpenJob,
+}: {
+  job: AgentBackgroundJobV1;
+  sessionId: string;
+  onOpenJob?: (job: AgentBackgroundJobV1) => void;
+}) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
@@ -348,6 +365,11 @@ function BackgroundJobRow({ job, sessionId }: { job: AgentBackgroundJobV1; sessi
           ) : null}
           {sessionCancellable ? (
             <div className="agent-background-job__actions">
+              {onOpenJob ? (
+                <Button onClick={() => onOpenJob(job)} size="small" variant="secondary">
+                  在窗口查看
+                </Button>
+              ) : null}
               <Button
                 disabled={cancelling}
                 leadingIcon={<Square size={12} />}
@@ -368,6 +390,12 @@ function BackgroundJobRow({ job, sessionId }: { job: AgentBackgroundJobV1; sessi
                   继续运行
                 </Button>
               ) : null}
+            </div>
+          ) : onOpenJob ? (
+            <div className="agent-background-job__actions">
+              <Button onClick={() => onOpenJob(job)} size="small" variant="secondary">
+                在窗口查看
+              </Button>
             </div>
           ) : null}
           {cancellationManagedByRoom ? (

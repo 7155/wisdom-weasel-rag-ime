@@ -1,0 +1,612 @@
+/**
+ * PawAgentHome — Agent 新建工作主页（重构版）
+ *
+ * 替换 PawAgentApp.tsx 中原内联 PawNewWork 的表现层；创建链路、乐观入场
+ * （optimistic admission）、模型/思考配置与 Room 创建语义与原实现逐项一致。
+ *
+ * 设计合同：
+ * - UR-002/040：单一 Agent 入口，Session / Room 在 Composer 底栏选择。
+ * - UR-042/044/048：统一 Composer 骨架；锚定菜单紧贴触发控件，不撑开布局。
+ * - UR-046：权限四档（按风险确认 / 只读 / 工作区托管 / 全自动），全自动需先选工作目录。
+ * - UR-066/078：发送即乐观入场，后台补齐配置与回执。
+ * - UR-011/025：空态只给真实信息与下一步（最近工作记录、真实状态），不写愿景文案。
+ *
+ * 样式：paw-os/styles/paw-os-agent-next.css（类名 an-* 作用域）。
+ * 注意：本文件在沙盒中未编译；拷贝后请先运行 `pnpm exec tsc --noEmit`。
+ */
+
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Folder,
+  LoaderCircle,
+  Users,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useControlTransport } from '@/app/control-transport';
+import {
+  useAgentPreferencesRead,
+  type AgentExecutionMode,
+} from '@/features/agent/composer/agent-preferences-store';
+import {
+  supportedPiThinkingLevels,
+  type PiModelOption,
+} from '@/features/agent/model-catalog-options';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { SessionSummary } from '@/features/agent/types';
+import type { RoomSummary } from '@/features/rooms/room-types';
+import { useAgentLiveStore } from '@/features/agent/state/live-store';
+import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { pawBrowserHost } from './paw-browser-host';
+import { PawAppIcon } from '../shell/PawAppIcon';
+
+type WorkMode = 'session' | 'room';
+type Selection =
+  | { kind: 'new'; draft?: string }
+  | { kind: 'session'; id: string; draft?: string }
+  | { kind: 'room'; id: string; draft?: string; error?: string };
+
+type OptionsPanel = 'project' | 'model' | 'permission' | null;
+
+const PERMISSION_PRESETS: ReadonlyArray<{
+  executionMode: AgentExecutionMode;
+  label: string;
+  description: string;
+}> = [
+  { executionMode: 'per_action', label: '按风险确认', description: '写入与 Shell 逐条确认' },
+  { executionMode: 'read_only', label: '只读', description: '只读自动，写入与 Shell 全部阻止' },
+  { executionMode: 'workspace_managed', label: '工作区托管', description: '启动时批准范围，范围内自动，越界再问' },
+  { executionMode: 'full_trust', label: '全自动', description: '待审批操作由审批 Agent 自动判定' },
+];
+
+export function PawAgentHome({
+  defaultModel,
+  initialDraft,
+  models,
+  onCreated,
+  onOpenRoom,
+  onOpenSession,
+  personas,
+  projectRoots,
+  rooms,
+  sessions,
+}: {
+  defaultModel: string;
+  initialDraft?: string;
+  models: PiModelOption[];
+  onCreated: (selection: Selection, created?: SessionSummary, createdRoom?: RoomSummary) => void;
+  onOpenRoom: (id: string) => void;
+  onOpenSession: (id: string) => void;
+  personas: AgentPersonaV1[];
+  projectRoots: string[];
+  rooms: RoomSummary[];
+  sessions: SessionSummary[];
+}) {
+  const transport = useControlTransport();
+  const electronHost = pawBrowserHost();
+  const preferenceRead = useAgentPreferencesRead();
+  const preferences = preferenceRead.preferences;
+  const [mode, setMode] = useState<WorkMode>('session');
+  const [prompt, setPrompt] = useState(initialDraft ?? '');
+  const [workspaceRoot, setWorkspaceRoot] = useState('');
+  const [executionMode, setExecutionMode] = useState<AgentExecutionMode>(preferences.executionMode);
+  const [modelReference, setModelReference] = useState(preferences.modelReference || defaultModel);
+  const [thinking, setThinking] = useState(preferences.thinking);
+  const [optionsPanel, setOptionsPanel] = useState<OptionsPanel>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const composerRef = useRef<HTMLDivElement>(null);
+  const preferenceHydratedRef = useRef(false);
+  const preferenceEditedRef = useRef({ executionMode: false, modelReference: false, thinking: false });
+
+  useEffect(() => {
+    if (!modelReference && (preferences.modelReference || defaultModel)) {
+      setModelReference(preferences.modelReference || defaultModel);
+    }
+  }, [defaultModel, modelReference, preferences.modelReference]);
+  useEffect(() => {
+    if (preferenceRead.isPending || preferenceRead.readError || preferenceHydratedRef.current) return;
+    preferenceHydratedRef.current = true;
+    if (!preferenceEditedRef.current.executionMode) setExecutionMode(preferences.executionMode);
+    if (!preferenceEditedRef.current.modelReference) setModelReference(preferences.modelReference || defaultModel);
+    if (!preferenceEditedRef.current.thinking) setThinking(preferences.thinking);
+  }, [defaultModel, preferenceRead.isPending, preferenceRead.readError, preferences.executionMode, preferences.modelReference, preferences.thinking]);
+  useEffect(() => {
+    if (!workspaceRoot && projectRoots[0]) setWorkspaceRoot(projectRoots[0]);
+  }, [projectRoots, workspaceRoot]);
+
+  const selectedModel = models.find((item) => item.reference === modelReference);
+  const thinkingLevels = supportedPiThinkingLevels(selectedModel, { includeOff: true });
+  const roomPersonas = personas.slice(0, 4);
+  const modelGroups = useMemo(() => {
+    const groups = new Map<string, PiModelOption[]>();
+    for (const model of models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model]);
+    return [...groups.entries()];
+  }, [models]);
+  const permission = PERMISSION_PRESETS.find((item) => item.executionMode === executionMode) ?? PERMISSION_PRESETS[0]!;
+
+  const recents = useMemo(() => {
+    const sessionCards = sessions.slice(0, 3).map((item) => ({ kind: 'session' as const, item }));
+    const roomCards = rooms.slice(0, 1).map((item) => ({ kind: 'room' as const, item }));
+    return [...sessionCards, ...roomCards]
+      .sort((left, right) => right.item.updatedAtMs - left.item.updatedAtMs)
+      .slice(0, 4);
+  }, [rooms, sessions]);
+
+  useEffect(() => {
+    if (!optionsPanel) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !composerRef.current?.contains(event.target)) setOptionsPanel(null);
+    };
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOptionsPanel(null);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeWithEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeWithEscape);
+    };
+  }, [optionsPanel]);
+
+  async function pickWorkspace(): Promise<void> {
+    if (!transport.pickFiles && !electronHost?.pickWorkspaceDirectory) {
+      setError('当前运行环境不能选择本地目录。');
+      return;
+    }
+    try {
+      const path = transport.pickFiles
+        ? (await transport.pickFiles({ purpose: 'workspace-root', selection: 'directory', multiple: false, maxFiles: 1 }))[0]?.path?.trim()
+        : (await electronHost?.pickWorkspaceDirectory?.())?.path?.trim();
+      if (path) {
+        setWorkspaceRoot(path);
+        setOptionsPanel(null);
+      }
+    } catch (pickError) {
+      setError(errorText(pickError));
+    }
+  }
+
+  async function startWork(): Promise<void> {
+    const message = prompt.trim();
+    if (!message || submitting) return;
+    if (executionMode === 'full_trust' && !workspaceRoot) {
+      setError('全自动需要先选择工作目录。');
+      setOptionsPanel('project');
+      return;
+    }
+    if (mode === 'room' && roomPersonas.length < 2) {
+      setError('当前没有足够的 Room 伙伴。');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    try {
+      if (mode === 'session') {
+        const response = await transport.request<Record<string, unknown>>({
+          pathId: 'agent.sessions.create',
+          body: {
+            title: workTitle(message),
+            mode: workspaceRoot ? 'coordinator' : 'assistant',
+            executionMode,
+            toolProfileVersion: executionMode === 'read_only' ? 'subagent-readonly-v1' : 'control-center-v1',
+            workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
+            ...(executionMode === 'workspace_managed' ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' } : {}),
+            ...(executionMode === 'full_trust' ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' } : {}),
+          },
+        });
+        const rawSession = record(record(response).session);
+        const sessionId = text(rawSession.id);
+        if (!sessionId) throw new Error('服务端没有返回可验证的 Session。');
+        const clientMessageId = clientId('session');
+        const createdSession = createdSessionSummary(rawSession, message, workspaceRoot, executionMode);
+        // Tutti 入场顺序：先让 Session 与首条用户消息可见，配置与回执后台补齐。
+        useAgentLiveStore.getState().appendOptimistic(sessionId, {
+          clientMessageId,
+          text: message,
+          attachments: [],
+          nowMs: Date.now(),
+        });
+        onCreated({ kind: 'session', id: sessionId }, createdSession);
+        void (async () => {
+          try {
+            const configuration = [] as Promise<unknown>[];
+            if (selectedModel) {
+              configuration.push(transport.request({
+                pathId: 'agent.session.model.select',
+                params: { sessionId },
+                body: { provider: selectedModel.provider, modelId: selectedModel.id },
+              }));
+              if (thinkingLevels.includes(thinking)) {
+                configuration.push(transport.request({
+                  pathId: 'agent.session.thinking.select',
+                  params: { sessionId },
+                  body: { level: thinking },
+                }));
+              }
+            }
+            void Promise.allSettled(configuration);
+            await transport.request({
+              pathId: 'agent.session.prompt',
+              params: { sessionId },
+              body: { message, attachments: [], clientMessageId },
+            });
+            useAgentLiveStore.getState().acknowledgeOptimistic(sessionId, clientMessageId, Date.now());
+          } catch (requestError) {
+            useAgentLiveStore.getState().failOptimistic(sessionId, clientMessageId, errorText(requestError), Date.now());
+          }
+        })();
+      } else {
+        const selectedPersonas = roomPersonas;
+        const response = await transport.request<Record<string, unknown>>({
+          pathId: 'agent.rooms.create',
+          body: {
+            title: workTitle(message),
+            roomKind: 'collaboration',
+            avatar: 'briefcase',
+            description: message,
+            scenarioPrompt: '',
+            participants: selectedPersonas.map((persona, index) => ({
+              roleId: persona.roleId,
+              roleVersion: persona.version,
+              displayName: persona.displayName,
+              collaborationRole: index === 0 ? 'coordinator' : index === 1 ? 'reviewer' : 'specialist',
+            })),
+            routingPolicy: 'parallel',
+            routingConfig: { maxResponders: Math.min(4, selectedPersonas.length), naturalJitter: 0, fallbackParticipantId: '' },
+            workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
+            executionMode,
+            ...(executionMode === 'workspace_managed' ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' } : {}),
+            ...(executionMode === 'full_trust' ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' } : {}),
+          },
+        });
+        const rawRoom = record(record(response).room);
+        const roomId = text(rawRoom.id);
+        if (!roomId) throw new Error('服务端没有返回可验证的 Room。');
+        const clientMessageId = clientId('room');
+        const createdRoom = createdRoomSummary(rawRoom, message, workspaceRoot, selectedPersonas);
+        useRoomLiveStore.getState().appendOptimistic(roomId, {
+          clientMessageId,
+          text: message,
+          attachments: [],
+          nowMs: Date.now(),
+        });
+        onCreated({ kind: 'room', id: roomId }, undefined, createdRoom);
+        void transport.request<Record<string, unknown>>({
+          pathId: 'agent.room.message',
+          params: { roomId },
+          body: { message, clientMessageId, attachmentIds: [] },
+        }).then((messageResponse) => {
+          useRoomLiveStore.getState().acceptMessage(roomId, messageResponse);
+        }).catch((requestError) => {
+          useRoomLiveStore.getState().discardOptimistic(roomId, clientMessageId);
+          onCreated({ kind: 'room', id: roomId, draft: message, error: errorText(requestError) });
+        });
+      }
+    } catch (requestError) {
+      setError(errorText(requestError));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const greeting = timeGreeting();
+
+  return (
+    <div className="paw-agent-next an-home-root">
+      <div className="an-home">
+        <svg className="an-home-geo" aria-hidden="true">
+          <defs>
+            <pattern id="an-reg" width="220" height="220" patternUnits="userSpaceOnUse">
+              <path d="M110 96v28M96 110h28" stroke="var(--an-ink)" strokeOpacity=".05" strokeWidth="1.5" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#an-reg)" />
+          <circle cx="86%" cy="18%" r="180" fill="none" stroke="var(--an-violet)" strokeOpacity=".08" strokeWidth="1.5" />
+          <circle cx="86%" cy="18%" r="120" fill="none" stroke="var(--an-cobalt)" strokeOpacity=".07" strokeWidth="1.5" strokeDasharray="2 7" />
+        </svg>
+        <div className="an-home-wrap">
+          <div className="an-home-greet">{greeting}</div>
+          <h1 className="an-home-title">交给 Agent 一件事。</h1>
+
+          <div className="an-composer" ref={composerRef}>
+            <textarea
+              aria-label="描述你想完成的工作"
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void startWork();
+                }
+              }}
+              placeholder="描述目标、上下文和验收方式…（Enter 发送，Shift+Enter 换行）"
+              value={prompt}
+            />
+            <div className="an-composer-foot">
+              <span className="an-mode-seg" role="radiogroup" aria-label="工作类型">
+                <button aria-checked={mode === 'session'} onClick={() => setMode('session')} role="radio" type="button"><PawAppIcon appId="agent" size={14} />Session</button>
+                <button aria-checked={mode === 'room'} onClick={() => setMode('room')} role="radio" type="button"><PawAppIcon appId="room" size={14} />Room</button>
+              </span>
+
+              <span className="an-anchor">
+                <button
+                  aria-expanded={optionsPanel === 'permission'}
+                  className="an-chip"
+                  onClick={() => setOptionsPanel(optionsPanel === 'permission' ? null : 'permission')}
+                  type="button"
+                >
+                  <span className="mini-dot" />{permission.label}<ChevronDown className="caret" size={13} />
+                </button>
+                {optionsPanel === 'permission' ? (
+                  <div className="an-menu" role="menu">
+                    <div className="an-menu-title">权限模式</div>
+                    {PERMISSION_PRESETS.map((item) => (
+                      <button
+                        aria-checked={item.executionMode === executionMode}
+                        className="an-menu-item"
+                        disabled={item.executionMode === 'full_trust' && !workspaceRoot}
+                        key={item.executionMode}
+                        onClick={() => {
+                          preferenceEditedRef.current.executionMode = true;
+                          setExecutionMode(item.executionMode);
+                          setOptionsPanel(null);
+                        }}
+                        role="menuitemradio"
+                        type="button"
+                      >
+                        <span style={{ minWidth: 0 }}>
+                          <span className="mi-tt">{item.executionMode === executionMode ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{item.label}</span>
+                          <span className="mi-sub">{item.description}{item.executionMode === 'full_trust' && !workspaceRoot ? '（需先选工作目录）' : ''}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </span>
+
+              <span className="an-anchor">
+                <button
+                  aria-expanded={optionsPanel === 'model'}
+                  className="an-chip"
+                  onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
+                  type="button"
+                >
+                  {selectedModel?.name ?? '自动模型'} · {thinkingLabel(thinking)}<ChevronDown className="caret" size={13} />
+                </button>
+                {optionsPanel === 'model' ? (
+                  <div className="an-menu" role="menu">
+                    {modelGroups.map(([provider, group]) => (
+                      <div key={provider}>
+                        <div className="an-menu-group">{provider}</div>
+                        {group.map((model) => (
+                          <button
+                            aria-checked={model.reference === modelReference}
+                            className="an-menu-item"
+                            key={model.reference}
+                            onClick={() => {
+                              preferenceEditedRef.current.modelReference = true;
+                              setModelReference(model.reference);
+                            }}
+                            role="menuitemradio"
+                            type="button"
+                          >
+                            <span style={{ minWidth: 0 }}>
+                              <span className="mi-tt">{model.reference === modelReference ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{model.name}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                    {thinkingLevels.length ? <div className="an-menu-sep" /> : null}
+                    {thinkingLevels.length ? <div className="an-menu-group">推理强度</div> : null}
+                    {thinkingLevels.map((level) => (
+                      <button
+                        aria-checked={level === thinking}
+                        className="an-menu-item"
+                        key={level}
+                        onClick={() => {
+                          preferenceEditedRef.current.thinking = true;
+                          setThinking(level);
+                          setOptionsPanel(null);
+                        }}
+                        role="menuitemradio"
+                        type="button"
+                      >
+                        <span className="mi-tt">{level === thinking ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{thinkingLabel(level)}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </span>
+
+              <span className="an-anchor">
+                <button
+                  aria-expanded={optionsPanel === 'project'}
+                  className="an-chip"
+                  onClick={() => setOptionsPanel(optionsPanel === 'project' ? null : 'project')}
+                  type="button"
+                >
+                  <Folder size={12} />{workspaceRoot ? projectName([workspaceRoot]) : '选择工作目录'}<ChevronDown className="caret" size={13} />
+                </button>
+                {optionsPanel === 'project' ? (
+                  <div className="an-menu" role="menu">
+                    <div className="an-menu-title">工作目录</div>
+                    {projectRoots.map((root) => (
+                      <button
+                        aria-checked={root === workspaceRoot}
+                        className="an-menu-item"
+                        key={root}
+                        onClick={() => { setWorkspaceRoot(root); setOptionsPanel(null); }}
+                        role="menuitemradio"
+                        type="button"
+                      >
+                        <span style={{ minWidth: 0 }}>
+                          <span className="mi-tt">{root === workspaceRoot ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{projectName([root])}</span>
+                          <span className="mi-sub" style={{ fontFamily: 'var(--an-mono)' }}>{root}</span>
+                        </span>
+                      </button>
+                    ))}
+                    {transport.pickFiles || electronHost?.pickWorkspaceDirectory ? (
+                      <>
+                        <div className="an-menu-sep" />
+                        <button className="an-menu-item" onClick={() => void pickWorkspace()} type="button">
+                          <span className="mi-tt">浏览其他目录…</span>
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </span>
+
+              <button
+                aria-label={submitting ? '正在创建' : `开始 ${mode === 'session' ? 'Session' : 'Room'}`}
+                className="an-send"
+                disabled={!prompt.trim() || submitting}
+                onClick={() => void startWork()}
+                type="button"
+              >
+                {submitting ? <LoaderCircle className="ui-spin" size={14} /> : <ArrowUp size={14} />}
+              </button>
+            </div>
+          </div>
+          {preferenceRead.readError ? (
+            <p className="an-home-error" role="alert">
+              <CircleAlert size={14} />{preferenceRead.readError}
+              <button onClick={preferenceRead.reload} type="button">重新读取</button>
+            </p>
+          ) : null}
+          {error ? (
+            <p className="an-home-error" role="alert"><CircleAlert size={14} />{error}</p>
+          ) : null}
+
+          {recents.length ? (
+            <div className="an-home-section">
+              <h2>继续工作</h2>
+              <div className="an-recent-list">
+                {recents.map((entry) => entry.kind === 'session' ? (
+                  <button className="an-recent-card" key={`session:${entry.item.id}`} onClick={() => onOpenSession(entry.item.id)} type="button">
+                    <span className="rc-top"><span className={`an-dot ${entry.item.status === 'archived' ? '' : 'is-ok'}`} /><span className="rc-title">{entry.item.title}</span></span>
+                    {entry.item.lastMessagePreview ? <span className="rc-preview">{entry.item.lastMessagePreview}</span> : null}
+                    <span className="rc-meta">{projectName(entry.item.workspaceRoots)} · {relativeTime(entry.item.updatedAtMs)}</span>
+                  </button>
+                ) : (
+                  <button className="an-recent-card is-room" key={`room:${entry.item.id}`} onClick={() => onOpenRoom(entry.item.id)} type="button">
+                    <span className="rc-top"><span className={`an-dot ${entry.item.status === 'active' ? 'is-run' : ''}`} /><span className="rc-title">{entry.item.title}</span></span>
+                    {entry.item.description ? <span className="rc-preview">{entry.item.description}</span> : null}
+                    <span className="rc-meta"><Users size={11} style={{ verticalAlign: -1 }} /> {entry.item.participants?.length ?? 0} 位伙伴 · {relativeTime(entry.item.updatedAtMs)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="an-home-foot">
+            <span><span className="an-dot is-ok" />Pi Runtime 已连接</span>
+            {models.length ? <span>{models.length} 个可用模型</span> : null}
+            {defaultModel ? <span>默认模型 {defaultModel.split('/').pop()}</span> : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 本地工具（与 PawAgentApp 原实现语义一致） ---------- */
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+function record(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+function workTitle(message: string): string {
+  const singleLine = message.replace(/\s+/g, ' ').trim();
+  return singleLine.length > 28 ? `${singleLine.slice(0, 28)}…` : singleLine || '未命名工作';
+}
+function clientId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+function createdSessionSummary(
+  raw: Record<string, unknown>,
+  firstMessage: string,
+  workspaceRoot: string,
+  executionMode: AgentExecutionMode,
+): SessionSummary {
+  return {
+    id: text(raw.id),
+    title: text(raw.title) || workTitle(firstMessage),
+    mode: text(raw.mode) || (workspaceRoot ? 'coordinator' : 'assistant'),
+    status: text(raw.status) || 'running',
+    roleId: text(raw.roleId),
+    roleVersion: text(raw.roleVersion),
+    roleBookRevisionId: text(raw.roleBookRevisionId),
+    updatedAtMs: typeof raw.updatedAtMs === 'number' ? raw.updatedAtMs : Date.now(),
+    workspaceRoots: Array.isArray(raw.workspaceRoots) ? (raw.workspaceRoots as string[]) : workspaceRoot ? [workspaceRoot] : [],
+    lastMessagePreview: firstMessage,
+    executionMode,
+  } as SessionSummary;
+}
+function createdRoomSummary(
+  raw: Record<string, unknown>,
+  firstMessage: string,
+  workspaceRoot: string,
+  selectedPersonas: AgentPersonaV1[],
+): RoomSummary {
+  return {
+    ...raw,
+    id: text(raw.id),
+    title: text(raw.title) || workTitle(firstMessage),
+    status: text(raw.status) || 'active',
+    description: text(raw.description) || firstMessage,
+    routingPolicy: raw.routingPolicy ?? 'parallel',
+    moderatorParticipantId: text(raw.moderatorParticipantId),
+    updatedAtMs: typeof raw.updatedAtMs === 'number' ? raw.updatedAtMs : Date.now(),
+    participants: Array.isArray(raw.participants)
+      ? raw.participants
+      : selectedPersonas.map((persona) => ({ id: persona.roleId, displayName: persona.displayName })),
+    workspaceRoots: Array.isArray(raw.workspaceRoots) ? (raw.workspaceRoots as string[]) : workspaceRoot ? [workspaceRoot] : [],
+  } as RoomSummary;
+}
+function projectName(roots: readonly string[] | undefined): string {
+  const first = roots?.[0] ?? '';
+  if (!first) return '未绑定项目';
+  const parts = first.split('/').filter(Boolean);
+  return parts.slice(-2).join('/') || first;
+}
+function relativeTime(atMs: number): string {
+  const diff = Date.now() - atMs;
+  const minutes = Math.max(0, Math.round(diff / 60_000));
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.round(hours / 24);
+  return `${days} 天前`;
+}
+function timeGreeting(): string {
+  const now = new Date();
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const hour = now.getHours();
+  const phase = hour < 5 ? '夜深了' : hour < 9 ? '早上好' : hour < 12 ? '上午好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
+  const hh = String(hour).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  return `${weekdays[now.getDay()]} · ${hh}:${mm} · ${phase}`;
+}
+function thinkingLabel(level: string): string {
+  if (!level || level === 'off') return '关闭';
+  if (level === 'low') return '低';
+  if (level === 'medium') return '中';
+  if (level === 'high') return '高';
+  if (level === 'max') return 'Max';
+  return level;
+}
+function errorText(reason: unknown): string {
+  if (reason instanceof Error && reason.message) return reason.message;
+  if (typeof reason === 'string' && reason) return reason;
+  return '操作没有完成，请重试。';
+}

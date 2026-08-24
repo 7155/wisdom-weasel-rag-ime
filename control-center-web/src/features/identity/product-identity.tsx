@@ -15,8 +15,8 @@ export type ProductIdentity = {
 };
 
 export const defaultProductIdentity: ProductIdentity = {
-  productName: '澄',
-  assistantName: '澄',
+  productName: 'PAW',
+  assistantName: 'Agent',
   tagline: '记得你，也陪你做事',
 };
 

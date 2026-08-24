@@ -25,9 +25,11 @@ describe('Configuration settings WorkContract UI', () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(true);
     await screen.findByRole('heading', { name: '设置', level: 1 });
+    expect(screen.queryByRole('heading', { name: 'PAWOS 外观' })).not.toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /^上下文/ }));
     const input = await screen.findByRole('spinbutton', { name: '上下文容量' });
     expect(document.querySelector('.configuration-editor')).not.toBeNull();
+    await user.click(screen.getByText('导入、备份与恢复'));
     expect(document.querySelector('.configuration-portability')).not.toBeNull();
     await user.clear(input);
     await user.type(input, '4096');

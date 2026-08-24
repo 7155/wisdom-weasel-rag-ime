@@ -40,13 +40,19 @@ describe('History WorkContract UI', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '输入详情' });
     expect(within(dialog).getByText('这是服务端按事件读取的完整输入，不是列表摘要。')).toBeInTheDocument();
-    expect(within(dialog).getByText('豆包语音')).toBeInTheDocument();
+    expect(within(dialog).queryByText('豆包语音')).not.toBeInTheDocument();
     expect(within(dialog).getAllByText('采用')).toHaveLength(2);
     expect(within(dialog).getByText('2 次')).toBeInTheDocument();
     expect(within(dialog).getByText('1 次')).toBeInTheDocument();
-    expect(within(dialog).getByText('澄')).toBeInTheDocument();
+    expect(within(dialog).getByText('PAW')).toBeInTheDocument();
     expect(within(dialog).getByRole('heading', { name: '辅助上下文' })).toBeInTheDocument();
     expect(within(dialog).getByText('前面正在核对来源筛选，随后完成了当前输入。')).toBeInTheDocument();
+    expect(within(dialog).queryByText('语音定稿插入')).not.toBeInTheDocument();
+    const captureSummary = within(dialog).getByText('高级：采集详情').closest('summary');
+    expect(captureSummary).not.toBeNull();
+    await user.click(captureSummary!);
+    expect(captureSummary).toHaveAttribute('aria-expanded', 'true');
+    expect(within(dialog).getByText('豆包语音')).toBeInTheDocument();
     expect(within(dialog).getByText('语音定稿插入')).toBeInTheDocument();
     expect(within(dialog).getByText('不适用 · 语音定稿不请求智能候选')).toBeInTheDocument();
     expect(within(dialog).getByText('14 字 · 已记录')).toBeInTheDocument();

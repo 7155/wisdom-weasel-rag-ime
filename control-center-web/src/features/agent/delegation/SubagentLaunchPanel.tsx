@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, SegmentedControl } from '@/components/primitives';
+import { Button, Disclosure, SegmentedControl } from '@/components/primitives';
 import type { AgentTemplateV1 } from '@/contracts/generated/agent-template.v1';
 import type { ToolManifest } from '@/features/agent/types';
 import { toolItems } from '@/features/agent/types';
@@ -44,25 +44,21 @@ export function SubagentLaunchPanel({
   defaultOpen?: boolean;
   surface?: 'session' | 'room';
 }) {
-  const [opened, setOpened] = useState(!collapsible || defaultOpen);
   const body = <SubagentLaunchForm
     availableTools={availableTools}
     parents={parents}
     surface={surface}
   />;
   if (!collapsible) return body;
-  return <details
+  return <Disclosure
     className="subagent-launch-shell"
-    onToggle={(event) => setOpened(event.currentTarget.open)}
-    open={opened}
-  >
-    <summary>
+    defaultOpen={defaultOpen}
+    summary={<>
       <span className="subagent-launch-shell__icon"><Bot size={17} /></span>
       <span><strong>配置子 Agent</strong><small>模板、上下文、工具与权限</small></span>
       <ChevronDown className="subagent-launch-shell__chevron" size={16} />
-    </summary>
-    {opened ? body : null}
-  </details>;
+    </>}
+  >{body}</Disclosure>;
 }
 
 function SubagentLaunchForm({
@@ -272,8 +268,7 @@ function SubagentLaunchForm({
       </PolicyField>
     </div> : null}
 
-    <details className="subagent-launch__tools">
-      <summary><span><Wrench size={15} /><strong>工具与技能</strong><small>{customTools ? `已收窄到 ${selectedToolCount} 个工具` : `继承模板与父 Session 的交集 · 当前可见 ${tools.length}`}</small></span><ChevronDown size={15} /></summary>
+    <Disclosure className="subagent-launch__tools" contentClassName="subagent-launch__tools-content" summary={<><span><Wrench size={15} /><strong>工具与技能</strong><small>{customTools ? `已收窄到 ${selectedToolCount} 个工具` : `继承模板与父 Session 的交集 · 当前可见 ${tools.length}`}</small></span><ChevronDown size={15} /></>}>
       <div className="subagent-launch__tool-mode">
         <label><input checked={!customTools} name={`subagent-tools-${surface}`} onChange={() => setCustomTools(false)} type="radio" />模板默认</label>
         <label><input checked={customTools} name={`subagent-tools-${surface}`} onChange={() => setCustomTools(true)} type="radio" />手动收窄</label>
@@ -289,7 +284,7 @@ function SubagentLaunchForm({
         <label><input checked={effectivePiSkillsEnabled} onChange={(event) => setPiSkillsEnabled(event.target.checked)} type="checkbox" /><span><strong>Pi Skills</strong><small>{piSkillsEnabled === undefined ? `继承父 Session · ${effectivePiSkillsEnabled ? '已开启' : '未开启'}` : '本次启动显式配置'}</small></span></label>
         <label><input checked={effectiveCodexSkillsEnabled} onChange={(event) => setCodexSkillsEnabled(event.target.checked)} type="checkbox" /><span><strong>Codex Skills</strong><small>{codexSkillsEnabled === undefined ? `继承父 Session · ${effectiveCodexSkillsEnabled ? '已开启' : '未开启'}` : '本次启动显式配置'}</small></span></label>
       </div>
-    </details>
+    </Disclosure>
 
     <div className="subagent-launch__brief">
       <label><span>有界任务</span><textarea aria-label="子 Agent 有界任务" maxLength={8_000} onChange={(event) => setTask(event.target.value)} placeholder="只描述这一位子 Agent 要完成的工作" rows={3} value={task} /></label>

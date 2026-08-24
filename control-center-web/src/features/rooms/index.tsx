@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, BriefcaseBusiness, FilePlus2, FolderOpen, GitBranch, ListEnd, ListStart, ListTodo, LoaderCircle, MessageSquarePlus, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BriefcaseBusiness, FilePlus2, FolderOpen, GitBranch, ListEnd, ListStart, ListTodo, LoaderCircle, MessageSquarePlus, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, PanelsTopLeft, Plus, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, X } from 'lucide-react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -14,6 +14,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Disclosure,
   EmptyState,
   IconButton,
   Menu,
@@ -25,12 +26,16 @@ import {
 } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { PickedFile } from '@/platform/transport';
-import { parseRoomEventPage, type RoomAttachmentReceipt } from '@/contracts/room-reducer';
-import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
+import {
+  parseRoomEventPage,
+  type RoomAttachmentReceipt,
+  type RoomProjectionState,
+} from '@/contracts/room-reducer';
 import { GenericUserInputCard } from '@/features/agent/review/AgentReviewDialogs';
 import { roleItems } from '@/features/agent/types';
 import { useMediaQuery, useModalPanel } from '@/features/agent/overlay-dialog';
 import { publicErrorText } from '@/features/overview/management-ui';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { RoomStatusPanel } from './RoomStatusPanel';
 import { ConnectedRoomTaskGraph } from './RoomTaskGraph';
 import { RoomMemberBoundaryDialog } from './RoomMemberBoundaryDialog';
@@ -41,6 +46,7 @@ import {
   roomCollaborationRoleLabel,
 } from './room-copy';
 import {
+  participantName,
   pathName,
   recommendedCreateRole,
   roomAvatarIcon,
@@ -70,6 +76,7 @@ import { RoomTurn } from './timeline/RoomTurn';
 import {
   selectPublicRoomTurnOrder,
   selectRoomExecutionOverview,
+  selectRoomTurnExecution,
 } from './runtime/room-execution-lanes';
 import { useRoomLiveSession } from './runtime/use-room-live-session';
 import { useRoomLiveStore } from './state/live-store';
@@ -203,39 +210,6 @@ function RoomTimelineScrollFooter() {
   return <div aria-hidden="true" className="room-timeline__footer-space" />;
 }
 
-function RoomAssignmentBar({
-  onOpen,
-  room,
-  workItems,
-}: {
-  onOpen: () => void;
-  room: RoomSummary;
-  workItems: RoomWorkItem[];
-}) {
-  const visible = workItems.slice(0, 4);
-  return <div aria-label="当前任务分配" className="room-assignment-bar">
-    <span className="room-assignment-bar__label"><GitBranch size={13} /><strong>当前分工</strong><em>{workItems.length}</em></span>
-    {visible.map((workItem) => {
-      const participant = room.participants.find((item) => item.id === workItem.currentOwnerParticipantId);
-      return <button
-        aria-label={`打开任务总览：${participant?.displayName ?? '未分配'}负责${workItem.objective}`}
-        data-room-role={participant?.collaborationRole ?? 'partner'}
-        data-state={workItem.state}
-        key={workItem.id}
-        onClick={onOpen}
-        title={`${roomCollaborationRoleLabel(participant?.collaborationRole)} · @ ${participant?.displayName ?? '未分配'} · ${workItem.objective}`}
-        type="button"
-      >
-        <i className="room-role-chip">{roomCollaborationRoleLabel(participant?.collaborationRole)}</i>
-        <b>@ {participant?.displayName ?? '未分配'}</b>
-        <span>{workItem.objective}</span>
-        <em>{roomWorkStateLabel(workItem.state)}</em>
-      </button>;
-    })}
-    {workItems.length > visible.length ? <button className="room-assignment-bar__more" onClick={onOpen} type="button">+{workItems.length - visible.length}</button> : null}
-  </div>;
-}
-
 function roomTimelineScrollerIsAtBottom(scroller: HTMLElement): boolean {
   return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 120;
 }
@@ -252,11 +226,24 @@ function scrollRoomTimelineToLatest(
   });
 }
 
-export function RoomsFeature() {
+function latestRoomTimelineContentKey(
+  projection: RoomProjectionState | undefined,
+  turnOrder: readonly string[],
+): string {
+  const turnId = turnOrder.at(-1) ?? '';
+  if (!projection || !turnId) return '';
+  const turn = projection.turnsById[turnId];
+  const messageId = selectRoomTurnExecution(projection, turnId).messageIds.at(-1) ?? '';
+  const message = messageId ? projection.messagesById[messageId] : undefined;
+  return [turnId, messageId, message?.status ?? turn?.status ?? ''].join('\u001f');
+}
+
+export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { initialRoomId?: string; pawOsWorkbench?: boolean } = {}) {
   const transport = useControlTransport();
+  const pawOsDesktop = usePawOsDesktop();
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [personas, setPersonas] = useState<AgentPersonaV1[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(initialRoomId);
   const roomDraftsRef = useRef(roomDraftsStore);
   const roomAttachmentsRef = useRef(new Map<string, RoomAttachmentReceipt[]>());
   const roomErrorsRef = useRef(new Map<string, {
@@ -274,7 +261,7 @@ export function RoomsFeature() {
   const roomWorkspaceRef = useRef<HTMLElement>(null);
   const roomTimelineRef = useRef<VirtuosoHandle>(null);
   const roomTimelineFollowIntentRef = useRef(true);
-  const roomTimelineLatestTurnIdRef = useRef('');
+  const roomTimelineLatestContentKeyRef = useRef('');
   const [roomTimelineScroller, setRoomTimelineScroller] = useState<HTMLElement | null>(null);
   useComposerClearance(roomWorkspaceRef);
   const [roomRailOpen, setRoomRailOpen] = useState(roomRailInitiallyOpen);
@@ -360,7 +347,10 @@ export function RoomsFeature() {
   const roomStatusModal = roomStatusOverlay && statusOpen;
   const selectedRoomRecoveryState = roomRecoveryStates[selectedId];
   const selectedRoomErrorSource = roomErrorsRef.current.get(selectedId)?.source;
-  const latestVisibleTurnId = visibleTurnOrder.at(-1) ?? '';
+  const latestTimelineContentKey = useMemo(
+    () => latestRoomTimelineContentKey(selectedRoomProjection, visibleTurnOrder),
+    [selectedRoomProjection, visibleTurnOrder],
+  );
 
   selectedRoomIdRef.current = selectedId;
 
@@ -370,7 +360,7 @@ export function RoomsFeature() {
 
   useEffect(() => {
     roomTimelineFollowIntentRef.current = true;
-    roomTimelineLatestTurnIdRef.current = latestVisibleTurnId;
+    roomTimelineLatestContentKeyRef.current = latestTimelineContentKey;
   }, [selectedId]);
 
   useEffect(() => {
@@ -420,11 +410,11 @@ export function RoomsFeature() {
   }, [roomTimelineScroller]);
 
   useEffect(() => {
-    const previousLatestTurnId = roomTimelineLatestTurnIdRef.current;
-    roomTimelineLatestTurnIdRef.current = latestVisibleTurnId;
+    const previousContentKey = roomTimelineLatestContentKeyRef.current;
+    roomTimelineLatestContentKeyRef.current = latestTimelineContentKey;
     if (
-      !latestVisibleTurnId
-      || latestVisibleTurnId === previousLatestTurnId
+      !latestTimelineContentKey
+      || latestTimelineContentKey === previousContentKey
       || !roomTimelineFollowIntentRef.current
     ) return;
     const frame = window.requestAnimationFrame(() => {
@@ -436,7 +426,7 @@ export function RoomsFeature() {
       );
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [latestVisibleTurnId, roomTimelineScroller, visibleTurnOrder.length]);
+  }, [latestTimelineContentKey, roomTimelineScroller, visibleTurnOrder.length]);
 
   function selectRoomId(roomId: string): void {
     selectedRoomIdRef.current = roomId;
@@ -547,6 +537,28 @@ export function RoomsFeature() {
     if (selectedRoomIdRef.current === roomId) setError('');
   }
 
+  async function decideRoomApproval(
+    roomId: string,
+    approvalId: string,
+    decision: 'approved' | 'rejected',
+    payloadSha256: string,
+  ): Promise<void> {
+    try {
+      await transport.request({
+        pathId: 'agent.approval.decide',
+        params: { approvalId },
+        body: {
+          decision: decision === 'approved' ? 'approve' : 'reject',
+          payloadSha256,
+        },
+      });
+      setRoomError(roomId, '');
+    } catch (requestError) {
+      setRoomError(roomId, publicErrorText(requestError, '审批没有完成，请重试。'));
+      throw requestError;
+    }
+  }
+
   function closeRoomRail(restoreFocus = true): void {
     if (!roomRailOpen) return;
     setRoomRailOpen(false);
@@ -624,7 +636,9 @@ export function RoomsFeature() {
         setSelectedId((current) => {
           const next = items.some((item) => item.id === current)
             ? current
-            : items.find((item) => item.status === 'active')?.id ?? items[0]?.id ?? '';
+            : items.some((item) => item.id === initialRoomId)
+              ? initialRoomId
+              : items.find((item) => item.status === 'active')?.id ?? items[0]?.id ?? '';
           selectedRoomIdRef.current = next;
           return next;
         });
@@ -647,7 +661,7 @@ export function RoomsFeature() {
       ]));
     }).finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
-  }, [catalogReloadRevision, includeArchived, transport]);
+  }, [catalogReloadRevision, includeArchived, initialRoomId, transport]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -727,6 +741,7 @@ export function RoomsFeature() {
       preserveMessage?: boolean;
       includeComposerState?: boolean;
       question?: PendingRoomQuestion;
+      retryOfRootId?: string;
     } = {},
   ): Promise<boolean> {
     if (!room || room.status !== 'active') return false;
@@ -773,6 +788,9 @@ export function RoomsFeature() {
           ...(pendingQuestionAnswer && authoritativeQuestion
             ? { answerToPostId: authoritativeQuestion.postId }
             : {}),
+          ...(options.retryOfRootId
+            ? { retryOfRootId: options.retryOfRootId }
+            : {}),
         },
       );
     }
@@ -800,6 +818,9 @@ export function RoomsFeature() {
             body: {
               message,
               clientMessageId,
+              ...(options.retryOfRootId
+                ? { retryOfRootId: options.retryOfRootId }
+                : {}),
               attachmentIds: selectedAttachments.map((attachment) => attachment.mediaId),
               ...(pendingQuestionAnswer && authoritativeQuestion
                 ? {
@@ -1296,7 +1317,7 @@ export function RoomsFeature() {
     }
   }
   return <>
-    <main className="rooms-feature" data-route-id="rooms" data-rail-open={roomRailOpen} data-status-open={statusOpen}>
+    <main className="rooms-feature" data-paw-agent-workbench={pawOsWorkbench || undefined} data-route-id="rooms" data-rail-open={roomRailOpen} data-status-open={statusOpen}>
       <h1 className="rooms-feature__title">多人协作</h1>
       <aside ref={roomRailRef} className="rooms-rail" id="rooms-list-drawer" aria-hidden={roomStatusModal || undefined} aria-label="协作空间列表" inert={roomStatusModal ? true : undefined} role={roomRailModal ? 'dialog' : undefined} aria-modal={roomRailModal ? true : undefined}>
         <header><span><strong>协作空间</strong><small>和伙伴一起聊，也一起把事做完</small></span><div className="rooms-rail-actions"><IconButton label={includeArchived ? '隐藏已收起的协作空间' : '显示已收起的协作空间'} icon={includeArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />} aria-pressed={includeArchived} onClick={() => setIncludeArchived((current) => !current)} tooltip /><IconButton disabled={catalogLoading || creating} label="开始新的协作" icon={<MessageSquarePlus size={17} />} onClick={() => { closeRoomRailIfOverlay(false); beginCreateRoom(); }} tooltip /></div><IconButton ref={roomRailCloseRef} className="rooms-rail-mobile-close" label="关闭协作空间列表" icon={<X size={17} />} onClick={() => closeRoomRail()} tooltip /></header>
@@ -1305,7 +1326,7 @@ export function RoomsFeature() {
       <RoomPaneResizer side="rail" />
       <button className="rooms-rail-backdrop" aria-hidden="true" disabled={!roomRailModal} tabIndex={-1} onClick={() => closeRoomRail()} type="button" />
       <section ref={roomWorkspaceRef} className="room-workspace" aria-hidden={roomRailModal || roomStatusModal || undefined} inert={roomRailModal || roomStatusModal ? true : undefined}>
-        <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label={roomRailOpen ? '收起协作空间列表' : '打开协作空间列表'} icon={roomRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => { if (!roomRailOpen && roomStatusModal) setStatusOpen(false); setRoomRailOpen((current) => !current); }} tooltip /><span><strong>{room?.title ?? '协作空间'}</strong><small>{!room ? '选一个协作空间，或开始新的对话' : room.status === 'archived' ? '已收起' : `${room.roomKind === 'roleplay' ? '一起聊聊' : roomPathName(room)} · ${roomHeadlineState}`}</small></span><SegmentedControl aria-label="协作空间视图" items={roomWorkspaceViewOptions(room?.roomKind)} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions"><span className="room-header-actions__desktop">{room ? <IconButton label="设置这个协作空间" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu> : null}</span>{room ? <span className="room-header-actions__mobile"><Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={beginRoomSettings}><Settings2 size={15} />设置协作空间</MenuItem><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu></span> : null}<IconButton ref={roomStatusToggleRef} label={statusOpen ? '关闭协作进展' : '看看协作进展'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={() => { if (!statusOpen && roomRailModal) setRoomRailOpen(false); setStatusOpen((current) => !current); }} tooltip /></div></header>
+        <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label={roomRailOpen ? '收起协作空间列表' : '打开协作空间列表'} icon={roomRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => { if (!roomRailOpen && roomStatusModal) setStatusOpen(false); setRoomRailOpen((current) => !current); }} tooltip /><span><strong>{room?.title ?? '协作空间'}</strong><small>{!room ? '选一个协作空间，或开始新的对话' : room.status === 'archived' ? '已收起' : `${room.roomKind === 'roleplay' ? '一起聊聊' : roomPathName(room)} · ${roomHeadlineState}`}</small></span><SegmentedControl aria-label="协作空间视图" items={roomWorkspaceViewOptions(room?.roomKind)} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions"><span className="room-header-actions__desktop">{room && pawOsDesktop ? <IconButton label="在独立窗口中打开这个 Room" icon={<PanelsTopLeft size={16} />} onClick={() => pawOsDesktop.openWindow({ appId: 'agent', target: { kind: 'room', id: room.id, title: room.title, subtitle: `${room.participants.filter((participant) => participant.status === 'active').length} 位伙伴 · ${roomWorkStateLabel(activeWork?.state ?? 'queued')}` } })} tooltip /> : null}{room ? <IconButton label="设置这个协作空间" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu> : null}</span>{room ? <span className="room-header-actions__mobile"><Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end">{pawOsDesktop ? <MenuItem onSelect={() => pawOsDesktop.openWindow({ appId: 'agent', target: { kind: 'room', id: room.id, title: room.title, subtitle: `${room.participants.filter((participant) => participant.status === 'active').length} 位伙伴` } })}><PanelsTopLeft size={15} />独立窗口</MenuItem> : null}<MenuItem onSelect={beginRoomSettings}><Settings2 size={15} />设置协作空间</MenuItem><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu></span> : null}<IconButton ref={roomStatusToggleRef} label={statusOpen ? '关闭协作进展' : '看看协作进展'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={() => { if (!statusOpen && roomRailModal) setRoomRailOpen(false); setStatusOpen((current) => !current); }} tooltip /></div></header>
         {room ? <div className="room-context-bar">
           <div className="room-topic-tabs" aria-label="协作话题">
             <MessagesSquare size={14} />
@@ -1313,7 +1334,7 @@ export function RoomsFeature() {
             <IconButton label="管理话题" icon={<Plus size={14} />} disabled={topicSaving} onClick={() => { setTopicError(''); setTopicsOpen(true); }} tooltip />
           </div>
           <div className="room-context-actions">
-            {unresolvedWork.length ? <RoomAssignmentBar onOpen={() => setWorkspaceView('execution')} room={room} workItems={unresolvedWork} /> : <span>{room.description || (room.roomKind === 'roleplay' ? '让几位伙伴一起聊聊' : '先聊清楚，再一起把事情做完')}</span>}
+            {activeWork ? <span className="room-work-summary" data-state={activeWork.state} title={activeWork.objective}><GitBranch size={13} />{roomWorkStateLabel(activeWork.state)} · {participantName(room, activeWork.currentOwnerParticipantId)} · {activeWork.objective}</span> : <span>{room.description || (room.roomKind === 'roleplay' ? '让几位伙伴一起聊聊' : '先聊清楚，再一起把事情做完')}</span>}
             {room.roomKind !== 'roleplay' ? <IconButton label="分享工作文件" icon={artifactPicking ? <LoaderCircle className="ui-spin" size={15} /> : <FilePlus2 size={15} />} disabled={artifactPicking || room.status !== 'active'} onClick={() => void addRoomArtifact()} tooltip /> : null}
           </div>
         </div> : <div aria-hidden="true" className="room-context-bar room-context-bar--empty" />}
@@ -1337,7 +1358,7 @@ export function RoomsFeature() {
             atBottomStateChange={(atBottom) => {
               if (atBottom) roomTimelineFollowIntentRef.current = true;
             }}
-            followOutput={() => roomTimelineFollowIntentRef.current ? 'auto' : false}
+            followOutput={false}
             initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
             increaseViewportBy={300}
             scrollerRef={handleRoomTimelineScrollerRef}
@@ -1353,9 +1374,10 @@ export function RoomsFeature() {
               onAbortTurn={(rootId) => void abortRootTurn(rootId)}
               retryingTurn={sendingRoomIds.has(room.id)}
               onRetryTurn={room.status === 'active'
-                ? (message) => void send(message, {
+                ? (message, retryOfRootId) => void send(message, {
                     preserveMessage: true,
                     includeComposerState: false,
+                    retryOfRootId,
                   })
                 : undefined}
               onAnswerQuestion={room.status === 'active'
@@ -1369,6 +1391,14 @@ export function RoomsFeature() {
                     if (accepted) requestAnimationFrame(() => roomComposerRef.current?.focus());
                     return accepted;
                   }
+                : undefined}
+              onApprovalDecision={room.status === 'active'
+                ? (approvalId, decision, payloadSha256) => decideRoomApproval(
+                    room.id,
+                    approvalId,
+                    decision,
+                    payloadSha256,
+                  )
                 : undefined}
             />}
           /> : snapshotLoading
@@ -1449,7 +1479,7 @@ export function RoomsFeature() {
           onPickAttachments={() => undefined}
         /> : null}</div>}</div></> : workspaceView === 'sessions' ? <section className="room-session-workspace" aria-label="伙伴与权限">
           <header><span><strong>伙伴与工作权限</strong><small>每位伙伴保留自己的工作上下文；分工负责引导协作，真正能做什么仍由工作目录、工具和你的授权决定。</small></span></header>
-          <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} /><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
+          <div>{activeParticipants.map((participant) => <article key={participant.id}><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
           {!activeParticipants.length ? <p className="room-empty room-session-workspace__empty">还没有伙伴加入这个协作空间。</p> : null}
         </section> : null}
         <section className="room-execution-workspace room-execution-workspace--cockpit" aria-label="任务流转与验收" hidden={workspaceView !== 'execution'}>
@@ -1477,8 +1507,8 @@ export function RoomsFeature() {
             <label><input type="radio" name="room-kind" checked={createRoomKind === 'roleplay'} onChange={() => updateCreateRoomKind('roleplay')} /><span><Sparkles size={17} /><strong>一起聊聊</strong><small>只共享对话背景，不会访问项目文件</small></span></label>
           </div></fieldset>
           <label className="room-create-field"><span>取个名字 <small>必填</small></span><input maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder={createRoomKind === 'roleplay' ? '例如：深夜茶话会' : '例如：发布前检查'} aria-label="协作空间名称" /></label>
-          <fieldset><legend>邀请伙伴 <small>至少 2 位 · {selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{roomCreateParticipantLabel(createRoomKind, checked, persona.roleId, selectedRoleIds, coordinatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
-          {createRoomKind === 'collaboration' ? <p className="room-create-role-flow">主持整合者负责拆分、集成和最终回复；实现与调研伙伴并行工作；独立复核者只在集成后进入。</p> : null}
+          <fieldset><legend>邀请伙伴 <small>至少 2 位 · {selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><span><strong>{persona.displayName}<em>{roomCreateParticipantLabel(createRoomKind, checked, persona.roleId, selectedRoleIds, coordinatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
+          {createRoomKind === 'collaboration' ? <p className="room-create-role-flow">所有伙伴地位平等，可以直接互相 @、提问和回复；其中一位只在最后负责 Root 汇合与最终回复，不承担消息转发。</p> : null}
           {createRoomKind === 'collaboration' ? <section className="room-create-projects" aria-label="工作目录">
             <header><strong>在哪个目录工作</strong><small>必选</small></header>
             {projectPaths.length ? <RadioGroup.Root aria-label="最近使用的工作目录" value={workspaceRoots[0] ?? ''} onValueChange={(value) => { setWorkspaceRoots([value]); setCreateError(''); }}>{projectPaths.map((path) => <RadioGroup.Item key={path} value={path} title={path}><FolderOpen size={16} /><span><strong>{pathName(path)}</strong><small>{path}</small></span></RadioGroup.Item>)}</RadioGroup.Root> : null}
@@ -1488,8 +1518,10 @@ export function RoomsFeature() {
           {createRoomKind === 'collaboration' ? <fieldset><legend>允许伙伴怎样工作</legend><div className="room-kind-options">
             {roomExecutionModeOptions(createRoomKind).map((option) => <label key={option.value}><input type="radio" name="room-execution-mode" checked={createExecutionMode === option.value} onChange={() => setCreateExecutionMode(option.value)} /><span><ShieldCheck size={17} /><strong>{option.label}</strong><small>{option.description}</small></span></label>)}
           </div></fieldset> : null}
-          <details className="room-create-optional">
-            <summary>补充背景与外观 <small>可选</small></summary>
+          <Disclosure
+            className="room-create-optional"
+            summary={<>补充背景与外观 <small>可选</small></>}
+          >
             <div>
               <div className="room-create-pair">
                 <label className="room-create-field"><span>{createRoomKind === 'roleplay' ? '想聊些什么' : '这次大致想做什么'}</span><input maxLength={500} value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} placeholder={createRoomKind === 'roleplay' ? '给伙伴一个轻松、明确的话题' : '任务细节可以稍后在对话中一起确认'} aria-label="协作空间简介" /></label>
@@ -1497,7 +1529,7 @@ export function RoomsFeature() {
               </div>
               <label className="room-create-field"><span>{createRoomKind === 'roleplay' ? '共同背景' : '一起工作的约定'}</span><textarea maxLength={8000} rows={3} value={createScenarioPrompt} onChange={(event) => setCreateScenarioPrompt(event.target.value)} placeholder={createRoomKind === 'roleplay' ? '可以写下彼此关系、共同背景，以及不希望触碰的话题。' : '可以写下项目背景、不能改动的地方和交付习惯。'} aria-label={createRoomKind === 'roleplay' ? '共同背景' : '协作约定'} /></label>
             </div>
-          </details>
+          </Disclosure>
         </form>
         <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>先不开始</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={(createRoomKind === 'collaboration' && !workspaceRoots.length) || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>{createRoomKind === 'roleplay' ? '开始群聊' : '开始协作'}</Button></DialogFooter>
       </DialogContent>
@@ -1535,7 +1567,6 @@ export function RoomsFeature() {
               const mutationPending = Boolean(memberRemovingId || memberSavingRoleId || memberUpdatingId);
               const removeDisabled = !participant || room?.status !== 'active' || activeParticipants.length <= 2 || isRequiredModerator || mutationPending;
               return <article key={`${persona.roleId}:${persona.version}`} data-active={Boolean(participant)}>
-                <PersonaAvatar persona={persona} size="small" />
                 <span><strong>{persona.displayName}</strong><small>{participant ? room?.roomKind === 'roleplay' ? '一起聊天 · 已加入' : `${roomCollaborationRoleLabel(participant.collaborationRole)} · ${roomCollaborationRoleDescription(participant.collaborationRole)}` : persona.tagline}</small></span>
                 <div className="room-member-actions">
                   {participant && room?.roomKind !== 'roleplay' ? <Select aria-label={`${persona.displayName} 负责什么`} disabled={room?.status !== 'active' || mutationPending} onValueChange={(value) => void updateRoomParticipantRole(participant, value as RoomCollaborationRole)} options={roomCollaborationRoleOptions(participant.collaborationRole)} value={participant.collaborationRole ?? 'implementer'} /> : null}

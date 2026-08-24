@@ -269,6 +269,13 @@ export const CONTROL_ROUTES = {
     path: '/api/agent/sessions/:sessionId/commands',
     params: { sessionId: null },
   },
+  'agent.session.command.invoke': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/commands',
+    params: { sessionId: null },
+    body: ['command'],
+    requiredBody: ['command'],
+  },
   'agent.session.models': {
     method: 'GET',
     path: '/api/agent/sessions/:sessionId/models',
@@ -318,7 +325,7 @@ export const CONTROL_ROUTES = {
     method: 'POST',
     path: '/api/agent/sessions/:sessionId/background-jobs/:jobId/cancel',
     params: { sessionId: null, jobId: null },
-    body: ['reason'],
+    body: ['reason', 'roomTurnId'],
   },
   'agent.session.intercom.list': {
     method: 'GET',
@@ -486,6 +493,7 @@ export const CONTROL_ROUTES = {
     body: [
       'message',
       'clientMessageId',
+      'retryOfRootId',
       'participantIds',
       'workItemId',
       'attachmentIds',
@@ -827,7 +835,6 @@ export const CONTROL_ROUTES = {
   },
 
   'browser.status': { method: 'GET', path: '/api/browser/status' },
-  'browser.pairing': { method: 'GET', path: '/api/browser/pairing' },
   'browser.tabs': { method: 'GET', path: '/api/browser/tabs' },
   'browser.snapshot.latest': {
     method: 'GET',
@@ -845,33 +852,6 @@ export const CONTROL_ROUTES = {
     path: '/api/browser/traces',
     query: ['limit'],
   },
-  'browser.permissions': {
-    method: 'GET',
-    path: '/api/browser/permissions',
-    query: ['limit'],
-  },
-  'browser.permission.get': {
-    method: 'GET',
-    path: '/api/browser/permissions/:promptId',
-    params: { promptId: null },
-  },
-  'browser.permission.decide': {
-    method: 'POST',
-    path: '/api/browser/permissions/:promptId/decision',
-    params: { promptId: null },
-    body: ['decision'],
-    requiredBody: ['decision'],
-  },
-  'browser.mode.update': {
-    method: 'POST',
-    path: '/api/browser/mode',
-    body: ['mode'],
-    requiredBody: ['mode'],
-  },
-  'browser.pairing.rotate': {
-    method: 'POST',
-    path: '/api/browser/pairing/rotate',
-  },
   'browser.command': {
     method: 'POST',
     path: '/api/browser/command',
@@ -882,7 +862,9 @@ export const CONTROL_ROUTES = {
       'refId',
       'url',
       'text',
+      'script',
       'clear',
+      'submit',
       'direction',
       'amount',
       'timeoutMs',
@@ -893,6 +875,37 @@ export const CONTROL_ROUTES = {
   'browser.stop': { method: 'POST', path: '/api/browser/stop' },
   'browser.managed.start': { method: 'POST', path: '/api/browser/managed/start' },
   'browser.managed.stop': { method: 'POST', path: '/api/browser/managed/stop' },
+
+  'terminal.sessions.list': { method: 'GET', path: '/api/terminal/sessions' },
+  'terminal.session.create': {
+    method: 'POST',
+    path: '/api/terminal/sessions',
+    body: ['title', 'cwd', 'shell', 'cols', 'rows'],
+  },
+  'terminal.session.read': {
+    method: 'POST',
+    path: '/api/terminal/read',
+    body: ['terminalId', 'cursor', 'maxBytes'],
+    requiredBody: ['terminalId'],
+  },
+  'terminal.session.write': {
+    method: 'POST',
+    path: '/api/terminal/write',
+    body: ['terminalId', 'text'],
+    requiredBody: ['terminalId', 'text'],
+  },
+  'terminal.session.resize': {
+    method: 'POST',
+    path: '/api/terminal/resize',
+    body: ['terminalId', 'cols', 'rows'],
+    requiredBody: ['terminalId', 'cols', 'rows'],
+  },
+  'terminal.session.close': {
+    method: 'POST',
+    path: '/api/terminal/close',
+    body: ['terminalId'],
+    requiredBody: ['terminalId'],
+  },
 
   'planning.dashboard': {
     method: 'GET',

@@ -255,7 +255,7 @@ export function previewMemoryReference(kind: string, referenceId: string): Memor
     ref: makeReference('role_book_revision', referenceId),
     item: {
       id: referenceId,
-      title: '澄 · 当前角色书',
+      title: 'Agent 设置',
       detail: '维护角色使命、能力画像、协作习惯与已验证教训。',
       status: 'active',
       ownerKind: 'agent',

@@ -19,7 +19,22 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react';
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useId,
+  useState,
+  type Dispatch,
+  type CSSProperties,
+  type ReactNode,
+  type SetStateAction,
+  type UIEvent,
+} from 'react';
+import { publicToolName } from '../tool-presentation';
 import {
   Button,
   Dialog,
@@ -54,6 +69,37 @@ import {
   type PublicToolResultView,
 } from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
+import { SmoothDisclosureReveal } from './SmoothDisclosureReveal';
+
+const activityDisclosureOverrides = new Map<string, boolean>();
+const activityDisclosureOverrideLimit = 512;
+
+/** Virtualized turns may unmount while their measured height changes. Keep a
+ * human's disclosure choice on the stable Runtime activity id so a real click
+ * cannot flash open and immediately collapse during that remount. */
+export function resetActivityDisclosureOverrides(): void {
+  activityDisclosureOverrides.clear();
+}
+
+function useActivityDisclosure(
+  key: string,
+  initiallyOpen: boolean,
+): [boolean, Dispatch<SetStateAction<boolean>>] {
+  const [open, setOpenState] = useState(() => activityDisclosureOverrides.get(key) ?? initiallyOpen);
+  const setOpen = useCallback<Dispatch<SetStateAction<boolean>>>((nextValue) => {
+    setOpenState((current) => {
+      const next = typeof nextValue === 'function' ? nextValue(current) : nextValue;
+      if (activityDisclosureOverrides.size >= activityDisclosureOverrideLimit
+        && !activityDisclosureOverrides.has(key)) {
+        const oldest = activityDisclosureOverrides.keys().next().value;
+        if (typeof oldest === 'string') activityDisclosureOverrides.delete(oldest);
+      }
+      activityDisclosureOverrides.set(key, next);
+      return next;
+    });
+  }, [key]);
+  return [open, setOpen];
+}
 
 export function ActivitySummary({
   activities,
@@ -96,7 +142,13 @@ export function ActivitySummary({
   // Tool histories are supporting detail, not the conversation itself. Keep
   // live, completed, and failed groups compact by default; only a real human
   // decision opens automatically so the required controls cannot be missed.
-  const [inlineOpen, setInlineOpen] = useState(Boolean(pendingApprovalId));
+  const activityGroupId = activities[0]?.id ?? 'empty';
+  const [inlineOpen, setInlineOpen] = useActivityDisclosure(
+    `group:${activityGroupId}`,
+    Boolean(pendingApprovalId),
+  );
+  const [inlinePresence, setInlinePresence] = useState(inlineOpen);
+  const inlineDetailId = `agent-activity-group-${useId().replace(/:/gu, '')}`;
   const presentedApprovalRef = useRef(pendingApprovalId);
   const inlineContentKey = activities
     .map((activity) => `${activity.id}:${activity.status}:${activity.updatedAtMs}`)
@@ -130,7 +182,7 @@ export function ActivitySummary({
     : title;
   // A long Agent loop can legitimately contain failed probes. Keep the group
   // neutral and reserve terminal red for a turn/provider failure. The inline
-  // detail list still identifies every unfinished call and its recovery reason.
+  // detail list still identifies every failed call and its recovery reason.
   const inlineSummary = inlineTools.count
     ? inlineTools.count === 1
       ? inlineTools.highlight || inlineTools.outcome || inlineTools.names
@@ -145,9 +197,10 @@ export function ActivitySummary({
         : failed && inlineTools.count > 1
           ? '查看'
           : failed
-            ? '未完成'
+            ? '失败'
             : '完成';
   const liveActivities = running || waiting ? activities.slice(-3) : [];
+  const liveActivityCount = liveActivities.length;
   const state = terminalFailure ? 'failed' : waiting ? 'waiting' : running ? 'running' : failed ? 'mixed' : 'done';
   const summaryContent = (
     <>
@@ -176,9 +229,10 @@ export function ActivitySummary({
         <details
           className="agent-activity agent-activity--inline"
           data-state={state}
-          open={inlineOpen}
+          open={inlineOpen || inlinePresence}
         >
           <summary
+            aria-controls={inlineDetailId}
             aria-expanded={inlineOpen}
             aria-label={`${inlineTitle}，${inlineSummary}，${inlineStatus}`}
             onClick={(event) => toggleDisclosurePreservingAnchor(event, setInlineOpen)}
@@ -187,10 +241,14 @@ export function ActivitySummary({
             <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />
             <strong>{inlineTitle}</strong>
             <span className="agent-activity__inline-tools">{inlineSummary}</span>
-            <span className="agent-activity__inline-status" data-status={state}>{inlineStatus}</span>
+            <span className="agent-activity__inline-status agent-fx-pill" data-status={state} data-tone={state === 'done' ? 'ok' : state === 'running' ? 'run' : state === 'waiting' ? 'wait' : state === 'failed' ? 'danger' : 'warn'}><i aria-hidden="true" />{inlineStatus}</span>
             <ChevronRight aria-hidden="true" size={15} />
           </summary>
-          {inlineOpen ? (
+          <SmoothDisclosureReveal
+            id={inlineDetailId}
+            onPresenceChange={setInlinePresence}
+            open={inlineOpen}
+          >
             <div
               aria-label="操作与思考过程"
               className="agent-activity__inline-timeline"
@@ -217,7 +275,7 @@ export function ActivitySummary({
                 />
               ))}
             </div>
-          ) : null}
+          </SmoothDisclosureReveal>
         </details>
       </div>
     );
@@ -261,6 +319,18 @@ export function ActivitySummary({
       </Dialog>
       {liveActivities.length ? (
         <div className="agent-activity-live" aria-label="当前活动">
+          {activities.length > liveActivityCount ? (
+            <div className="agent-activity-live__scope">
+              <small>当前显示最近 {liveActivityCount} / 共 {activities.length} 项活动</small>
+              <button
+                type="button"
+                onClick={() => setDetailsOpen(true)}
+                aria-label={`查看全部 ${activities.length} 项活动`}
+              >
+                查看全部
+              </button>
+            </div>
+          ) : null}
           {liveActivities.map((activity) => (
             <ActivityRow
               key={activity.id}
@@ -279,12 +349,14 @@ export function ActivitySummary({
 const ActivityRow = memo(function ActivityRow({
   activity,
   initiallyOpen = false,
+  hideSummary = false,
   onApprovalDecision,
   onOpenApproval,
   onRequestPermission,
 }: {
   activity: AgentActivityProjection;
   initiallyOpen?: boolean;
+  hideSummary?: boolean;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
@@ -314,20 +386,26 @@ const ActivityRow = memo(function ActivityRow({
     : publicActivitySummary(activity.summary, presentation.title);
   const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
-  const [rowOpen, setRowOpen] = useState(Boolean(
-    initiallyOpen || (boundToTool && activity.status === 'waiting'),
-  ));
+  const [rowOpen, setRowOpen] = useActivityDisclosure(
+    `row:${activity.id}`,
+    Boolean(initiallyOpen || (boundToTool && activity.status === 'waiting')),
+  );
+  const [rowPresence, setRowPresence] = useState(rowOpen);
+  const detailId = `agent-activity-row-${useId().replace(/:/gu, '')}`;
   const nowMs = useActivityClock(activity.status === 'running');
   const duration = activityDuration(activity, nowMs);
   return (
     <details
       className="agent-activity-row"
       data-kind={presentation.kind}
+      data-summary-hidden={hideSummary || undefined}
       data-state={activity.status}
-      open={rowOpen}
+      open={rowOpen || rowPresence}
     >
       <summary
+        aria-controls={detailId}
         aria-expanded={rowOpen}
+        hidden={hideSummary}
         onClick={(event) => toggleDisclosurePreservingAnchor(event, setRowOpen)}
         onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setRowOpen)}
       >
@@ -340,16 +418,20 @@ const ActivityRow = memo(function ActivityRow({
         </span>
         <i data-status={activity.status}>
           {toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}
-          {isToolActivity && activity.status === 'failed' ? '未完成' : statusLabel(activity.status)}
+          {statusLabel(activity.status)}
           {duration ? ` · ${duration}` : ''}
         </i>
       </summary>
-      {rowOpen ? (
+      <SmoothDisclosureReveal
+        id={detailId}
+        onPresenceChange={setRowPresence}
+        open={rowOpen}
+      >
         <div className="agent-activity-row__details">
           {presentation.detail ? <p>{presentation.detail}</p> : null}
           <ToolProgressTimeline activity={activity} entries={progressHistory} />
           {toolView?.request.length ? <PublicToolRequest view={toolView} /> : null}
-          {toolView ? <PublicToolResult view={toolView} /> : null}
+          {toolView ? <PublicToolResult activityId={activity.id} view={toolView} /> : null}
           {toolView && toolView.fields.every((field) => field.id === 'status') && !toolView.request.length && !toolView.output && !toolView.preview && !toolView.resultItems.length && !toolView.change && !toolView.error ? (
             <p className="agent-tool-unavailable">这条历史回执未包含可公开的调用参数或返回内容。</p>
           ) : null}
@@ -390,7 +472,7 @@ const ActivityRow = memo(function ActivityRow({
             </div>
           ) : null}
         </div>
-      ) : null}
+      </SmoothDisclosureReveal>
     </details>
   );
 });
@@ -544,7 +626,7 @@ function ReasoningSummaryStrip({
           <Brain aria-hidden="true" size={15} />
           <strong>{running ? '正在思考' : '思考摘要'}</strong>
           <span>{latest}</span>
-          <small>{running ? '实时' : `${items.length} 项`}</small>
+          <small>{running ? `实时 · ${items.length} 项` : `${items.length} 项`}</small>
           <ChevronRight aria-hidden="true" size={15} />
         </button>
       </DialogTrigger>
@@ -575,7 +657,10 @@ function reasoningSummaryItems(activities: AgentActivityProjection[]): { items: 
   ));
   const items = reasoning.flatMap((activity) => reasoningItemsFromPayload(activity.payload, activity.summary));
   return {
-    items: [...new Set(items)].slice(-12),
+    // The compact strip intentionally shows only the latest sentence, but its
+    // disclosure is the complete public reasoning record. Do not silently
+    // discard earlier planning steps from a long-running turn.
+    items: [...new Set(items)],
     running: reasoning.some((activity) => activity.status === 'running'),
   };
 }
@@ -587,7 +672,7 @@ function reasoningItemsFromPayload(payload: Record<string, unknown>, fallback: s
     .map((value) => value.replace(/\s+/gu, ' ').trim())
     .filter(Boolean);
   const summary = fallback.replace(/\s+/gu, ' ').trim();
-  return items.length ? items.slice(0, 12) : summary ? [summary] : [];
+  return items.length ? items : summary ? [summary] : [];
 }
 
 function useActivityClock(running: boolean): number {
@@ -625,7 +710,7 @@ function ToolProgressTimeline({
   );
 }
 
-function PublicToolResult({ view }: { view: PublicToolResultView }) {
+function PublicToolResult({ activityId, view }: { activityId: string; view: PublicToolResultView }) {
   let primary: ReactNode = null;
   if (view.resultKind === 'semantic' && view.preview) {
     primary = <SemanticToolPreview preview={view.preview} />;
@@ -647,7 +732,7 @@ function PublicToolResult({ view }: { view: PublicToolResultView }) {
   return (
     <>
       {primary}
-      {view.rawResult ? <InspectableToolResult view={view} /> : null}
+      {view.rawResult ? <InspectableToolResult activityId={activityId} view={view} /> : null}
     </>
   );
 }
@@ -673,7 +758,7 @@ function PublicTerminalResult({ view }: { view: PublicToolResultView }) {
           {state === 'copied' ? '已复制输出' : '复制输出'}
         </Button>
       </header>
-      <pre aria-label="命令输出内容" tabIndex={0}><code>{output}</code></pre>
+      <pre aria-label="命令输出内容" role="region" tabIndex={0}><code>{output}</code></pre>
       {view.output?.truncated ? <small>{view.rawResult ? '摘要已截断；可展开下方“完整返回”查看原始回执。' : '完整结果仍由本机工具回执保留。'}</small> : null}
       {state === 'failed' ? <small role="alert">无法复制输出，请手动选择内容。</small> : null}
     </section>
@@ -705,7 +790,7 @@ function PublicCodeResult({ view }: { view: PublicToolResultView }) {
           </Button>
         </span>
       </header>
-      <pre aria-label={`${file} 代码内容`} data-language={view.language ?? 'text'} tabIndex={0}><code>{code}</code></pre>
+      <pre aria-label={`${file} 代码内容`} data-language={view.language ?? 'text'} role="region" tabIndex={0}><code>{code}</code></pre>
       {view.output?.truncated ? <small>{view.rawResult ? '代码摘要已截断；可展开下方“完整返回”查看原始回执。' : '完整结果仍由本机工具回执保留。'}</small> : null}
       {state === 'failed' ? <small role="alert">无法复制代码，请手动选择内容。</small> : null}
     </section>
@@ -786,13 +871,16 @@ function PublicChangeResult({ view }: { view: PublicToolResultView }) {
   );
 }
 
-function InspectableToolResult({ view }: { view: PublicToolResultView }) {
+function InspectableToolResult({ activityId, view }: { activityId: string; view: PublicToolResultView }) {
   const raw = view.rawResult;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useActivityDisclosure(`raw:${activityId}`, false);
+  const [presence, setPresence] = useState(open);
+  const detailId = `agent-tool-raw-${useId().replace(/:/gu, '')}`;
   if (!raw) return null;
   return (
-    <details className="agent-tool-result-view agent-tool-raw-result" aria-label="完整工具返回" open={open}>
+    <details className="agent-tool-result-view agent-tool-raw-result" aria-label="完整工具返回" open={open || presence}>
       <summary
+        aria-controls={detailId}
         aria-expanded={open}
         onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
         onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
@@ -801,7 +889,13 @@ function InspectableToolResult({ view }: { view: PublicToolResultView }) {
         <strong>完整返回</strong>
         <small>{raw.format.toUpperCase()}</small>
       </summary>
-      {open ? <InspectableToolResultBody raw={raw} /> : null}
+      <SmoothDisclosureReveal
+        id={detailId}
+        onPresenceChange={setPresence}
+        open={open}
+      >
+        <InspectableToolResultBody raw={raw} />
+      </SmoothDisclosureReveal>
     </details>
   );
 }
@@ -838,7 +932,7 @@ function InspectableToolResultBody({
       </header>
       {lines.length >= RAW_RESULT_VIRTUALIZE_AT
         ? <VirtualizedRawResult lines={lines} />
-        : <pre aria-label="完整工具返回内容" tabIndex={0}><code>{content}</code></pre>}
+        : <pre aria-label="完整工具返回内容" role="region" tabIndex={0}><code>{content}</code></pre>}
       {state === 'failed' ? <small role="alert">无法复制完整返回，请手动选择内容。</small> : null}
     </div>
   );
@@ -969,7 +1063,7 @@ export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
           {state === 'copied' ? '已复制结果' : '复制结果'}
         </Button>
       </header>
-      <pre aria-label="工具返回内容" tabIndex={0}>{outputText}</pre>
+      <pre aria-label="工具返回内容" role="region" tabIndex={0}>{outputText}</pre>
       {view.output.truncated ? (
         <small>此处显示安全截断片段；完整结果仍由本机工具回执保留。</small>
       ) : null}
@@ -1006,9 +1100,9 @@ function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResul
 export function PublicToolError({ reason }: { reason: string }) {
   const { copy, state } = useCopyableText(reason);
   return (
-    <section className="agent-tool-result-panel" data-tone="error" aria-label="工具未完成">
+    <section className="agent-tool-result-panel" data-tone="error" aria-label="工具失败">
       <header className="agent-tool-result-panel__header">
-        <strong><TriangleAlert size={13} />未完成原因</strong>
+        <strong><TriangleAlert size={13} />失败原因</strong>
         <Button
           aria-live="polite"
           leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
@@ -1046,7 +1140,11 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     return { title: '处理说明', kind: 'thinking', icon: Brain };
   }
   if (activity.kind === 'turn_failed') {
-    return { title: '模型服务请求失败', kind: 'runtime', icon: TriangleAlert, detail: '模型请求没有完成；可返回对话重试或切换模型。' };
+    const retryAttempts = finiteCount(payload.providerRetryAttempts);
+    const detail = payload.retryExhausted === true && retryAttempts > 0
+      ? `已自动重试 ${retryAttempts} 次，模型服务仍未恢复；请稍后重试或切换模型。`
+      : '模型请求没有完成；可返回对话重试或切换模型。';
+    return { title: '模型服务请求失败', kind: 'runtime', icon: TriangleAlert, detail };
   }
   if (activity.kind.includes('approval') || activity.kind === 'user_input_required') {
     const decision = approvalDecisionView(payload);
@@ -1191,7 +1289,7 @@ function compactToolSummary(activities: AgentActivityProjection[]) {
   const running = statuses.filter((status) => status === 'running').length;
   const outcome = [
     completed ? `${completed} 已完成` : '',
-    failed ? `${failed} 未完成` : '',
+    failed ? `${failed} 失败` : '',
     waiting ? `${waiting} 待确认` : '',
     running ? `${running} 进行中` : '',
   ].filter(Boolean).join(' · ');
@@ -1277,4 +1375,188 @@ function elapsedLabel(elapsedMs: number): string {
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function finiteCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : 0;
+}
+
+/** FX 签收稿的活动栈：一次真实活动一行安静披露（UR-016 原子顺序）。
+ *  运行/失败/等待自动展开以保住真实进度与恢复入口，其余点击展开；
+ *  只投影真实 reducer 活动，不合并、不重排、不发明状态。 */
+export function FxActivityStack({
+  activities,
+  onApprovalDecision,
+  onOpenApproval,
+  onRequestPermission,
+}: {
+  activities: AgentActivityProjection[];
+  onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  onOpenApproval?: (activity: AgentActivityProjection) => void;
+  onRequestPermission?: () => void;
+}) {
+  if (!activities.length) return null;
+  return (
+    <div aria-label="工具与思考步骤" className="paw-activity-stack" role="group">
+      {activities.map((activity, index) => (
+        <FxActivityDisclosure
+          activity={activity}
+          key={activity.id}
+          onApprovalDecision={onApprovalDecision}
+          onOpenApproval={onOpenApproval}
+          onRequestPermission={onRequestPermission}
+          position={index + 1}
+          setSize={activities.length}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FxActivityDisclosure({
+  activity,
+  onApprovalDecision,
+  onOpenApproval,
+  onRequestPermission,
+  position,
+  setSize,
+}: {
+  activity: AgentActivityProjection;
+  onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  onOpenApproval?: (activity: AgentActivityProjection) => void;
+  onRequestPermission?: () => void;
+  position: number;
+  setSize: number;
+}) {
+  const failed = activity.status === 'failed';
+  const waiting = activity.status === 'waiting';
+  const running = activity.status === 'running';
+  const [manuallyOpen, setManuallyOpen] = useActivityDisclosure(`fx:${activity.id}`, false);
+  const open = manuallyOpen || running || failed || waiting;
+  const detailId = `paw-activity-detail-${useId().replace(/:/gu, '')}`;
+  const label = fxActivityLabel(activity);
+  const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : 'ok';
+  const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : '完成';
+  const meta = fxActivityMeta(activity);
+  const progress = activityProgressView(activity);
+  return (
+    <div
+      aria-level={1}
+      aria-posinset={position}
+      aria-setsize={setSize}
+      className="paw-activity-node"
+      data-state={activity.status}
+      role="treeitem"
+    >
+      <button
+        aria-controls={detailId}
+        aria-expanded={open}
+        aria-label={`${label}，${statusText}${meta ? `，${meta}` : ''}`}
+        className="paw-activity"
+        data-state={activity.status}
+        onClick={(event) => toggleDisclosurePreservingAnchor(event, setManuallyOpen)}
+        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setManuallyOpen)}
+        type="button"
+      >
+        <span className="paw-activity__row">
+          <span className="paw-chevron">▸</span>
+          <span className="paw-activity__label">{label}</span>
+          <span className={`fx-pill ${tone}`}><i />{statusText}</span>
+          {meta ? <span className="fx-meta">{meta}</span> : null}
+          {progress ? <span
+            aria-label={`${label}：${progress.label}`}
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={progress.percent}
+            aria-valuetext={progress.label}
+            className="paw-activity__progress"
+            data-state={activity.status}
+            role="progressbar"
+            style={{ '--paw-activity-progress': String(progress.fraction) } as CSSProperties}
+          >
+            <span aria-hidden="true" className="paw-activity__progress-track"><i /></span>
+            <small>{progress.label}</small>
+          </span> : null}
+        </span>
+      </button>
+      <SmoothDisclosureReveal
+        ariaLabel={`${label}详情`}
+        className="paw-activity__detail"
+        id={detailId}
+        open={open}
+        role="region"
+      ><div className="fx-inner">
+        <ActivityRow
+          activity={activity}
+          hideSummary
+          initiallyOpen
+          onApprovalDecision={onApprovalDecision}
+          onOpenApproval={onOpenApproval}
+          onRequestPermission={onRequestPermission}
+        />
+      </div></SmoothDisclosureReveal>
+    </div>
+  );
+}
+
+function fxActivityLabel(activity: AgentActivityProjection): string {
+  const display = text(activity.payload.displayName) || text(activity.payload.toolName);
+  if (display) return display;
+  const toolId = text(activity.payload.toolId);
+  if (toolId) return publicToolName(toolId);
+  if (activity.kind === 'reasoning_summary') return '思考过程';
+  if (activity.kind === 'user_input_required') return '等待你的输入';
+  if (activity.kind === 'turn_failed') return '本轮失败';
+  if (activity.kind === 'approval') return '审批';
+  return '操作';
+}
+
+function fxActivityMeta(activity: AgentActivityProjection): string {
+  const durationMs = Number(activity.payload.durationMs ?? activity.payload.duration ?? 0);
+  if (Number.isFinite(durationMs) && durationMs > 0) return `${(durationMs / 1000).toFixed(1)}s`;
+  return '';
+}
+
+export interface ActivityProgressView {
+  fraction: number;
+  percent: number;
+  label: string;
+}
+
+/** A determinate meter is shown only when the Tool receipt contains a bounded
+ * fraction or an explicit current/total count. Elapsed time and DOM position
+ * are intentionally not progress signals. */
+export function activityProgressView(activity: AgentActivityProjection): ActivityProgressView | null {
+  if (!['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind)) return null;
+  const count = explicitProgressCount(activity.summary);
+  const supplied = activity.payload.progress;
+  const suppliedFraction = typeof supplied === 'number' && Number.isFinite(supplied)
+    ? Math.min(1, Math.max(0, supplied))
+    : null;
+  const fraction = count
+    ? Math.min(1, Math.max(0, count.current / count.total))
+    : suppliedFraction;
+  if (fraction === null) return null;
+  const percent = Math.round(fraction * 100);
+  return {
+    fraction,
+    percent,
+    label: count?.label ?? `${percent}%`,
+  };
+}
+
+function explicitProgressCount(summary: string): { current: number; total: number; label: string } | null {
+  const match = summary.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)(?:\s*([^\s,.，。:：;；/]{1,8}))?/u);
+  if (!match) return null;
+  const current = Number(match[1]?.replaceAll(',', ''));
+  const total = Number(match[2]?.replaceAll(',', ''));
+  if (!Number.isFinite(current) || !Number.isFinite(total) || current < 0 || total <= 0) return null;
+  const unit = match[3]?.trim() ?? '';
+  return {
+    current,
+    total,
+    label: `${match[1]} / ${match[2]}${unit ? ` ${unit}` : ''}`,
+  };
 }

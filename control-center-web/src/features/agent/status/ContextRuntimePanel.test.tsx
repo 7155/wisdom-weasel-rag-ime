@@ -135,6 +135,29 @@ describe('Agent context runtime panel', () => {
     expect(within(pipeline).getByText('发送消息后会记录组装阶段')).toBeVisible();
   });
 
+  it('shows a bounded context inbox with an explicit path to every loaded active item', async () => {
+    const user = userEvent.setup();
+    const transport = new StubControlTransport('mock', {
+      'agent.session.contextItems.list': {
+        ok: true,
+        items: Array.from({ length: 5 }, (_, index) => ({
+          schemaVersion: 'rag-ime.agent-context-item.v1', itemId: `context-item:${index + 1}`, sessionId: 'session-1', sourceKind: 'long_task', sourceId: `task-${index + 1}`,
+          lane: 'result', lifecycle: 'until_ack', status: 'delivered', title: `待处理 ${index + 1}`, summary: '等待确认', availableAtMs: 1, expiresAtMs: null, deliveredTurnId: 'turn-1', createdAtMs: 1, updatedAtMs: 2,
+        })),
+      },
+      'agent.session.contextTraces.list': { ok: true, items: [] },
+      'agent.session.contextItems.ack': { ok: true },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<ControlTransportProvider transport={transport}><QueryClientProvider client={client}><ContextRuntimeSections open sessionId="session-1" /></QueryClientProvider></ControlTransportProvider>);
+
+    await user.click(screen.getByRole('button', { name: /查看上下文状态/ }));
+    const inbox = (await screen.findByText('上下文收件箱')).closest('section')!;
+    expect(within(inbox).queryByText('待处理 5')).not.toBeInTheDocument();
+    await user.click(within(inbox).getByRole('button', { name: '显示更多（4/5）' }));
+    expect(within(inbox).getByText('待处理 5')).toBeVisible();
+  });
+
   it('places converging trace nodes into topological layers', () => {
     const layers = contextTraceLayers(traceFixture());
     expect(layers.map((layer) => layer.map((node) => node.stage))).toEqual([

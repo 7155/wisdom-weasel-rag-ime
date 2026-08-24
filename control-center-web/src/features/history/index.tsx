@@ -16,6 +16,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  Disclosure,
   EmptyState,
   Field,
   Input,
@@ -369,8 +370,11 @@ function HistoryDetailDialog({
               </dl>
               {auxiliaryText ? <pre tabIndex={0}>{auxiliaryText}</pre> : <p className="history-detail__empty">没有可查看的辅助上下文。</p>}
               {auxiliaryContext.truncated === true ? <p className="history-detail__empty">内容较长，当前显示前 8000 字。</p> : null}
-              <details className="history-detail__advanced-context">
-                <summary>高级：采集详情</summary>
+              <Disclosure
+                className="history-detail__advanced-context"
+                contentClassName="history-detail__advanced-context-body"
+                summary="高级：采集详情"
+              >
                 <dl className="history-detail__context-grid">
                   <DetailFact label="来源方式" value={captureSourceLabel(stringValue(auxiliaryContext.captureSource), stringValue(auxiliaryContext.captureMode))} />
                   <DetailFact label="识别或候选服务" value={providerLabel(stringValue(item.provider))} />
@@ -381,7 +385,7 @@ function HistoryDetailDialog({
                   <DetailFact label="保存状态" value={captureReceiptLabel(captureReceipt)} />
                 </dl>
                 {stringValue(auxiliaryContext.fallbackReason) ? <p className="history-detail__empty">读取方式变化：{captureFallbackLabel(stringValue(auxiliaryContext.fallbackReason))}</p> : null}
-              </details>
+              </Disclosure>
               {contextCopyState === 'failed' ? <p className="history-detail__copy-error" role="status">复制失败，可直接选择上方内容复制。</p> : null}
             </section>
             <section aria-labelledby="history-detail-feedback" className="history-detail__feedback">

@@ -1,11 +1,11 @@
-import { Code2, Globe2, Maximize2, Minimize2, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Code2, Globe2, Maximize2, Minimize2, PanelTopOpen, X } from 'lucide-react';
+import { memo, useMemo, useState } from 'react';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { RICH_HTML_SANDBOX, richHtmlDocument } from '../file-preview/rich-html';
 import { useRichHtmlUrl } from '../file-preview/use-rich-html-url';
 
-const INLINE_MIN_HEIGHT = 180;
-const INLINE_MAX_HEIGHT = 720;
-const EXPANDED_MAX_HEIGHT = 1_800;
+const INLINE_HEIGHT = 420;
+const EXPANDED_HEIGHT = 720;
 
 /**
  * Render complete model-authored HTML in the message that produced it.
@@ -18,71 +18,51 @@ export const InlineHtmlOutput = memo(function InlineHtmlOutput({
 }: {
   content: string;
 }) {
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  const observerRef = useRef<ResizeObserver | null>(null);
-  const animationFrameRef = useRef(0);
-  const [contentHeight, setContentHeight] = useState(320);
+  const desktop = usePawOsDesktop();
   const [expanded, setExpanded] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const document = useMemo(() => richHtmlDocument(content), [content]);
+  const result = useMemo(() => htmlResultDescriptor(content), [content]);
   const url = useRichHtmlUrl(document);
-
-  const measure = useCallback(() => {
-    const frame = frameRef.current;
-    const frameDocument = frame?.contentDocument;
-    if (!frame || !frameDocument?.body) return;
-    const height = measureDocumentHeight(frameDocument);
-    if (height > 0) setContentHeight(clampHeight(height, INLINE_MIN_HEIGHT, 12_000));
-  }, []);
-
-  const scheduleMeasure = useCallback(() => {
-    if (animationFrameRef.current) return;
-    animationFrameRef.current = window.requestAnimationFrame(() => {
-      animationFrameRef.current = 0;
-      measure();
-    });
-  }, [measure]);
-
-  const bindMeasurement = useCallback(() => {
-    observerRef.current?.disconnect();
-    const frameDocument = frameRef.current?.contentDocument;
-    if (!frameDocument?.documentElement || !frameDocument.body) return;
-    observerRef.current = new ResizeObserver(scheduleMeasure);
-    observerRef.current.observe(frameDocument.documentElement);
-    observerRef.current.observe(frameDocument.body);
-    scheduleMeasure();
-    window.setTimeout(scheduleMeasure, 50);
-    window.setTimeout(scheduleMeasure, 200);
-  }, [scheduleMeasure]);
-
-  useEffect(() => () => {
-    observerRef.current?.disconnect();
-    if (animationFrameRef.current) window.cancelAnimationFrame(animationFrameRef.current);
-  }, []);
-
-  const maximum = expanded ? EXPANDED_MAX_HEIGHT : INLINE_MAX_HEIGHT;
-  const frameHeight = clampHeight(contentHeight, INLINE_MIN_HEIGHT, maximum);
-  const canExpand = contentHeight > INLINE_MAX_HEIGHT;
+  const frameHeight = expanded ? EXPANDED_HEIGHT : INLINE_HEIGHT;
 
   return (
     <section className="agent-html-output" data-expanded={expanded || undefined}>
       <header className="agent-html-output__header">
         <span className="agent-html-output__label">
           <Globe2 aria-hidden="true" size={15} />
-          HTML 输出
+          {result.label}
         </span>
         <span className="agent-html-output__actions">
-          {canExpand ? (
+          {desktop ? (
             <button
-              aria-label={expanded ? '收起 HTML 预览' : '展开 HTML 预览'}
+              aria-label={`在独立窗口打开${result.label}`}
               className="agent-html-output__action"
-              onClick={() => setExpanded((value) => !value)}
+              onClick={() => desktop.openWindow({
+                appId: 'agent',
+                target: {
+                  kind: 'result',
+                  id: `html-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  title: result.title,
+                  resultKind: result.kind,
+                  content,
+                  subtitle: `来自当前 Agent 消息的隔离${result.label}`,
+                },
+              })}
               type="button"
             >
-              {expanded ? <Minimize2 aria-hidden="true" size={14} /> : <Maximize2 aria-hidden="true" size={14} />}
-              {expanded ? '收起' : '展开'}
+              <PanelTopOpen aria-hidden="true" size={14} />独立窗口
             </button>
           ) : null}
+          <button
+            aria-label={expanded ? '收起 HTML 预览' : '展开 HTML 预览'}
+            className="agent-html-output__action"
+            onClick={() => setExpanded((value) => !value)}
+            type="button"
+          >
+            {expanded ? <Minimize2 aria-hidden="true" size={14} /> : <Maximize2 aria-hidden="true" size={14} />}
+            {expanded ? '收起' : '展开'}
+          </button>
           <button
             aria-expanded={showSource}
             aria-label={showSource ? '关闭 HTML 源码' : '查看 HTML 源码'}
@@ -97,17 +77,21 @@ export const InlineHtmlOutput = memo(function InlineHtmlOutput({
       </header>
       <iframe
         className="agent-html-output__frame"
-        loading="lazy"
-        onLoad={bindMeasurement}
-        ref={frameRef}
         referrerPolicy="no-referrer"
         sandbox={RICH_HTML_SANDBOX}
-        src={url || undefined}
+        src={url}
         style={{ height: `${frameHeight}px` }}
         title="HTML 输出预览"
       />
       {showSource ? (
-        <pre className="agent-html-output__source"><code>{content}</code></pre>
+        <pre
+          aria-label="HTML 源码"
+          className="agent-html-output__source"
+          role="region"
+          tabIndex={0}
+        >
+          <code>{content}</code>
+        </pre>
       ) : null}
     </section>
   );
@@ -132,23 +116,26 @@ export function standaloneHtmlSource(source: string): string | undefined {
   return undefined;
 }
 
-function measureDocumentHeight(document: Document): number {
-  let anchor = document.getElementById('paw-html-height-anchor');
-  if (!anchor) {
-    anchor = document.createElement('div');
-    anchor.id = 'paw-html-height-anchor';
-    anchor.style.cssText = 'clear:both;height:1px;margin-top:-1px;visibility:hidden;pointer-events:none';
-    document.body.append(anchor);
-  }
-  const bodyTop = document.body.getBoundingClientRect().top;
-  let height = anchor.offsetTop + anchor.offsetHeight;
-  for (const node of document.querySelectorAll<HTMLElement>('body > *:not(#paw-html-height-anchor)')) {
-    const rect = node.getBoundingClientRect();
-    height = Math.max(height, rect.bottom - bodyTop, node.scrollHeight || 0);
-  }
-  return Math.ceil(height);
-}
+type HtmlResultDescriptor = {
+  kind: 'html' | 'web' | 'game' | 'music';
+  label: string;
+  title: string;
+};
 
-function clampHeight(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, Math.round(value)));
+function htmlResultDescriptor(source: string): HtmlResultDescriptor {
+  const document = new DOMParser().parseFromString(source, 'text/html');
+  const declared = (
+    document.querySelector('meta[name="paw-result-kind"]')?.getAttribute('content')
+    || document.documentElement.dataset.pawResultKind
+    || document.body.dataset.pawResultKind
+    || ''
+  ).trim().toLowerCase();
+  const authoredKind = declared === 'web' || declared === 'game' || declared === 'music' ? declared : '';
+  const hasCanvasLoop = Boolean(document.querySelector('canvas')) && /requestAnimationFrame\s*\(/u.test(source);
+  const hasAudioEngine = /(?:AudioContext|webkitAudioContext|createOscillator|createAnalyser)\s*\(?/u.test(source);
+  const kind = authoredKind || (hasAudioEngine ? 'music' : hasCanvasLoop ? 'game' : 'html');
+  const label = ({ html: 'HTML 输出', web: '网页结果', game: '互动作品', music: '音乐可视化' } as const)[kind];
+  const declaredTitle = document.querySelector('meta[name="paw-result-title"]')?.getAttribute('content')?.trim();
+  const title = declaredTitle || document.title.trim() || label;
+  return { kind, label, title };
 }

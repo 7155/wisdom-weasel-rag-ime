@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ControlTransportProvider,
   createConfiguredControlTransport,
@@ -12,6 +12,16 @@ function Probe() {
 }
 
 describe('ControlTransportProvider', () => {
+  const originalUrl = window.location.href;
+
+  beforeEach(() => {
+    window.history.replaceState({}, '', '/?controlTransport=mock#/control-transport-tests');
+  });
+
+  afterEach(() => {
+    window.history.replaceState({}, '', originalUrl);
+  });
+
   it('provides the preview transport when no native bridge is present', () => {
     render(
       <ControlTransportProvider>
@@ -38,6 +48,16 @@ describe('ControlTransportProvider', () => {
       );
     } finally {
       vi.unstubAllGlobals();
+      window.history.replaceState({}, '', originalUrl);
+    }
+  });
+
+  it('uses the same-origin HTTP transport by default for PAWOS development', () => {
+    const originalUrl = window.location.href;
+    window.history.replaceState({}, '', '/?frontend=paw-os#/project-field');
+    try {
+      expect(createConfiguredControlTransport().kind).toBe('http');
+    } finally {
       window.history.replaceState({}, '', originalUrl);
     }
   });

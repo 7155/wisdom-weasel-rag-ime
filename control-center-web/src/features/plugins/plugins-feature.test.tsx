@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
+import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
 import type { ControlPathId } from '@/platform/routes';
 import type { ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
@@ -17,6 +18,72 @@ afterEach(() => {
 });
 
 describe('PluginsFeature', () => {
+  it('reveals policy guidance smoothly instead of mounting a hidden page of text', async () => {
+    const user = userEvent.setup();
+    renderPlugins();
+
+    await screen.findByRole('heading', { name: '插件管理', level: 1 });
+    expect(screen.queryByText('显示出来，不等于自动执行')).not.toBeInTheDocument();
+
+    const summaryLabel = await screen.findByText('能力如何生效');
+    await user.click(summaryLabel);
+    const details = summaryLabel.closest('details');
+    expect(details).toHaveAttribute('open');
+    expect(screen.getByText('显示出来，不等于自动执行')).toBeVisible();
+
+    await user.click(summaryLabel);
+    expect(summaryLabel.closest('summary')).toHaveAttribute('aria-expanded', 'false');
+    expect(details).toHaveAttribute('open');
+    expect(details?.querySelector('.ui-disclosure__reveal')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('显示出来，不等于自动执行')).toBeInTheDocument();
+    await waitFor(() => expect(details).not.toHaveAttribute('open'));
+    await waitFor(() => expect(screen.queryByText('显示出来，不等于自动执行')).not.toBeInTheDocument());
+  });
+
+  it('keeps large capability schemas behind a real second-level disclosure', async () => {
+    const user = userEvent.setup();
+    renderPlugins({
+      'agent.tools.list': capabilityCatalog([
+        tool({
+          id: 'workspace_read',
+          displayName: '工作区读取',
+          description: '读取已授权工作区中的文本',
+          domain: 'workspace',
+          riskLevel: 'R0',
+          operations: ['read'],
+          sessionModes: ['assistant'],
+          parameters: { absolutePath: { type: 'string', description: '工作区内的绝对路径' } },
+        }),
+      ]),
+    });
+
+    await user.click(await screen.findByRole('button', { name: /工作区读取/ }));
+    expect(screen.queryByText(/absolutePath/)).not.toBeInTheDocument();
+    await user.click(screen.getByText('查看技术参数'));
+    expect(screen.getByText(/absolutePath/)).toBeVisible();
+    expect(screen.getByText(/工作区内的绝对路径/)).toBeVisible();
+  });
+
+  it('shows the routed proposal workbench without the legacy App Center shell', async () => {
+    renderPlugins({
+      'agent.extensions.proposals': {
+        ok: true,
+        items: [{
+          proposalId: 'proposal-disable',
+          previewToken: 'preview-disable',
+          payloadSha256: 'b'.repeat(64),
+          summary: { action: 'disable', pluginId: 'session-review', displayName: 'Session Review' },
+        }],
+      },
+    }, '/plugins?view=proposals', true);
+
+    expect(await screen.findByRole('heading', { name: /的建议/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /对话复盘/ })).toBeInTheDocument();
+    expect(screen.queryByText('能力概览')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Pi Package 来源')).not.toBeInTheDocument();
+    expect(document.querySelector('.mgmt-page__header')).not.toBeInTheDocument();
+  });
+
   it('keeps a stable catalog split while opening and closing capability details', async () => {
     const user = userEvent.setup();
     renderPlugins();
@@ -62,18 +129,6 @@ describe('PluginsFeature', () => {
     expect(screen.queryByRole('complementary', { name: '能力详情' })).not.toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: '能力详情占位' })).toBeInTheDocument();
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'false');
-  });
-
-  it('renders the complete management surface as a section inside model settings', async () => {
-    renderPlugins({}, '/roles', true);
-
-    expect(await screen.findByRole('heading', { name: '插件与工具', level: 2 })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '插件管理', level: 1 })).not.toBeInTheDocument();
-    expect(document.querySelector('section.mgmt-page--embedded[data-route-id="plugins"]')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '审批中心' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument();
-    expect(await screen.findByRole('group', { name: '能力列表' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '管理扩展与自动整理' })).toBeInTheDocument();
   });
 
   it('shows fixed base tools without persistent disclosure controls', async () => {
@@ -355,6 +410,29 @@ describe('PluginsFeature', () => {
     ))).toBe(true));
   });
 
+  it('states the lifecycle record boundary and lets the user reveal every older event', async () => {
+    const user = userEvent.setup();
+    renderPlugins({
+      'agent.lifecycleHooks.get': {
+        ok: true,
+        policies: [],
+        recentEvents: Array.from({ length: 11 }, (_, index) => ({
+          eventId: `event-${index + 1}`,
+          eventType: `custom_${index + 1}`,
+          status: 'completed',
+        })),
+      },
+    });
+
+    await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
+    expect(await screen.findByText('最近 8 / 共 11 条')).toBeVisible();
+    expect(screen.queryByText('custom_9')).not.toBeInTheDocument();
+
+    await user.click(screen.getByText('查看其余 3 条记录'));
+    expect(screen.getByText('custom_9')).toBeVisible();
+    expect(screen.getByText('custom_11')).toBeVisible();
+  });
+
   it('does not disguise plugin query failures as empty installed or proposal states', async () => {
     const user = userEvent.setup();
     renderPlugins({
@@ -384,6 +462,32 @@ describe('PluginsFeature', () => {
     expect(await screen.findByText('Pi Runtime 暂时未连接')).toBeVisible();
     expect(screen.getByText('Pi 未连接')).toBeVisible();
     expect(screen.getByText(/不会再把断连伪装成“0 个已安装”/)).toBeVisible();
+  });
+
+  it('opens the exact installed Package when entered from a PAWOS Package App window', async () => {
+    renderPlugins({
+      'agent.extensions.list': {
+        schemaVersion: 'rag-ime.plugin-inventory.v1',
+        ok: true,
+        runtimeAvailable: true,
+        items: [{
+          id: '@paw/pi-session-workflow',
+          displayName: 'Session Workflow',
+          version: '1.0.0',
+          digest: 'a'.repeat(64),
+          enabled: true,
+          installed: true,
+          rollbackAvailable: false,
+          permissions: [],
+          resources: { skills: ['skills/session-workflow/SKILL.md'] },
+        }],
+      },
+    }, '/plugins?packageId=%40paw%2Fpi-session-workflow');
+
+    const packageCard = await screen.findByRole('article', { name: 'Session Workflow Package' });
+    expect(packageCard).toHaveAttribute('data-selected', 'true');
+    expect(packageCard).toHaveTextContent('v1.0.0');
+    expect(screen.getByRole('button', { name: '收起维护选项' })).toBeInTheDocument();
   });
 
   it('refreshes catalog, installed versions, proposals and lifecycle together', async () => {
@@ -454,7 +558,7 @@ describe('PluginsFeature', () => {
     await user.click(await screen.findByRole('button', { name: /对话复盘/ }));
     expect(screen.getByText('v1.1.0 · 需要的权限：读取对话内容 · 当前已启用')).toBeVisible();
   });
-  it('shows installed display names and disables rollback after the visible version transition', async () => {
+  it('requires explicit confirmation before disabling or rolling back an installed Package', async () => {
     const user = userEvent.setup();
     const transport = createPreviewTransport();
     renderPluginsWithTransport(transport);
@@ -463,15 +567,44 @@ describe('PluginsFeature', () => {
     await screen.findByText('时间线检查');
 
     await user.click(screen.getByRole('button', { name: '停用' }));
+    expect(await screen.findByText('等待你的批准')).toBeVisible();
+    expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: '确认更改' }));
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(1));
 
     const rollback = screen.getByRole('button', { name: '恢复上一版本' });
     expect(rollback).toBeEnabled();
     await user.click(rollback);
+    expect(await screen.findByText('等待你的批准')).toBeVisible();
+    expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '确认更改' }));
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(2));
 
     expect(await screen.findByText('v0.9.0')).toBeVisible();
     expect(screen.getByRole('button', { name: '恢复上一版本' })).toBeDisabled();
+  });
+
+  it('previews uninstall in App Center, states retained data, and removes only after confirmation', async () => {
+    const user = userEvent.setup();
+    const transport = createPreviewTransport();
+    renderPluginsWithTransport(transport);
+
+    await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
+    await screen.findByText('时间线检查');
+
+    await user.click(screen.getByRole('button', { name: '卸载' }));
+
+    expect(await screen.findByText('等待你的批准')).toBeVisible();
+    expect(screen.getByText(/不会删除项目文件、对话、WorkDocument 或个人数据/)).toBeVisible();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.extensions.apply')).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: '确认更改' }));
+    await waitFor(() => expect(transport.requests.filter((call) => (
+      call.request.pathId === 'agent.extensions.apply'
+    ))).toHaveLength(1));
+
+    expect(screen.queryByText('时间线检查')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '还没有额外扩展' })).toBeVisible();
   });
 
 });
@@ -479,7 +612,7 @@ describe('PluginsFeature', () => {
 function renderPlugins(
   overrides: Partial<Record<ControlPathId, MockRouteHandler>> = {},
   initialEntry = '/plugins',
-  embedded = false,
+  pawOs = false,
 ) {
   const transport = new MockControlTransport({
     pickedFiles: [{
@@ -533,17 +666,18 @@ function renderPlugins(
       ...overrides,
     },
   });
-  renderPluginsWithTransport(transport, initialEntry, embedded);
+  renderPluginsWithTransport(transport, initialEntry, pawOs);
   return transport;
 }
 
 function renderPluginsWithTransport(
   transport: ControlTransport,
   initialEntry = '/plugins',
-  embedded = false,
+  pawOs = false,
 ): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<MemoryRouter initialEntries={[initialEntry]}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}><QueryClientProvider client={client}><PluginsFeature embedded={embedded} /></QueryClientProvider></ControlTransportProvider></TooltipProvider></MemoryRouter>);
+  const feature = <QueryClientProvider client={client}><PluginsFeature /></QueryClientProvider>;
+  render(<MemoryRouter initialEntries={[initialEntry]}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}>{pawOs ? <PawOsAppSurfaceProvider appId="app-center" height={720} width={1_080}>{feature}</PawOsAppSurfaceProvider> : feature}</ControlTransportProvider></TooltipProvider></MemoryRouter>);
 }
 
 function LocationProbe() {

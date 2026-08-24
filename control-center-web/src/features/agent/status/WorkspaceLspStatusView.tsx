@@ -7,6 +7,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { Disclosure } from '@/components/primitives';
 import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 import { validateContract } from '@/contracts/validators';
@@ -97,9 +98,7 @@ export function WorkspaceLspStatusView({
         <span><strong>下一步</strong>{view.guidance}</span>
       </p>
       {view.roots.length ? (
-        <details className="agent-workspace-lsp__disclosure">
-          <summary>查看 {view.roots.length} 个活动工作区与 {view.serverCount} 个语言服务器</summary>
-          <div className="agent-workspace-lsp__roots">
+        <Disclosure className="agent-workspace-lsp__disclosure" contentClassName="agent-workspace-lsp__roots" summary={`查看 ${view.roots.length} 个活动工作区与 ${view.serverCount} 个语言服务器`}>
             {view.roots.map((root) => (
               <section key={root.root}>
                 <header><code>{root.root}</code><span>{serverStateLabel(root.state)}</span></header>
@@ -127,18 +126,16 @@ export function WorkspaceLspStatusView({
                 ) : <p>该工作区没有 Runtime 报告的语言服务器。</p>}
               </section>
             ))}
-          </div>
-        </details>
+        </Disclosure>
       ) : null}
 
       {view.failure ? (
-        <details className="agent-workspace-lsp__disclosure" data-tone="danger">
-          <summary>查看失败信息</summary>
+        <Disclosure className="agent-workspace-lsp__disclosure" data-tone="danger" contentClassName="agent-workspace-lsp__failure" summary="查看失败信息">
           <p>
             {view.failure.code ? <code>{view.failure.code}</code> : null}
             {view.failure.message ? <span>{view.failure.message}</span> : null}
           </p>
-        </details>
+        </Disclosure>
       ) : null}
     </div>
   );

@@ -1,8 +1,8 @@
 {
-  "name": "澄 · Agent 记忆与协作",
-  "short_name": "澄",
-  "description": "记得你，也陪你做事的本机 Agent 伙伴。",
-  "start_url": "./#/agent",
+  "name": "PAW",
+  "short_name": "PAW",
+  "description": "Personal Agent Workbench",
+  "start_url": "./#/project-field",
   "display": "standalone",
   "background_color": "#f6f7f8",
   "theme_color": "#f6f7f8",

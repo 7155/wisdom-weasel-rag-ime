@@ -9,7 +9,7 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -39,6 +39,7 @@ import {
   stringValue,
   type JsonRecord,
 } from '@/features/overview/management-ui';
+import './planning.css';
 
 type TargetType = 'session' | 'role';
 type RecurrenceKind = 'once' | 'daily' | 'weekly';
@@ -46,7 +47,7 @@ type ScheduleAction = 'pause' | 'resume' | 'cancel' | 'retry';
 
 const scheduleQueryKey = ['planning', 'agent-wake-schedules'] as const;
 
-export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) {
+export function AgentWakeSchedules({ embedded = false, tasks }: { embedded?: boolean; tasks: readonly JsonRecord[] }) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
   const createTriggerRef = useRef<HTMLButtonElement>(null);
@@ -190,10 +191,9 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
   }
 
   return (
-    <ManagementSection
-      title="定时安排"
-      description="让一段对话或一位伙伴在指定时间继续做事；每次执行都会留下结果。"
-      trailing={(
+    <PlanningWakeSurface
+      embedded={embedded}
+      createAction={(
         <Button
           ref={createTriggerRef}
           disabled={catalog.isPending || Boolean(catalog.error)}
@@ -359,6 +359,37 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
         </DialogContent>
       </Dialog>
 
+    </PlanningWakeSurface>
+  );
+}
+
+function PlanningWakeSurface({
+  children,
+  createAction,
+  embedded,
+}: {
+  children: ReactNode;
+  createAction: ReactNode;
+  embedded: boolean;
+}) {
+  if (embedded) {
+    return (
+      <section className="planning-wake-embedded">
+        <header>
+          <div><h2>定时安排</h2><p>让一段对话或一位伙伴在指定时间继续做事；每次执行都会留下结果。</p></div>
+          {createAction}
+        </header>
+        {children}
+      </section>
+    );
+  }
+  return (
+    <ManagementSection
+      description="让一段对话或一位伙伴在指定时间继续做事；每次执行都会留下结果。"
+      title="定时安排"
+      trailing={createAction}
+    >
+      {children}
     </ManagementSection>
   );
 }

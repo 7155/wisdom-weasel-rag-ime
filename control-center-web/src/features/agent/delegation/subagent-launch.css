@@ -37,7 +37,7 @@
   color: var(--color-text-primary);
 }
 
-.subagent-launch-shell > .subagent-launch { border-top: 1px solid var(--color-border); }
+.subagent-launch-shell > .ui-disclosure__reveal > .subagent-launch { border-top: 1px solid var(--color-border); }
 .subagent-launch[data-surface='room'] { background: color-mix(in srgb, var(--color-surface) 96%, var(--color-accent-soft)); }
 
 .subagent-launch__header { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
@@ -100,6 +100,7 @@
 .subagent-launch__tools > summary strong { font-size: 11px; }
 .subagent-launch__tools > summary small { grid-column: 2; color: var(--color-text-muted); font-size: 10px; }
 .subagent-launch__tools[open] > summary > svg { transform: rotate(180deg); }
+.subagent-launch__tools-content { display: grid; min-width: 0; }
 .subagent-launch__tool-mode { padding: 10px 12px; display: flex; gap: 16px; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); font-size: 11px; }
 .subagent-launch__tool-mode label { display: flex; align-items: center; gap: 6px; }
 .subagent-launch__tool-list { max-height: 220px; padding: 8px 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; overflow: auto; }

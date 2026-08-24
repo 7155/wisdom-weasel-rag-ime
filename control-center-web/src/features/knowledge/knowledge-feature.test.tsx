@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
+import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { KnowledgeFeature } from './index';
@@ -27,6 +28,19 @@ afterEach(() => {
 });
 
 describe('document knowledge library', () => {
+  it('uses one PAWOS navigation layer while keeping the real library tabs interactive', async () => {
+    const user = userEvent.setup();
+    renderKnowledge(createTransport(), '/knowledge', true);
+
+    expect(await screen.findByRole('region', { name: '切换文档知识库' })).toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: '文档知识库' })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: '当前知识库' })).toHaveTextContent('伙伴运行资料');
+    await user.click(screen.getByRole('tab', { name: '知识图谱' }));
+    expect(await screen.findByRole('button', { name: /重建图谱/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: '设置' }));
+    expect(await screen.findByRole('button', { name: '保存基本信息' })).toBeInTheDocument();
+  });
+
   it('keeps document retrieval separate from personal memory and exposes citations', async () => {
     const transport = createTransport();
     const user = userEvent.setup();
@@ -38,7 +52,7 @@ describe('document knowledge library', () => {
     const materialDetails = screen.getByText('高级：材料详情', { selector: 'summary' });
     expect(materialDetails).toBeInTheDocument();
     expect(screen.getByText('PDF 文档')).toBeInTheDocument();
-    expect(screen.getByText('application/pdf')).not.toBeVisible();
+    expect(screen.queryByText('application/pdf')).not.toBeInTheDocument();
     await user.click(materialDetails);
     expect(screen.getByText('application/pdf')).toBeVisible();
     await user.click(materialDetails);
@@ -55,7 +69,11 @@ describe('document knowledge library', () => {
     await user.click(screen.getByText('高级：检索详情', { selector: 'summary' }));
     expect(screen.getByText('92 / 100')).toBeInTheDocument();
     expect(screen.getByText('混合检索 · 关键词候选第 1 · 向量候选第 2 · 图谱候选第 1 · 关联 工具、知识整理服务')).toBeInTheDocument();
-    expect(screen.getByText('工具 → mentions → 文档片段')).toBeInTheDocument();
+    expect(screen.getByText('工具 → mentions → 文档片段；文档片段 → evidence → 工具注册')).toBeInTheDocument();
+    expect(screen.queryByText('知识整理服务 → uses → 检索器')).not.toBeInTheDocument();
+    await user.click(screen.getByText('显示 2 / 共 4 条 · 查看全部'));
+    expect(screen.getByText('知识整理服务 → uses → 检索器')).toBeVisible();
+    expect(screen.getByText('检索器 → reads → runtime.pdf')).toBeVisible();
     expect(screen.getByText('第 12 页')).toBeInTheDocument();
     expect(screen.getByText('伙伴工作循环 > 工具')).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent('Knowledge Worker');
@@ -114,6 +132,7 @@ describe('document knowledge library', () => {
       expectedRevision: 8,
     }));
 
+    await user.click(screen.getByText('高级：检索调优', { selector: 'summary' }));
     const denseWeight = screen.getByRole('spinbutton', { name: '向量权重' });
     await user.clear(denseWeight);
     await user.type(denseWeight, '1.5');
@@ -128,6 +147,7 @@ describe('document knowledge library', () => {
       },
       expectedRevision: 8,
     }));
+    await user.click(screen.getByText('高级：连接与索引设置', { selector: 'summary' }));
     expect(screen.getByDisplayValue('local-hash:96:v1')).toBeDisabled();
     expect(screen.getByDisplayValue('42')).toBeDisabled();
 
@@ -332,7 +352,7 @@ describe('document knowledge library', () => {
     expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
     expect(screen.queryByText('处理中')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /runtime.pdf/ }));
-    expect(screen.getByText('job-1')).not.toBeVisible();
+    expect(screen.queryByText('job-1')).not.toBeInTheDocument();
     await user.click(screen.getByText('高级：处理详情', { selector: 'summary' }));
     expect(screen.getByText('job-1')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: '任务阶段记录' })).toBeInTheDocument();
@@ -443,7 +463,7 @@ describe('document knowledge library', () => {
     expect(screen.getByText('已索引材料')).toBeInTheDocument();
     expect(screen.getByText('待处理材料')).toBeInTheDocument();
     expect(screen.getByText('下次重建').nextElementSibling).toHaveTextContent('模型整理（推荐）');
-    expect(screen.getByText('由当前配置决定')).not.toBeVisible();
+    expect(screen.queryByText('由当前配置决定')).not.toBeInTheDocument();
     await user.click(screen.getByText('高级：构建详情', { selector: 'summary' }));
     expect(screen.getByText('由当前配置决定')).toBeInTheDocument();
     expect(screen.getByText('抽取上限').nextElementSibling).toHaveTextContent('5 实体 / 4 关系 / 2 主题');
@@ -457,6 +477,21 @@ describe('document knowledge library', () => {
       maxRelationsPerChunk: 4,
       maxTopicsPerChunk: 2,
     }));
+  });
+
+  it('states the graph evidence boundary and reveals every remaining relation', async () => {
+    const user = userEvent.setup();
+    renderKnowledge(createTransport({ manyRelations: true }));
+
+    await user.click(await screen.findByRole('tab', { name: '知识图谱' }));
+    await user.click(await screen.findByRole('radio', { name: '节点' }));
+    await user.click(screen.getByRole('button', { name: /按需检索与上下文注入/ }));
+
+    const inspector = screen.getByLabelText('节点详情');
+    expect(within(inspector).getByText('显示 8 / 共 11 条')).toBeVisible();
+    expect(within(inspector).queryByText('关系节点9')).not.toBeInTheDocument();
+    await user.click(within(inspector).getByText('查看其余 3 条关系'));
+    expect(within(inspector).getByText('关系节点9')).toBeVisible();
   });
 
   it('keeps build status reachable before the first graph has nodes', async () => {
@@ -524,21 +559,40 @@ describe('document knowledge library', () => {
 
 });
 
-function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowledge') {
+function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowledge', pawOs = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const feature = <QueryClientProvider client={client}><KnowledgeFeature /></QueryClientProvider>;
   render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <TooltipProvider delayDuration={0}>
         <ControlTransportProvider transport={transport}>
-          <QueryClientProvider client={client}><KnowledgeFeature /></QueryClientProvider>
+          {pawOs ? <PawOsAppSurfaceProvider appId="knowledge" height={760} width={1_200}>{feature}</PawOsAppSurfaceProvider> : feature}
         </ControlTransportProvider>
       </TooltipProvider>
     </MemoryRouter>,
   );
 }
 
-function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; pagedDetail?: boolean; pollingGraph?: boolean } = {}): MockControlTransport {
+function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; manyRelations?: boolean; pagedDetail?: boolean; pollingGraph?: boolean } = {}): MockControlTransport {
   let graphRequestCount = 0;
+  const extraGraphNodes = options.manyRelations
+    ? Array.from({ length: 9 }, (_, index) => ({
+      id: `related-${index + 1}`,
+      label: `关系节点${index + 1}`,
+      kind: 'topic',
+      weight: .5,
+    }))
+    : [];
+  const extraGraphEdges = options.manyRelations
+    ? Array.from({ length: 9 }, (_, index) => ({
+      id: `edge-extra-${index + 1}`,
+      source: 'chunk-tool',
+      target: `related-${index + 1}`,
+      kind: 'related',
+      label: '关联',
+      weight: .5,
+    }))
+    : [];
   return new MockControlTransport({
     capabilities: { features: { managementWorkContract: true, configurationSettingsWorkContract: true } },
     knowledgeAsset: (input) => ({ ...input, mimeType: 'image/png', byteSize: 3, sha256: input.assetId, blob: new Blob(['png'], { type: 'image/png' }) }),
@@ -593,7 +647,17 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
         hits: [{
           id: 'chunk-tool', documentId: 'file-runtime', documentName: 'runtime.pdf', title: 'Tool 注册',
           excerpt: 'Agent 启动时注册 knowledge。', score: .92, page: 12, heading: 'Agent Loop > Tools',
-          diagnostics: { effectiveMode: 'hybrid', lexicalRank: 1, denseRank: 2, graphRank: 1, lexicalScore: .95, denseScore: .88, graphScore: .9, graphMatches: ['Tool', 'Knowledge Worker'], graphPaths: ['Tool → mentions → 文档片段'] },
+          diagnostics: {
+            effectiveMode: 'hybrid', lexicalRank: 1, denseRank: 2, graphRank: 1,
+            lexicalScore: .95, denseScore: .88, graphScore: .9,
+            graphMatches: ['Tool', 'Knowledge Worker'],
+            graphPaths: [
+              'Tool → mentions → 文档片段',
+              '文档片段 → evidence → 工具注册',
+              '知识整理服务 → uses → 检索器',
+              '检索器 → reads → runtime.pdf',
+            ],
+          },
         }],
       },
       'knowledgeBases.document.get': options.pagedDetail ? pagedKnowledgeDetail : knowledgeDetail(),
@@ -617,15 +681,17 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
           { id: 'topic-tools', label: '工具注册', kind: 'topic', weight: .9 },
           { id: 'entity-worker', label: 'Knowledge Worker', kind: 'entity', weight: .8 },
           { id: 'chunk-tool', label: '按需检索与上下文注入', kind: 'chunk', documentId: 'file-runtime', documentName: 'runtime.pdf', chunkId: 'chunk-tool', heading: 'Agent Loop > Tools', excerpt: 'Agent 启动时注册 knowledge。', page: 12, weight: .92 },
+          ...extraGraphNodes,
         ],
         edges: options.emptyGraph ? [] : [
           { id: 'edge-1', source: 'doc-runtime', target: 'topic-tools', kind: 'contains', label: '包含', weight: .9 },
           { id: 'edge-2', source: 'topic-tools', target: 'chunk-tool', kind: 'evidence', label: '证据', weight: .92 },
           { id: 'edge-3', source: 'chunk-tool', target: 'entity-worker', kind: 'mentions', label: '提及', weight: .8 },
+          ...extraGraphEdges,
         ],
         stats: {
-          nodeCount: options.emptyGraph ? 0 : 4,
-          edgeCount: options.emptyGraph ? 0 : 3,
+          nodeCount: options.emptyGraph ? 0 : 4 + extraGraphNodes.length,
+          edgeCount: options.emptyGraph ? 0 : 3 + extraGraphEdges.length,
           documentCount: options.emptyGraph ? 0 : 1,
           chunkCount: options.emptyGraph ? 0 : 1,
           indexedDocumentCount: options.emptyGraph ? 0 : 1,

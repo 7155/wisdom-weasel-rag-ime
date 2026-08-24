@@ -21,6 +21,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
+  Disclosure,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -33,6 +34,7 @@ import {
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
 import { MarkdownBody } from '@/features/agent/timeline/MarkdownRenderer';
 import { publicErrorText } from '@/features/overview/management-ui';
+import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import {
   formatJson,
   describeDebugTurn,
@@ -50,6 +52,7 @@ import './context-debug.css';
 
 export function ContextDebugFeature() {
   const transport = useControlTransport();
+  const appSurface = usePawOsAppSurface();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('sessionId') ?? '';
   const requestedTurnId = searchParams.get('turnId') ?? '';
@@ -155,15 +158,17 @@ export function ContextDebugFeature() {
 
   return (
     <>
-    <main className="context-debug-feature" data-route-id="context-debug">
-      <header className="context-debug-header">
-        <div className="context-debug-heading">
-          <span className="context-debug-heading__icon"><Braces size={18} /></span>
-          <span>
-            <h1>上下文检查</h1>
-            <small><ShieldCheck size={12} />逐轮查看模型实际收到的上下文；技术载荷按需展开</small>
-          </span>
-        </div>
+    <main className="context-debug-feature" data-paw-os-app={appSurface?.appId} data-paw-os-compact={appSurface?.compact || undefined} data-route-id="context-debug">
+      <header className="context-debug-header" data-native-actions={appSurface ? true : undefined}>
+        {appSurface ? <h1 className="mgmt-sr-only">上下文检查</h1> : (
+          <div className="context-debug-heading">
+            <span className="context-debug-heading__icon"><Braces size={18} /></span>
+            <span>
+              <h1>上下文检查</h1>
+              <small><ShieldCheck size={12} />逐轮查看模型实际收到的上下文；技术载荷按需展开</small>
+            </span>
+          </div>
+        )}
         <div className="context-debug-controls">
           <Select
             aria-label="选择对话"
@@ -773,10 +778,9 @@ function ReadableMessageList({
             <div className="context-debug-session-message__body">
               {customType ? body : <MarkdownBody text={body} />}
             </div>
-            <details>
-              <summary>原始消息</summary>
+            <ContextDisclosure label="原始消息" meta="逐字段核对" tone="raw">
               <pre className="context-debug-reader__code">{formatJson(message)}</pre>
-            </details>
+            </ContextDisclosure>
           </li>
         );
       })}
@@ -917,17 +921,15 @@ function ContextDisclosure({
   meta: string;
   tone: 'messages' | 'provider' | 'raw' | 'system' | 'tools';
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <details
+    <Disclosure
       className="context-debug-reader__disclosure"
       data-tone={tone}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      open={open}
+      revealClassName="context-debug-reader__reveal"
+      summary={<span><strong>{label}</strong><small>{meta}</small></span>}
     >
-      <summary><span><strong>{label}</strong><small>{meta}</small></span></summary>
-      {open ? <div>{children}</div> : null}
-    </details>
+      {children}
+    </Disclosure>
   );
 }
 
@@ -1085,28 +1087,26 @@ function projectedText(source: Record<string, unknown>, keys: string[]): string 
 }
 
 function ToolExecutionDetails({ entryId, tool }: { entryId?: string; tool: DebugToolExecution }) {
-  const [open, setOpen] = useState(tool.status !== 'completed');
   return (
-    <details
+    <Disclosure
       className="context-debug-tool"
+      contentClassName="context-debug-tool__payloads"
+      defaultOpen={tool.status !== 'completed'}
       id={entryId}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      open={open}
-      tabIndex={entryId ? -1 : undefined}
-    >
-      <summary>
+      revealClassName="context-debug-tool__reveal"
+      summary={<>
         <span className="context-debug-tool__state" data-status={tool.status}>
           {tool.status === 'running' ? <Play size={12} /> : tool.status === 'failed' ? <Activity size={12} /> : <Check size={12} />}
         </span>
         <span><strong>{tool.toolName}</strong><small>{compactTreePreview(messagePreview(tool.args) || shortId(tool.toolCallId))}</small></span>
         <em>{durationLabel(tool.startedAtMs, tool.endedAtMs)}</em>
-      </summary>
-      <div className="context-debug-tool__payloads">
-        <section><h4>参数</h4><pre>{formatJson(tool.args)}</pre></section>
-        <section><h4>结果</h4><pre>{formatJson(tool.result ?? null)}</pre></section>
-        {tool.updates.length ? <section><h4>过程更新</h4><pre>{formatJson(tool.updates)}</pre></section> : null}
-      </div>
-    </details>
+      </>}
+      tabIndex={entryId ? -1 : undefined}
+    >
+      <section><h4>参数</h4><pre>{formatJson(tool.args)}</pre></section>
+      <section><h4>结果</h4><pre>{formatJson(tool.result ?? null)}</pre></section>
+      {tool.updates.length ? <section><h4>过程更新</h4><pre>{formatJson(tool.updates)}</pre></section> : null}
+    </Disclosure>
   );
 }
 

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { ControlPathId } from '@/platform/routes';
@@ -14,6 +14,7 @@ import type {
   FrontendCapabilities,
 } from '@/platform/transport';
 import { PlanningFeature } from '.';
+import { PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
 
 const now = 1_784_006_400_000;
 const saveHash = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -48,6 +49,27 @@ describe('Planning WorkContract UI', () => {
     await user.click(await screen.findByRole('button', { name: '添加任务' }));
     expect(screen.getByRole('heading', { name: '添加任务', level: 2 })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('例如：整理今天的工作清单')).toHaveValue('');
+  });
+
+  it('opens a selected task as an independent PAWOS WorkItem window', async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.fn<(request: PawOsWindowRequest) => void>();
+    renderPlanning(false, openWindow);
+
+    await user.click(await screen.findByRole('button', { name: /^完成管理页/ }));
+    await user.click(screen.getByRole('button', { name: '独立窗口' }));
+
+    expect(openWindow).toHaveBeenCalledWith({
+      appId: 'project-workbench',
+      target: {
+        kind: 'task',
+        id: 'task-1',
+        title: '完成管理页',
+        subtitle: expect.stringContaining('wisdom-weasel-rag-ime'),
+        date: expect.any(String),
+        project: 'wisdom-weasel-rag-ime',
+      },
+    });
   });
 
   it('keeps the selected day and visible copy aligned when a cached dashboard date lags behind', async () => {
@@ -375,14 +397,21 @@ class PlanningTransport implements ControlTransport {
   }
 }
 
-function renderPlanning(failTaskSave = false): PlanningTransport {
+function renderPlanning(
+  failTaskSave = false,
+  openWindow?: (request: PawOsWindowRequest) => void,
+): PlanningTransport {
   const transport = new PlanningTransport(failTaskSave);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
     <MemoryRouter>
       <TooltipProvider delayDuration={0}>
         <ControlTransportProvider transport={transport}>
-          <QueryClientProvider client={client}><PlanningFeature /></QueryClientProvider>
+          <QueryClientProvider client={client}>
+            {openWindow ? (
+              <PawOsDesktopProvider openWindow={openWindow}><PlanningFeature /></PawOsDesktopProvider>
+            ) : <PlanningFeature />}
+          </QueryClientProvider>
         </ControlTransportProvider>
       </TooltipProvider>
     </MemoryRouter>,

@@ -182,7 +182,7 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
 
 const pages: readonly [string, ComponentType, string, ControlPathId][] = [
   ['overview', OverviewFeature, '概览', 'overview.get'],
-  ['input', InputMethodFeature, '输入体验与个人词库', 'input.source.get'],
+  ['input', InputMethodFeature, '输入法', 'input.source.get'],
   ['plugins', PluginsFeature, '插件管理', 'agent.tools.list'],
   ['approvals', ApprovalsFeature, '审批中心', 'agent.approvals.list'],
   ['voice', VoiceFeature, '语音输入', 'configuration.settings'],
@@ -352,6 +352,7 @@ describe('management features', () => {
   });
 
   it('renders the live predictor capability without exposing provider implementation names', async () => {
+    const user = userEvent.setup();
     renderFeature(DiagnosticsFeature, {
       ...routeFixtures,
       'diagnostics.predictor': {
@@ -368,6 +369,7 @@ describe('management features', () => {
 
     expect((await screen.findAllByText('本机模型')).length).toBeGreaterThan(0);
     expect(screen.queryByText('local-mlx')).not.toBeInTheDocument();
+    await user.click(screen.getByText('高级：诊断详情'));
     expect(screen.getByText('768')).toBeInTheDocument();
   });
 
@@ -620,7 +622,7 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('网页端不能启动听写或打开系统授权；请回到已安装的澄。')).toBeInTheDocument();
+    expect(await screen.findByText('网页端不能启动听写或打开系统授权；请回到已安装的PAW。')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '实时听写' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();

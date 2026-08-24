@@ -27,6 +27,7 @@ const workDocumentReadRouteIds = [
 export interface WorkDocumentAccess {
   read: boolean;
   history: boolean;
+  register: boolean;
   archive: boolean;
   repair: boolean;
   reopen: boolean;
@@ -64,6 +65,7 @@ export function useWorkDocumentWorkspace(
   const access: WorkDocumentAccess = {
     read: missingReadRoutes.length === 0,
     history: routeIds.has('workDocuments.history.search'),
+    register: routeIds.has('workDocuments.register'),
     archive: routeIds.has('workDocuments.archive'),
     repair: routeIds.has('workDocuments.repair'),
     reopen: routeIds.has('workDocuments.reopen'),
@@ -125,6 +127,15 @@ export function useWorkDocumentWorkspace(
 }
 
 export type WorkDocumentCommandInput =
+  | {
+    operation: 'register';
+    authorityKind: 'session_todo' | 'session_goal' | 'room_work_item';
+    authorityId: string;
+    authorityRevision: number;
+    workspaceRoot: string;
+    sourcePath: string;
+    title: string;
+  }
   | { operation: 'archive'; documentId: string; terminalReceiptId: string }
   | { operation: 'repair'; documentId: string }
   | { operation: 'reopen'; documentId: string; authorityRevision: number; transitionReceiptId: string }
@@ -135,6 +146,18 @@ export function requestWorkDocumentCommand(
   input: WorkDocumentCommandInput,
 ): Promise<WorkDocumentCommandV1> {
   switch (input.operation) {
+    case 'register':
+      return transport.request<WorkDocumentCommandV1>({
+        pathId: 'workDocuments.register',
+        body: {
+          authorityKind: input.authorityKind,
+          authorityId: input.authorityId,
+          authorityRevision: input.authorityRevision,
+          workspaceRoot: input.workspaceRoot,
+          sourcePath: input.sourcePath,
+          title: input.title,
+        },
+      });
     case 'archive':
       return transport.request<WorkDocumentCommandV1>({
         pathId: 'workDocuments.archive',

@@ -5,7 +5,29 @@
  * and other content the report needs to render. Isolation belongs to the
  * iframe sandbox, while this function only adds host layout guardrails.
  */
-export const RICH_HTML_SANDBOX = 'allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts';
+export const RICH_HTML_SANDBOX = 'allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-scripts';
+
+export const RICH_HTML_PREVIEW_PATH = '/__paw_html_preview';
+
+/**
+ * Put authored HTML in the URL fragment of a dedicated loopback document.
+ * Fragments never cross the HTTP boundary. The document served by 8766 owns a
+ * narrow preview-only CSP and an opaque sandbox, so authored scripts can run
+ * without relaxing the Control Center's CSP or sharing its origin.
+ */
+export function richHtmlPreviewUrl(source: string): string {
+  const bytes = new TextEncoder().encode(source);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  const encoded = window.btoa(binary)
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/u, '');
+  return `${RICH_HTML_PREVIEW_PATH}#${encoded}`;
+}
 
 export function richHtmlDocument(source: string): string {
   const completeDocument = /(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/iu.test(source);

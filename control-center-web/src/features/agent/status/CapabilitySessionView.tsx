@@ -9,6 +9,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  Disclosure,
   Field,
   Input,
   Select,
@@ -259,8 +260,7 @@ function CapabilityRow({
         <small>{capabilityScopeLabel(item.effectiveScope)}</small>
       </div>
 
-      <details className="agent-capability-session__details">
-        <summary>查看来源、权限和生效依据</summary>
+      <Disclosure className="agent-capability-session__details" contentClassName="agent-capability-session__details-content" summary="查看来源、权限和生效依据">
         <dl>
           <div><dt>来源</dt><dd>{item.source.label}</dd></div>
           <div><dt>当前状态</dt><dd>{capabilityStatusLabel(item.status)}</dd></div>
@@ -284,7 +284,7 @@ function CapabilityRow({
           <span>{capabilityReasonLabel(item.disclosure.reason)}。{capabilityReasonLabel(item.authorization.reason)}。</span>
           <small>后端依据代码：<code>{item.disclosure.reason}</code> · <code>{item.authorization.reason}</code></small>
         </p>
-      </details>
+      </Disclosure>
     </article>
   );
 }

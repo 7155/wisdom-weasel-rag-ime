@@ -1,7 +1,175 @@
 import { describe, expect, it } from 'vitest';
+import { applyAgentSnapshot, createAgentProjection } from '@/contracts/agent-reducer';
 import { createPreviewTransport } from './preview-control-transport';
+import { previewAgentSnapshot } from '@/features/agent/preview-data';
 
 describe('preview control transport', () => {
+  it('hydrates each preview session snapshot from its session fixture', async () => {
+    const transport = createPreviewTransport();
+
+    const populated = record(await transport.request({
+      pathId: 'agent.session.snapshot',
+      params: { sessionId: 'session-preview' },
+    }));
+    const fresh = record(await transport.request({
+      pathId: 'agent.session.snapshot',
+      params: { sessionId: 'session-fresh' },
+    }));
+
+    expect(populated.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'session-preview:assistant-architecture',
+        role: 'assistant',
+      }),
+    ]));
+    expect(populated.messages).not.toHaveLength(0);
+    expect(fresh.messages).toEqual([]);
+    expect(fresh.lastSequence).toBe(0);
+  });
+
+  it('exposes a dedicated completed multi-stage turn for progressive disclosure', async () => {
+    const sessionId = 'session-work-disclosure';
+    const snapshot = previewAgentSnapshot(sessionId);
+    const projection = applyAgentSnapshot(createAgentProjection(sessionId), snapshot);
+    const turn = projection.turnsById[`${sessionId}:turn-implementation`];
+
+    expect(turn?.status).toBe('completed');
+    expect(turn?.messageIds).toEqual([
+      `${sessionId}:work-user`,
+      `${sessionId}:work-intermediate`,
+      `${sessionId}:work-final`,
+    ]);
+    expect(projection.messagesById[`${sessionId}:work-intermediate`]?.role).toBe('assistant');
+    expect(projection.messagesById[`${sessionId}:work-final`]?.blocks.map((block) => block.type)).toEqual([
+      'text',
+      'diff',
+      'file',
+    ]);
+    expect(turn?.activityIds).toHaveLength(3);
+    expect(turn?.activityIds.map((id) => projection.activitiesById[id]?.kind)).toEqual([
+      'reasoning_summary',
+      'tool_finished',
+      'tool_finished',
+    ]);
+    expect(turn?.activityIds.every((id) => projection.activitiesById[id]?.status === 'completed')).toBe(true);
+    expect(snapshot.liveEvents.map((event) => (event as { eventType: string }).eventType)).toEqual([
+      'reasoning_summary',
+      'tool_started',
+      'tool_finished',
+      'tool_started',
+      'tool_finished',
+      'turn_completed',
+    ]);
+  });
+
+  it('lists the progressive-disclosure fixture as an enterable Session', async () => {
+    const transport = createPreviewTransport();
+    const response = record(await transport.request({
+      pathId: 'agent.sessions.list',
+      query: { limit: 100 },
+    }));
+
+    expect(arrayRecords(response.sessions)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'session-work-disclosure',
+        title: '过程折叠验收',
+        messageCount: 3,
+      }),
+    ]));
+  });
+
+  it('replays live preview events only to the owning session subscription', async () => {
+    const transport = createPreviewTransport();
+    const stateEvents: unknown[] = [];
+    const unrelatedEvents: unknown[] = [];
+    const unsubscribeStates = transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId: 'session-states' },
+        lastEventId: 'session-states:0',
+      },
+      { next: (event) => stateEvents.push(event) },
+    );
+    const unsubscribeUnrelated = transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId: 'session-preview' },
+        lastEventId: 'session-preview:12',
+      },
+      { next: (event) => unrelatedEvents.push(event) },
+    );
+
+    // The state fixture is delivered after subscription registration, which
+    // mirrors the first live tick after a real snapshot has been hydrated.
+    await Promise.resolve();
+
+    expect(stateEvents).toHaveLength(7);
+    expect(unrelatedEvents).toEqual([]);
+    unsubscribeStates();
+    unsubscribeUnrelated();
+  });
+
+  it('keeps context trace, debug context, and trace detail turn ids aligned', async () => {
+    const transport = createPreviewTransport();
+    const list = record(await transport.request({
+      pathId: 'agent.session.contextTraces.list',
+      params: { sessionId: 'session-preview' },
+    }));
+    const items = arrayRecords(list.items);
+    const turnIds = items.map((item) => String(item.turnId));
+
+    expect(turnIds).toEqual(['turn-initial', 'turn-steady', 'turn-recovered']);
+    for (const item of items) {
+      const detail = record(await transport.request({
+        pathId: 'agent.session.contextTrace.get',
+        params: {
+          sessionId: 'session-preview',
+          traceId: String(item.traceId),
+        },
+      }));
+      expect(detail.turnId).toBe(item.turnId);
+    }
+
+    const debug = record(await transport.request({
+      pathId: 'agent.session.debugContext.get',
+      params: { sessionId: 'session-preview' },
+    }));
+    expect(record(debug.context).turnId).toBe('turn-recovered');
+    expect(arrayRecords(debug.availableTurns).map((item) => String(item.turnId))).toEqual(turnIds);
+  });
+
+  it('persists role-based model routing with the same optimistic revision contract', async () => {
+    const transport = createPreviewTransport();
+    const initial = record(await transport.request({ pathId: 'agent.configuration.get' }));
+    const initialSnapshot = record(initial.configuration);
+    expect(record(record(initialSnapshot.configuration).modelRouting)).toMatchObject({
+      primary: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+      toolAgent: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+    });
+
+    const updated = record(await transport.request({
+      pathId: 'agent.configuration.update',
+      body: {
+        expectedRevision: Number(initialSnapshot.revision),
+        changes: {
+          'modelRouting.toolAgent': {
+            modelProfile: 'openai-codex/gpt-5.6-luna',
+            thinkingLevel: 'low',
+          },
+        },
+        updatedBy: 'models-ui',
+      },
+    }));
+    const updatedSnapshot = record(updated.configuration);
+    expect(updatedSnapshot.revision).toBe(Number(initialSnapshot.revision) + 1);
+    expect(record(record(updatedSnapshot.configuration).modelRouting)).toMatchObject({
+      toolAgent: {
+        modelProfile: 'openai-codex/gpt-5.6-luna',
+        thinkingLevel: 'low',
+      },
+    });
+  });
+
   it('keeps Memory preview labels product-facing without changing stable identifiers', async () => {
     const transport = createPreviewTransport();
     const graph = record(await transport.request({
@@ -564,6 +732,36 @@ describe('preview control transport', () => {
       pathId: 'agent.extensions.preview',
       body: { action: 'rollback', pluginId: 'timeline-inspector' },
     })).rejects.toThrow('这个扩展当前没有可恢复的上一版本。');
+  });
+
+  it('uninstalls an installed extension only after the reviewed preview is applied', async () => {
+    const transport = createPreviewTransport();
+    const preview = record(await transport.request({
+      pathId: 'agent.extensions.preview',
+      body: { action: 'uninstall', pluginId: 'timeline-inspector' },
+    }));
+
+    expect(record(preview.summary)).toMatchObject({
+      action: 'uninstall',
+      pluginId: 'timeline-inspector',
+      displayName: 'Timeline Inspector',
+    });
+    expect(arrayRecords(record(await transport.request({
+      pathId: 'agent.extensions.list',
+    })).items)).toHaveLength(1);
+
+    await transport.request({
+      pathId: 'agent.extensions.apply',
+      body: {
+        previewToken: preview.previewToken as string,
+        payloadSha256: preview.payloadSha256 as string,
+        confirmText: 'apply',
+      },
+    });
+
+    expect(arrayRecords(record(await transport.request({
+      pathId: 'agent.extensions.list',
+    })).items)).toEqual([]);
   });
 
 });

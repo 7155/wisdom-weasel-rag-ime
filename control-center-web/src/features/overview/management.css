@@ -32,7 +32,7 @@
 }
 
 .mgmt-page__heading { min-width: 0; }
-.mgmt-page__heading :is(h1, h2) { margin: 4px 0 6px; text-wrap: balance; }
+.mgmt-page__heading h1 { margin: 4px 0 6px; font-family: var(--font-display); text-wrap: balance; }
 
 .mgmt-page__heading p,
 .mgmt-section__header p,
@@ -77,6 +77,87 @@
   align-content: start;
   container-type: inline-size;
 }
+
+/* In PAWOS, a management route is the content surface of an App window, not
+   another full-browser page. The title becomes a compact, sticky App toolbar
+   and the body owns the window's scrolling rhythm. Legacy routing keeps the
+   editorial sheet unchanged while migration proceeds App by App. */
+.mgmt-page[data-paw-os-app] {
+  min-height: 100%;
+  padding: 0;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-accent-subtle) 32%, transparent), transparent 180px),
+    var(--color-paper);
+}
+
+.mgmt-page[data-paw-os-app] > * {
+  width: 100%;
+  margin-inline: 0;
+}
+
+.mgmt-page[data-paw-os-app] > .mgmt-page__native-actions {
+  position: sticky;
+  z-index: 8;
+  top: 0;
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 7px clamp(16px, 2.6cqw, 28px);
+  border-bottom: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--color-paper) 92%, transparent);
+  backdrop-filter: blur(16px) saturate(1.06);
+}
+
+.mgmt-page[data-paw-os-app] > .mgmt-page__body {
+  padding: 0 clamp(16px, 2.6cqw, 28px) clamp(26px, 4cqw, 44px);
+}
+
+.mgmt-page[data-paw-os-app]:not(:has(.mgmt-page__native-actions)) > .mgmt-page__body {
+  padding-top: var(--space-3);
+}
+
+.mgmt-page[data-paw-os-app][data-paw-os-compact='true'] > .mgmt-page__native-actions {
+  position: relative;
+  justify-content: flex-start;
+}
+
+/* Native App type roles stay stable even when a feature stylesheet contains
+   older literal sizes later in the bundle. */
+main.mgmt-page[data-paw-os-app] {
+  --font-size-caption: 13px;
+  --font-size-ui: 14px;
+  --font-size-ui-strong: 14px;
+  --font-size-body: 15px;
+  --text-label: 13px;
+  --text-ui: 14px;
+  --text-reading: 15px;
+}
+
+main.mgmt-page[data-paw-os-app] :where(
+  button,
+  input,
+  select,
+  textarea,
+  label,
+  summary,
+  [role='tab'],
+  .ui-button,
+  .ui-select__trigger,
+  .ui-segmented__item
+) { font-size: 14px; }
+
+main.mgmt-page[data-paw-os-app] :where(small, dt, time, .mgmt-list__meta, .mgmt-status) { font-size: 13px; }
+main.mgmt-page[data-paw-os-app] :where(
+  .ui-empty-state p,
+  .mgmt-section__header p,
+  .mgmt-inline-notice__body,
+  .memory-preferences__intro p,
+  .memory-catalog-detail p
+) { font-size: 15px; }
 
 /* No border, no fill, no shadow: space does the separating, and a soft rule
    only appears between siblings so the first section never starts with one. */
@@ -528,7 +609,7 @@
 .mgmt-page { padding-inline: var(--workspace-gutter); }
 .mgmt-page > * { width: min(100%, calc(var(--workspace-measure) + 160px)); }
 
-.mgmt-page__heading :is(h1, h2),
+.mgmt-page__heading h1,
 .mgmt-section__header h2,
 .memory-system-overview__headline h2 {
   font-weight: var(--font-weight-semibold);
@@ -536,7 +617,7 @@
 }
 
 /* Page titles keep the editorial voice; section headings are operational. */
-.mgmt-page__heading :is(h1, h2) { font-family: var(--font-display); }
+.mgmt-page__heading h1 { font-family: var(--font-display); }
 .mgmt-section__header h2 { font-family: var(--font-ui); font-size: var(--text-section-lead); line-height: var(--text-section-lead-lh); }
 
 .mgmt-metric dd {
@@ -698,6 +779,91 @@ main[data-route-id='overview'] .overview-status-cell p {
   overflow-wrap: anywhere;
 }
 
+/* PAWOS Apps resize independently from the browser viewport. Keep the legacy
+   page breakpoints above, and mirror the shared management grammar against the
+   owning window so every migrated feature remains usable as a small App. */
+@container paw-window (max-width: 860px) {
+  .mgmt-page[data-paw-os-app] .mgmt-grid-2,
+  .mgmt-page[data-paw-os-app] .mgmt-grid-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-list__row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-list__meta {
+    display: block;
+    grid-column: 1 / -1;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-list__status { grid-column: 2; }
+  .mgmt-page[data-paw-os-app] .mgmt-list__row > svg { grid-column: 3; }
+}
+
+@container paw-window (max-width: 620px) {
+  .mgmt-page[data-paw-os-app] > .mgmt-page__header {
+    position: relative;
+    display: grid;
+    min-height: 0;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .mgmt-page[data-paw-os-app] > .mgmt-page__body {
+    padding: 0 12px 24px;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-page__heading h1 {
+    font-size: 18px;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-page__heading p {
+    display: none;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-page__actions,
+  .mgmt-page[data-paw-os-app] .mgmt-toolbar,
+  .mgmt-page[data-paw-os-app] .mgmt-filter-row {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-page__actions .ui-button,
+  .mgmt-page[data-paw-os-app] .mgmt-workflow__buttons .ui-button {
+    flex: 1 1 128px;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-section {
+    padding-block: 18px;
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-section__header,
+  .mgmt-page[data-paw-os-app] .mgmt-workflow__heading,
+  .mgmt-page[data-paw-os-app] .mgmt-workflow__receipt {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mgmt-page[data-paw-os-app] .mgmt-section__header h2::before { display: none; }
+  .mgmt-page[data-paw-os-app] .mgmt-section__trailing { justify-self: start; }
+  .mgmt-page[data-paw-os-app] .mgmt-input-row,
+  .mgmt-page[data-paw-os-app] .mgmt-kv { grid-template-columns: minmax(0, 1fr); }
+  .mgmt-page[data-paw-os-app] .mgmt-kv dd { padding-top: 0; }
+  .mgmt-page[data-paw-os-app] .mgmt-workflow__steps { overflow-x: auto; }
+  .mgmt-page[data-paw-os-app] .mgmt-workflow__steps li { min-width: 92px; justify-content: center; }
+  .mgmt-page[data-paw-os-app] .mgmt-pagination { align-items: stretch; flex-direction: column; }
+}
+
+@container paw-window (max-width: 380px) {
+  .mgmt-page[data-paw-os-app] .mgmt-page__eyebrow { display: none; }
+  .mgmt-page[data-paw-os-app] .mgmt-page__actions .ui-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mgmt-page[data-paw-os-app] .mgmt-metrics { grid-template-columns: minmax(0, 1fr); }
+  .mgmt-page[data-paw-os-app] .mgmt-list__status { display: none; }
+  .mgmt-page[data-paw-os-app] .mgmt-list__row { grid-template-columns: minmax(0, 1fr) auto; }
+  .mgmt-page[data-paw-os-app] .mgmt-list__row > svg { grid-column: 2; }
+}
+
 main[data-route-id='overview'] .overview-status-cell__action {
   justify-self: start;
   margin-top: auto;
@@ -801,19 +967,6 @@ main[data-route-id='overview'] .overview-capability-actions .ui-button { min-hei
     font-size: 16px;
   }
 }
-
-/* A management surface can live inside a broader settings page without
-   creating a second page, a second canvas, or a nested main landmark. */
-.mgmt-page.mgmt-page--embedded {
-  width: 100%;
-  min-height: 0;
-  padding: 0;
-  background: transparent;
-}
-
-.mgmt-page.mgmt-page--embedded > * { width: 100%; }
-.mgmt-page--embedded > .mgmt-page__header { padding-block: 0 var(--space-4); }
-.mgmt-page--embedded .mgmt-page__heading h2 { font-size: var(--text-section-lead); }
 
 
 /* ===================== overview: report, not dashboard =====================

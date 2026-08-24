@@ -59,7 +59,10 @@ export function PermissionPicker({
   const current = permissionPreset(session?.executionMode, profile);
   const sessionMode = session?.mode ?? 'assistant';
   const workspaceRoots = session?.workspaceRoots ?? [];
-  const canCoordinate = persona?.selectableModes.includes('coordinator') ?? false;
+  // Session ownership and the runtime policy decide whether a user
+  // conversation can enter coordinator mode. Persona is optional metadata and
+  // must never grant or withhold execution permissions.
+  const canCoordinate = Boolean(session && !session.roomParticipant);
 
   useEffect(() => {
     if (requestOpen > 0 && session && !disabled) setOpen(true);
@@ -147,7 +150,7 @@ export function PermissionPicker({
                     <small>
                       {available
                         ? `${preset.description} · ${toolCount} 个工具`
-                        : '当前角色未开放协调权限'}
+                        : '当前会话未开放协调权限'}
                     </small>
                   </span>
                   {selected ? <Check size={15} /> : null}

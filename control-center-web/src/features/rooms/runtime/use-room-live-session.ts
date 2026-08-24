@@ -137,13 +137,10 @@ export function useRoomLiveSession({
         });
         if (active) callbacksRef.current.onMetadata(roomId, response);
       } catch (error) {
-        if (active && !isAbortError(error)) {
-          callbacksRef.current.onConnectionError(
-            roomId,
-            error,
-            'Room 状态暂时无法刷新，实时对话仍在继续。',
-          );
-        }
+        // Metadata is best-effort. The snapshot and event stream remain the
+        // authoritative Room projection, so a late detail refresh must not
+        // turn a healthy live conversation into a global timeout state.
+        void error;
       } finally {
         metadataRefreshRunning = false;
         metadataController = undefined;

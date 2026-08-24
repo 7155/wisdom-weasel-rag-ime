@@ -103,6 +103,8 @@ function ContextRuntimeDetails({ sessionId }: { sessionId: string }) {
   const items = useMemo(() => contextItems(itemsQuery.data), [itemsQuery.data]);
   const traces = useMemo(() => contextTraceSummaries(tracesQuery.data), [tracesQuery.data]);
   const activeItems = items.filter((item) => item.status === 'pending' || item.status === 'delivered');
+  const [visibleItemCount, setVisibleItemCount] = useState(4);
+  const visibleItems = activeItems.slice(0, visibleItemCount);
 
   async function acknowledge(itemId: string): Promise<void> {
     if (acknowledgingId) return;
@@ -143,7 +145,7 @@ function ContextRuntimeDetails({ sessionId }: { sessionId: string }) {
           : null}
         {activeItems.length ? (
           <div className="agent-context-items">
-            {activeItems.slice(0, 4).map((item) => (
+            {visibleItems.map((item) => (
               <article key={item.itemId}>
                 <CircleDot size={13} />
                 <span>
@@ -163,6 +165,7 @@ function ContextRuntimeDetails({ sessionId }: { sessionId: string }) {
                 ) : null}
               </article>
             ))}
+            {visibleItems.length < activeItems.length ? <Button className="agent-context-items__load-more" onClick={() => setVisibleItemCount((count) => Math.min(activeItems.length, count + 4))} size="small" variant="quiet">显示更多（{visibleItems.length}/{activeItems.length}）</Button> : null}
           </div>
         ) : null}
       </section>

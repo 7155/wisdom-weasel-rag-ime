@@ -16,6 +16,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Disclosure,
 } from '@/components/primitives';
 import {
   InlineNotice,
@@ -155,8 +156,7 @@ export function MemoryReferenceDialog({
               <ReferenceFact label="时间" value={referenceTime(resolvedReference.item)} />
               <ReferenceFact label="相关来源" value={`${references.length} 条`} />
             </dl>
-            <details className="memory-reference-view__advanced">
-              <summary>高级：引用详情</summary>
+            <Disclosure className="memory-reference-view__advanced" summary="高级：引用详情">
               <dl className="memory-reference-view__facts">
                 <ReferenceFact label="引用编号" value={current.referenceId} />
                 <ReferenceFact label="来源类别" value={resolvedReference.source.sourceKind || resolvedReference.source.kind} />
@@ -167,7 +167,7 @@ export function MemoryReferenceDialog({
                 />
                 {resolvedReference.item.ownerId ? <ReferenceFact label="内部归属编号" value={resolvedReference.item.ownerId} /> : null}
               </dl>
-            </details>
+            </Disclosure>
             {current.kind === 'event' ? (
               <section className="memory-reference-view__source-context" aria-label="整理使用的输入上下文">
                 <header>

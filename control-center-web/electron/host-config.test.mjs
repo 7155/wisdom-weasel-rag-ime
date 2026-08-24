@@ -1,0 +1,307 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import vm from 'node:vm';
+import { browserPartition, defaultPawHostPort, isBrowserGuestUrl, resolveHostPaths } from './host-config.mjs';
+import { startPawHostServer } from './local-server.mjs';
+import {
+  appendBrowserHistory,
+  clearBrowserHistory,
+  clearBrowserSessionData,
+  readBrowserHistory,
+  readBrowserSessionSettings,
+  removeBrowserHistoryEntry,
+} from './browser-session.mjs';
+import { browserWindowChrome } from './window-chrome.mjs';
+
+test('uses one fixed persistent PAW Browser profile and the built PAWOS entry', () => {
+  const paths = resolveHostPaths({
+    HOME: '/Users/example',
+    RAG_IME_APP_SUPPORT_DIR: '/tmp/paw-app-support',
+  });
+
+  assert.equal(browserPartition, 'persist:paw-browser');
+  assert.equal(defaultPawHostPort, 8770);
+  assert.equal(paths.profilePath, path.resolve('/tmp/paw-app-support/Browser/runtime-profile'));
+  assert.match(paths.frontendEntry, /control-center-web\/dist\/index\.html$/);
+  assert.equal(paths.hostPidFile, path.join(paths.profilePath, 'PAWBrowserHost.pid'));
+  assert.equal(paths.browserHistoryFile, path.join(paths.profilePath, 'PAWBrowserHost.history.json'));
+});
+
+test('same-window guests accept browser pages but not local host files', () => {
+  assert.equal(isBrowserGuestUrl('https://example.com/docs'), true);
+  assert.equal(isBrowserGuestUrl('about:blank'), true);
+  assert.equal(isBrowserGuestUrl('chrome://history/'), false);
+  assert.equal(isBrowserGuestUrl('file:///tmp/index.html'), false);
+  assert.equal(isBrowserGuestUrl('javascript:alert(1)'), false);
+});
+
+test('macOS reserves native traffic lights while other hosts keep the default titlebar', () => {
+  assert.deepEqual(browserWindowChrome('darwin'), {
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 13 },
+  });
+  assert.deepEqual(browserWindowChrome('linux'), { titleBarStyle: 'default' });
+
+  const css = fs.readFileSync(path.resolve(import.meta.dirname, '../src/paw-os/styles/paw-os.css'), 'utf8');
+  assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar/);
+  assert.match(css, /grid-template-columns: 68px 26px max-content minmax\(0, 1fr\) auto/);
+});
+
+test('preload marks only a macOS Electron document for the PAWOS native-host seam', () => {
+  const preload = fs.readFileSync(path.resolve(import.meta.dirname, 'preload.cjs'), 'utf8');
+  const macos = runPreload(preload, 'darwin', 'loading');
+  const linux = runPreload(preload, 'linux');
+  assert.equal(macos.browserHost.nativeHost, 'macos');
+  assert.equal(macos.dataset.pawNativeHost, 'macos');
+  assert.equal(macos.terminalHost, undefined);
+  assert.equal(linux.browserHost.nativeHost, 'electron');
+  assert.equal(linux.dataset.pawNativeHost, undefined);
+});
+
+test('preload reads and mutates Browser History through the host-owned IPC seam', async () => {
+  const preload = fs.readFileSync(path.resolve(import.meta.dirname, 'preload.cjs'), 'utf8');
+  const host = runPreload(preload, 'darwin');
+
+  await host.browserHost.getHistory();
+  await host.browserHost.removeHistoryEntry('history-entry');
+  await host.browserHost.clearHistory();
+  const unsubscribe = host.browserHost.onHistoryChanged(() => undefined);
+  unsubscribe();
+
+  assert.deepEqual(host.ipcCalls, [
+    ['paw-browser:get-history'],
+    ['paw-browser:remove-history-entry', 'history-entry'],
+    ['paw-browser:clear-history'],
+  ]);
+  assert.deepEqual(host.ipcListeners, [
+    ['on', 'paw-browser:history-updated'],
+    ['off', 'paw-browser:history-updated'],
+  ]);
+});
+
+test('preload exposes the Electron-owned workspace directory picker', async () => {
+  const preload = fs.readFileSync(path.resolve(import.meta.dirname, 'preload.cjs'), 'utf8');
+  const host = runPreload(preload, 'darwin');
+
+  await host.browserHost.pickWorkspaceDirectory();
+
+  assert.deepEqual(host.ipcCalls, [
+    ['paw-host:pick-workspace-directory'],
+  ]);
+});
+
+test('Electron keeps workspace selection inside the installed PAW window', () => {
+  const main = fs.readFileSync(path.resolve(import.meta.dirname, 'main.mjs'), 'utf8');
+  assert.match(main, /ipcMain\.handle\('paw-host:pick-workspace-directory'/);
+  assert.match(main, /dialog\.showOpenDialog\(mainWindow/);
+  assert.match(main, /properties:\s*\['openDirectory', 'createDirectory'\]/);
+});
+
+test('Electron sends Agent writes to the execution-owning Gateway by default', () => {
+  const main = fs.readFileSync(path.resolve(import.meta.dirname, 'main.mjs'), 'utf8');
+  const localServer = fs.readFileSync(path.resolve(import.meta.dirname, 'local-server.mjs'), 'utf8');
+
+  assert.match(main, /PAW_CONTROL_ORIGIN \|\| 'http:\/\/127\.0\.0\.1:8768'/);
+  assert.match(localServer, /controlOrigin = 'http:\/\/127\.0\.0\.1:8768'/);
+});
+
+test('Electron records History from guest navigation events rather than renderer claims', () => {
+  const main = fs.readFileSync(path.resolve(import.meta.dirname, 'main.mjs'), 'utf8');
+  assert.match(main, /guestContents\.on\('did-navigate'/);
+  assert.match(main, /guestContents\.on\('did-navigate-in-page'/);
+  assert.doesNotMatch(main, /paw-browser:record-history/);
+});
+
+test('Electron exposes no external terminal launcher; Terminal remains a PAWOS PTY', () => {
+  const preload = fs.readFileSync(path.resolve(import.meta.dirname, 'preload.cjs'), 'utf8');
+  const main = fs.readFileSync(path.resolve(import.meta.dirname, 'main.mjs'), 'utf8');
+  assert.doesNotMatch(preload, /pawTerminalHost|paw-terminal:/);
+  assert.doesNotMatch(main, /terminal-host|paw-terminal:|Ghostty|Terminal\.app/);
+});
+
+test('host serves PAWOS and proxies GET, POST, and event streams through one origin', async () => {
+  const requests = [];
+  const upstream = http.createServer((request, response) => {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => { body += chunk; });
+    request.on('end', () => {
+      requests.push({ body, headers: request.headers, method: request.method, url: request.url });
+      if (request.url === '/api/events') {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end('event: ready\ndata: {"ok":true}\n\n');
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ body, method: request.method, ok: true }));
+    });
+  });
+  await listen(upstream);
+  const upstreamAddress = upstream.address();
+  assert.ok(upstreamAddress && typeof upstreamAddress !== 'string');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paw-electron-host-'));
+  const frontendEntry = path.join(root, 'index.html');
+  fs.writeFileSync(frontendEntry, '<!doctype html><title>PAWOS</title>', 'utf8');
+  const host = await startPawHostServer({
+    browserBridge: {
+      activateTarget: async (targetId) => ({ ok: true, targetId }),
+      createTab: async (url) => ({ ok: true, targetId: `target:${url}` }),
+      token: 'host-token',
+    },
+    frontendEntry,
+    controlOrigin: `http://127.0.0.1:${upstreamAddress.port}`,
+    port: 0,
+  });
+  try {
+    assert.match(await (await fetch(`${host.origin}/`)).text(), /PAWOS/);
+    assert.equal((await (await fetch(`${host.origin}/api/health`)).json()).method, 'GET');
+    const posted = await fetch(`${host.origin}/api/probe`, {
+      body: '{"check":true}',
+      headers: { 'Content-Type': 'application/json', Origin: host.origin },
+      method: 'POST',
+    });
+    assert.equal((await posted.json()).body, '{"check":true}');
+    const rejected = await fetch(`${host.origin}/api/probe`, {
+      body: '{}',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://evil.invalid' },
+      method: 'POST',
+    });
+    assert.equal(rejected.status, 403);
+    const created = await fetch(`${host.origin}/__paw_browser/tabs`, {
+      body: '{"url":"https://example.com"}',
+      headers: { 'Content-Type': 'application/json', 'X-Paw-Browser-Token': 'host-token' },
+      method: 'POST',
+    });
+    assert.equal((await created.json()).targetId, 'target:https://example.com');
+    assert.match(await (await fetch(`${host.origin}/api/events`)).text(), /event: ready/);
+    assert.equal(requests[1].headers.origin, `http://127.0.0.1:${upstreamAddress.port}`);
+    assert.equal(requests[1].headers.host, `127.0.0.1:${upstreamAddress.port}`);
+  } finally {
+    await host.close();
+    await new Promise((resolve) => upstream.close(resolve));
+    fs.rmSync(root, { recursive: true });
+  }
+});
+
+test('Browser settings report and clear the fixed persistent session', async () => {
+  let cacheBytes = 8192;
+  let cookieCount = 3;
+  const electronSession = {
+    clearCache: async () => { cacheBytes = 0; },
+    clearStorageData: async () => { cookieCount = 0; },
+    cookies: { get: async () => Array.from({ length: cookieCount }, () => ({})) },
+    flushStorageData: () => undefined,
+    getCacheSize: async () => cacheBytes,
+  };
+
+  assert.deepEqual(await readBrowserSessionSettings({
+    downloadsPath: '/Users/example/Downloads',
+    electronSession,
+    startPage: 'about:blank',
+  }), {
+    cacheBytes: 8192,
+    cookieCount: 3,
+    downloadPath: '/Users/example/Downloads',
+    partition: 'persist:paw-browser',
+    permissionMode: 'site-request',
+    startPage: 'about:blank',
+  });
+  assert.deepEqual(await clearBrowserSessionData(electronSession, 'cache'), {
+    action: 'cache',
+    before: 8192,
+    after: 0,
+  });
+  assert.deepEqual(await clearBrowserSessionData(electronSession, 'site-data'), {
+    action: 'site-data',
+    before: 3,
+    after: 0,
+  });
+});
+
+test('Browser History is host-owned, persisted, bounded, and contains only real web pages', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paw-browser-history-'));
+  const historyFile = path.join(root, 'PAWBrowserHost.history.json');
+  try {
+    const first = appendBrowserHistory(historyFile, {
+      title: 'PAW docs',
+      url: 'https://example.com/paw',
+      visitedAt: 10,
+    });
+    assert.equal(first.length, 1);
+    assert.match(first[0].id, /^history-/);
+    assert.deepEqual(readBrowserHistory(historyFile), first);
+
+    const deduplicated = appendBrowserHistory(historyFile, {
+      title: 'PAW docs updated',
+      url: 'https://example.com/paw',
+      visitedAt: 20,
+    });
+    assert.equal(deduplicated.length, 1);
+    assert.equal(deduplicated[0].title, 'PAW docs updated');
+    assert.equal(deduplicated[0].visitedAt, 20);
+
+    assert.deepEqual(appendBrowserHistory(historyFile, {
+      title: 'Blank',
+      url: 'about:blank',
+      visitedAt: 30,
+    }), deduplicated);
+
+    const second = appendBrowserHistory(historyFile, {
+      title: 'Reference',
+      url: 'https://reference.example/',
+      visitedAt: 40,
+    });
+    assert.deepEqual(removeBrowserHistoryEntry(historyFile, second[1].id), [second[0]]);
+    assert.deepEqual(clearBrowserHistory(historyFile), []);
+    assert.deepEqual(readBrowserHistory(historyFile), []);
+  } finally {
+    fs.rmSync(root, { recursive: true });
+  }
+});
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+}
+
+function runPreload(source, platform, readyState = 'complete') {
+  let onReady;
+  const document = {
+    documentElement: { dataset: {} },
+    readyState,
+    addEventListener: (_event, listener) => { onReady = listener; },
+  };
+  const exposed = {};
+  const ipcCalls = [];
+  const ipcListeners = [];
+  vm.runInNewContext(source, {
+    document,
+    Object,
+    process: { platform },
+    require: () => ({
+      contextBridge: { exposeInMainWorld: (name, value) => { exposed[name] = value; } },
+      ipcRenderer: {
+        invoke: (...args) => {
+          ipcCalls.push(args);
+          return Promise.resolve(undefined);
+        },
+        off: (channel) => { ipcListeners.push(['off', channel]); },
+        on: (channel) => { ipcListeners.push(['on', channel]); },
+      },
+    }),
+  });
+  onReady?.();
+  return {
+    browserHost: exposed.pawBrowserHost,
+    dataset: document.documentElement.dataset,
+    ipcCalls,
+    ipcListeners,
+    terminalHost: exposed.pawTerminalHost,
+  };
+}

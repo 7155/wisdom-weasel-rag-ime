@@ -1,4 +1,4 @@
-.mgmt-page[data-route-id='plugins'] .plugins-count {
+main[data-route-id='plugins'] .plugins-count {
   color: var(--color-text-tertiary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
@@ -541,6 +541,12 @@
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
+.installed-plugin[data-selected] {
+  border-color: color-mix(in srgb, var(--color-accent) 62%, var(--color-border));
+  background: var(--color-accent-subtle);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
 .plugin-lifecycle__approval {
   display: flex;
   align-items: center;
@@ -588,7 +594,19 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .lifecycle-hooks__audit { gap: var(--space-2); }
-.lifecycle-hooks__audit h3 { margin: 0 0 2px; font-size: 13px; }
+.lifecycle-hooks__audit h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0 0 2px;
+  font-size: 13px;
+}
+.lifecycle-hooks__audit h3 small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+}
 .lifecycle-audit {
   display: flex;
   min-width: 0;
@@ -602,6 +620,26 @@
 .lifecycle-audit > span { display: grid; min-width: 0; gap: 2px; }
 .lifecycle-audit strong { font-size: 13px; }
 .lifecycle-audit small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.lifecycle-audit-more { border-bottom: 1px solid var(--color-border); }
+.lifecycle-audit-more > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+.lifecycle-audit-more > summary::-webkit-details-marker { display: none; }
+.lifecycle-audit-more > summary svg {
+  flex: 0 0 auto;
+  transition: transform 160ms var(--ease-standard);
+}
+.lifecycle-audit-more[open] > summary svg { transform: rotate(90deg); }
+.lifecycle-audit-more__items { display: grid; }
 
 @media (max-width: 980px) {
   .plugins-filters { grid-template-columns: minmax(210px, 1fr) minmax(130px, 170px); }
@@ -664,9 +702,10 @@
 .capability-disclosure dl > div { display: grid; gap: 3px; grid-template-columns: 58px minmax(0, 1fr); }
 .capability-disclosure dt { color: var(--color-text-tertiary); font-size: 12px; }
 .capability-disclosure dd { font-size: 12px; margin: 0; overflow-wrap: anywhere; }
-.capability-disclosure details { margin-top: 12px; }
+.capability-disclosure__technical { margin-top: 12px; }
 .capability-disclosure summary { display: flex; min-height: 44px; align-items: center; cursor: pointer; font-size: 12px; font-weight: 700; }
-.capability-disclosure pre { max-height: 240px; overflow: auto; padding: 9px; border: 1px solid var(--color-border); font-size: 12px; white-space: pre-wrap; }
+.capability-disclosure__technical-content { padding-bottom: 2px; }
+.capability-disclosure pre { max-height: 240px; overflow: auto; margin: 0; padding: 9px; border: 1px solid var(--color-border); border-radius: var(--radius-2); font-size: 12px; white-space: pre-wrap; }
 .capability-disclosure > p { color: var(--color-text-tertiary); font-size: 12px; }
 
 @media (max-width: 760px) {
@@ -675,31 +714,87 @@
 
 /* The usage ledger speaks once: per-column boilerplate repeated five times is
    noise, not information — the section description already carries it. */
-.mgmt-page[data-route-id='plugins'] .mgmt-metrics .mgmt-metric__detail { display: none; }
-.mgmt-page[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+main[data-route-id='plugins'] .mgmt-metrics .mgmt-metric__detail { display: none; }
+main[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
 
 @media (prefers-reduced-motion: reduce) {
-  .plugins-list__item { transition: none; }
+  .plugins-list__item,
+  .lifecycle-audit-more > summary svg { transition: none; }
   .plugins-list__item:active { transform: none; }
 }
 
 @media (max-width: 760px) {
-  .mgmt-page[data-route-id='plugins'] .mgmt-metrics {
+  main[data-route-id='plugins'] .mgmt-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     column-gap: var(--space-2);
   }
 
-  .mgmt-page[data-route-id='plugins'] .mgmt-metric {
+  main[data-route-id='plugins'] .mgmt-metric {
     grid-template-columns: 14px minmax(0, 1fr);
     column-gap: 5px;
   }
 
-  .mgmt-page[data-route-id='plugins'] .ui-button,
-  .mgmt-page[data-route-id='plugins'] .ui-icon-button,
-  .mgmt-page[data-route-id='plugins'] .ui-input,
-  .mgmt-page[data-route-id='plugins'] .ui-select__trigger,
-  .mgmt-page[data-route-id='plugins'] .ui-segmented__item,
-  .mgmt-page[data-route-id='plugins'] details > summary {
+  main[data-route-id='plugins'] .ui-button,
+  main[data-route-id='plugins'] .ui-icon-button,
+  main[data-route-id='plugins'] .ui-input,
+  main[data-route-id='plugins'] .ui-select__trigger,
+  main[data-route-id='plugins'] .ui-segmented__item,
+  main[data-route-id='plugins'] details > summary {
     min-height: 44px;
   }
+}
+
+@container paw-window (max-width: 900px) {
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-filters { grid-template-columns: minmax(210px, 1fr) minmax(130px, 170px); }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-mode-filter { grid-column: 1 / -1; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-browser { grid-template-columns: minmax(240px, .9fr) minmax(300px, 1.1fr); }
+  main[data-route-id='plugins'][data-paw-os-app] .lifecycle-hooks { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container paw-window (max-width: 680px) {
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-maintenance-entry,
+  main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__approval,
+  main[data-route-id='plugins'][data-paw-os-app] .capability-precedence > header { align-items: stretch; flex-direction: column; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-filters,
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-browser,
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-browser[data-detail-open='true'],
+  main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__install,
+  main[data-route-id='plugins'][data-paw-os-app] .plugin-catalog__row,
+  main[data-route-id='plugins'][data-paw-os-app] .lifecycle-policy,
+  main[data-route-id='plugins'][data-paw-os-app] .lifecycle-policy__limits,
+  main[data-route-id='plugins'][data-paw-os-app] .capability-precedence dl > div { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-mode-filter { grid-column: auto; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-mode-filter .ui-segmented { width: 100%; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-list { max-height: 320px; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-detail { min-height: 0; border-top: 1px solid var(--color-border); border-left: 0; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-detail--empty { display: none; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugin-catalog__action { grid-column: auto; justify-content: stretch; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugin-catalog__action .ui-button { width: 100%; }
+}
+
+/* UR-102 app-center-lifecycle semantic typography */
+main[data-route-id='plugins'][data-paw-os-app] :is(
+  .plugins-policy-disclosure > summary small,
+  .plugin-lifecycle__approval small,
+  .lifecycle-audit small,
+  .capability-stage-legend > span,
+  .capability-stage-legend b,
+  .capability-disclosure dt,
+  .capability-disclosure dd
+) { font-size: 13px; }
+main[data-route-id='plugins'][data-paw-os-app] :is(
+  .capability-disclosure h4,
+  .capability-disclosure summary
+) { font-size: 14px; }
+main[data-route-id='plugins'][data-paw-os-app] .capability-disclosure > p { font-size: 15px; }
+/* UR-102 app-center-lifecycle semantic typography end */
+
+/* A single installed Package should use the whole lifecycle measure. The
+ * shared App Center shell intentionally uses a two-column catalogue when
+ * several Packages are present; with one Package that leaves the title column
+ * at zero width and turns a name such as “时间线检查” into one character per
+ * line. Let the lone card span both tracks while preserving the multi-card
+ * catalogue layout. */
+.paw-desktop-root .paw-system-app[data-system-app='app-center'] .plugin-lifecycle__installed > .installed-plugin:only-child {
+  grid-column: 1 / -1;
 }

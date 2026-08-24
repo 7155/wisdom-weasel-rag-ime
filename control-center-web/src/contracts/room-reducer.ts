@@ -28,6 +28,10 @@ export interface RoomMessageProjection {
   sourceMessageId?: string;
   sourceBlockId?: string;
   sourceEventId?: string;
+  /** Opaque Pi Session turn identity; may contain several assistant/tool loops. */
+  sourceTurnId?: string;
+  /** Opaque Pi assistant/tool loop identity; exactly one Room card boundary. */
+  sourceLoopId?: string;
   /** Authoritative server event order; optimistic messages fall back to time. */
   sequence?: number;
   /** Canonical RoomPost order metadata when the publication carries it. */
@@ -37,6 +41,8 @@ export interface RoomMessageProjection {
   mentionedParticipantIds?: string[];
   question?: RoomMessageQuestionProjection;
   answerToPostId?: string;
+  /** Authoritative link to the failed/aborted Root this attempt retries. */
+  retryOfRootId?: string;
   completedAtMs?: number;
 }
 
@@ -71,9 +77,8 @@ export interface RoomActivityLaneIdentity {
   rootId: string;
   participantId: string;
   dispatchId: string;
-  workItemId: string;
-  workItemRevision?: number;
-  attemptId: string;
+  sourceTurnId: string;
+  sourceLoopId: string;
   key: string;
 }
 
@@ -117,6 +122,7 @@ export interface RoomTurnProjection {
   createdAtMs: number;
   updatedAtMs: number;
   failure?: string;
+  retryOfRootId?: string;
 }
 
 export interface RoomProjectionState {
@@ -172,6 +178,7 @@ export interface OptimisticRoomMessageInput {
   nowMs: number;
   attachments?: RoomAttachmentReceipt[];
   answerToPostId?: string;
+  retryOfRootId?: string;
 }
 
 const diagnosticLimit = 50;
@@ -435,6 +442,7 @@ export function appendOptimisticRoomMessage(
     projectionKind: 'optimistic',
     rootId: turnId,
     ...(answerToPostId ? { answerToPostId } : {}),
+    ...(text(input.retryOfRootId) ? { retryOfRootId: text(input.retryOfRootId) } : {}),
     createdAtMs: input.nowMs,
   };
   next.messagesById[id] = message;
@@ -460,31 +468,32 @@ export function roomActivityLaneIdentity(
     || activity.sourceSessionId
     || text(activity.payload.sourceEventId)
     || activity.id;
-  const workItemId = text(activity.payload.workItemId);
-  const revisionValue = activity.payload.workItemRevision;
-  const workItemRevision = (
-    typeof revisionValue === 'number'
-    && Number.isSafeInteger(revisionValue)
-    && revisionValue >= 0
-  ) ? revisionValue : undefined;
-  const attemptId = text(activity.payload.attemptId);
-  const key = workItemId
-    ? [
-        rootId,
-        `work:${workItemId}`,
-        `revision:${workItemRevision ?? 0}`,
-        `attempt:${attemptId || dispatchId}`,
-      ].join('\u001f')
-    : `${rootId}\u001f${participantId}\u001f${dispatchId}`;
+  const sourceTurnId = text(activity.payload.sourceTurnId);
+  const sourceLoopId = text(activity.payload.sourceLoopId);
   return {
     rootId,
     participantId,
     dispatchId,
-    workItemId,
-    workItemRevision,
-    attemptId,
-    key,
+    sourceTurnId,
+    sourceLoopId,
+    key: roomExecutionLaneKey(
+      rootId,
+      participantId,
+      dispatchId,
+      sourceLoopId || sourceTurnId,
+    ),
   };
+}
+
+export function roomExecutionLaneKey(
+  rootId: string,
+  participantId: string,
+  dispatchId: string,
+  sourceLoopId = '',
+): string {
+  return [rootId, participantId, dispatchId, sourceLoopId]
+    .filter((value, index) => index < 3 || Boolean(value))
+    .join('\u001f');
 }
 export function selectRoomParticipantPublicProgress(
   state: RoomProjectionState,
@@ -744,6 +753,7 @@ function applyUserMessage(
   payload: Record<string, unknown>,
 ): void {
   const clientMessageId = text(payload.clientMessageId);
+  const retryOfRootId = text(payload.retryOfRootId);
   const attachments = roomAttachmentReceipts(payload.attachmentReceipts, event.roomId);
   const rawAnswerText = text(payload.text ?? payload.message);
   const explicitAnswerToPostId = text(payload.answerToPostId);
@@ -791,6 +801,7 @@ function applyUserMessage(
     rootId: text(payload.rootId) || event.turnId,
     ...(clientMessageId ? { clientMessageId } : {}),
     ...(answerToPostId ? { answerToPostId } : {}),
+    ...(retryOfRootId ? { retryOfRootId } : {}),
     createdAtMs: event.createdAtMs,
     completedAtMs: event.createdAtMs,
   };
@@ -903,6 +914,8 @@ function applyParticipantDelta(
 ): void {
   const rootId = text(payload.rootId) || event.turnId;
   const dispatchId = text(payload.dispatchId);
+  const sourceTurnId = text(payload.sourceTurnId);
+  const sourceLoopId = text(payload.sourceLoopId);
   const sourceMessageId = text(payload.messageId);
   const sourceBlockId = text(payload.blockId);
   const id = executionMessageId(event, payload);
@@ -928,6 +941,8 @@ function applyParticipantDelta(
         projectionKind: 'execution',
         rootId,
         ...(dispatchId ? { dispatchId } : {}),
+        ...(sourceTurnId ? { sourceTurnId } : {}),
+        ...(sourceLoopId ? { sourceLoopId } : {}),
         ...(sourceMessageId ? { sourceMessageId } : {}),
         ...(sourceBlockId ? { sourceBlockId } : {}),
         createdAtMs: event.createdAtMs,
@@ -953,13 +968,22 @@ function applyParticipantMessage(
     return;
   }
   const clientMessageId = text(payload.clientMessageId) || parsed.value.clientMessageId || '';
+  const sourceLoopId = text(payload.sourceLoopId);
   const message: RoomMessageProjection = {
-    id: parsed.value.id,
+    id: sourceLoopId
+      ? `${parsed.value.id}\u001f${sourceLoopId}`
+      : parsed.value.id,
     roomId: event.roomId,
     turnId: event.turnId || parsed.value.turnId,
     participantId: event.participantId,
     sourceSessionId: event.sourceSessionId,
     sourceEventId: text(payload.sourceEventId) || event.eventId,
+    ...(text(payload.sourceTurnId) ? {
+      sourceTurnId: text(payload.sourceTurnId),
+    } : {}),
+    ...(sourceLoopId ? {
+      sourceLoopId,
+    } : {}),
     sequence: event.sequence,
     role: parsed.value.role === 'user' ? 'user' : 'assistant',
     status: parsed.value.status,
@@ -977,6 +1001,7 @@ function applyParticipantMessage(
   const provisional = findProvisionalMessage(state, {
     rootId: message.rootId || message.turnId,
     dispatchId: message.dispatchId,
+    sourceLoopId: message.sourceLoopId,
     participantId: message.participantId,
     sourceSessionId: message.sourceSessionId,
     messageIds: [message.id, text(payload.messageId)],
@@ -1063,6 +1088,12 @@ function applyRoomPost(
       || text(payload.sourceEventId)
       || post.publicationSource.ref
       || event.eventId,
+    ...(text(payload.sourceTurnId) ? {
+      sourceTurnId: text(payload.sourceTurnId),
+    } : {}),
+    ...(text(payload.sourceLoopId) ? {
+      sourceLoopId: text(payload.sourceLoopId),
+    } : {}),
     sequence: postSequence,
     ...(post.chronology ? { chronology: { ...post.chronology } } : {}),
     role: post.publicationSource.kind === 'user' ? 'user' : 'assistant',
@@ -1101,6 +1132,7 @@ function applyRoomPost(
   const provisional = findProvisionalMessage(state, {
     rootId: post.rootId,
     dispatchId: post.dispatchId,
+    sourceLoopId: message.sourceLoopId,
     participantId: event.participantId,
     sourceSessionId: event.sourceSessionId,
     messageIds: [post.postId, post.publicationSource.ref],
@@ -1245,6 +1277,7 @@ function markPublishedDispatchTerminal(
 interface ProvisionalMessageIdentity {
   rootId: string;
   dispatchId?: string;
+  sourceLoopId?: string;
   participantId: string | null;
   sourceSessionId: string;
   messageIds: string[];
@@ -1270,6 +1303,7 @@ function findProvisionalMessage(
         )
       )
       && (!identity.dispatchId || candidate.dispatchId === identity.dispatchId)
+      && (!identity.sourceLoopId || candidate.sourceLoopId === identity.sourceLoopId)
     ))
     .sort((left, right) => right.createdAtMs - left.createdAtMs);
   const aliased = candidates.find((candidate) => (
@@ -1624,6 +1658,7 @@ function mergeRoomActivityPayload(
 function attachMessage(state: RoomProjectionState, message: RoomMessageProjection): void {
   const turn = ensureTurn(state, message.turnId, message.createdAtMs);
   turn.rootId = message.rootId || turn.rootId || message.turnId;
+  if (message.retryOfRootId) turn.retryOfRootId = message.retryOfRootId;
   if (message.dispatchId) {
     turn.dispatchIds ??= [];
     turn.dispatchParticipantIds ??= {};
@@ -1921,9 +1956,12 @@ function executionMessageId(
 ): string {
   const messageId = text(payload.messageId);
   const dispatchId = text(payload.dispatchId);
+  const sourceLoopId = text(payload.sourceLoopId);
   if (!dispatchId) {
-    return messageId
-      || `${event.turnId}:${event.participantId ?? 'participant'}:assistant`;
+    return [
+      messageId || `${event.turnId}:${event.participantId ?? 'participant'}:assistant`,
+      sourceLoopId,
+    ].filter(Boolean).join('\u001f');
   }
   const rootId = text(payload.rootId) || event.turnId;
   const participantId = (event.participantId ?? event.sourceSessionId) || 'participant';
@@ -1932,8 +1970,9 @@ function executionMessageId(
     rootId,
     participantId,
     dispatchId,
+    sourceLoopId,
     messageId || 'assistant',
-  ].join('\u001f');
+  ].filter(Boolean).join('\u001f');
 }
 
 function cloneState(state: RoomProjectionState): RoomProjectionState {

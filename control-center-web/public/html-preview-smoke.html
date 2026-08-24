@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HTML 预览测试</title>
+    <style>
+      :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, #e8f7f0, #d9e9ff); color: #18312b; }
+      main { width: min(640px, calc(100% - 32px)); padding: 28px; border: 1px solid #b8d4c8; border-radius: 18px; background: rgb(255 255 255 / 88%); box-shadow: 0 18px 50px rgb(24 49 43 / 14%); }
+      h1 { margin: 0 0 8px; font-size: 28px; }
+      p { line-height: 1.6; }
+      .status { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #d8f5e5; color: #17633c; font-weight: 700; }
+      canvas { display: block; width: 100%; max-width: 560px; height: 150px; margin: 20px 0; border-radius: 12px; background: #102b45; }
+      button { border: 0; border-radius: 10px; padding: 10px 15px; background: #236b5d; color: white; cursor: pointer; font: inherit; font-weight: 700; }
+      button:hover { background: #185447; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>HTML 预览测试成功</h1>
+      <p>如果你能看到这张卡片、彩色画布和按钮，说明 HTML、CSS、Canvas 和脚本都能正常渲染。</p>
+      <p class="status" id="status">脚本正在启动…</p>
+      <canvas id="preview" width="560" height="150" aria-label="Canvas 渲染测试"></canvas>
+      <button id="counter" type="button">点击测试：0</button>
+    </main>
+    <script>
+      const status = document.querySelector('#status');
+      const canvas = document.querySelector('#preview');
+      const context = canvas.getContext('2d');
+      const button = document.querySelector('#counter');
+      let clicks = 0;
+
+      status.textContent = '脚本运行成功';
+      context.fillStyle = '#38bdf8';
+      context.fillRect(28, 28, 150, 94);
+      context.fillStyle = '#a7f3d0';
+      context.fillRect(205, 48, 150, 74);
+      context.fillStyle = '#fbbf24';
+      context.fillRect(382, 68, 150, 54);
+      context.fillStyle = '#ffffff';
+      context.font = 'bold 20px sans-serif';
+      context.fillText('Canvas OK', 28, 22);
+
+      button.addEventListener('click', () => {
+        clicks += 1;
+        button.textContent = `点击测试：${clicks}`;
+      });
+    </script>
+  </body>
+</html>

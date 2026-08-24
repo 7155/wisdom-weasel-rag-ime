@@ -71,6 +71,15 @@
   overflow-wrap: anywhere;
 }
 
+.work-documents__detail-window-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
 .work-documents__kicker {
   color: var(--color-text-tertiary);
   font: var(--font-label);
@@ -115,18 +124,37 @@
   transform: rotate(90deg);
 }
 
-.work-documents__technical-details[open] > summary {
-  margin-bottom: var(--space-5);
+.work-documents__technical-details > .ui-disclosure__reveal > div {
+  padding-top: 0;
+  transition: padding-top var(--motion-disclose) var(--ease-standard);
 }
 
-.work-documents__technical-details:not([open]) > :not(summary) {
-  display: none;
+.work-documents__technical-details[open] > .ui-disclosure__reveal > div {
+  padding-top: var(--space-5);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .work-documents__technical-details > summary::before {
     transition: none;
   }
+  .work-documents__technical-details > .ui-disclosure__reveal > div { transition: none; }
+}
+
+@container paw-window (max-width: 860px) {
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__workspace { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__detail,
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__progress { padding: var(--space-4); }
+}
+
+@container paw-window (max-width: 620px) {
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__search,
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__action-row,
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__facts dl,
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__progress dl { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__detail-header,
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__section-heading,
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__danger { display: grid; }
+  main[data-route-id='work-documents'][data-paw-os-app] .work-documents__detail-window-actions { justify-content: start; }
 }
 
 .work-documents__facts h3,
@@ -274,6 +302,18 @@
   margin-top: var(--space-5);
 }
 
+.work-documents__register-form {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.work-documents__register-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr);
+}
+
 .work-documents__erase-form > .ui-button {
   justify-self: start;
 }
@@ -290,6 +330,12 @@
 }
 
 @media (max-width: 760px) {
+  .work-documents__register-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ui-dialog.work-documents__register-dialog .ui-button,
+  .ui-dialog.work-documents__register-dialog .ui-input,
   .ui-dialog.work-documents__erase-dialog .ui-button,
   .ui-dialog.work-documents__erase-dialog .ui-input {
     min-height: 44px;
@@ -320,6 +366,10 @@
   .work-documents__section-heading,
   .work-documents__danger {
     display: grid;
+  }
+
+  .work-documents__detail-window-actions {
+    justify-content: start;
   }
 
   .work-documents__facts dl,

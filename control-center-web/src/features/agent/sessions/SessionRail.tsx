@@ -7,6 +7,7 @@ import {
   MessageSquarePlus,
   LoaderCircle,
   MoreHorizontal,
+  PanelsTopLeft,
   Search,
   Trash2,
   X,
@@ -44,6 +45,7 @@ export const SessionRail = forwardRef<HTMLElement, {
   onShowArchivedChange?: (value: boolean) => void;
   onArchive?: (sessionId: string, archived: boolean) => void;
   onDelete?: (sessionId: string) => void | Promise<void>;
+  onOpenWindow?: (session: SessionSummary) => void;
   onRetry?: () => void;
   onClose?: () => void;
 }>(function SessionRail({
@@ -60,6 +62,7 @@ export const SessionRail = forwardRef<HTMLElement, {
   onShowArchivedChange,
   onArchive,
   onDelete,
+  onOpenWindow,
   onRetry,
   onClose,
 }, ref) {
@@ -220,8 +223,15 @@ export const SessionRail = forwardRef<HTMLElement, {
                             />
                           </MenuTrigger>
                           <MenuContent align="end" aria-label={`${session.title} 对话操作`}>
+                            {onOpenWindow ? (
+                              <MenuItem aria-describedby={titleId} onSelect={() => onOpenWindow(session)}>
+                                <PanelsTopLeft size={15} />
+                                独立窗口
+                              </MenuItem>
+                            ) : null}
                             {onArchive ? (
                               <>
+                                {onOpenWindow ? <MenuSeparator /> : null}
                                 <MenuItem
                                   aria-describedby={titleId}
                                   onSelect={() => onArchive(session.id, !archived)}

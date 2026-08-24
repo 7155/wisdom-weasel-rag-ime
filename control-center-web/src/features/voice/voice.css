@@ -223,26 +223,12 @@ main[data-route-id='voice'] .voice-refinement-status[open] > summary::after {
   transform: rotate(225deg) translateY(-2px);
 }
 
-main[data-route-id='voice'] .voice-connection-details[open] > .voice-connection-details__content,
-main[data-route-id='voice'] .voice-recognition-details[open] > p,
-main[data-route-id='voice'] .voice-refinement-status[open] > .voice-refinement-status__content {
-  animation: voice-details-content-enter var(--duration-enter) var(--ease-standard) both;
-}
-
-@keyframes voice-details-content-enter {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   main[data-route-id='voice'] .voice-hotword-suggestions button,
   main[data-route-id='voice'] .voice-connection-details > summary::after,
   main[data-route-id='voice'] .voice-recognition-details > summary::after,
   main[data-route-id='voice'] .voice-refinement-status > summary::after { transition: none; }
   main[data-route-id='voice'] .voice-hotword-suggestions button:active { transform: none; }
-  main[data-route-id='voice'] .voice-connection-details[open] > .voice-connection-details__content,
-  main[data-route-id='voice'] .voice-recognition-details[open] > p,
-  main[data-route-id='voice'] .voice-refinement-status[open] > .voice-refinement-status__content { animation: none; }
 }
 
 @media (max-width: 900px) {
@@ -315,6 +301,15 @@ main[data-route-id='voice'] .voice-refinement-status[open] > .voice-refinement-s
   }
 }
 
-main[data-route-id='voice'] details:not([open]) > :not(summary) {
-  display: none;
+@container paw-window (max-width: 900px) {
+  main[data-route-id='voice'][data-paw-os-app] .voice-service-layout,
+  main[data-route-id='voice'][data-paw-os-app] .voice-credential-grid,
+  main[data-route-id='voice'][data-paw-os-app] .voice-native-actions { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='voice'][data-paw-os-app] .voice-native-action-group { border-right: 0; border-bottom: 1px solid var(--color-border); }
+}
+
+@container paw-window (max-width: 520px) {
+  main[data-route-id='voice'][data-paw-os-app] .voice-runtime-issue { align-items: stretch; flex-direction: column; }
+  main[data-route-id='voice'][data-paw-os-app] .voice-native-action-group { flex-wrap: wrap; }
+  main[data-route-id='voice'][data-paw-os-app] .voice-native-action-group > span { width: 100%; }
 }

@@ -38,6 +38,107 @@ main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow__headi
   max-width: 720px;
 }
 
+main[data-route-id='diagnostics'] .diagnostics-service-list {
+  border-block: 1px solid var(--color-border-soft);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service {
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service:last-child { border-bottom: 0; }
+
+main[data-route-id='diagnostics'] .diagnostics-service > summary {
+  display: grid;
+  min-height: 56px;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, auto) auto 18px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 2px;
+  color: inherit;
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service > summary::-webkit-details-marker,
+main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::-webkit-details-marker { display: none; }
+
+main[data-route-id='diagnostics'] .diagnostics-service > summary::after,
+main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::before {
+  color: var(--color-text-tertiary);
+  content: '›';
+  font-size: 18px;
+  line-height: 1;
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service[open] > summary::after,
+main[data-route-id='diagnostics'] .diagnostics-service__evidence[open] > summary::before { transform: rotate(90deg); }
+
+main[data-route-id='diagnostics'] .diagnostics-service > summary:focus-visible,
+main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service__copy strong { color: var(--color-text-primary); font-size: 15px; }
+main[data-route-id='diagnostics'] .diagnostics-service__copy small,
+main[data-route-id='diagnostics'] .diagnostics-service__meta { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; }
+main[data-route-id='diagnostics'] .diagnostics-service__copy small { overflow-wrap: anywhere; }
+main[data-route-id='diagnostics'] .diagnostics-service__meta { font-family: var(--font-mono); }
+
+main[data-route-id='diagnostics'] .diagnostics-service__body {
+  padding: 0 28px 14px;
+  border-top: 1px solid var(--color-border-soft);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service__facts {
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+  padding: 13px 0;
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service__facts dt { color: var(--color-text-tertiary); font-size: 12px; }
+main[data-route-id='diagnostics'] .diagnostics-service__facts dd { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+
+main[data-route-id='diagnostics'] .diagnostics-service__evidence {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font: 600 12px/1.45 var(--font-mono);
+  list-style: none;
+}
+
+main[data-route-id='diagnostics'] .diagnostics-service__evidence pre {
+  max-height: 280px;
+  margin: 0 0 2px;
+  padding: 11px 12px;
+  overflow: auto;
+  border: 1px solid var(--color-code-border);
+  border-radius: var(--radius-2);
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
+  font: 12px/1.58 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 main[data-route-id='diagnostics'] .diagnostics-boundary {
   border-block: 1px solid var(--color-border);
 }
@@ -76,10 +177,6 @@ main[data-route-id='diagnostics'] .diagnostics-boundary p {
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.55;
-}
-
-main[data-route-id='diagnostics'] .diagnostics-boundary:not([open]) > :not(summary) {
-  display: none !important;
 }
 
 main[data-route-id='diagnostics'] .diagnostics-action-summary {
@@ -123,10 +220,41 @@ main[data-route-id='diagnostics'] .diagnostics-action-summary p { margin: 3px 0 
 }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='diagnostics'] .diagnostics-boundary summary:hover { background: var(--color-surface-hover); }
+  main[data-route-id='diagnostics'] .diagnostics-boundary summary:hover,
+  main[data-route-id='diagnostics'] .diagnostics-service > summary:hover,
+  main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary:hover { background: var(--color-surface-hover); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   main[data-route-id='diagnostics'] .diagnostics-boundary summary,
-  main[data-route-id='diagnostics'] .diagnostics-boundary summary::before { transition: none; }
+  main[data-route-id='diagnostics'] .diagnostics-boundary summary::before,
+  main[data-route-id='diagnostics'] .diagnostics-service > summary,
+  main[data-route-id='diagnostics'] .diagnostics-service > summary::after,
+  main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::before { transition: none; }
 }
+
+@container paw-window (max-width: 620px) {
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-capability-state { align-items: stretch; flex-direction: column; }
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-action-list .mgmt-workflow { padding-inline: 2px; }
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-action-summary li { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service > summary { grid-template-columns: minmax(0, 1fr) auto 18px; }
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__meta { display: none; }
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__body { padding-inline: 12px; }
+}
+
+@container paw-window (max-width: 440px) {
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__facts { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__facts dd + dt { margin-top: 8px; }
+}
+
+/* UR-102 monitor-diagnostics semantic typography */
+main[data-route-id='diagnostics'][data-paw-os-app] :is(
+  .diagnostics-boundary summary,
+  .diagnostics-action-summary strong
+) { font-size: 14px; }
+main[data-route-id='diagnostics'][data-paw-os-app] .mgmt-status { font-size: 13px; }
+main[data-route-id='diagnostics'][data-paw-os-app] :is(
+  .diagnostics-boundary p,
+  .diagnostics-action-summary p
+) { font-size: 15px; }
+/* UR-102 monitor-diagnostics semantic typography end */

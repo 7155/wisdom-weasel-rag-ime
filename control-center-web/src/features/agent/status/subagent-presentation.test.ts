@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import {
   isUnverifiedReturn,
+  subagentFailurePolicy,
   subagentPresentationState,
   subagentStateLabel,
 } from './subagent-presentation';
@@ -55,6 +56,18 @@ describe('subagent presentation semantics', () => {
     expect(subagentPresentationState(run)).toBe('contract_invalid');
     expect(subagentStateLabel(run)).toBe('合同无效');
     expect(subagentStateLabel(run, 'result')).toBe('已返回，合同无效');
+  });
+
+  it('names a token budget failure and gives the parent a recovery action', () => {
+    const run = sampleRun({
+      state: 'failed',
+      error: 'token budget exceeded',
+      result: { failureClass: 'logic_error' },
+    });
+
+    expect(subagentFailurePolicy(run)).toContain('Token 预算');
+    expect(subagentFailurePolicy(run)).toContain('改派');
+    expect(subagentFailurePolicy(run)).toContain('不会自动重试');
   });
 });
 

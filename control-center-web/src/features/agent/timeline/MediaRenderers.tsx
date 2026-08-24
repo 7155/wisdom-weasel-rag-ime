@@ -3,11 +3,13 @@ import {
   FileAudio,
   Image as ImageIcon,
   PackageOpen,
+  PanelTopOpen,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
-import { IconButton } from '@/components/primitives';
+import { Disclosure, IconButton } from '@/components/primitives';
 import { managedAgentMediaContentPath } from '@/platform/transport';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { AgentFileBlock } from '../file-preview/AgentFileBlock';
 import { stickerAsset } from './PersonaAvatar';
 import { BlockedMedia } from './StructuredRenderers';
@@ -15,6 +17,7 @@ import type { AgentBlockRenderProps } from './renderer-contract';
 import { finiteNumber, text } from './renderer-values';
 
 export function ArtifactBlockRenderer({ block }: AgentBlockRenderProps) {
+  const desktop = usePawOsDesktop();
   const data = block.data;
   const href = safeArtifactLink(text(data.receiptUrl ?? data.href ?? data.url));
   const name = text(data.title ?? data.name ?? data.fileName) || '任务产物';
@@ -26,12 +29,10 @@ export function ArtifactBlockRenderer({ block }: AgentBlockRenderProps) {
         <small>{text(data.summary) || fileMeta(data)}</small>
       </span>
       {href ? (
-        <IconButton
-          label="打开产物回执"
-          icon={<ExternalLink size={16} />}
-          onClick={() => window.open(href, '_blank', 'noopener,noreferrer')}
-          tooltip
-        />
+        <span className="agent-rich-artifact__actions">
+          <IconButton label="打开产物回执" icon={<ExternalLink size={16} />} onClick={() => window.open(href, '_blank', 'noopener,noreferrer')} tooltip />
+          {desktop ? <IconButton label="在独立窗口打开产物" icon={<PanelTopOpen size={16} />} onClick={() => desktop.openWindow({ appId: 'agent', target: { kind: 'result', id: resultId('artifact'), title: name, resultKind: 'artifact', source: href, subtitle: '来自当前 Agent 消息的受控文件回执' } })} tooltip /> : null}
+        </span>
       ) : null}
     </section>
   );
@@ -67,6 +68,7 @@ export function CitationBlockRenderer({ block }: AgentBlockRenderProps) {
 }
 
 export function ImageBlockRenderer({ block }: AgentBlockRenderProps) {
+  const desktop = usePawOsDesktop();
   const transport = useOptionalControlTransport();
   const [failedSource, setFailedSource] = useState('');
   const data = block.data;
@@ -99,6 +101,7 @@ export function ImageBlockRenderer({ block }: AgentBlockRenderProps) {
         onError={() => setFailedSource(source)}
       />
       {text(data.caption) ? <figcaption>{text(data.caption)}</figcaption> : null}
+      {desktop ? <IconButton label="在独立窗口打开图片" icon={<PanelTopOpen size={16} />} onClick={() => desktop.openWindow({ appId: 'agent', target: { kind: 'result', id: resultId('image'), title: text(data.alt) || '对话图片', resultKind: 'image', source, subtitle: text(data.caption) || '来自当前 Agent 消息的受控图片回执' } })} tooltip /> : null}
     </figure>
   );
 }
@@ -112,6 +115,7 @@ export function ImageBlockRenderer({ block }: AgentBlockRenderProps) {
  * offer the original file.
  */
 export function AudioBlockRenderer({ block }: AgentBlockRenderProps) {
+  const desktop = usePawOsDesktop();
   const data = block.data;
   const [unplayable, setUnplayable] = useState(false);
   const source = safeMediaSource(text(data.receiptUrl ?? data.src ?? data.url), 'audio');
@@ -136,6 +140,7 @@ export function AudioBlockRenderer({ block }: AgentBlockRenderProps) {
       ) : (
         <audio controls onError={() => setUnplayable(true)} preload="metadata" src={source} />
       )}
+      {desktop ? <IconButton label="在独立窗口打开音频" icon={<PanelTopOpen size={16} />} onClick={() => desktop.openWindow({ appId: 'agent', target: { kind: 'result', id: resultId('audio'), title: name, resultKind: 'audio', source, subtitle: '来自当前 Agent 消息的受控音频回执' } })} tooltip /> : null}
     </figure>
   );
 }
@@ -170,10 +175,9 @@ export function UnknownBlockRenderer({ block }: AgentBlockRenderProps) {
   const label = text(block.rawType) || text(block.presentationKind) || 'unknown';
   const summary = text(block.summary);
   return (
-    <details className="agent-unknown-block">
-      <summary>暂不支持的内容 · {label}</summary>
+    <Disclosure className="agent-unknown-block" summary={`暂不支持的内容 · ${label}`}>
       <p>{summary || '内容已安全保留，可以继续对话或在审计区查看原始记录。'}</p>
-    </details>
+    </Disclosure>
   );
 }
 
@@ -218,4 +222,8 @@ function fileMeta(data: Record<string, unknown>): string {
 function imageDimension(value: unknown): number {
   const dimension = finiteNumber(value);
   return dimension >= 1 && dimension <= 8_192 ? Math.round(dimension) : 0;
+}
+
+function resultId(kind: string): string {
+  return `${kind}-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`}`;
 }

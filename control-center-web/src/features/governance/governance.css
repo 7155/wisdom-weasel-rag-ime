@@ -1,7 +1,7 @@
 .shell-route-stage > main[data-route-id='governance'] { width: 100%; }
 .governance-filter-disclosure { border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); }
 .governance-filter-disclosure > summary { cursor: pointer; padding: 11px var(--space-3); color: var(--color-text-secondary); font-size: 14px; font-weight: 700; }
-.governance-filter-disclosure > p { margin: 0; padding: 0 var(--space-3) var(--space-3); color: var(--color-text-tertiary); font-size: 13px; }
+.governance-filter-disclosure > .ui-disclosure__reveal > div > p { margin: 0; padding: 0 var(--space-3) var(--space-3); color: var(--color-text-tertiary); font-size: 13px; }
 .governance-filter-disclosure[open] > summary { border-bottom: 1px solid var(--color-border); }
 .governance-filters { display: grid; gap: var(--space-3); grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .governance-filter-disclosure .governance-filters { padding: var(--space-3); }
@@ -42,20 +42,19 @@
   list-style-position: inside;
 }
 .governance-record-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-.governance-record-details > dl { display: grid; gap: 7px; margin: 2px 0 8px; }
-.governance-record-details > dl > div { min-width: 0; }
+.governance-record-details > .ui-disclosure__reveal > div > dl { display: grid; gap: 7px; margin: 2px 0 8px; }
+.governance-record-details > .ui-disclosure__reveal > div > dl > div { min-width: 0; }
 .governance-record-details dt {
   color: var(--color-text-tertiary);
   font-size: 11px;
   font-weight: 650;
 }
 .governance-record-details dd { margin: 2px 0 0; }
-.governance-record-details > section > h4 {
+.governance-record-details > .ui-disclosure__reveal > div > section > h4 {
   margin: 10px 0 0;
   color: var(--color-text-tertiary);
   font-size: 11px;
 }
-.governance-record-details:not([open]) > :not(summary) { display: none !important; }
 .governance-loading__skeletons {
   display: grid;
   gap: var(--space-3);
@@ -77,6 +76,22 @@
   .governance-filters, .governance-columns, .governance-columns--two, .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
   .governance-list article header, .governance-timeline article header { align-items: flex-start; flex-direction: column; }
   .governance-load-error { align-items: stretch; flex-direction: column; }
+}
+
+@container paw-window (max-width: 900px) {
+  main[data-route-id='governance'][data-paw-os-app] .governance-filters,
+  main[data-route-id='governance'][data-paw-os-app] .governance-columns,
+  main[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container paw-window (max-width: 560px) {
+  main[data-route-id='governance'][data-paw-os-app] .governance-filters,
+  main[data-route-id='governance'][data-paw-os-app] .governance-columns,
+  main[data-route-id='governance'][data-paw-os-app] .governance-columns--two,
+  main[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='governance'][data-paw-os-app] .governance-list article header,
+  main[data-route-id='governance'][data-paw-os-app] .governance-timeline article header,
+  main[data-route-id='governance'][data-paw-os-app] .governance-load-error { align-items: stretch; flex-direction: column; }
 }
 
 /* ============== governance adopts the editorial page grammar ==============
@@ -141,12 +156,6 @@
 .governance-filter-disclosure[open] > summary::before { transform: rotate(90deg); }
 .governance-advanced > summary:focus-visible,
 .governance-filter-disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-
-/* A few page rules intentionally make disclosure children grids. Declare the
-   closed state here as well, so those grids cannot override native details
-   hiding and leave focusable controls in the layout. */
-.governance-advanced:not([open]) > :not(summary),
-.governance-filter-disclosure:not([open]) > :not(summary) { display: none !important; }
 
 @media (hover: hover) and (pointer: fine) {
   .governance-advanced > summary:hover,

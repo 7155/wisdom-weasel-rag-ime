@@ -6,7 +6,13 @@ import {
   LoaderCircle,
   ShieldCheck,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Button } from '@/components/primitives';
 import { roleItems } from '@/features/agent/types';
 import {
@@ -146,7 +152,6 @@ function RoleBookDetail({
     ?? {};
   const sections = asRecord(revision.sections);
   const items = roleBookSectionItems(sections);
-  const selectedItem = items.find((item) => item.key === itemKey);
   const draftCount = arrayRecords(catalog.dailyDrafts).filter((draft) => {
     const decision = asRecord(draft.decision);
     return !stringValue(decision.decision);
@@ -222,37 +227,43 @@ function RoleBookDetail({
           return (
             <section key={section}>
               <header><strong>{label}</strong><small>{sectionItems.length} 项</small></header>
-              {sectionItems.length ? sectionItems.map((item) => (
-                <button
-                  aria-current={item.key === itemKey}
-                  key={item.key}
-                  onClick={() => { setItemKey(item.key); setReference(null); }}
-                  type="button"
-                >
-                  <span>{stringValue(item.value.text, '未命名条目')}</span>
-                  <ChevronRight aria-hidden="true" size={14} />
-                </button>
-              )) : <p>当前版本没有这一类记录。</p>}
+              {sectionItems.length ? sectionItems.map((item) => {
+                const open = item.key === itemKey;
+                const disclosureId = roleBookItemDisclosureId(stringValue(revision.revisionId), item.key);
+                return (
+                  <Fragment key={item.key}>
+                    <button
+                      aria-controls={disclosureId}
+                      aria-expanded={open}
+                      onClick={() => {
+                        setItemKey((current) => current === item.key ? '' : item.key);
+                        setReference(null);
+                      }}
+                      type="button"
+                    >
+                      <span>{stringValue(item.value.text, '未命名条目')}</span>
+                      <ChevronRight aria-hidden="true" size={14} />
+                    </button>
+                    <RoleBookItemDisclosure id={disclosureId} open={open}>
+                      <RoleBookItemDetail
+                        item={item.value}
+                        label={item.label}
+                        onOpenReference={(evidenceId) => setReference({
+                          kind: /^\d+$/u.test(evidenceId) || evidenceId.startsWith('event:') || evidenceId.startsWith('input-memory:')
+                            ? 'event'
+                            : 'evidence',
+                          referenceId: evidenceId,
+                          label: stringValue(item.value.text),
+                        })}
+                      />
+                    </RoleBookItemDisclosure>
+                  </Fragment>
+                );
+              }) : <p>当前版本没有这一类记录。</p>}
             </section>
           );
         })}
       </div>
-
-      {selectedItem ? (
-        <RoleBookItemDetail
-          item={selectedItem.value}
-          label={selectedItem.label}
-          onOpenReference={(evidenceId) => setReference({
-            kind: /^\d+$/u.test(evidenceId) || evidenceId.startsWith('event:') || evidenceId.startsWith('input-memory:')
-              ? 'event'
-              : 'evidence',
-            referenceId: evidenceId,
-            label: stringValue(selectedItem.value.text),
-          })}
-        />
-      ) : (
-        <p className="memory-lineage-empty">选择一条伙伴记忆，查看它的相关来源。</p>
-      )}
 
       <footer>
         <span><ShieldCheck size={14} />伙伴记忆只描述经历与边界，不能扩大工具权限或安全范围。</span>
@@ -301,6 +312,34 @@ function RoleBookItemDetail({
       ) : <p className="memory-lineage-empty">这条记录没有可展开的来源信息。</p>}
     </div>
   );
+}
+
+function RoleBookItemDisclosure({
+  children,
+  id,
+  open,
+}: {
+  children: ReactNode;
+  id: string;
+  open: boolean;
+}) {
+  return (
+    <div
+      aria-hidden={!open}
+      className="memory-role-book-item-disclosure"
+      data-open={open ? 'true' : 'false'}
+      id={id}
+      inert={open ? undefined : true}
+    >
+      <div>
+        <div className="memory-role-book-item-disclosure__content">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function roleBookItemDisclosureId(revisionId: string, itemKey: string): string {
+  return `memory-role-book-item-${revisionId}-${itemKey}`.replace(/[^a-zA-Z0-9_-]+/gu, '-');
 }
 
 function uniqueRevisions(

@@ -10,6 +10,7 @@ import {
 } from './index';
 import { projectFieldProjects } from './prototype-data';
 import { personalAgentProjectFieldProjection } from './reconstructed-personal-agent-project';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 
 describe('Project Field prototype', () => {
   beforeEach(() => {
@@ -75,6 +76,28 @@ describe('Project Field prototype', () => {
     expect(screen.getByRole('link', { name: '现有工作台' })).toHaveAttribute('href', '#/agent');
     expect(screen.getByRole('link', { name: '设置' })).toHaveAttribute('href', '#/configuration');
     expect(container).not.toHaveTextContent(/\b(?:Issue|Ticket|Spec)\b/i);
+  });
+
+  it('opens the current project as a PAWOS entity window without changing projects', async () => {
+    const user = userEvent.setup();
+    const requests: unknown[] = [];
+    render(
+      <PawOsDesktopProvider openWindow={(request) => requests.push(request)}>
+        <ProjectFieldFeature />
+      </PawOsDesktopProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: '在独立窗口中打开当前项目' }));
+
+    expect(requests).toEqual([{
+      appId: 'project-workbench',
+      target: expect.objectContaining({
+        kind: 'project',
+        id: 'personal-agent-workbench',
+        title: '个人助手工作台',
+      }),
+    }]);
+    expect(screen.getByRole('heading', { name: '个人助手工作台 项目场' })).toBeInTheDocument();
   });
 
   it('shows a branching start and an explicitly unreached destination without process copy', () => {
@@ -290,6 +313,17 @@ describe('Project Field prototype', () => {
 
     expect(search).toHaveValue('');
     expect(screen.queryByRole('region', { name: '搜索结果' })).not.toBeInTheDocument();
+  });
+
+  it('keeps every matching Room reachable inside the compact search window', async () => {
+    const user = userEvent.setup();
+    render(<ProjectFieldFeature />);
+
+    await user.type(screen.getByLabelText('搜索协作目标'), '的');
+    const results = screen.getByRole('region', { name: '搜索结果' });
+
+    expect(within(results).getByText('7 个匹配目标')).toBeInTheDocument();
+    expect(within(results).getAllByRole('button')).toHaveLength(7);
   });
 
   it('routes an internal functional direction back to its containing Room island', async () => {

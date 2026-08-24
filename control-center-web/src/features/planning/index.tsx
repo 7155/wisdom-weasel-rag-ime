@@ -1,4 +1,4 @@
-import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Flag, ListTodo, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Flag, ListTodo, PanelsTopLeft, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -38,10 +38,12 @@ import {
 } from '@/features/overview/management-ui';
 import { AgentWakeSchedules } from './AgentWakeSchedules';
 import { useProductIdentity } from '@/features/identity/product-identity';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import './planning.css';
 
 export function PlanningFeature() {
   const navigate = useNavigate();
+  const pawOsDesktop = usePawOsDesktop();
   const identity = useProductIdentity();
   const now = new Date();
   const [date, setDate] = useState(today());
@@ -398,6 +400,26 @@ export function PlanningFeature() {
                   label={taskStatusLabel(stringValue(selectedTaskRecord.status))}
                   tone={selectedStatus === 'done' ? 'success' : selectedStatus === 'in_progress' ? 'info' : 'neutral'}
                 />
+              ) : null}
+              {selectedTaskRecord && pawOsDesktop ? (
+                <Button
+                  leadingIcon={<PanelsTopLeft aria-hidden="true" size={14} />}
+                  onClick={() => pawOsDesktop.openWindow({
+                    appId: 'project-workbench',
+                    target: {
+                      kind: 'task',
+                      id: stringValue(selectedTaskRecord.id),
+                      title: stringValue(selectedTaskRecord.title, '未命名任务'),
+                      subtitle: `${date} · ${project}`,
+                      date,
+                      project,
+                    },
+                  })}
+                  size="small"
+                  variant="quiet"
+                >
+                  独立窗口
+                </Button>
               ) : null}
             </div>
             <div className={selectedTask ? 'planning-dialog__grid' : 'planning-dialog__grid planning-dialog__grid--single'}>

@@ -1,7 +1,7 @@
 import { CheckCircle2, KeyRound, Mic, Play, Plus, RefreshCw, Save, Shield, Sparkles, Square, Waves } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Field, Input, SegmentedControl, Select, Switch, TextArea } from '@/components/primitives';
+import { Button, Disclosure, Field, Input, SegmentedControl, Select, Switch, TextArea } from '@/components/primitives';
 import { useVoiceCredentialStatus, useVoiceQueries } from './api';
 import {
   parsePiModelCatalogOptions,
@@ -67,7 +67,7 @@ const hotkeys = [
 ] as const;
 
 const defaultSuggestedHotwords = [
-  '澄助手', '个人计划', '常用联系人', '项目名称', '专业名词', '英文缩写',
+  'PAW', '个人计划', '常用联系人', '项目名称', '专业名词', '英文缩写',
   '补全模型', 'GPT-5.6', 'Luna', 'Terra',
 ] as const;
 
@@ -365,8 +365,7 @@ export function VoiceFeature() {
         </ManagementSection>
 
         <ManagementSection title="连接信息" description="连接当前转写服务所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
-          <details className="voice-connection-details">
-            <summary>配置服务连接</summary>
+          <Disclosure className="voice-connection-details" summary="配置服务连接">
             <div className="voice-connection-details__content">
           <div className="voice-credential-grid">
             <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有连接信息。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="访问令牌">
@@ -394,7 +393,7 @@ export function VoiceFeature() {
             <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} variant="primary">安全保存账号</Button>
           </div>
             </div>
-          </details>
+          </Disclosure>
         </ManagementSection>
 
         <ManagementSection title="按住说话与专有词" description="在这里设置按住说话和常用专有词。词表会留在本机；只有当前服务支持时才会用于听写。">
@@ -642,8 +641,7 @@ export function VoiceFeature() {
               title="保存保守校对模型"
             />
           </div>
-          <details className="voice-refinement-status">
-            <summary>文字定稿状态</summary>
+          <Disclosure className="voice-refinement-status" summary="文字定稿状态">
             <div className="voice-refinement-status__content">
           <MetricStrip items={[
             { label: '引擎最终稿', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '转写引擎会在结束时给出最终文字', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
@@ -675,13 +673,12 @@ export function VoiceFeature() {
             </InlineNotice>
           ) : null}
           {booleanValue(lastRecognition.finalReceived) && stringValue(lastRecognition.providerResponseStage) ? (
-            <details className="voice-recognition-details">
-              <summary>高级：本次定稿记录</summary>
+            <Disclosure className="voice-recognition-details" summary="高级：本次定稿记录">
               <p>{providerMetadataDetail(lastRecognition)}</p>
-            </details>
+            </Disclosure>
           ) : null}
             </div>
-          </details>
+          </Disclosure>
         </ManagementSection>
       </QueryState>
     </ManagementPage>

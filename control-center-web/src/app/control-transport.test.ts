@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createConfiguredControlTransport } from './control-transport';
 
 describe('preview control transport', () => {
+  const originalUrl = window.location.href;
+
+  beforeEach(() => {
+    window.history.replaceState({}, '', '/?controlTransport=mock#/preview-control-transport-tests');
+  });
+
+  afterEach(() => {
+    window.history.replaceState({}, '', originalUrl);
+  });
+
   it('keeps Room member Sessions available for direct Agent chat and exposes canonical working tools', async () => {
     const transport = createConfiguredControlTransport();
 

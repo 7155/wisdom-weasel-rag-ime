@@ -3,11 +3,48 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/primitives';
-import { RoomComposer } from './RoomComposer';
+import { RoomComposer, roomMentionedParticipants } from './RoomComposer';
 
 afterEach(cleanup);
 
 describe('RoomComposer macOS input methods', () => {
+  it('shows stable planet aliases and resolves @Earth to the real participant', () => {
+    const participant = {
+      id: 'participant-earth',
+      sessionId: 'session-earth',
+      roleId: 'implementer',
+      roleVersion: '1',
+      displayName: 'Agent 1',
+      status: 'active',
+    };
+    render(
+      <TooltipProvider>
+        <RoomComposer
+          room={{ id: 'room-sol', status: 'active', participants: [participant] }}
+          participantAliases={{ 'participant-earth': 'Earth' }}
+          personas={[]}
+          draft=""
+          attachments={[]}
+          sending={false}
+          onDraftChange={vi.fn()}
+          onAttachmentsChange={vi.fn()}
+          onPasteImages={vi.fn()}
+          onPasteFromClipboard={vi.fn()}
+          onPickAttachments={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '点名一位伙伴' }));
+    const earth = screen.getByRole('option', { name: /Earth/ });
+    expect(earth).toHaveTextContent('Agent 1');
+    fireEvent.mouseDown(earth);
+    expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveValue('@Earth ');
+    expect(roomMentionedParticipants([participant], '@Earth 请复核', { 'participant-earth': 'Earth' }))
+      .toEqual([participant]);
+  });
+
   it('keeps marked text local and does not send the IME commit key', () => {
     const onDraftChange = vi.fn();
     const onSend = vi.fn();

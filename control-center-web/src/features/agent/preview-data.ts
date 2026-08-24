@@ -10,7 +10,7 @@ const previewNow = 1_785_014_400_000;
 export const previewPersonas: AgentPersonaV1[] = [
   {
     schemaVersion: 'rag-ime.agent-persona.v1', roleId: 'companion-future-v1', version: '1',
-    displayName: '澄·远', tagline: '把记忆、工具与协作构筑成下一步',
+    displayName: 'Agent 3', tagline: '把记忆、工具与协作构筑成下一步',
     summary: '站在长期时间线上深思的构筑者，默认主持复杂任务，串联证据、工具、角色、实现与验收。',
     traits: ['沉稳', '工具编排'],
     visualProfile: { avatarAssetId: 'rag-ime-timeline-future-v1', symbolName: 'point.3.connected.trianglepath.dotted', accentToken: 'rose' },
@@ -22,7 +22,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     schemaVersion: 'rag-ime.agent-persona.v1',
     roleId: 'companion-present-v1',
     version: '1',
-    displayName: '澄·今',
+    displayName: 'Agent 1',
     tagline: '先接住眼前的问题，再一起把它做清楚',
     summary: '贴近当前工作现场的稳健实践者，平衡深度与速度，把正在发生的想法落到下一步。',
     traits: ['温暖', '证据优先'],
@@ -45,7 +45,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     schemaVersion: 'rag-ime.agent-persona.v1',
     roleId: 'companion-firstlight-v1',
     version: '1',
-    displayName: '澄·初',
+    displayName: 'Agent 2',
     tagline: '从第一笔记录开始，认真认识你的世界',
     summary: '像月光巡游历史线索的敏锐行动者，快速理解意图、核对线索并给出清楚下一步。',
     traits: ['好奇', '记录优先'],
@@ -66,7 +66,7 @@ export const previewPersonas: AgentPersonaV1[] = [
   },
   {
     schemaVersion: 'rag-ime.agent-persona.v1', roleId: 'companion-flash-v1', version: '1',
-    displayName: '澄·瞬', tagline: '高速掠过漫长档案，只带回最有用的线索',
+    displayName: 'Agent 4', tagline: '高速掠过漫长档案，只带回最有用的线索',
     summary: '超长档案的高速侦察与整理者，极快提取、聚类和交接线索，但不独自承担复杂实现与高风险结论。',
     traits: ['极速', '线索整理'],
     visualProfile: { avatarAssetId: 'rag-ime-timeline-flash-v1', symbolName: 'bolt', accentToken: 'neutral' },
@@ -332,6 +332,25 @@ export const previewSessions: SessionSummary[] = [
     lastMessagePreview: '生成的 HTML 报告与原始数据一并交付。',
     modelProfile: 'openai/gpt-5.4',
   },
+  {
+    id: 'session-work-disclosure',
+    title: '过程折叠验收',
+    mode: 'assistant',
+    status: 'idle',
+    roleId: 'companion-present-v1',
+    roleVersion: '1',
+    roleBookRevisionId: '',
+    toolProfileVersion: 'control-center-v1',
+    toolAllowlistMode: 'profile',
+    projectContextEnabled: true,
+    piSkillsEnabled: false,
+    codexSkillsEnabled: false,
+    updatedAtMs: previewNow - 90_000,
+    workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
+    messageCount: 3,
+    lastMessagePreview: '最终结果保持可见，推理与工具过程可按需展开。',
+    modelProfile: 'openai/gpt-5.4',
+  },
 ];
 
 export function previewModelCatalog(sessionId: string): ModelCatalog {
@@ -374,28 +393,6 @@ export function previewModelCatalog(sessionId: string): ModelCatalog {
         id: 'gpt',
         displayName: 'GPT',
         models: [
-          {
-            provider: 'gpt',
-            id: 'gpt-5.6-sol',
-            name: 'GPT-5.6 Sol',
-            api: 'responses',
-            reasoning: true,
-            thinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
-            supportsImages: true,
-            contextWindow: 1_050_000,
-            maxTokens: 128_000,
-          },
-          {
-            provider: 'gpt',
-            id: 'gpt-5.6-terra',
-            name: 'GPT-5.6 Terra',
-            api: 'responses',
-            reasoning: true,
-            thinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
-            supportsImages: true,
-            contextWindow: 1_050_000,
-            maxTokens: 128_000,
-          },
           {
             provider: 'gpt',
             id: 'gpt-5.6-luna',
@@ -507,6 +504,108 @@ function previewRendererGallery(sessionId: string) {
       block('gal-approval', 'approval', { approvalId: 'apr-gallery-1', title: '写入词表草案', state: 'pending', detail: '需要你确认后才会写入本机词库；批准前不会有任何写入。', payloadSha256: 'b3f1c2a9d4e5a7160c83f92d418be5cf0a2d7e64913b8ac5de07f21649a3bd8e' }),
     ], previewNow - 270_000),
   ];
+}
+
+/**
+ * A dedicated completed multi-stage turn for validating progressive disclosure.
+ * Keep this separate from `session-preview`: that fixture is used by many
+ * interaction tests which intentionally pin its four-message transcript.
+ *
+ * The transcript carries the user request, an intermediate assistant update,
+ * and a final rich result. The bounded live journal carries the reasoning and
+ * two tool lifecycles that sit between those messages, so the real reducer and
+ * timeline can prove that settled work collapses without hiding the answer.
+ */
+function previewTurnWorkDisclosure(sessionId: string) {
+  const turnId = `${sessionId}:turn-implementation`;
+  const base = previewNow - 90_000;
+  const messages = [
+    message(sessionId, turnId, 'work-user', 'user', [
+      block('work-user-text', 'text', {
+        text: '请核对 Agent 对话的过程折叠：中间过程可以收起，但最终答案、差异和交付文件必须一直可见。',
+      }),
+    ], base),
+    message(sessionId, turnId, 'work-intermediate', 'assistant', [
+      block('work-intermediate-text', 'text', {
+        text: '我先检查时间线的消息排序、工具活动和完成态边界，再把最终改动整理成可复核的结果。',
+      }),
+    ], base + 12_000),
+    message(sessionId, turnId, 'work-final', 'assistant', [
+      block('work-final-markdown', 'text', {
+        text: [
+          '### 已完成过程折叠验收',
+          '',
+          '最终结果保留在对话主线上；推理与工具过程可通过“步骤”逐层展开查看。',
+          '',
+          '- 中间助手更新不会覆盖最终回答。',
+          '- 工具调用按原时间顺序保留，可逐项复核。',
+          '- 差异和交付文件属于结果，不会随过程一起隐藏。',
+        ].join('\n'),
+      }),
+      block('work-final-diff', 'diff', {
+        fileName: 'src/features/agent/timeline/AgentTimeline.tsx',
+        diff: '@@ -118,6 +118,12 @@ function AgentTimeline() {\n+  const work = buildAgentTurnWorkModel(status, entries);\n+  return <AgentTurnWorkDisclosure model={work} />;\n }\n',
+      }),
+      block('work-final-file', 'file', {
+        mediaId: 'media_previewworkreceipt01',
+        name: 'agent-work-disclosure-receipt.md',
+        mimeType: 'text/markdown',
+        byteSize: 1_824,
+        sha256: 'd'.repeat(64),
+      }),
+    ], base + 42_000),
+  ];
+  const events: UiAgentEvent[] = [
+    ['reasoning_summary', {
+      summary: '核对消息、活动与完成态的显示边界',
+      items: ['核对消息、活动与完成态的显示边界'],
+      source: 'provider_reasoning_summary',
+      state: 'completed',
+    }],
+    ['tool_started', {
+      toolCallId: 'tool-work-read',
+      toolId: 'workspace_shell',
+      operation: 'read',
+      summary: '读取时间线渲染入口',
+      args: { path: 'src/features/agent/timeline/AgentTimeline.tsx' },
+    }],
+    ['tool_finished', {
+      toolCallId: 'tool-work-read',
+      toolId: 'workspace_shell',
+      operation: 'read',
+      summary: '已读取时间线渲染入口',
+      status: 'completed',
+      result: { files: 1, lines: 286 },
+    }],
+    ['tool_started', {
+      toolCallId: 'tool-work-test',
+      toolId: 'workspace_shell',
+      operation: 'test',
+      summary: '运行过程折叠 focused 检查',
+      args: { command: 'pnpm vitest run agent-turn-work-model.test.ts' },
+    }],
+    ['tool_finished', {
+      toolCallId: 'tool-work-test',
+      toolId: 'workspace_shell',
+      operation: 'test',
+      summary: '过程折叠 focused 检查通过',
+      status: 'completed',
+      result: { passed: 8, failed: 0 },
+    }],
+    ['turn_completed', { summary: '过程折叠验收完成' }],
+  ].map(([eventType, payload], index) => ({
+    schemaVersion: 'rag-ime.agent-event.v1',
+    eventId: `${sessionId}:work-event-${index + 1}`,
+    sessionId,
+    turnId,
+    sequence: index + 1,
+    createdAtMs: base + 4_000 + index * 7_000,
+    payload,
+    resumeToken: `${sessionId}:${index + 1}`,
+    streamKind: 'agent',
+    eventType,
+  })) as UiAgentEvent[];
+  return { messages, events };
 }
 
 /**
@@ -938,6 +1037,17 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
     const messages = previewRendererGallery(sessionId);
     return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], todo: null, messages };
   }
+  if (sessionId === 'session-work-disclosure') {
+    const fixture = previewTurnWorkDisclosure(sessionId);
+    return {
+      lastSequence: fixture.events.length,
+      resumeToken: `${sessionId}:${fixture.events.length}`,
+      status: 'idle',
+      liveEvents: fixture.events,
+      todo: null,
+      messages: fixture.messages,
+    };
+  }
   if (sessionId === 'session-long') {
     const messages = previewLongTranscript(sessionId);
     return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], todo: null, messages };
@@ -1071,7 +1181,7 @@ function previewStateEvents(sessionId: string): UiAgentEvent[] {
 }
 
 export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
-  if (sessionId === 'session-fresh' || sessionId === 'session-input') return [];
+  if (sessionId === 'session-fresh' || sessionId === 'session-input' || sessionId === 'session-work-disclosure') return [];
   if (sessionId === 'session-states') return previewStateEvents(sessionId);
   // The snapshot already carries the whole thread; the default media-turn
   // events below would append an unrelated turn and muddy the comparison

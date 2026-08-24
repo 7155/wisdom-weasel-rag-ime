@@ -3,6 +3,7 @@ import {
   Bot,
   Brain,
   Braces,
+  ChevronDown,
   CircleDotDashed,
   Database,
   FilterX,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button, EmptyState, IconButton } from '@/components/primitives';
+import { Button, Disclosure, EmptyState, IconButton } from '@/components/primitives';
 import type { ObservationEventV1 } from '@/contracts/generated/observation-event.v1';
 import { DebugContextInspector } from '@/features/agent/status/DebugContextInspector';
 import {
@@ -72,7 +73,6 @@ export function ObservabilityFeature() {
   );
   const [selectedTraceId, setSelectedTraceId] = useState('');
   const [selectedEventId, setSelectedEventId] = useState('');
-  const [debugOpen, setDebugOpen] = useState(false);
   const selectedTrace = useMemo(
     () => visibleItems
       .filter((item) => item.traceId === selectedTraceId)
@@ -108,6 +108,13 @@ export function ObservabilityFeature() {
       .filter((value): value is number => typeof value === 'number' && value > 0),
   );
   const scoped = Boolean(filters.sessionId || filters.roomId || filters.traceId);
+  const snapshotTotal = Math.max(feed.items.length, feed.snapshot?.counts.total ?? 0);
+  const snapshotTruncated = Boolean(feed.snapshot?.truncated || snapshotTotal > feed.items.length);
+  const timelineCountLabel = needle.trim()
+    ? `${visibleItems.length} / 已载入 ${feed.items.length}`
+    : snapshotTruncated
+      ? `最近 ${visibleItems.length} / 共 ${snapshotTotal}`
+      : `${visibleItems.length} 条`;
 
   function selectCategory(next: CategoryFilter): void {
     const params = new URLSearchParams(searchParams);
@@ -154,6 +161,12 @@ export function ObservabilityFeature() {
         <InlineNotice title="隐私边界" tone="info">
           运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，可以在上下文检查中查看指定目录保存的脱敏记录；未开启时只查看当前运行中的内容。
         </InlineNotice>
+
+        {snapshotTruncated ? (
+          <InlineNotice title={`当前显示最近 ${feed.items.length} / 共 ${snapshotTotal} 条`} tone="warning">
+            Runtime 当前只返回最近一段记录；这里明确保留该边界，不把这批结果当作完整历史。
+          </InlineNotice>
+        ) : null}
 
         {feed.streamError ? (
           <div className="observation-connection-notice">
@@ -241,7 +254,7 @@ export function ObservabilityFeature() {
         <div className="observation-workspace">
           <ManagementSection
             title="事件时间线"
-            trailing={<StatusBadge label={`${visibleItems.length} 条`} tone="neutral" />}
+            trailing={<StatusBadge label={timelineCountLabel} tone="neutral" />}
           >
             {visibleItems.length ? (
               <ol className="observation-timeline" aria-label="运行记录事件">
@@ -282,14 +295,16 @@ export function ObservabilityFeature() {
                 <ol className="observation-trace">
                   {selectedTrace.map((item, index) => (
                     <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} key={`${item.eventId}:trace`}>
-                      <button onClick={() => setSelectedEventId(item.eventId)} type="button">
-                        <span className="observation-trace__index">{index + 1}</span>
-                        <div>
-                          <strong>{publicObservationSummary(item)}</strong>
-                          <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
-                          <ObservationFacts item={item} />
-                        </div>
-                      </button>
+                      <article className="observation-trace__card">
+                        <button className="observation-trace__summary" onClick={() => setSelectedEventId(item.eventId)} type="button">
+                          <span className="observation-trace__index">{index + 1}</span>
+                          <span>
+                            <strong>{publicObservationSummary(item)}</strong>
+                            <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
+                          </span>
+                        </button>
+                        <ObservationFacts item={item} />
+                      </article>
                     </li>
                   ))}
                 </ol>
@@ -299,13 +314,13 @@ export function ObservabilityFeature() {
                       <Braces size={15} />
                       <span><strong>查看这轮的完整上下文</strong><small>逐次核对新增内容、模型请求和工具执行</small></span>
                     </a>
-                    <details
+                    <Disclosure
                       className="observation-debug-context"
-                      onToggle={(event) => setDebugOpen(event.currentTarget.open)}
+                      summary={<><Database size={15} /><span><strong>在这里快速查看</strong><small>{selectedEvent.turnId ? '读取本轮临时快照' : '读取当前对话的最新临时快照'}</small></span></>}
+                      title={selectedEvent.turnId || selectedEvent.sessionId}
                     >
-                      <summary title={selectedEvent.turnId || selectedEvent.sessionId}><Database size={15} /><span><strong>在这里快速查看</strong><small>{selectedEvent.turnId ? '读取本轮临时快照' : '读取当前对话的最新临时快照'}</small></span></summary>
-                      {debugOpen ? <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded /> : null}
-                    </details>
+                      <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded />
+                    </Disclosure>
                   </div>
                 ) : null}
               </>
@@ -354,21 +369,52 @@ function ObservationRow({
 }
 
 function ObservationFacts({ item }: { item: ObservationEventV1 }) {
-  const facts = observationFacts(item);
-  if (!facts.length) return null;
+  const [expanded, setExpanded] = useState(false);
+  const progress = observationProgress(item);
+  const facts = observationFacts(item, new Set(progress?.sourceKeys ?? []));
+  const initialFacts = facts.slice(0, 8);
+  const additionalFacts = facts.slice(8);
+  if (!facts.length && !progress) return null;
   return (
-    <dl className="observation-facts">
-      {facts.slice(0, 8).map(([label, value]) => (
-        <div key={`${label}:${value}`}>
+    <div className="observation-facts-shell">
+      {progress ? (
+        <div className="observation-progress">
+          <span><strong>工具进度</strong><small>{progress.current} / {progress.total}</small></span>
+          <progress aria-label={`工具进度 ${progress.current} / ${progress.total}`} max={progress.total} value={progress.current} />
+        </div>
+      ) : null}
+      {initialFacts.length ? <ObservationFactList facts={initialFacts} /> : null}
+      {additionalFacts.length ? (
+        <Disclosure
+          className="observation-facts__disclosure"
+          onOpenChange={setExpanded}
+          revealClassName="observation-facts__reveal"
+          summary={<>
+            <ChevronDown aria-hidden="true" size={14} />
+            {expanded ? `收起其余 ${additionalFacts.length} 项事实` : `查看其余 ${additionalFacts.length} 项事实`}
+          </>}
+        >
+          <ObservationFactList facts={additionalFacts} nested />
+        </Disclosure>
+      ) : null}
+    </div>
+  );
+}
+
+function ObservationFactList({ facts, nested = false }: { facts: [string, string][]; nested?: boolean }) {
+  return (
+    <dl className="observation-facts" data-nested={nested || undefined}>
+      {facts.map(([label, value], index) => (
+        <div key={`${label}:${value}:${index}`}>
           <dt>{label}</dt>
-          <dd>{value}</dd>
+          <dd title={value}>{value}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
-function observationFacts(item: ObservationEventV1): [string, string][] {
+function observationFacts(item: ObservationEventV1, excludedMetricKeys = new Set<string>()): [string, string][] {
   const facts: [string, string][] = [];
   if (item.durationMs !== null) facts.push(['耗时', formatDuration(item.durationMs)]);
   const model = primitiveAttribute(item.attributes.modelName) || primitiveAttribute(item.attributes.model);
@@ -376,12 +422,49 @@ function observationFacts(item: ObservationEventV1): [string, string][] {
   if (model) facts.push(['模型', model]);
   if (provider) facts.push(['模型服务', provider]);
   for (const [key, value] of Object.entries(item.metrics)) {
-    if (value === null || typeof value === 'object') continue;
+    if (excludedMetricKeys.has(key) || value === null || typeof value === 'object') continue;
     facts.push([metricLabel(key), displayMetric(key, value)]);
   }
   if (item.refs.length) facts.push(['引用', String(item.refs.length)]);
   facts.push(['隐私', privacyLabel(item.privacyClass)]);
   return facts;
+}
+
+type ObservationProgress = {
+  current: number;
+  total: number;
+  sourceKeys: string[];
+};
+
+function observationProgress(item: ObservationEventV1): ObservationProgress | null {
+  if (item.category !== 'tool') return null;
+  const nested = item.metrics.progress;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    const current = finiteMetric((nested as Record<string, unknown>).current);
+    const total = finiteMetric((nested as Record<string, unknown>).total);
+    if (current !== null && total !== null && total > 0) {
+      return { current: Math.min(current, total), total, sourceKeys: ['progress'] };
+    }
+  }
+  for (const [currentKey, totalKey] of [
+    ['progressCurrent', 'progressTotal'],
+    ['completedCount', 'totalCount'],
+    ['processedCount', 'totalCount'],
+    ['scannedCount', 'totalCount'],
+    ['scanned', 'total'],
+    ['current', 'total'],
+  ] as const) {
+    const current = finiteMetric(item.metrics[currentKey]);
+    const total = finiteMetric(item.metrics[totalKey]);
+    if (current !== null && total !== null && total > 0) {
+      return { current: Math.min(current, total), total, sourceKeys: [currentKey, totalKey] };
+    }
+  }
+  return null;
+}
+
+function finiteMetric(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function categoryIcon(category: ObservationEventV1['category']): LucideIcon {

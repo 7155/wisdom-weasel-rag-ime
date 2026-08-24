@@ -20,4 +20,16 @@ describe('bootstrapControlCenter', () => {
 
     expect(document.documentElement.dataset.controlTransport).toBe('native');
   });
+
+  it('uses the live HTTP service for the PAWOS development entrypoint', async () => {
+    const originalUrl = window.location.href;
+    window.history.replaceState({}, '', '/?frontend=paw-os#/project-field');
+    vi.resetModules();
+    const { bootstrapControlCenter } = await import('./bootstrap');
+
+    bootstrapControlCenter();
+
+    expect(document.documentElement.dataset.controlTransport).toBe('http');
+    window.history.replaceState({}, '', originalUrl);
+  });
 });

@@ -103,6 +103,19 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.queryByText(/当前没有 Todo。如果这段工作来自协作空间/)).not.toBeInTheDocument();
   });
 
+  it('uses one compact sentence for an empty on-demand workflow panel', async () => {
+    const state = workflowState();
+    state.todo.phases = [];
+    state.todo.counts = { total: 0, pending: 0, inProgress: 0, completed: 0, abandoned: 0 };
+    state.goal.configured = false;
+
+    renderWorkflow(transportFor(state), { compactEmpty: true });
+
+    expect(await screen.findByText('当前没有 Todo 或长期目标；需要时可直接在对话中说明目标。')).toHaveAttribute('role', 'status');
+    expect(screen.queryByRole('region', { name: 'Todo' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '长期目标' })).not.toBeInTheDocument();
+  });
+
   it('projects a newer live Todo immediately instead of waiting for the workflow poll', async () => {
     const queried = workflowState();
     const live = workflowState();

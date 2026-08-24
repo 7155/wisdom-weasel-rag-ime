@@ -1,0 +1,548 @@
+import { describe, expect, it } from 'vitest';
+import agentFeatureCss from '../../features/agent/agent.css?raw';
+import sessionSubagentCss from '../../features/agent/delegation/session-subagent.css?raw';
+import configurationCss from '../../features/configuration/configuration.css?raw';
+import contextDebugCss from '../../features/context-debug/context-debug.css?raw';
+import diagnosticsCss from '../../features/diagnostics/diagnostics.css?raw';
+import filesCss from '../../features/files/paw-os-files-app.css?raw';
+import filesSource from '../../features/files/PawOsFilesApp.tsx?raw';
+import activityTimelineCss from '../../features/memory/activity-timeline.css?raw';
+import memoryCss from '../../features/memory/memory.css?raw';
+import knowledgeCss from '../../features/knowledge/knowledge.css?raw';
+import observabilityCss from '../../features/observability/observability.css?raw';
+import pluginsCss from '../../features/plugins/plugins.css?raw';
+import satelliteCss from '../../features/paw-os/paw-os-satellite.css?raw';
+import terminalCss from '../../features/terminal/paw-os-terminal-app.css?raw';
+import appCss from './paw-apps.css?raw';
+import pawOsAppSource from '../PawOsApp.tsx?raw';
+import primitiveCss from '../../components/primitives/primitives.css?raw';
+import workspaceCss from '../../design/workspace.css?raw';
+import agentCompositionCss from '../styles/paw-os-agent-composition.css?raw';
+import agentFxCss from '../styles/paw-os-agent-fx.css?raw';
+import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
+import agentNextCss from '../styles/paw-os-agent-next.css?raw';
+import pawOsCss from '../styles/paw-os.css?raw';
+import motionCss from '../styles/paw-os-motion.css?raw';
+import roomFocusCss from '../styles/paw-os-room-focus.css?raw';
+import roomMigratedCss from '../styles/paw-os-room-migrated-v1.css?raw';
+import shellMigratedCss from '../styles/paw-os-shell-migrated-v1.css?raw';
+import systemMigratedCss from '../styles/paw-os-sys-apps-migrated-v1.css?raw';
+import toolsMigratedCss from '../styles/paw-os-tools-files-migrated-v1.css?raw';
+import webmodelCss from '../styles/paw-os-webmodel-v1.css?raw';
+import workbenchMigratedCss from '../styles/paw-os-workbench-migrated-v1.css?raw';
+import polishCss from '../styles/paw-os-polish.css?raw';
+
+type SemanticBlock = {
+  css: string;
+  marker: string;
+  selectors: readonly string[];
+};
+
+const semanticReceipts: ReadonlyArray<{
+  app: string;
+  blocks: readonly SemanticBlock[];
+  sizes: readonly number[];
+}> = [
+  {
+    app: 'Agent',
+    blocks: [{ css: appCss, marker: 'agent', selectors: ['.paw-agent-row', '.paw-session-workspace__header', '.paw-unified-composer > textarea'] }],
+    sizes: [13, 14, 15],
+  },
+  {
+    app: 'Memory',
+    blocks: [{ css: memoryCss, marker: 'memory', selectors: ["main[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span"] }],
+    sizes: [13],
+  },
+  {
+    app: 'App Center',
+    blocks: [{ css: pluginsCss, marker: 'app-center-lifecycle', selectors: ["main[data-route-id='plugins'][data-paw-os-app]", '.plugin-lifecycle__approval', '.capability-disclosure'] }],
+    sizes: [13, 14, 15],
+  },
+  {
+    app: 'Monitor',
+    blocks: [
+      { css: observabilityCss, marker: 'monitor-observability', selectors: ["main[data-route-id='observability'][data-paw-os-app]"] },
+      { css: contextDebugCss, marker: 'monitor-context', selectors: ["main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor']"] },
+      { css: diagnosticsCss, marker: 'monitor-diagnostics', selectors: ["main[data-route-id='diagnostics'][data-paw-os-app]"] },
+    ],
+    sizes: [13, 14, 15],
+  },
+  {
+    app: 'Settings',
+    blocks: [{ css: configurationCss, marker: 'settings-configuration', selectors: ["main[data-route-id='configuration'][data-paw-os-app]", '.configuration-section-nav', '.configuration-subagents__error'] }],
+    sizes: [13, 14, 15],
+  },
+];
+
+function semanticBlock({ css, marker }: SemanticBlock): string {
+  const startMarker = `/* UR-102 ${marker} semantic typography */`;
+  const endMarker = `/* UR-102 ${marker} semantic typography end */`;
+  const start = css.indexOf(startMarker);
+  const end = css.indexOf(endMarker, start + startMarker.length);
+  expect(start, `${marker} semantic block start`).toBeGreaterThan(-1);
+  expect(end, `${marker} semantic block end`).toBeGreaterThan(start);
+  return css.slice(start, end);
+}
+
+describe('PAWOS semantic type roles', () => {
+  it('keeps Browser tabs out of generic segmented-control styling and owns the Ego execution layer', () => {
+    expect(polishCss).toContain(".paw-window-shell[data-app]:not([data-app='browser']):not([data-app='terminal']) [class*='-tabs']");
+    expect(polishCss).toContain(".paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='row']");
+    expect(toolsMigratedCss).toContain('.paw-browser-agent-field');
+    expect(toolsMigratedCss).toContain('.paw-browser-agent-capsule');
+    expect(toolsMigratedCss).toContain(".paw-browser-viewport[data-agent-state='active']");
+    expect(toolsMigratedCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-browser-agent-field/);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app='browser'\] \.paw-omnibox-form input\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/s);
+  });
+
+  it('keeps Browser structure and final visual polish free of retired competing owners', () => {
+    expect(appCss).not.toMatch(/\.paw-browser-app\s*\{/);
+    expect(appCss).not.toContain('.paw-browser-address');
+    expect(motionCss).not.toContain('.paw-browser-address');
+    expect(webmodelCss).not.toMatch(/\.paw-window-shell\[data-app='browser'\]\s+(?::is|\.)/);
+    expect(pawOsAppSource).not.toContain("./styles/paw-os-apps-composition.css");
+    expect(pawOsAppSource).not.toContain("./styles/paw-os-apps-next.css");
+    expect(pawOsCss).not.toContain("@import '../apps/paw-apps.css'");
+    expect(pawOsCss).not.toMatch(/transition:\s*width[^;]*height/);
+    expect(pawOsCss).not.toContain(".paw-window-shell[data-app='browser'] .paw-direct-browser");
+    expect(appCss).not.toContain('.paw-browser-awaiting strong');
+    expect(appCss).not.toContain('.paw-browser-awaiting p');
+    expect(appCss).not.toContain('.paw-browser-no-trace p');
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser\s*\{[^}]*container:\s*paw-browser\s*\/\s*inline-size;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser\s*\{[^}]*--paw-browser-chrome:\s*var\(--paw-app-nav,[^)]+\);[^}]*background:\s*var\(--paw-app-surface,/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-toolbar/);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*none;/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*flex;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-agent-stream\s*\{[^}]*background:\s*#fff;[^}]*backdrop-filter:\s*none;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-history,\s*\.paw-desktop-root \.paw-browser-settings\s*\{[^}]*background:\s*#eef1f5;[^}]*backdrop-filter:\s*none;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-error\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
+  });
+
+  it('keeps ordinary App windows above the desktop Dock', () => {
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock\s*\{[^}]*z-index:\s*8;/s);
+  });
+
+  it('keeps desktop chrome and Dock visual ownership out of retired compatibility layers', () => {
+    expect(pawOsAppSource).not.toContain("./styles/paw-os-composition.css");
+    expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-dock\s*\{/);
+    expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-shell(?:\[[^\]]+\])? \.paw-window\s*\{/);
+    expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{/);
+    expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-menu-bar\s*\{/);
+    expect(pawOsCss).not.toContain(".paw-window-shell[data-app] .paw-window-titlebar");
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);[^}]*background:\s*rgb\(255 255 255 \/ \.5\);/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock button::before\s*\{\s*content:\s*none;/s);
+  });
+
+  it('keeps portalled controls above the PAWOS desktop stacking context', () => {
+    expect(pawOsCss).toMatch(/\.paw-desktop-root\s*\{[^}]*z-index:\s*1000;/s);
+    expect(primitiveCss).toMatch(/\.ui-dialog__overlay\s*\{[^}]*z-index:\s*1099;/s);
+    expect(primitiveCss).toMatch(/\.ui-dialog\s*\{[^}]*z-index:\s*1100;/s);
+    expect(primitiveCss).toMatch(/\.ui-select__content\s*\{[^}]*z-index:\s*1110;/s);
+    expect(primitiveCss).toMatch(/\.ui-toast__viewport\s*\{[^}]*z-index:\s*1120;/s);
+  });
+
+  it('stacks Project planning controls and keeps the primary action icon-only at narrow widths', () => {
+    const compactDetailCss = workbenchMigratedCss.slice(
+      workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 1050px)'),
+      workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 760px)'),
+    );
+    expect(compactDetailCss).toMatch(/\.paw-wb-detail__compact-toggle\s*\{\s*display:\s*inline-flex;/s);
+    expect(compactDetailCss).toMatch(/\.paw-wb-detail__body\s*\{[^}]*max-height:\s*0;[^}]*visibility:\s*hidden;[^}]*transition:\s*max-height/s);
+    expect(compactDetailCss).toMatch(/\.paw-wb-detail\[data-expanded='true'\] \.paw-wb-detail__body\s*\{[^}]*max-height:\s*1200px;[^}]*opacity:\s*1;[^}]*visibility:\s*visible;/s);
+    const mediumProjectCss = workbenchMigratedCss.slice(
+      workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 760px)'),
+      workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'),
+    );
+    expect(mediumProjectCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
+    expect(mediumProjectCss).toMatch(/\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(mediumProjectCss).toMatch(/\.paw-wb-documents\[data-reader-open='true'\] \.paw-wb-document-index\s*\{\s*display:\s*none;/s);
+    expect(appCss).toMatch(/\.paw-native-stage\s*\{[^}]*container-name:\s*paw-native-stage;[^}]*container-type:\s*inline-size;/s);
+    const narrowProjectCss = workbenchMigratedCss.slice(workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'));
+    expect(narrowProjectCss).toMatch(/\.paw-wb-primary > span\s*\{\s*display:\s*none;/s);
+    expect(narrowProjectCss).not.toContain('.paw-wb-primary { font-size: 0; }');
+    expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
+    expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools__date,[\s\S]*?\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(narrowProjectCss).toMatch(/\.paw-wb-documents\[data-reader-open='true'\] \.paw-wb-document-index\s*\{\s*display:\s*none;/s);
+    expect(narrowProjectCss).toMatch(/\.paw-wb-schedules-dialog \.planning-wake-form,\s*\.paw-wb-schedules-dialog \.planning-wake-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
+  });
+
+  it('keeps Project controls out of generic paper polish and removes retired native owners', () => {
+    expect(polishCss).toContain(".paw-window-shell[data-app]:not([data-app='browser']):not([data-app='project-workbench']) [class*='actions']");
+    expect(polishCss).not.toContain(".paw-window-shell[data-app]:not([data-app='browser']) [class*='row']");
+    expect(polishCss).not.toContain(".paw-window-shell[data-app]:not([data-app='browser']) [class*='actions']");
+    expect(agentCompositionCss).not.toContain('.paw-window-shell[data-app] .paw-native-app');
+    expect(agentCompositionCss).not.toContain('.paw-window-shell[data-app] .paw-native-nav');
+    expect(agentCompositionCss).not.toContain(".paw-window-shell[data-app='files'] .paw-files-tree");
+  });
+
+  it('does not ship the retired generic Project and suite prototypes', () => {
+    for (const selector of [
+      '.paw-app-rail',
+      '.paw-workflow',
+      '.paw-partner-grid',
+      '.paw-transcript',
+      '.paw-composer {',
+      '.paw-resource-grid',
+      '.paw-native-suite',
+      '.paw-page-frame',
+      '.paw-page-body',
+      '.paw-primary-action',
+      '.paw-work-document-detail',
+      '.paw-memory-detail',
+      '.paw-native-empty',
+      '.paw-empty-compact',
+      '.paw-native-nav > header',
+      '.paw-native-nav > footer',
+    ]) expect(appCss).not.toContain(selector);
+  });
+
+  it('leaves System App content to its current feature and migrated style owners', () => {
+    for (const retiredSelector of [
+      '.paw-feature-app',
+      '.paw-feature-content',
+      '.paw-feature-nav',
+      '.paw-appearance-settings',
+      '.paw-metric-strip',
+      '.paw-health-strip',
+      '.paw-native-timeline',
+      '.paw-approval-list',
+      '.paw-library-shelves',
+      '.paw-memory-overview',
+      '.paw-memory-cards',
+      '.paw-knowledge-status',
+      '.paw-library-detail',
+      '.paw-relation-canvas',
+      '.paw-search-canvas',
+      '.paw-ingest-flow',
+      '.paw-input-stage',
+      '.paw-input-preview',
+      '.paw-voice-status',
+      '.paw-candidate-line',
+      '.paw-voice-deck',
+      '.paw-package-list',
+      '.paw-context-deck',
+      '.paw-diagnostics-grid',
+      '.paw-theme-gallery',
+      '.paw-agent-settings',
+    ]) expect(appCss).not.toContain(retiredSelector);
+    expect(systemMigratedCss).toContain(".paw-system-app[data-system-app='app-center']");
+    expect(systemMigratedCss).toContain(".paw-system-app[data-system-app='system-monitor']");
+    expect(systemMigratedCss).toContain(".paw-system-app[data-system-app='system-settings']");
+  });
+
+  it('keeps Memory as one native surface and gives Role Books a readable list measure', () => {
+    expect(memoryCss).toMatch(
+      /main\[data-route-id='memory'\]\[data-paw-os-app='memory'\] \.memory-second-brain \.memory-view-tabs[\s\S]*?border:\s*0;/s,
+    );
+    expect(memoryCss).toMatch(
+      /\.memory-second-brain \.(?:memory-role-book-workspace)[\s\S]*?grid-template-columns:\s*minmax\(300px, \.82fr\) minmax\(0, 1\.18fr\);/s,
+    );
+    expect(memoryCss).toMatch(
+      /\.memory-second-brain\[data-view='catalog'\] \.memory-layer-detail > \.ui-empty-state\s*\{[\s\S]*?min-height:\s*0;/s,
+    );
+  });
+
+  it('keeps Knowledge library layout roots full-width and leaves document tabs explicit', () => {
+    expect(knowledgeCss).toMatch(
+      /main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-library__tabs,[\s\S]*?width:\s*100%;[\s\S]*?border:\s*0;/s,
+    );
+    expect(knowledgeCss).toMatch(
+      /main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-library__tabs > \[role='tabpanel'\][\s\S]*?display:\s*block;[\s\S]*?flex:\s*none;/s,
+    );
+    expect(knowledgeCss).toMatch(/\.knowledge-markdown-preview[\s\S]*?background:\s*#fff;/s);
+    expect(knowledgeCss).toMatch(
+      /\.paw-window-shell\[data-app='knowledge'\] main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-document-tabs[\s\S]*?display:\s*grid;[\s\S]*?width:\s*100%;/s,
+    );
+    expect(knowledgeCss).toMatch(
+      /\.knowledge-document-tabs > \[role='tabpanel'\]\[hidden\][\s\S]*?display:\s*none;/s,
+    );
+  });
+
+  it('lets a lone installed Package use both App Center catalogue tracks', () => {
+    expect(pluginsCss).toMatch(
+      /\.paw-desktop-root \.paw-system-app\[data-system-app='app-center'\] \.plugin-lifecycle__installed > \.installed-plugin:only-child\s*\{[^}]*grid-column:\s*1 \/ -1;/s,
+    );
+  });
+
+  it('collapses System App navigation from the owning PAW window width', () => {
+    expect(systemMigratedCss).not.toContain('@container paw-system-app');
+    expect(systemMigratedCss).toMatch(
+      /@container paw-window \(max-width: 720px\)[\s\S]*?\.paw-desktop-root \.paw-system-app\s*\{[^}]*grid-template-columns:\s*54px minmax\(0, 1fr\);/s,
+    );
+    expect(systemMigratedCss).toMatch(
+      /@container paw-window \(max-width: 520px\)[\s\S]*?\.paw-system-app \.(?:mgmt-metrics)\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
+    );
+    expect(systemMigratedCss).not.toContain('.paw-system-app *::before');
+    expect(systemMigratedCss).not.toContain('animation-duration: .001ms !important');
+    expect(systemMigratedCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-system-app \.mgmt-section\s*\{\s*animation:\s*none;/s,
+    );
+  });
+
+  it('keeps Files and Terminal layout contracts owned by their feature styles', () => {
+    expect(filesSource).not.toContain("./paw-os-files-next.css");
+    expect(filesCss).toMatch(/@container paw-files \(max-width: 860px\)[\s\S]*?\.paw-files-app__workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[\s\S]*?\.paw-files-tree\s*\{[^}]*max-height:\s*40%;/s);
+    expect(filesCss).not.toMatch(/@media \(max-width: 860px\)[\s\S]*?\.paw-files-app__workspace/);
+    expect(filesCss).toContain('--color-canvas: #f4f6f8');
+    expect(filesCss).toMatch(/\.paw-files-preview\s*\{[^}]*background:\s*#fff;/s);
+    expect(toolsMigratedCss).not.toContain('.paw-desktop-root .paw-files-app');
+    expect(terminalCss).toMatch(/\.paw-terminal-console\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\);/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) 30px;/s);
+    expect(terminalCss).toContain('--paw-terminal-bg: #101216');
+    expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*display:\s*flex;[^}]*overflow:\s*hidden;/s);
+    expect(terminalCss).toMatch(/@container paw-terminal \(max-width:\s*560px\)/);
+    expect(toolsMigratedCss).not.toContain('.paw-desktop-root .paw-terminal-app');
+    for (const retiredSelector of [
+      '.paw-terminal-console__subbar',
+      '.paw-terminal-meta',
+      '.paw-terminal-output',
+      '.paw-terminal-ansi-content',
+      '.paw-terminal-connecting',
+      '.paw-terminal-input-bar',
+      '.paw-prompt-symbol',
+    ]) expect(terminalCss).not.toContain(retiredSelector);
+  });
+
+  it('keeps native page navigation free of the retired warm-paper identity rail', () => {
+    expect(pawOsAppSource).not.toContain('paw-os-apps-composition.css');
+  });
+
+  it('keeps retired paper and migrated utility layers from restyling the final Terminal surface', () => {
+    expect(pawOsAppSource).not.toContain('paw-os-apps-next.css');
+    expect(terminalCss).toContain('.paw-terminal-console');
+    expect(toolsMigratedCss).not.toContain('.paw-desktop-root .paw-terminal-app');
+  });
+
+  it('keeps Browser chrome typography readable', () => {
+    const browserStart = appCss.indexOf('.paw-browser-tab-main');
+    const browserEnd = appCss.indexOf('/* CDP Live View */');
+    const browserCss = appCss.slice(browserStart, browserEnd);
+
+    expect(browserStart).toBeGreaterThan(-1);
+    expect(browserEnd).toBeGreaterThan(browserStart);
+    expect(browserCss).not.toMatch(/font-size:\s*(?:10|11|12)px/);
+    expect(browserCss).toContain('font-size: 14px');
+    expect(browserCss).toContain('font-size: 13px');
+    expect(browserCss).toContain('font-size: 15px');
+  });
+
+  it.each(semanticReceipts)('$app final PAWOS selectors preserve semantic type roles', ({ blocks, sizes }) => {
+    const combined = blocks.map((part) => {
+      const block = semanticBlock(part);
+      expect(block).not.toMatch(/font-size:\s*(?:8|9|10|11|12)px/);
+      for (const selector of part.selectors) expect(block).toContain(selector);
+      return block;
+    }).join('\n');
+    for (const size of sizes) expect(combined).toContain(`font-size: ${size}px`);
+  });
+
+  it.each([
+    ['agent', agentMigratedCss],
+    ['room', roomMigratedCss],
+    ['room-focus', roomFocusCss],
+    ['shell', shellMigratedCss],
+    ['browser-files-terminal', toolsMigratedCss],
+    ['workbench', workbenchMigratedCss],
+    ['system-apps', systemMigratedCss],
+    ['memory', memoryCss],
+    ['memory-activity', activityTimelineCss],
+    ['knowledge', knowledgeCss],
+  ])('%s final owner declares readable roles at the owning selectors', (_surface, css) => {
+    expect(css).not.toMatch(/font-size:\s*(?:9\.5|10|10\.5|11|11\.5)px/);
+    expect(css).not.toContain('UR-087 readable typography floor');
+  });
+
+  it('keeps final Agent controls at 13px and metadata at 12px or larger', () => {
+    expect(agentMigratedCss).toMatch(/\.paw-session-workspace__tools > nav > button\s*\{[^}]*font-size:\s*13px;/s);
+    expect(agentMigratedCss).toMatch(/\.paw-agent-trace-v1__filters button\s*\{[^}]*font-size:\s*13px;/s);
+    expect(agentMigratedCss).not.toMatch(/font(?:-size)?:[^;]*(?:9\.5|10|10\.5|11|11\.5)px/);
+  });
+
+  it('keeps the Agent rail opaque and lays its portalled control beside window chrome', () => {
+    expect(agentMigratedCss).toMatch(
+      /\.paw-window-titlebar \.paw-agent-rail-toggle\s*\{[^}]*position:\s*static;[^}]*flex:\s*0 0 30px;/s,
+    );
+    expect(agentMigratedCss).toMatch(
+      /\.paw-window-shell\[data-app='agent'\] \.paw-agent-rail\s*\{[^}]*background:\s*#f6f8fb;[^}]*backdrop-filter:\s*none;/s,
+    );
+    expect(agentCompositionCss).not.toMatch(/\[data-app='agent'\] \.paw-agent-rail[^{]*\{[^}]*rgba\([^)]*,\s*\.5\)/s);
+  });
+
+  it('uses one bounded motion contract without clipping open nested Tool evidence', () => {
+    expect(agentFeatureCss).toMatch(
+      /\.agent-smooth-reveal\s*\{[^}]*height 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/s,
+    );
+    expect(agentFeatureCss).toMatch(
+      /\.agent-smooth-reveal\[data-state='open'\]\s*\{[^}]*overflow:\s*visible/s,
+    );
+    expect(agentFxCss).toMatch(
+      /\.agent-turn-work__reveal\s*\{[^}]*height 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/s,
+    );
+    expect(agentFxCss).toMatch(
+      /\.paw-activity__detail\s*\{[^}]*height 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/s,
+    );
+    expect(agentFxCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.paw-activity\[data-state='running'\] \.paw-activity__label\s*\{[^}]*animation:\s*none/s,
+    );
+  });
+
+  it('does not reserve the Composer twice inside the separated Agent timeline', () => {
+    const separatedTimelineRules = [...agentMigratedCss.matchAll(
+      /\.paw-session-workspace__conversation\[data-message-flow='separated'\] \.agent-timeline\s*\{([^}]*)\}/gs,
+    )].map((match) => match[1] ?? '');
+
+    expect(separatedTimelineRules.length).toBeGreaterThan(0);
+    expect(separatedTimelineRules.join('\n')).not.toMatch(
+      /padding(?:-bottom)?:\s*[^;]*120px/,
+    );
+  });
+
+  it('keeps retired Agent prototype generations out of the active App stylesheet', () => {
+    for (const selector of [
+      '.paw-new-work',
+      '.paw-composer-mode',
+      '.paw-option-menu',
+      '.paw-model-menu',
+      '.paw-conversation-trace',
+      '.paw-agent-flow-map',
+    ]) expect(appCss).not.toContain(selector);
+
+    expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .paw-user-message');
+    expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-pill.danger');
+    expect(agentFxCss).not.toMatch(/(^|})\s*(?::root|html|body|\*)\s*\{/m);
+  });
+
+  it('keeps dead Agent status and Composition 8 selectors out of live owners', () => {
+    expect(agentNextCss).not.toMatch(/\.agent-activity-row[^{}]*data-status/);
+    expect(workspaceCss).toContain('.agent-activity-row [data-state]');
+    expect(workspaceCss).not.toContain('.agent-tool-step [data-state]');
+
+    expect(agentCompositionCss).not.toMatch(/\.agent-assistant-pending \.paw-comp8-shape/);
+    expect(agentCompositionCss).not.toContain('@keyframes paw-comp8-shape-hop');
+    expect(agentCompositionCss).toContain('.agent-assistant-pending::after');
+    expect(agentCompositionCss).toContain('.paw-desktop-root .paw-os-satellite');
+    expect(agentCompositionCss).not.toContain(".paw-window-shell[data-app='agent'] .paw-agent-rail");
+    expect(agentMigratedCss).toContain(".paw-window-shell[data-app='agent'] .paw-agent-rail");
+  });
+
+  it('keeps the retired approval-block renderer out of the Agent rich owner', () => {
+    expect(agentFeatureCss).not.toMatch(/\.agent-approval-block(?:__actions)?/);
+    expect(agentFxCss).toContain('.fx-approval');
+  });
+
+  it('keeps the real Agent turn navigator available and adapts it to the Session window', () => {
+    expect(agentMigratedCss).not.toMatch(/\.paw-session-workspace__trace \.an-trace-rail\s*\{[^}]*display:\s*none;/s);
+    expect(agentNextCss).not.toContain('.an-trace-rail { display: none; }');
+    expect(agentNextCss).toMatch(/@container paw-session-workspace \(max-width: 680px\)[\s\S]*?\.an-trace\s*\{[^}]*flex-direction:\s*column;/s);
+    expect(agentNextCss).toMatch(/@container paw-session-workspace \(max-width: 680px\)[\s\S]*?\.an-trace-rail\s*\{[^}]*display:\s*grid;/s);
+  });
+
+  it('keeps Agent Home full-height on the same cold surface as Session and Trace', () => {
+    expect(agentNextCss).not.toContain('warm paper');
+    expect(agentNextCss).not.toContain('#f4efdd');
+    expect(agentNextCss).not.toContain('rgba(27, 21, 18');
+    expect(agentNextCss).toContain('--an-paper: #f6f8fb');
+    expect(agentNextCss).toContain('--an-paper-bright: #fff');
+    expect(agentNextCss).toMatch(/\.an-home-root\s*\{[^}]*height:\s*100%;/s);
+    expect(agentNextCss).toMatch(/@container paw-agent-shell \(max-width: 680px\)[\s\S]*?\.an-home-wrap/s);
+  });
+
+  it('gives each Agent tool panel a real header row and a readable metadata floor', () => {
+    expect(appCss).toMatch(/\.paw-session-workspace__side > \.agent-status-panel,[\s\S]*?\.paw-session-workspace__side > \.agent-files-panel\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\);/s);
+    expect(agentFeatureCss).not.toMatch(/font(?:-size)?:[^;\n]*(?:10|11)px/);
+    expect(sessionSubagentCss).not.toMatch(/font(?:-size)?:[^;\n]*(?:10|11)px/);
+  });
+
+  it('keeps the imported Room owner at a 12px metadata floor and 14–16px reading/control roles', () => {
+    expect(roomMigratedCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
+    expect(roomFocusCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
+    expect(roomMigratedCss).toMatch(/\.paw-room-chronology__message > div\s*\{[^}]*font-size:\s*15\.5px;/s);
+    expect(roomMigratedCss).toMatch(/\.paw-room-chronology__activity > div p\s*\{[^}]*font-size:\s*14px;/s);
+    expect(roomMigratedCss).toMatch(/\.paw-room-chronology__activity > footer button,[\s\S]*?\.paw-room-chronology__terminal > button\s*\{[^}]*font-size:\s*14px;/s);
+    expect(roomMigratedCss).toMatch(/@container paw-room-workspace \(max-width: 520px\)[\s\S]*?\.paw-room-workspace__objective > div > small\s*\{[^}]*font-size:\s*12px;/s);
+    expect(roomFocusCss).toMatch(/\.paw-room-focus-overview__inspector\s*\{[^}]*animation:\s*paw-room-focus-inspector-enter 180ms cubic-bezier\(\.23, 1, \.32, 1\)/s);
+    expect(roomFocusCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-room-focus-overview__inspector\s*\{\s*animation:\s*none;/s);
+  });
+
+  it('keeps Room satellite governance readable without the retired inline tool shell', () => {
+    expect(appCss).not.toContain('.paw-room-workspace:not([data-panel=\'none\'])');
+    expect(appCss).not.toContain('.paw-room-workspace__side');
+    expect(appCss).not.toContain('.paw-room-workspace__tool-header');
+    expect(appCss).not.toContain('.paw-room-workspace__tool-content');
+    expect(appCss).toMatch(/\.paw-room-governance article strong\s*\{[^}]*font-size:\s*14px;/s);
+    expect(appCss).toMatch(/\.paw-room-governance article small\s*\{[^}]*font-size:\s*12px;/s);
+    expect(appCss).toMatch(/\.paw-room-governance select, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
+  });
+
+  it('keeps Room panel and participant satellites at the 12px metadata floor', () => {
+    const roomSatelliteCss = satelliteCss.slice(
+      satelliteCss.indexOf('.paw-os-satellite--room-panel'),
+      satelliteCss.indexOf('@keyframes paw-participant-packet-in'),
+    );
+
+    expect(roomSatelliteCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
+    expect(roomSatelliteCss).toMatch(/\.paw-participant-chat__timeline article > header time\s*\{[^}]*font-size:\s*12px;/s);
+    expect(roomSatelliteCss).toMatch(/\.paw-os-satellite__feedback\s*\{[^}]*font-size:\s*12px;/s);
+  });
+
+  it('lets the Room conversation reclaim the column retired with the inline tool panel', () => {
+    expect(roomMigratedCss).toMatch(/\.paw-room-workspace--migrated-v1 \.paw-room-workspace__body\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
+  });
+
+  it('adapts Room Flow to its satellite window instead of the absent main-workspace container', () => {
+    const workspaceRuleStart = roomMigratedCss.indexOf('@container paw-room-workspace (max-width: 760px)');
+    const windowRuleStart = roomMigratedCss.indexOf('@container paw-window (max-width: 760px)', workspaceRuleStart);
+    const workspaceRule = roomMigratedCss.slice(workspaceRuleStart, windowRuleStart);
+
+    expect(roomMigratedCss).toMatch(/@container paw-window \(max-width:\s*760px\)[\s\S]*?\.paw-room-flow--migrated-v1\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
+    expect(workspaceRuleStart).toBeGreaterThan(-1);
+    expect(windowRuleStart).toBeGreaterThan(workspaceRuleStart);
+    expect(workspaceRule).not.toContain('.paw-room-flow--migrated-v1');
+    expect(satelliteCss).toMatch(/\.paw-os-satellite__room-panel-body > \.paw-room-flow\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*470px;/s);
+  });
+
+  it('preserves explicit Focus frames and resize handles throughout the 721–820px gap', () => {
+    const narrowStart = pawOsCss.indexOf('@media (max-width: 820px)');
+    const narrowEnd = pawOsCss.indexOf('@media (max-width: 700px)', narrowStart);
+    const narrowShellCss = pawOsCss.slice(narrowStart, narrowEnd);
+
+    expect(narrowShellCss).toContain('.paw-window-shell:not([data-overview]):not([data-focus-layout])');
+    expect(narrowShellCss).toContain('.paw-window-shell:not([data-focus-layout]) .paw-window-resize');
+    expect(narrowShellCss).not.toMatch(/(?:^|\n)\s*\.paw-window-resize\s*\{/);
+  });
+
+  it('keeps a narrow satellite title visible when no App chrome competes for the row', () => {
+    expect(pawOsCss).toMatch(
+      /@container paw-window \(max-width: 620px\)\s*\{\s*\.paw-window-titlebar:has\(\.paw-window-chrome-slot:not\(:empty\)\) \.paw-window-title\s*\{[^}]*visibility:\s*hidden;[^}]*opacity:\s*0;/s,
+    );
+    expect(pawOsCss).not.toMatch(
+      /@container paw-window \(max-width: 620px\)\s*\{\s*\.paw-window-title\s*\{[^}]*visibility:\s*hidden;/s,
+    );
+  });
+
+  it('imports every final Knowledge Markdown owner and keeps readable prose throughout the cascade', () => {
+    expect(knowledgeCss).toMatch(/\.knowledge-markdown-body\s*\{[^}]*font-size:\s*14px;/s);
+    expect(knowledgeCss).toMatch(/main\.knowledge-feature\[data-paw-os-app='knowledge'\] \.knowledge-markdown-body,[\s\S]*?font-size:\s*15px;/s);
+    expect(knowledgeCss).toMatch(/main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-markdown-body\s*\{[^}]*font-size:\s*15px;/s);
+  });
+
+  it('keeps narrow Agent chrome on one row and the shared tool surface inside the window', () => {
+    expect(agentMigratedCss).not.toContain('height: 72px');
+    expect(agentMigratedCss).not.toContain('.paw-session-workspace__actions');
+    expect(agentMigratedCss).toMatch(/@container paw-window \(max-width: 420px\)[\s\S]*?\.paw-session-workspace__runtime[\s\S]*?display:\s*none;/);
+    expect(agentMigratedCss).toMatch(/@container paw-session-workspace \(max-width: 520px\)[\s\S]*?\.paw-session-workspace__side[\s\S]*?width:\s*100%;[\s\S]*?height:\s*min\(52%, 340px\);/);
+  });
+
+  it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
+    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
+    expect(systemMigratedCss).toMatch(/\.paw-system-agent-fields small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);
+    expect(memoryCss).toMatch(/\.memory-lineage-panel > div:first-child > p,[\s\S]*?font-size:\s*14px;[\s\S]*?line-height:\s*1\.55;/);
+    expect(memoryCss).toMatch(/\.memory-system-overview__trust-note span\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/s);
+    expect(knowledgeCss).toMatch(/\.knowledge-graph__inspector > p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/s);
+    expect(knowledgeCss).toMatch(/\.knowledge-chunk-grid p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.62;/s);
+  });
+});

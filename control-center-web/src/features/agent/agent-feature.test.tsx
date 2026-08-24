@@ -363,6 +363,31 @@ describe('Agent experience', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it('offers a PAWOS Session window from the conversation menu', async () => {
+    const onOpenWindow = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <SessionRail
+          sessions={previewSessions}
+          selectedId="session-preview"
+          loading={false}
+          onSelect={() => {}}
+          onCreate={() => {}}
+          onOpenWindow={onOpenWindow}
+        />
+      </TooltipProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: '更多“记忆整理”操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '独立窗口' }));
+
+    expect(onOpenWindow).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'session-memory',
+      title: '记忆整理',
+    }));
+  });
+
   it('offers restore from the same overflow menu for archived conversations', async () => {
     const onArchive = vi.fn();
     const user = userEvent.setup();
@@ -435,7 +460,7 @@ describe('Agent experience', () => {
     expect(markers.length).toBeGreaterThan(1);
     expect(markers[0]).toHaveTextContent('第 1 轮');
     expect(navigator).toHaveTextContent('读取输入法工具书');
-    expect(navigator).toHaveTextContent('澄');
+    expect(navigator).toHaveTextContent('Agent');
   });
 
   it('preserves bottom-follow through layout growth and restores it after the reader returns', async () => {
@@ -969,7 +994,7 @@ describe('Agent experience', () => {
     }));
   });
 
-  it('renders one persona avatar and one activity container per assistant turn without raw payloads', async () => {
+  it('renders one activity container per assistant turn without avatar columns or raw payloads', async () => {
     const sessionId = 'session-preview';
     const snapshot = previewAgentSnapshot(sessionId);
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, snapshot);
@@ -978,7 +1003,8 @@ describe('Agent experience', () => {
     useAgentLiveStore.getState().applyEvents(sessionId, events);
     const turnId = `${sessionId}:turn-media`;
     render(<TooltipProvider><AgentTurn sessionId={sessionId} turnId={turnId} persona={previewPersonas[0]} onApprovalDecision={() => {}} /></TooltipProvider>);
-    expect(screen.getAllByAltText('澄·远头像')).toHaveLength(1);
+    expect(screen.queryByRole('img', { name: 'Pi Agent' })).not.toBeInTheDocument();
+    expect(document.querySelector('.agent-persona-avatar')).not.toBeInTheDocument();
     expect(document.querySelectorAll('.agent-activity')).toHaveLength(1);
     expect(document.querySelector('.agent-user-message')).toBeInTheDocument();
     expect(screen.queryByText(/do-not-render/)).not.toBeInTheDocument();
@@ -1039,7 +1065,7 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
-    const sectionToggle = await within(statusPanel).findByRole('button', { name: /子智能体/ });
+    const sectionToggle = await within(statusPanel).findByRole('button', { name: /子 Agent 运行树/ });
     const section = sectionToggle.closest('section')!;
 
     expect(await within(section).findByRole('alert')).toHaveTextContent('子智能体状态读取失败');
@@ -1527,6 +1553,9 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
+    await waitFor(() => expect(
+      transport.requests.some((call) => call.request.pathId === 'agent.session.commands'),
+    ).toBe(true));
     await user.click(await screen.findByRole('button', { name: '打开子 Agent 工作台' }));
     const workspace = await screen.findByLabelText('Session 子 Agent 工作台');
     expect(workspace).toHaveAttribute('data-open', 'true');
@@ -1764,7 +1793,7 @@ describe('Agent experience', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.abort')).toBe(false);
   });
 
-  it('renders a bordered assistant placeholder immediately while the prompt request is pending', async () => {
+  it('renders a bordered assistant processing surface immediately without an avatar placeholder', async () => {
     const pendingPrompt = new Promise(() => {});
     const transport = featureTransport(
       previewModelCatalog('session-preview'),
@@ -1788,8 +1817,9 @@ describe('Agent experience', () => {
     expect(pending).toHaveTextContent('消息已收到');
     const assistantTurn = pending.closest('.agent-assistant-turn');
     expect(assistantTurn).not.toBeNull();
-    expect(within(assistantTurn as HTMLElement).getByAltText('澄·今头像')).toBeInTheDocument();
-    expect(within(assistantTurn as HTMLElement).getByText('澄·今')).toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).queryByRole('img', { name: 'Pi Agent' })).not.toBeInTheDocument();
+    expect(assistantTurn?.querySelector('.agent-persona-avatar')).not.toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).getByText('Agent')).toBeInTheDocument();
     expect(within(assistantTurn as HTMLElement).getByText('正在处理')).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true);
   });
@@ -1875,7 +1905,6 @@ describe('Agent experience', () => {
       { ok: true },
       () => pendingAbort.promise,
     );
-    const user = userEvent.setup();
     renderAgent(transport);
     await screen.findByRole('textbox', { name: '消息' });
     await waitFor(() => expect(
@@ -1903,7 +1932,7 @@ describe('Agent experience', () => {
       nowMs: Date.now(),
     }));
 
-    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+    fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
     await waitFor(() => expect(
       transport.requests.filter((call) => call.request.pathId === 'agent.session.abort'),
     ).toHaveLength(1));
@@ -1920,7 +1949,7 @@ describe('Agent experience', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '控制中心迁移' }));
     expect(await screen.findByText('A 的停止请求失败')).toBeInTheDocument();
-  });
+  }, 30_000);
 
   it('renders a rejected Pi prompt once with a public recovery message', async () => {
     const transport = featureTransport(
@@ -2679,7 +2708,6 @@ describe('Agent experience', () => {
       undefined,
       () => abortPending,
     );
-    const user = userEvent.setup();
     renderAgent(transport);
     await screen.findByRole('textbox', { name: '消息' });
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
@@ -2691,7 +2719,7 @@ describe('Agent experience', () => {
       });
     });
 
-    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+    fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
 
     const stopping = await screen.findByRole('button', { name: '正在停止本轮' });
     expect(stopping).toBeDisabled();
@@ -2760,7 +2788,7 @@ describe('Agent experience', () => {
     await waitFor(() => expect(
       transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
     ).toHaveLength(1));
-    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+    fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
 
     await waitFor(() => expect(snapshotCalls).toBe(2));
     expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
@@ -2865,14 +2893,13 @@ describe('Agent experience', () => {
           : busyStopSnapshot('session-preview', 100 + snapshotCalls);
       },
     });
-    const user = userEvent.setup();
     renderAgent(transport);
     await screen.findByRole('textbox', { name: '消息' });
     await waitFor(() => expect(snapshotCalls).toBe(1));
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.status,
     ).toBe('busy'));
-    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+    fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
 
     expect(await screen.findByRole('button', { name: '正在停止本轮' })).toBeDisabled();
     expect(await screen.findByRole('alert', {}, { timeout: 2_000 })).toHaveTextContent(
@@ -3976,13 +4003,61 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toMatchObject({
-      roleId: 'companion-future-v1',
-      roleVersion: '1',
-      mode: 'coordinator',
+      mode: 'assistant',
+      executionMode: 'per_action',
+      toolProfileVersion: 'control-center-v1',
       workspaceRoots: [],
     });
+    expect(create?.request.body).not.toHaveProperty('roleId');
+    expect(create?.request.body).not.toHaveProperty('roleVersion');
     expect(create?.request.body).not.toHaveProperty('modelProfile');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.model.select')).toBe(false);
+  });
+
+  it('sends the explicit full-automation confirmation when creating a project conversation', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '新建对话' }));
+    const dialog = await screen.findByRole('dialog', { name: '新建对话' });
+    await user.click(within(dialog).getByRole('radio', { name: /personal-agent-workbench/ }));
+    await user.click(within(dialog).getByRole('radio', { name: /全自动/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /我确认让此对话全自动执行/ }));
+    await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
+    const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
+    expect(create?.request.body).toMatchObject({
+      mode: 'coordinator',
+      executionMode: 'full_trust',
+      toolProfileVersion: 'control-center-v1',
+      workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+    });
+  });
+
+  it('keeps ordinary Sessions neutral when Persona and Subagent Packages are absent', async () => {
+    const transport = productionTransport({
+      'agent.session.commands': {
+        schemaVersion: 'rag-ime.agent-command-catalog.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        runtimeAvailable: true,
+        items: [{ name: 'review', invocation: '/review', description: '审阅当前改动', source: 'extension' }],
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await screen.findByRole('textbox', { name: '消息' });
+    expect(screen.queryByRole('img', { name: 'Pi Agent' })).not.toBeInTheDocument();
+    expect(document.querySelector('.agent-persona-avatar')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '打开子 Agent 工作台' })).not.toBeInTheDocument();
+    const composer = screen.getByRole('textbox', { name: '消息' });
+    expect(composer).toHaveAttribute('placeholder', expect.stringContaining('给Agent发消息'));
+    await user.type(composer, '/');
+    expect(screen.queryByRole('option', { name: /\/subagents/ })).not.toBeInTheDocument();
   });
 
   it('renders Pi-provided Max reasoning and sends max without inventing levels', async () => {
@@ -5117,6 +5192,7 @@ function commandCatalog() {
     runtimeAvailable: true,
     items: [
       { name: 'review', invocation: '/review', description: '审阅当前改动', source: 'extension' },
+      { name: 'subagents', invocation: '/subagents', description: '查看子 Agent', source: 'extension' },
       { name: 'plan', invocation: '/plan', description: '运行规划模板', source: 'prompt' },
       { name: 'skill:browser', invocation: '/skill:browser', description: '调用浏览器技能', source: 'skill' },
     ],

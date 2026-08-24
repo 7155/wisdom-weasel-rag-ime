@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
@@ -7,7 +8,9 @@ import { agentEventFixture } from '@/test/fixtures/events';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import { useAgentLiveStore } from '../state/live-store';
 import {
+  AgentTimeline,
   AgentTurn,
+  activityDisplayRuns,
   agentDeliveryFeedback,
   agentScrollSeekConfiguration,
   agentTurnMarkerKind,
@@ -23,15 +26,36 @@ import {
   partitionStreamingMarkdownFragments,
 } from './BlockRenderer';
 import { agentRendererPolicy, TRUSTED_AGENT_RENDERERS } from './renderer-registry';
+import { resetAgentTurnDisclosureOverrides } from './AgentTurnWorkDisclosure';
+import { resetActivityDisclosureOverrides } from './ActivitySummary';
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  resetActivityDisclosureOverrides();
+  resetAgentTurnDisclosureOverrides();
   useAgentLiveStore.getState().clear('session-failed-snapshot');
   useAgentLiveStore.getState().clear('session-1');
+  useAgentLiveStore.getState().clear('session-empty-timeline');
 });
 
 describe('Agent chat rendering', () => {
+
+  it('explains an authoritative empty Session and points to the composer', () => {
+    render(
+      <AgentTimeline
+        modelSelectionAvailable
+        onApprovalDecision={() => {}}
+        onRetryTurn={() => false}
+        onSwitchModel={() => {}}
+        sessionId="session-empty-timeline"
+      />,
+    );
+
+    const empty = screen.getByRole('status', { name: '空 Session' });
+    expect(empty).toHaveTextContent('还没有消息');
+    expect(empty).toHaveTextContent('在下方输入第一条消息');
+  });
 
   it('estimates streamed CJK and Latin text for the visible token-rate indicator', () => {
     expect(estimatedStreamingTokens([{ id: 'empty', type: 'text', status: 'running', presentationKind: 'markdown', data: {} }])).toBe(0);
@@ -69,6 +93,35 @@ describe('Agent chat rendering', () => {
     expect(agentDeliveryFeedback('steer', 'applied', 'completed')).toBe('新指令已生效');
     expect(agentDeliveryFeedback('steer', undefined, 'completed')).toBe('新指令已生效');
     expect(agentDeliveryFeedback('steer', 'accepted', 'failed')).toBe('未能确认干预是否已接收');
+  });
+
+  it('uses message side as the visual identity in a one-to-one FX Session', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    const createdAtMs = Date.UTC(2026, 7, 24, 0, 48);
+    const message = {
+      ...userMessage(sessionId, turnId),
+      id: 'user-message-with-audit-time',
+      createdAtMs,
+      completedAtMs: createdAtMs,
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [message],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+
+    render(<AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+
+    const shell = document.querySelector<HTMLElement>('[data-agent-message-id="user-message-with-audit-time"]')!;
+    expect(shell).toBeInTheDocument();
+    expect(shell.querySelector('.fx-user-meta')).not.toBeInTheDocument();
+    const auditTime = shell.querySelector('time');
+    expect(auditTime).toHaveClass('sr-only');
+    expect(auditTime).toHaveAttribute('dateTime', new Date(createdAtMs).toISOString());
+    expect(auditTime).toHaveTextContent('用户消息');
   });
 
   it('uses authoritative event sequence before message clock drift', () => {
@@ -140,6 +193,41 @@ describe('Agent chat rendering', () => {
       ['reasoning-before', 'tool-before'],
       ['reasoning-middle', 'tool-middle'],
       ['tool-after'],
+    ]);
+  });
+
+  it('keeps Tool, reasoning, and compaction disclosures in Runtime order', () => {
+    const activity = (
+      id: string,
+      kind: 'tool_finished' | 'reasoning_summary' | 'context_compaction',
+      timelineSequence: number,
+    ) => ({
+      id,
+      turnId: 'turn-1',
+      kind,
+      status: 'completed' as const,
+      summary: id,
+      payload: kind === 'tool_finished' ? { toolName: id } : {},
+      createdAtMs: timelineSequence * 10,
+      updatedAtMs: timelineSequence * 10,
+      timelineSequence,
+    });
+
+    const runs = activityDisplayRuns([
+      activity('tool-before', 'tool_finished', 1),
+      activity('reasoning', 'reasoning_summary', 2),
+      activity('compaction', 'context_compaction', 3),
+      activity('tool-after', 'tool_finished', 4),
+    ]);
+
+    expect(runs.map((run) => run.kind)).toEqual(['ordinary', 'reasoning', 'compaction', 'ordinary']);
+    expect(runs.flatMap((run) => run.kind === 'compaction'
+      ? [run.activity.id]
+      : run.activities.map((item) => item.id))).toEqual([
+      'tool-before',
+      'reasoning',
+      'compaction',
+      'tool-after',
     ]);
   });
 
@@ -217,6 +305,110 @@ describe('Agent chat rendering', () => {
     expect(entries[1]).toHaveTextContent('运行状态正常');
     expect(entries[2]).toHaveTextContent('读取完成，当前运行正常。');
     expect(entries[0]).not.toHaveTextContent('读取完成');
+  });
+
+  it('collapses settled FX work to the explicit final response and restores every layer on demand', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    const first = {
+      ...assistantMessage(sessionId, turnId, '我先读取运行状态。', 10),
+      id: 'turn-1:assistant:step',
+      blocks: [{
+        ...assistantMessage(sessionId, turnId, '', 10).blocks[0]!,
+        id: 'turn-1:assistant:step:text',
+        data: { text: '我先读取运行状态。' },
+      }],
+    };
+    const final = {
+      ...assistantMessage(sessionId, turnId, '读取完成，当前运行正常。', 50),
+      id: 'turn-1:assistant:final',
+      blocks: [{
+        ...assistantMessage(sessionId, turnId, '', 50).blocks[0]!,
+        id: 'turn-1:assistant:final:text',
+        data: { text: '读取完成，当前运行正常。' },
+      }],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'message_completed', { message: first }),
+      agentEventFixture(2, 'tool_finished', {
+        toolCallId: 'call-settled-overview',
+        toolName: 'overview',
+        result: { details: { ok: true, operation: 'status', result: { summary: '运行状态正常' } } },
+      }),
+      agentEventFixture(3, 'message_completed', { message: final }),
+      agentEventFixture(4, 'turn_completed', { status: 'completed' }),
+    ]);
+
+    const view = render(
+      <AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    const toggle = screen.getByRole('button', { name: /展开 2 个步骤/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveTextContent('2 个步骤');
+    expect(toggle).toHaveTextContent('1 个工具');
+    expect(screen.getByText('读取完成，当前运行正常。')).toBeInTheDocument();
+    expect(screen.queryByText('我先读取运行状态。')).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('我先读取运行状态。')).toBeInTheDocument();
+    const tree = screen.getByRole('tree', { name: '本轮步骤' });
+    expect(within(tree).getAllByRole('treeitem')).toHaveLength(2);
+    fireEvent.keyDown(toggle, { key: ' ' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.keyDown(toggle, { key: 'Enter' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const activityToggle = document.querySelector<HTMLButtonElement>('.paw-activity')!;
+    expect(activityToggle).toBeInTheDocument();
+    fireEvent.click(activityToggle);
+    expect(activityToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(activityToggle).toHaveAttribute('aria-controls');
+    const activityDetail = document.querySelector<HTMLElement>('.paw-activity__detail')!;
+    expect(activityDetail).toHaveAttribute('role', 'region');
+    expect(activityDetail).not.toHaveAttribute('hidden');
+    expect(activityDetail.querySelector('.agent-activity-row > summary')).toHaveAttribute('hidden');
+    expect(activityDetail).toHaveTextContent('运行状态正常');
+    fireEvent.keyDown(activityToggle, { key: ' ' });
+    expect(activityToggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.keyDown(activityToggle, { key: 'Enter' });
+    expect(activityToggle).toHaveAttribute('aria-expanded', 'true');
+
+    view.unmount();
+    render(<AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+    expect(screen.getByRole('button', { name: /收起 2 个步骤/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('我先读取运行状态。')).toBeInTheDocument();
+    expect(document.querySelector('.paw-activity')).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelector('.paw-activity__detail')).not.toHaveAttribute('hidden');
+  });
+
+  it('keeps active FX work open and offers no misleading collapse control', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'responding',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'text_delta', { delta: '正在检查当前状态。', replaceBlock: true }),
+      agentEventFixture(2, 'tool_started', { toolCallId: 'call-running', toolName: 'overview' }),
+    ]);
+
+    render(<AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+
+    expect(screen.queryByRole('button', { name: /个步骤/ })).not.toBeInTheDocument();
+    expect(screen.getByText('正在检查当前状态。')).toBeInTheDocument();
+    expect(document.querySelector('.paw-activity-stack')).toBeInTheDocument();
   });
 
   it('aggregates Provider usage once after the whole Tool Loop settles', () => {
@@ -421,6 +613,8 @@ describe('Agent chat rendering', () => {
     expect(within(table).getByText('GFM 表格')).toBeInTheDocument();
     expect(screen.getByText('ControlTransport').tagName).toBe('CODE');
     expect(container.querySelector('pre[data-language="ts"]')).toHaveTextContent('const ready = true;');
+    expect(container.querySelector('pre[data-language="ts"]')).toHaveAttribute('role', 'region');
+    expect(container.querySelector('pre[data-language="ts"]')).toHaveAttribute('tabindex', '0');
     expect(container.querySelector('pre[data-language="text"]')).toHaveTextContent('plain fenced block');
     const jsonl = container.querySelector('pre[data-language="jsonl"]');
     expect(jsonl).toHaveTextContent('{"type":"message","id":"entry-1"}');
@@ -456,6 +650,15 @@ describe('Agent chat rendering', () => {
     expect(container.querySelector('tr[data-kind="remove"]')).toHaveTextContent('const state = "queued";');
     expect(container.querySelector('tr[data-kind="add"]')).toHaveTextContent('const state = "running";');
 
+    const filesScroll = container.querySelector('.agent-diff-preview__files');
+    expect(filesScroll).toHaveAttribute('role', 'region');
+    expect(filesScroll).toHaveAttribute('aria-label', 'Diff 文件列表');
+    expect(filesScroll).toHaveAttribute('tabindex', '0');
+    const fileScroll = container.querySelector('.agent-diff-file__scroll');
+    expect(fileScroll).toHaveAttribute('role', 'region');
+    expect(fileScroll).toHaveAttribute('aria-label', 'src/runtime.ts 变更内容');
+    expect(fileScroll).toHaveAttribute('tabindex', '0');
+
     fireEvent.click(screen.getByRole('radio', { name: /并排/ }));
     expect(container.querySelectorAll('.agent-diff-split')).toHaveLength(4);
   });
@@ -484,6 +687,30 @@ describe('Agent chat rendering', () => {
     expect(screen.getAllByText('src/state/live-store.ts')).toHaveLength(2);
     expect(container.querySelector('tr[data-kind="remove"]')).toHaveTextContent('set(next)');
     expect(container.querySelector('tr[data-kind="add"]')).toHaveTextContent('reduceBatch');
+  });
+
+  it('bounds an unparseable long diff as a keyboard-scrollable evidence region', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TooltipProvider>
+        <AgentBlock block={{
+          id: 'diff-plain-long',
+          type: 'diff',
+          status: 'completed',
+          presentationKind: 'diff.v1',
+          data: {
+            fileName: 'notes.patch',
+            diff: Array.from({ length: 900 }, (_, index) => `raw diff line ${index}`).join('\n'),
+          },
+        }} />
+      </TooltipProvider>,
+    );
+
+    await user.click(container.querySelector('.agent-inline-diff > summary')!);
+    const plain = container.querySelector('.agent-file-preview__plain');
+    expect(plain).toHaveAttribute('role', 'region');
+    expect(plain).toHaveAttribute('aria-label', 'notes.patch 变更内容');
+    expect(plain).toHaveAttribute('tabindex', '0');
   });
 
   it('keeps long Markdown structurally stable when streaming becomes completed', () => {
@@ -532,7 +759,124 @@ describe('Agent chat rendering', () => {
     expect(screen.getByRole('region', { name: 'Runtime' })).toHaveTextContent('全部收束');
   });
 
-  it('merges repeated file receipts by logical file while preserving distinct versions', () => {
+  it('makes every rich-result disclosure share the primitive pointer and ARIA contract', () => {
+    const blocks: UiAgentBlock[] = [
+      {
+        id: 'disclosure-checklist',
+        type: 'checklist',
+        status: 'completed',
+        presentationKind: 'checklist.v1',
+        data: { title: '交互清单', items: [{ id: 'one', text: '可展开', checked: true }] },
+      },
+      {
+        id: 'disclosure-table',
+        type: 'table',
+        status: 'completed',
+        presentationKind: 'table.v1',
+        data: { title: '交互表格', columns: ['项目'], rows: [['可读取']] },
+      },
+      {
+        id: 'disclosure-diff',
+        type: 'diff',
+        status: 'completed',
+        presentationKind: 'diff.v1',
+        data: { fileName: 'interaction.diff', diff: '@@ -1 +1 @@\n-old\n+new' },
+      },
+      {
+        id: 'disclosure-code',
+        type: 'code',
+        status: 'completed',
+        presentationKind: 'code.v1',
+        data: {
+          fileName: 'long-output.log',
+          language: 'text',
+          code: Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n'),
+        },
+      },
+      {
+        id: 'disclosure-unknown',
+        type: 'unknown',
+        rawType: 'future_panel',
+        status: 'completed',
+        presentationKind: 'future.v1',
+        summary: '安全保留的未来内容',
+        data: {},
+      },
+    ];
+    const { container } = render(
+      <TooltipProvider><AgentBlocks blocks={blocks} /></TooltipProvider>,
+    );
+
+    const disclosures = [
+      container.querySelector<HTMLDetailsElement>('.agent-rich-checklist')!,
+      container.querySelector<HTMLDetailsElement>('.agent-rich-table')!,
+      container.querySelector<HTMLDetailsElement>('.agent-inline-diff')!,
+      container.querySelector<HTMLDetailsElement>('.agent-code-collapse')!,
+      container.querySelector<HTMLDetailsElement>('.agent-unknown-block')!,
+    ];
+    expect(disclosures.every(Boolean)).toBe(true);
+
+    for (const details of disclosures) {
+      const summary = details.querySelector<HTMLElement>(':scope > summary')!;
+      const initialOpen = details.hasAttribute('open');
+      const controlledId = summary.getAttribute('aria-controls');
+      expect(summary).toHaveAttribute('aria-expanded', String(initialOpen));
+      expect(controlledId).toBeTruthy();
+      expect(document.getElementById(controlledId!)).toBeInTheDocument();
+
+      fireEvent.click(summary);
+      expect(summary).toHaveAttribute('aria-expanded', String(!initialOpen));
+
+      fireEvent.click(summary);
+      expect(summary).toHaveAttribute('aria-expanded', String(initialOpen));
+
+      fireEvent.click(summary);
+      expect(summary).toHaveAttribute('aria-expanded', String(!initialOpen));
+    }
+  });
+
+  it('keeps oversized structured blocks bounded while allowing every safe item to be loaded', async () => {
+    const user = userEvent.setup();
+    const blocks: UiAgentBlock[] = [
+      {
+        id: 'long-checklist', type: 'checklist', status: 'completed', presentationKind: 'checklist.v1', summary: '',
+        data: { title: '长清单', items: Array.from({ length: 25 }, (_, index) => ({ text: `清单 ${index + 1}`, checked: index < 10 })) },
+      },
+      {
+        id: 'wide-table', type: 'table', status: 'completed', presentationKind: 'table.v1', summary: '',
+        data: {
+          title: '宽表',
+          columns: Array.from({ length: 9 }, (_, index) => ({ key: `c${index + 1}`, label: `列 ${index + 1}` })),
+          rows: Array.from({ length: 25 }, (_, index) => Object.fromEntries(Array.from({ length: 9 }, (_, column) => [`c${column + 1}`, `r${index + 1}c${column + 1}`]))),
+        },
+      },
+      {
+        id: 'long-reasoning', type: 'reasoning_summary', status: 'completed', presentationKind: 'reasoning_summary.v1', summary: '',
+        data: { source: 'provider_reasoning_summary', items: Array.from({ length: 9 }, (_, index) => `工作要点 ${index + 1}`) },
+      },
+    ];
+    const { container } = render(<TooltipProvider><AgentBlocks blocks={blocks} /></TooltipProvider>);
+    const checklist = container.querySelector<HTMLElement>('.agent-rich-checklist')!;
+    const table = container.querySelector<HTMLElement>('.agent-rich-table')!;
+    const reasoning = container.querySelector<HTMLElement>('.agent-reasoning-summary')!;
+
+    expect(checklist).toHaveTextContent('显示 24/25');
+    expect(table).toHaveTextContent('显示 24/25 行 · 8/9 列');
+    expect(reasoning).toHaveTextContent('显示 8/9 项');
+    await user.click(checklist.querySelector('summary')!);
+    await user.click(table.querySelector('summary')!);
+    await user.click(reasoning.querySelector('summary')!);
+    await user.click(within(checklist).getByRole('button', { name: /加载更多/ }));
+    await user.click(within(table).getByRole('button', { name: /加载更多行/ }));
+    await user.click(within(table).getByRole('button', { name: /加载更多列/ }));
+    await user.click(within(reasoning).getByRole('button', { name: /加载更多/ }));
+    expect(checklist).toHaveTextContent('清单 25');
+    expect(table).toHaveTextContent('r25c9');
+    expect(reasoning).toHaveTextContent('工作要点 9');
+  });
+
+  it('merges repeated file receipts by logical file while preserving distinct versions', async () => {
+    const user = userEvent.setup();
     const blocks: UiAgentBlock[] = [
       fileBlock('tui-v1', 'tui.py', 'media_tui_version_0001', '1'.repeat(64)),
       fileBlock('tui-diff-v1', 'tui.py.diff', 'media_tui_diff_000001', '2'.repeat(64)),
@@ -551,6 +895,7 @@ describe('Agent chat rendering', () => {
     expect(collection).toHaveTextContent('2 个文件');
     expect(collection).toHaveTextContent('已合并 1 条重复结果');
     expect(container.querySelectorAll('.agent-file-collection__file')).toHaveLength(2);
+    for (const summary of container.querySelectorAll('.agent-file-collection__file > summary')) await user.click(summary);
     expect(container.querySelectorAll('.agent-file-collection__version')).toHaveLength(6);
     expect(container.querySelectorAll('.agent-file-collection__file > summary')[0]).toHaveTextContent('tui.py');
     expect(container.querySelectorAll('.agent-file-collection__file > summary')[1]).toHaveTextContent('test_tui.py');
@@ -605,7 +950,8 @@ describe('Agent chat rendering', () => {
     expect(document.activeElement).toBe(summary);
   });
 
-  it('keeps partial JSON as streaming text, collapses large code, and degrades unknown blocks readably', () => {
+  it('keeps partial JSON as streaming text, collapses large code, and degrades unknown blocks readably', async () => {
+    const user = userEvent.setup();
     const partial = '{"type":"card","data":{"title":"还没结束"';
     const blocks: UiAgentBlock[] = [
       { id: 'stream', type: 'text', status: 'running', presentationKind: 'markdown', data: { text: partial } },
@@ -621,6 +967,7 @@ describe('Agent chat rendering', () => {
     expect(codeDetails).not.toHaveAttribute('open');
     expect(codeDetails).toHaveTextContent('worker.log40 行');
     expect(screen.getByText(/暂不支持的内容 · timeline_chart/)).toBeInTheDocument();
+    await user.click(screen.getByText(/暂不支持的内容 · timeline_chart/));
     expect(screen.getByText('未来时间线')).toBeInTheDocument();
   });
 
@@ -855,6 +1202,125 @@ describe('Agent chat rendering', () => {
     expect(container.querySelectorAll('.agent-inline-notice[data-tone="danger"]')).toHaveLength(0);
   });
 
+  it('clears an old failure recovery surface after newer input while preserving the turn history', () => {
+    const sessionId = 'session-1';
+    const failedTurnId = 'turn-old-failure';
+    const nextTurnId = 'turn-new-input';
+    const nextUser: UiAgentMessage = {
+      ...userMessage(sessionId, nextTurnId),
+      id: 'new-input-user-message',
+      blocks: [{
+        ...userMessage(sessionId, nextTurnId).blocks[0]!,
+        id: 'new-input-user-text',
+        data: { text: '这是失败之后的新输入' },
+      }],
+      createdAtMs: 10,
+      completedAtMs: 11,
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [
+        userMessage(sessionId, failedTurnId),
+        failedAssistantMessage(sessionId, failedTurnId),
+        nextUser,
+      ],
+      liveEvents: [{
+        ...agentEventFixture(9, 'turn_failed', {
+          error: '503 upstream request failed',
+          retryExhausted: true,
+          providerRetryAttempts: 6,
+        }),
+        eventId: `${sessionId}:9`,
+        sessionId,
+        turnId: failedTurnId,
+      }],
+      lastSequence: 10,
+      resumeToken: `${sessionId}:10`,
+      status: 'idle',
+    });
+    const retryTurn = vi.fn(() => true);
+    const continueTurn = vi.fn(() => true);
+    const switchModel = vi.fn();
+
+    const { container } = render(
+      <TooltipProvider>
+        <AgentTurn
+          sessionId={sessionId}
+          turnId={failedTurnId}
+          modelSelectionAvailable
+          onApprovalDecision={() => {}}
+          onContinueTurn={continueTurn}
+          onRetryTurn={retryTurn}
+          onSwitchModel={switchModel}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(container.querySelector('.agent-turn')).toHaveAttribute('data-turn-status', 'failed');
+    expect(container.querySelectorAll('.agent-user-message')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '切换模型' })).not.toBeInTheDocument();
+
+    act(() => useAgentLiveStore.getState().applyEvents(sessionId, [{
+      ...agentEventFixture(11, 'turn_failed', {
+        error: '503 upstream request failed',
+        retryExhausted: true,
+        providerRetryAttempts: 6,
+      }),
+      eventId: `${sessionId}:11`,
+      sessionId,
+      turnId: failedTurnId,
+    }]));
+
+    expect(useAgentLiveStore.getState().projections[sessionId].turnOrder.at(-1)).toBe(nextTurnId);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '切换模型' })).not.toBeInTheDocument();
+    expect(retryTurn).not.toHaveBeenCalled();
+    expect(continueTurn).not.toHaveBeenCalled();
+    expect(switchModel).not.toHaveBeenCalled();
+  });
+
+  it('does not surface a superseded user-only snapshot turn as the current failure', () => {
+    const sessionId = 'session-steered-snapshot';
+    const interruptedTurnId = 'turn-before-steer';
+    const steeredTurnId = 'turn-after-steer';
+    const steeredUser: UiAgentMessage = {
+      ...userMessage(sessionId, steeredTurnId),
+      id: 'steered-user-message',
+      blocks: [{
+        ...userMessage(sessionId, steeredTurnId).blocks[0]!,
+        id: 'steered-user-text',
+        data: { text: '新指令已生效' },
+      }],
+      createdAtMs: 20,
+      completedAtMs: 21,
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, interruptedTurnId), steeredUser],
+      liveEvents: [],
+      lastSequence: 21,
+      resumeToken: `${sessionId}:21`,
+      status: 'responding',
+    });
+
+    const { container } = render(
+      <AgentTurn
+        sessionId={sessionId}
+        turnId={interruptedTurnId}
+        onApprovalDecision={() => {}}
+      />,
+    );
+
+    expect(useAgentLiveStore.getState().projections[sessionId].turnsById[interruptedTurnId]?.status).toBe('failed');
+    expect(container.querySelector('.agent-turn')).toHaveAttribute('data-turn-status', 'failed');
+    expect(container.querySelectorAll('.agent-user-message')).toHaveLength(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('未收到助手回复。')).not.toBeInTheDocument();
+  });
+
   it('offers a safe continuation instead of replaying tools after a network interruption', () => {
     const sessionId = 'session-network-interrupted';
     const turnId = 'turn-network-interrupted';
@@ -874,7 +1340,18 @@ describe('Agent chat rendering', () => {
     };
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
       messages: [userMessage(sessionId, turnId), failedWithResult],
-      liveEvents: [],
+      liveEvents: [{
+        ...agentEventFixture(9, 'turn_failed', {
+          error: 'WebSocket error',
+          retryExhausted: true,
+          providerRetryAttempts: 6,
+          providerRetryMaxAttempts: 6,
+          nextStep: '模型连接在自动重试后仍未恢复，请稍后继续或切换模型。',
+        }),
+        eventId: `${sessionId}:9`,
+        sessionId,
+        turnId,
+      }],
       lastSequence: 9,
       resumeToken: `${sessionId}:9`,
       status: 'faulted',
@@ -896,6 +1373,119 @@ describe('Agent chat rendering', () => {
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent('网络中断');
+    expect(screen.getByRole('alert')).toHaveTextContent('已自动重试 6 次，仍未恢复');
+    expect(screen.getByRole('alert')).toHaveTextContent('已完成的工具与文件结果已保留');
+    fireEvent.click(screen.getByRole('button', { name: '继续' }));
+    expect(continueTurn).toHaveBeenCalledWith(turnId);
+    expect(retryTurn).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+  });
+
+  it('offers one safe continuation after a Runtime host restart instead of replaying the failed turn', () => {
+    const sessionId = 'session-runtime-restarted';
+    const turnId = 'turn-runtime-restarted';
+    const failedAfterRestart: UiAgentMessage = {
+      ...failedAssistantMessage(sessionId, turnId),
+      id: 'runtime-restarted-assistant',
+      blocks: [{
+        id: 'runtime-restarted-error',
+        type: 'error',
+        status: 'failed',
+        presentationKind: 'error',
+        data: { message: 'Agent 运行时中断，任务已暂停等待恢复' },
+      }],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId), failedAfterRestart],
+      liveEvents: [{
+        ...agentEventFixture(12, 'turn_failed', {
+          error: 'Agent 运行时中断，任务已暂停等待恢复',
+          failureKind: 'runtime_host_exit',
+          nextStep: '重新打开当前 Session 后继续。',
+        }),
+        eventId: `${sessionId}:12`,
+        sessionId,
+        turnId,
+      }],
+      lastSequence: 12,
+      resumeToken: `${sessionId}:12`,
+      status: 'faulted',
+    });
+    const continueTurn = vi.fn(() => true);
+    const retryTurn = vi.fn(() => true);
+
+    render(
+      <TooltipProvider>
+        <AgentTurn
+          sessionId={sessionId}
+          turnId={turnId}
+          onApprovalDecision={() => {}}
+          onContinueTurn={continueTurn}
+          onRetryTurn={retryTurn}
+          onSwitchModel={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('运行时中断');
+    fireEvent.click(screen.getByRole('button', { name: '继续' }));
+    expect(continueTurn).toHaveBeenCalledWith(turnId);
+    expect(retryTurn).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+  });
+
+  it('reports exhausted provider retries before offering a safe continuation', () => {
+    const sessionId = 'session-provider-retry-exhausted';
+    const turnId = 'turn-provider-retry-exhausted';
+    const failedWithResult: UiAgentMessage = {
+      ...failedAssistantMessage(sessionId, turnId),
+      id: 'provider-retry-exhausted-assistant',
+      blocks: [
+        {
+          id: 'provider-retry-exhausted-error',
+          type: 'error',
+          status: 'failed',
+          presentationKind: 'error',
+          data: { message: '503 upstream request failed' },
+        },
+        fileBlock('provider-retry-result', 'result.md', 'media_provider_retry_01', '8'.repeat(64)),
+      ],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId), failedWithResult],
+      liveEvents: [{
+        ...agentEventFixture(10, 'turn_failed', {
+          error: '503 upstream request failed',
+          retryExhausted: true,
+          providerRetryAttempts: 6,
+          providerRetryMaxAttempts: 6,
+        }),
+        eventId: `${sessionId}:10`,
+        sessionId,
+        turnId,
+      }],
+      lastSequence: 10,
+      resumeToken: `${sessionId}:10`,
+      status: 'faulted',
+    });
+    const continueTurn = vi.fn(() => true);
+    const retryTurn = vi.fn(() => true);
+
+    render(
+      <TooltipProvider>
+        <AgentTurn
+          sessionId={sessionId}
+          turnId={turnId}
+          onApprovalDecision={() => {}}
+          onContinueTurn={continueTurn}
+          onRetryTurn={retryTurn}
+          onSwitchModel={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('模型服务请求失败');
+    expect(screen.getByRole('alert')).toHaveTextContent('已自动重试 6 次，仍未恢复');
     expect(screen.getByRole('alert')).toHaveTextContent('已完成的工具与文件结果已保留');
     fireEvent.click(screen.getByRole('button', { name: '继续' }));
     expect(continueTurn).toHaveBeenCalledWith(turnId);

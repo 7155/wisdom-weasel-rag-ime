@@ -16,6 +16,7 @@ import {
 } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Skeleton } from '@/components/primitives';
+import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import './management.css';
 
 export type JsonRecord = Record<string, unknown>;
@@ -32,7 +33,6 @@ export function ManagementPage({
   actions,
   children,
   description,
-  embedded = false,
   eyebrow,
   layout = 'sheet',
   routeId,
@@ -41,32 +41,37 @@ export function ManagementPage({
   actions?: ReactNode;
   children: ReactNode;
   description: string;
-  embedded?: boolean;
   eyebrow?: string;
   layout?: 'sheet' | 'workbench';
   routeId: string;
   title: string;
 }) {
-  const headingId = useId();
-  const Root = embedded ? 'section' : 'main';
-  const Heading = embedded ? 'h2' : 'h1';
+  const appSurface = usePawOsAppSurface();
   return (
-    <Root
-      aria-labelledby={embedded ? headingId : undefined}
-      className={`mgmt-page${embedded ? ' mgmt-page--embedded' : ''}`}
+    <main
+      className="mgmt-page"
       data-layout={layout}
+      data-paw-os-app={appSurface?.appId}
+      data-paw-os-compact={appSurface?.compact || undefined}
       data-route-id={routeId}
     >
-      <header className="mgmt-page__header">
-        <div className="mgmt-page__heading">
-          {eyebrow ? <span className="mgmt-page__eyebrow">{eyebrow}</span> : null}
-          <Heading id={headingId}>{title}</Heading>
-          <p>{description}</p>
-        </div>
-        {actions ? <div className="mgmt-page__actions">{actions}</div> : null}
-      </header>
+      {appSurface ? (
+        <>
+          <h1 className="mgmt-sr-only">{title}</h1>
+          {actions ? <div aria-label={`${title}页面操作`} className="mgmt-page__native-actions" role="toolbar">{actions}</div> : null}
+        </>
+      ) : (
+        <header className="mgmt-page__header">
+          <div className="mgmt-page__heading">
+            {eyebrow ? <span className="mgmt-page__eyebrow">{eyebrow}</span> : null}
+            <h1>{title}</h1>
+            <p>{description}</p>
+          </div>
+          {actions ? <div className="mgmt-page__actions">{actions}</div> : null}
+        </header>
+      )}
       <div className="mgmt-page__body">{children}</div>
-    </Root>
+    </main>
   );
 }
 

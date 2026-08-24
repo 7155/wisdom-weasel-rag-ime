@@ -426,6 +426,21 @@
   box-shadow: var(--shadow-menu);
 }
 
+.project-field__search-summary {
+  display: block;
+  padding: 5px 9px 7px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.project-field__search-list {
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .project-field__search-results button {
   display: flex;
   width: 100%;

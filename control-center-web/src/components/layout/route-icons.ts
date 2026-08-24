@@ -13,12 +13,11 @@ import {
   MessagesSquare,
   Mic2,
   MonitorDot,
+  Puzzle,
   Radar,
   ShieldQuestion,
   ShieldCheck,
   Settings,
-  UsersRound,
-  Cpu,
   type LucideIcon,
 } from 'lucide-react';
 import type { RouteId } from '@/app/route-registry';
@@ -29,7 +28,7 @@ export const routeIcons: Record<RouteId, LucideIcon> = {
   input: Keyboard,
   agent: Bot,
   rooms: MessagesSquare,
-  roles: Cpu,
+  plugins: Puzzle,
   approvals: ShieldQuestion,
   browser: MonitorDot,
   voice: Mic2,

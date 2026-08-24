@@ -46,7 +46,7 @@ export type RoomCollaborationRoleValue =
   | undefined;
 
 export function roomCollaborationRoleLabel(role: RoomCollaborationRoleValue): string {
-  if (role === 'coordinator') return '主持整合与回复';
+  if (role === 'coordinator') return '最终汇合与回复';
   if (role === 'researcher') return '调研与证据';
   if (role === 'reviewer') return '最终独立复核';
   if (role === 'specialist') return '专项伙伴（尚未设置）';
@@ -55,7 +55,7 @@ export function roomCollaborationRoleLabel(role: RoomCollaborationRoleValue): st
 }
 
 export function roomCollaborationRoleDescription(role: RoomCollaborationRoleValue): string {
-  if (role === 'coordinator') return '拆分和分派工作，整合伙伴结果，并给出唯一最终回复';
+  if (role === 'coordinator') return '只负责最终 Root 汇合与回复，不是伙伴之间的消息中继';
   if (role === 'researcher') return '查清事实和来源，提交证据与不确定性，不替代实现';
   if (role === 'reviewer') return '只在整合完成后独立检查完整结果，不参与原实现';
   if (role === 'specialist') return '尚未设置具体领域，不会冒充专家';

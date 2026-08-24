@@ -82,6 +82,10 @@ describe('ContextDebugFeature', () => {
     expect(document.activeElement).toHaveAttribute('id', 'context-call-1-message-1');
 
     await user.click(within(callOne).getByText('请求详情'));
+    const requestDetails = within(callOne).getByText('请求详情').closest('details');
+    const requestReveal = requestDetails?.querySelector('.context-debug-reader__reveal');
+    expect(requestDetails).toHaveAttribute('open');
+    expect(requestReveal).toHaveAttribute('aria-hidden', 'false');
     await user.click(within(callOne).getByText('系统指令'));
     expect(screen.getByText('调用一的真实系统提示词')).toBeInTheDocument();
     expect(screen.queryByText('回合级旧系统提示词')).not.toBeInTheDocument();
@@ -90,6 +94,14 @@ describe('ContextDebugFeature', () => {
     expect(screen.queryByText(/回合级旧工具/)).not.toBeInTheDocument();
     await user.click(within(callOne).getByText('模型服务交互'));
     expect(screen.getByText(/"model": "gpt-test"/)).toBeInTheDocument();
+    await user.click(within(callOne).getByText('请求详情'));
+    expect(within(callOne).getByText('请求详情').closest('summary')).toHaveAttribute('aria-expanded', 'false');
+    expect(requestDetails).toHaveAttribute('open');
+    expect(requestReveal).toBeInTheDocument();
+    expect(requestReveal).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('调用一的真实系统提示词')).toBeInTheDocument();
+    await waitFor(() => expect(requestDetails).not.toHaveAttribute('open'));
+    expect(screen.queryByText('调用一的真实系统提示词')).not.toBeInTheDocument();
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'agent.session.debugContext.get'
       && call.request.params?.sessionId === 'session-a'
@@ -236,6 +248,7 @@ describe('ContextDebugFeature', () => {
   });
 
   it('presents memory context as a user-facing reference while keeping the raw payload in details', async () => {
+    const user = userEvent.setup();
     const payload = debugContextResponse();
     const rawMemoryContext = '<rag-ime-context type="memory_recall">已召回：用户偏好真实运行时验证。</rag-ime-context>';
     const rawWorkState = '<work-state>当前任务：核对 Provider 上下文顺序。</work-state>';
@@ -276,11 +289,17 @@ describe('ContextDebugFeature', () => {
     expect(screen.getByText('对话上下文')).toBeVisible();
     const memoryMessages = [...container.querySelectorAll('[data-custom="rag-ime-memory-recall"]')];
     expect(memoryMessages).toHaveLength(2);
-    memoryMessages.forEach((memoryMessage) => {
+    for (const memoryMessage of memoryMessages) {
       expect(memoryMessage.querySelector('.context-debug-session-message__body')).not.toHaveTextContent('<rag-ime-context');
       expect(memoryMessage.querySelector('.context-debug-session-message__body')).not.toHaveTextContent('已召回');
       expect(memoryMessage.querySelector('details')).not.toHaveAttribute('open');
-    });
+      expect(memoryMessage.querySelector('pre')).not.toBeInTheDocument();
+      await user.click(within(memoryMessage as HTMLElement).getByText('原始消息'));
+      expect(memoryMessage.querySelector('details')).toHaveAttribute('open');
+    }
+    for (const customMessage of container.querySelectorAll('[data-custom]:not([data-custom="rag-ime-memory-recall"])')) {
+      await user.click(within(customMessage as HTMLElement).getByText('原始消息'));
+    }
     expect(memoryMessages[0]?.querySelector('pre')).toHaveTextContent('rag-ime-context');
     expect(container.querySelector('[data-custom="rag-ime-work-state"] pre')).toHaveTextContent('work-state');
     expect(container.querySelector('[data-custom="rag-ime-lifecycle"] pre')).toHaveTextContent('lifecycle-hook');

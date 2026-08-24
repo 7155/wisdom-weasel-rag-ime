@@ -24,14 +24,16 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { forwardRef, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { forwardRef, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
+  Disclosure,
   IconButton,
 } from '@/components/primitives';
 import type { AgentActivityProjection, AgentProjectionState, AgentTodoProjection, AgentTurnStatus } from '@/contracts/agent-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
+import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 import type {
   CapabilityCatalog,
@@ -76,6 +78,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   sessionId: string;
   session?: SessionSummary;
   open: boolean;
+  minimal?: boolean;
   modal?: boolean;
   onClose: () => void;
   commands: AgentCommand[];
@@ -89,10 +92,12 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   onCapabilityPreferenceChange: (canonicalId: string, preference: CapabilityPreference) => void;
   onCapabilityPolicyRetry: () => void;
   onCapabilityCatalogRetry: () => void;
+  onOpenBackgroundJob?: (job: AgentBackgroundJobV1) => void;
 }>(function AgentStatusPanel({
   sessionId,
   session,
   open,
+  minimal = false,
   modal = false,
   onClose,
   tools,
@@ -105,6 +110,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   onCapabilityPreferenceChange,
   onCapabilityPolicyRetry,
   onCapabilityCatalogRetry,
+  onOpenBackgroundJob,
 }, ref) {
   const transport = useControlTransport();
   const contentReady = useDeferredStatusContent(open);
@@ -158,6 +164,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
       aria-hidden={!open}
       aria-label="当前对话任务中心"
       aria-modal={modal || undefined}
+      data-minimal={minimal || undefined}
       inert={open ? undefined : true}
       role={modal ? 'dialog' : undefined}
       tabIndex={-1}
@@ -172,6 +179,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           fallbackTodo={projection?.todo}
           fallbackGoal={projection?.goal}
           fallbackActGate={projection?.actGate}
+          compactEmpty={minimal}
           onWorkflowResolved={setResolvedWorkflow}
         />
         {lifecycleCancellationAudits.length ? (
@@ -180,10 +188,13 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           </StatusSection>
         ) : null}
         {view.turn ? (
-          <div className="agent-status-turn agent-todo-turn-summary" data-state={view.turn.status}>
-            <TurnStateIcon status={view.turn.status} />
-            <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
-          </div>
+          <>
+            <div className="agent-status-turn agent-todo-turn-summary" data-state={view.turn.status}>
+              <TurnStateIcon status={view.turn.status} />
+              <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
+            </div>
+            {view.tasks.length ? <CurrentTurnTaskPlan tasks={view.tasks} /> : null}
+          </>
         ) : !projection ? (
           <StatusSection icon={ListChecks} title="执行进度" count={view.tasks.length}>
             <EmptyLine>还没有可展示的回合状态</EmptyLine>
@@ -191,7 +202,11 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
         ) : null}
 
         <StatusSection icon={SquareTerminal} title="后台任务" count={backgroundJobs.length}>
-          <AgentBackgroundJobsView sessionId={sessionId} jobs={backgroundJobs} />
+          <AgentBackgroundJobsView
+            sessionId={sessionId}
+            jobs={backgroundJobs}
+            onOpenJob={onOpenBackgroundJob}
+          />
         </StatusSection>
 
         <StatusSection icon={MessagesSquare} title="消息队列" count={(projection?.messageQueue.steering.length ?? 0) + (projection?.messageQueue.followUp.length ?? 0)}>
@@ -405,7 +420,7 @@ function SessionTelemetryView({ projection }: { projection?: AgentProjectionStat
           <b>{percent === null ? '—' : `${Math.round(percent)}%`}</b>
         </div>
         <div className="agent-session-telemetry__track" aria-hidden="true">
-          <span style={{ width: `${percent ?? 0}%` }} />
+          <span style={{ '--agent-context-progress': (percent ?? 0) / 100 } as CSSProperties} />
           {context.contextWindow > 0 ? <i style={{ left: `${Math.min(100, (context.compactAtTokens / context.contextWindow) * 100)}%` }} /> : null}
         </div>
         <p>
@@ -588,7 +603,7 @@ function StatusSection({
   const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
   return (
-    <section className="agent-status-section" data-open={open}>
+    <section className="agent-status-section" data-open={open} data-status-title={title}>
       <header>
         <button aria-controls={contentId} aria-expanded={open} onClick={() => setOpen((value) => !value)} type="button">
           <Icon size={15} />
@@ -604,8 +619,58 @@ function StatusSection({
   );
 }
 
+const TASK_PLAN_PAGE_SIZE = 6;
+
+/**
+ * A turn can carry a long structured plan. Keep the initial panel scannable,
+ * while retaining every public task behind an explicit, reversible disclosure.
+ */
+export function CurrentTurnTaskPlan({
+  tasks,
+}: {
+  tasks: StatusPanelProjection['tasks'];
+}) {
+  const [visibleCount, setVisibleCount] = useState(TASK_PLAN_PAGE_SIZE);
+  const visibleTasks = tasks.slice(0, visibleCount);
+  const remaining = Math.max(0, tasks.length - visibleTasks.length);
+  return (
+    <Disclosure
+      className="agent-status-task-plan"
+      contentClassName="agent-status-task-plan__content"
+      defaultOpen
+      summary={<>
+        <span className="agent-status-task-plan__icon"><ListChecks size={14} /></span>
+        <span><strong>本轮计划</strong><small>当前 {visibleTasks.length} / 共 {tasks.length} 项</small></span>
+        <ChevronRight aria-hidden="true" size={14} />
+      </>}
+    >
+      <ol aria-label="本轮计划步骤" data-bounded-scroll={tasks.length > TASK_PLAN_PAGE_SIZE || undefined}>
+        {visibleTasks.map((task, index) => (
+          <li key={task.id} data-state={task.status}>
+            <TaskStateIcon status={task.status} />
+            <span><b>{index + 1}</b>{task.label}</span>
+          </li>
+        ))}
+      </ol>
+      {remaining ? (
+        <Button
+          aria-label={`显示更多计划步骤：${remaining} 项`}
+          className="agent-status-task-plan__load-more"
+          onClick={() => setVisibleCount(tasks.length)}
+          size="small"
+          variant="quiet"
+        >
+          显示更多 {Math.min(TASK_PLAN_PAGE_SIZE, remaining)} 项
+        </Button>
+      ) : null}
+    </Disclosure>
+  );
+}
+
 function ToolStep({ activity }: { activity: AgentActivityProjection }) {
   const view = publicToolResultView(activity);
+  const [visibleFieldCount, setVisibleFieldCount] = useState(5);
+  const visibleFields = view.fields.slice(0, visibleFieldCount);
   const argumentFieldCount = Object.keys(record(activity.payload.args)).length;
   const knowledge = view.toolLabel === '文档知识库';
   const stateIcon = activity.status === 'running'
@@ -618,18 +683,18 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
           ? <Search size={14} />
           : <Wrench size={14} />;
   return (
-    <details className="agent-status-tool" data-state={activity.status}>
-      <summary>
+    <Disclosure className="agent-status-tool" data-state={activity.status} contentClassName="agent-status-tool__details" summary={<>
         <span className="agent-status-tool__icon">{stateIcon}</span>
         <span><strong>{knowledge ? '知识库' : view.toolLabel}</strong><small>{view.summary}</small></span>
         <i>{view.sources.length ? `来源 ${view.sources.length} · ` : ''}{activityStatusLabel(activity.status)}</i>
         <ChevronRight size={14} />
-      </summary>
+      </>}>
       <div>
         <p className="agent-status-tool__interface"><span>接口</span><code>{view.toolId || 'unknown'}</code></p>
         {view.operation ? <p><span>操作</span><code>{view.operation}</code></p> : null}
         <p><span>参数</span><strong>{argumentFieldCount} 个字段</strong></p>
-        {view.fields.slice(0, 5).map((field) => <p key={field.id}><span>{field.label}</span><strong>{field.value}</strong></p>)}
+        {visibleFields.map((field) => <p key={field.id}><span>{field.label}</span><strong>{field.value}</strong></p>)}
+        {visibleFields.length < view.fields.length ? <Button className="agent-status-tool__load-more" onClick={() => setVisibleFieldCount((count) => Math.min(view.fields.length, count + 5))} size="small" variant="quiet">显示更多字段（{visibleFields.length}/{view.fields.length}）</Button> : null}
         {view.sources.length ? (
           <section className="agent-status-tool__sources">
             <strong><BookOpenText size={13} />信息来源</strong>
@@ -644,7 +709,7 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
           </a>
         ) : null}
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
@@ -694,20 +759,19 @@ function isDelegationContractCorrection(activity: AgentActivityProjection): bool
 function ToolAttemptGroup({ activities }: { activities: AgentActivityProjection[] }) {
   const latest = publicToolResultView(activities.at(-1)!);
   return (
-    <details className="agent-status-tool-attempts">
-      <summary>
+    <Disclosure className="agent-status-tool-attempts" contentClassName="agent-status-tool-attempts__details" summary={<>
         <span className="agent-status-tool__icon"><TriangleAlert size={14} /></span>
         <span><strong>多人协作 · 参数修正</strong><small>{activities.length} 次无效调用已折叠 · {latest.summary}</small></span>
         <i>{activities.length} 次</i>
         <ChevronRight size={14} />
-      </summary>
+      </>}>
       <div>
         <p>这些回执属于同一次委派的参数纠错，不代表 {activities.length} 个子任务失败。原始回执仍保留在下方。</p>
         {activities.map((activity, index) => (
           <ToolStep key={activity.id} activity={activity} />
         ))}
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
@@ -855,7 +919,7 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
     for (const block of message.blocks) {
       if (block.type === 'task_plan') {
         const items = Array.isArray(block.data.items) ? block.data.items : Array.isArray(block.data.tasks) ? block.data.tasks : [];
-        items.slice(0, 12).forEach((item, index) => {
+        items.forEach((item, index) => {
           const value = record(item);
           tasks.push({
             id: `${block.id}:${index}`,

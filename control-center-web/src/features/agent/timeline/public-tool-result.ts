@@ -385,16 +385,20 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   const resultKind = publicToolResultKind(toolId, Boolean(preview));
   const resultItems = publicToolResultItems(resultKind, layers, codeResult.output?.text ?? '');
   const rawResult = inspectableRawResult(payload);
+  const subagentResult = toolId === 'subagent'
+    ? publicSubagentResult(layers)
+    : undefined;
   const error = !expectedNoop && (activity.status === 'failed' || payload.isError === true)
     ? publicToolError(layers, carrier)
     : '';
   const recovery = error ? publicToolRecovery(error, payload) : undefined;
+  const output = subagentResult?.output ?? codeResult.output;
 
   return {
     toolId,
     toolLabel,
     operation,
-    summary: summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
+    summary: subagentResult?.summary || summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
     resultKind,
     ...(codeResult.file ? { target: codeResult.file } : {}),
     ...(codeResult.additions !== undefined || codeResult.deletions !== undefined ? {
@@ -405,7 +409,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     } : {}),
     fields,
     request: codeResult.request,
-    ...(codeResult.output ? { output: codeResult.output } : {}),
+    ...(output ? { output } : {}),
     resultItems,
     ...(rawResult ? { rawResult } : {}),
     ...(resultKind === 'code' && codeResult.file ? { language: publicCodeLanguage(codeResult.file) } : {}),
@@ -415,6 +419,63 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     ...(recovery ? { recovery } : {}),
     ...(toolDestinations[toolId] ? { destination: toolDestinations[toolId] } : {}),
   };
+}
+
+interface PublicSubagentResult {
+  summary: string;
+  output?: {
+    text: string;
+    truncated: boolean;
+  };
+}
+
+function publicSubagentResult(layers: Record<string, unknown>[]): PublicSubagentResult | undefined {
+  const results = firstArray(layers, ['results']);
+  if (results.length === 0) return undefined;
+
+  const projected = results.slice(0, 8).map((value, index) => {
+    const item = record(value);
+    const status = publicSubagentStatus(text(item.status));
+    const rawOutput = text(item.output).trim();
+    const rawError = text(item.errorMessage ?? item.error ?? item.stderr).trim();
+    const usableOutput = rawOutput && !/^\(no output\)$/iu.test(rawOutput)
+      ? rawOutput
+      : rawError;
+    const body = publicToolOutputText(usableOutput)
+      || (status === '失败' ? '子进程失败，但没有返回错误明细。' : '子进程未返回内容。');
+    return {
+      index,
+      status,
+      body,
+      hasReturnedContent: Boolean(usableOutput),
+      sourceLength: usableOutput.length,
+      sourceTruncated: publicToolOutputWasTruncated(usableOutput),
+    };
+  });
+  const latest = [...projected].reverse().find((item) => item.hasReturnedContent) ?? projected.at(-1)!;
+  const outputText = publicToolOutputText(projected
+    .map((item) => `子 Agent ${item.index + 1} · ${item.status}\n${item.body}`)
+    .join('\n\n---\n\n'));
+  const output = outputText
+    ? {
+        text: outputText,
+        truncated: projected.some((item) => item.sourceTruncated)
+          || publicToolOutputWasTruncated(projected.map((item) => item.body).join('\n\n')),
+      }
+    : undefined;
+  return {
+    summary: latest.body.replace(/\s+/gu, ' ').trim().slice(0, 240),
+    ...(output ? { output } : {}),
+  };
+}
+
+function publicSubagentStatus(value: string): string {
+  return ({
+    completed: '已完成',
+    failed: '失败',
+    aborted: '已停止',
+    timeout: '超时',
+  } as Record<string, string>)[value.toLowerCase()] ?? '已返回';
 }
 
 function inspectableRawResult(

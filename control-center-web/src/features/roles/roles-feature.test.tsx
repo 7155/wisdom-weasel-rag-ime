@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
@@ -9,59 +10,106 @@ import { StubControlTransport } from '@/test/stub-control-transport';
 import { previewPersonas, previewTemplates } from '@/features/agent/preview-data';
 import { RolesFeature } from './index';
 
-vi.mock('@/features/plugins', () => ({
-  PluginsFeature: ({ embedded = false }: { embedded?: boolean }) => (
-    <section data-embedded={embedded || undefined} data-testid="plugin-management-surface">
-      <h2>插件与工具</h2>
-      <p>安装、启停、权限、更新与回退</p>
-    </section>
-  ),
-}));
-
 describe('Roles experience', () => {
   afterEach(cleanup);
-  it('places model routing and full plugin management on the same settings page', async () => {
+  it('makes model routing primary while keeping companion identity as migration compatibility', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.role.models': modelCatalog(),
-      'agent.configuration.get': modelRoutingConfiguration(),
-      'agent.tools.list': { ok: true, items: [{ id: 'read' }, { id: 'run' }] },
-      'agent.extensions.list': { ok: true, items: [{ id: 'github' }] },
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'gpt',
+          displayName: 'GPT',
+          models: [{ provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 }],
+        }],
+      },
+      'agent.configuration.get': modelRoutingConfiguration(1),
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
-
-    expect(await screen.findByRole('heading', { name: '模型与插件' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '按职责选择模型' })).toBeInTheDocument();
-    expect(screen.getByLabelText('普通对话默认模型')).toHaveTextContent('GPT-5.6 Sol');
-    expect(screen.getByLabelText('Room Partner默认模型')).toHaveTextContent('GPT-5.6 Terra');
-    expect(screen.getByLabelText('Tool Agent默认模型')).toHaveTextContent('GPT-5.6 Luna');
-    expect(screen.getByRole('heading', { name: '插件与工具', level: 2 })).toBeInTheDocument();
-    expect(screen.getByTestId('plugin-management-surface')).toHaveAttribute('data-embedded', 'true');
-    expect(screen.getByText('安装、启停、权限、更新与回退')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '兼容伙伴身份' })).toBeInTheDocument();
-    expect(screen.getByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
-    await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining([
-      'agent.roles.list',
-      'agent.role.models',
-      'agent.configuration.get',
-    ])));
+    expect(await screen.findByRole('heading', { name: '模型与扩展', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '按职责选择默认模型', level: 2 })).toBeInTheDocument();
+    expect(screen.getByText('默认主 Agent')).toBeInTheDocument();
+    expect(screen.getByText('Tool Agent')).toBeInTheDocument();
+    expect(screen.getByText('调研与复核 Agent')).toBeInTheDocument();
+    expect(screen.getByText('Room 协调 Agent')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '插件管理' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '兼容伙伴资料', level: 2 })).toBeInTheDocument();
+    expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
+    expect(screen.getByText('适合交给她')).toBeInTheDocument();
+    expect(screen.getByText('不建议交给她')).toBeInTheDocument();
+    expect(screen.getByText('多伙伴主持和独立验收')).toBeInTheDocument();
+    expect(screen.queryByText('多 Agent 主持和独立验收')).not.toBeInTheDocument();
+    expect(screen.getAllByText('内置伙伴').length).toBeGreaterThan(0);
+    expect(screen.getByText('默认')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制为我的伙伴' })).toBeInTheDocument();
+    expect(screen.queryByText('control-center-safe-v1')).not.toBeInTheDocument();
+    expect(screen.queryByText('control-center-v1')).not.toBeInTheDocument();
+    expect(screen.queryByText('任务助手')).not.toBeInTheDocument();
+    expect(screen.queryByText('Room 岗位')).not.toBeInTheDocument();
+    expect(screen.queryByText('协作规则')).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByText('新对话设置'));
+    expect((await screen.findAllByText('GPT-5.6 Sol · GPT')).length).toBeGreaterThan(0);
+    await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining(['agent.roles.list', 'agent.role.models', 'agent.configuration.get'])));
     expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(false);
   });
 
-  it('keeps identity separate from model routing and per-run Room jobs', async () => {
+  it('saves a Tool Agent model route without changing the companion default', async () => {
+    const user = userEvent.setup();
+    const initial = modelRoutingConfiguration(11);
+    const updated = modelRoutingConfiguration(12, {
+      modelProfile: 'openai-codex/gpt-5.6-terra',
+      thinkingLevel: 'high',
+    });
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.role.models': modelCatalog(),
-      'agent.configuration.get': modelRoutingConfiguration(),
-      'agent.tools.list': { ok: true, items: [] },
-      'agent.extensions.list': { ok: true, items: [] },
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'openai-codex',
+          displayName: 'OpenAI Codex',
+          models: [
+            { provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'medium'], supportsImages: true, contextWindow: 128000, maxTokens: 32000 },
+            { provider: 'openai-codex', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'medium', 'high'], supportsImages: true, contextWindow: 128000, maxTokens: 32000 },
+          ],
+        }],
+      },
+      'agent.configuration.get': initial,
+      'agent.configuration.update': updated,
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByText(/这里只保留称呼、表达方式和长期成长/)).toBeInTheDocument();
-    expect(screen.getByText('身份与运行边界')).toBeInTheDocument();
-    expect(screen.getByText(/普通对话、Room Partner 与 Tool Agent 分别继承页面上方的运行路由/)).toBeInTheDocument();
-    expect(screen.getByText(/查资料、动手实现或独立验收等职责由每次 Room 的 WorkItem 决定/)).toBeInTheDocument();
+    await screen.findByText('配置 #11');
+    await user.click(screen.getByLabelText('Tool Agent默认模型'));
+    await user.click(await screen.findByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' }));
+    await user.click(screen.getByLabelText('Tool Agent默认推理强度'));
+    await user.click(await screen.findByRole('option', { name: '高' }));
+    await user.click(screen.getByRole('button', { name: '保存Tool Agent模型分工' }));
+
+    await waitFor(() => expect(transport.requests.find((call) => call.request.pathId === 'agent.configuration.update')?.request.body).toEqual({
+      expectedRevision: 11,
+      changes: {
+        'modelRouting.toolAgent': {
+          modelProfile: 'openai-codex/gpt-5.6-terra',
+          thinkingLevel: 'high',
+        },
+      },
+      updatedBy: 'models-ui',
+    }));
+    expect(await screen.findByText('配置 #12')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Tool Agent的默认模型已保存');
+  });
+
+  it('makes Room membership a capability while keeping task jobs dynamic', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: previewPersonas },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    expect(await screen.findByText('Room 协调 Agent')).toBeInTheDocument();
+    expect(screen.getByText(/主持多人协作、分派工作并组织验收/)).toBeInTheDocument();
+    expect(screen.queryByText('协作配置')).not.toBeInTheDocument();
+    expect(screen.queryByText('协作主持')).not.toBeInTheDocument();
+    expect(await screen.findByText('内置伙伴 · 复制后可以调整')).toBeInTheDocument();
   });
 
   it('takes the user to settings when no reasoning model is available', async () => {
@@ -69,15 +117,68 @@ describe('Roles experience', () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.role.models': { ok: true, providers: [] },
-      'agent.configuration.get': modelRoutingConfiguration(),
-      'agent.tools.list': { ok: true, items: [] },
-      'agent.extensions.list': { ok: true, items: [] },
     } });
     render(<MemoryRouter initialEntries={['/roles']}><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /><LocationProbe /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByText('还没有可选模型')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '连接模型' }));
+    await user.click(await screen.findByText('新对话设置'));
+    expect(await screen.findByText('当前没有可用的推理模型。请先完成模型配置，再回来设置新对话默认值。')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '打开设置' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/configuration');
+  });
+
+  it('keeps new-conversation settings mounted while its disclosure closes', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.role.models': { ok: true, providers: [] },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    const summary = (await screen.findByText('新对话设置')).closest('summary');
+    if (!summary) throw new Error('新对话设置 disclosure 缺少 summary');
+    const details = summary.closest('details');
+    if (!details) throw new Error('新对话设置 disclosure 缺少 details');
+    await user.click(summary);
+    const emptyMessage = await screen.findByText('当前没有可用的推理模型。请先完成模型配置，再回来设置新对话默认值。');
+    expect(details).toHaveAttribute('open');
+    expect(summary).toHaveAttribute('aria-expanded', 'true');
+    await user.click(summary);
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    expect(emptyMessage).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('当前没有可用的推理模型。请先完成模型配置，再回来设置新对话默认值。')).not.toBeInTheDocument();
+      expect(details).not.toHaveAttribute('open');
+    });
+  });
+
+  it('keeps the partner-setting audit available through its closing transition', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.role.models': { ok: true, providers: [] },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await user.click(await screen.findByText('新对话设置'));
+    const summary = await screen.findByText('查看伙伴设定说明');
+    const details = summary.closest('details');
+    if (!details) throw new Error('伙伴设定 audit 缺少 details');
+
+    await user.click(summary);
+    const source = await screen.findByText('内置伙伴目录');
+    expect(summary.closest('summary')).toHaveAttribute('aria-expanded', 'true');
+    await user.click(summary);
+    expect(summary.closest('summary')).toHaveAttribute('aria-expanded', 'false');
+    expect(source).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('内置伙伴目录')).not.toBeInTheDocument();
+      expect(details).not.toHaveAttribute('open');
+    });
+  });
+
+  it('stacks new-conversation defaults in a narrow PAW window', () => {
+    const css = readFileSync('src/features/roles/roles.css', 'utf8');
+    expect(css).toMatch(/@container paw-window \(max-width: 620px\)[\s\S]*?\.role-runtime-defaults label\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
   });
 
   it('copies the selected built-in partner without changing her lifecycle phase', async () => {
@@ -111,13 +212,13 @@ describe('Roles experience', () => {
       </MemoryRouter>,
     );
 
-    await user.click(await screen.findByRole('button', { name: /澄·初/ }));
+    await user.click(await screen.findByRole('button', { name: /Agent 2/ }));
     await user.click(screen.getByRole('button', { name: '开始对话' }));
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/agent?session=session-past'));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toEqual({
-      title: '澄·初 对话',
+      title: 'Agent 2 对话',
       mode: 'assistant',
       roleId: 'companion-firstlight-v1',
       roleVersion: '1',
@@ -280,39 +381,71 @@ describe('Roles experience', () => {
     ))).toBe(false);
   });
 
-  it('saves the three authoritative model routes in one revision-fenced update', async () => {
+  it('lets builtin partners choose a reasoning model and non-off thinking level', async () => {
     const user = userEvent.setup();
+    const configured = {
+      ...previewPersonas[0]!,
+      defaults: {
+        ...previewPersonas[0]!.defaults,
+        modelProfile: 'gpt/gpt-5.6-sol',
+        thinkingLevel: 'max' as const,
+      },
+    };
+    const updated = {
+      ...configured,
+      defaults: {
+        ...configured.defaults,
+        modelProfile: 'openai-codex/gpt-5.6-terra',
+        thinkingLevel: 'high' as const,
+      },
+    };
     const transport = new MockControlTransport({ routes: {
-      'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.role.models': modelCatalog(),
-      'agent.configuration.get': modelRoutingConfiguration(),
-      'agent.configuration.update': modelRoutingConfiguration(8, {
-        roomPartnerModelProfile: 'gpt/gpt-5.6-sol',
-        roomPartnerThinkingLevel: 'max',
-      }),
-      'agent.tools.list': { ok: true, items: [] },
-      'agent.extensions.list': { ok: true, items: [] },
+      'agent.roles.list': { ok: true, items: [configured] },
+      'agent.subagents.templates': { ok: true, items: [] },
+      'agent.role.runtimeDefaults.update': { ok: true, role: updated, defaults: updated.defaults },
+      'agent.role.models': {
+        ok: true,
+        providers: [
+          {
+            id: 'gpt',
+            displayName: 'OpenAI API',
+            models: [
+              { provider: 'gpt', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+              { provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+              { provider: 'deepseek', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', api: 'responses', reasoning: false, thinkingLevels: ['off'], supportsImages: false, contextWindow: 1000000, maxTokens: 128000 },
+            ],
+          },
+          {
+            id: 'openai-codex',
+            displayName: 'OpenAI Codex',
+            models: [
+              { provider: 'openai-codex', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+            ],
+          },
+        ],
+      },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(await screen.findByLabelText('Room Partner默认模型'));
-    await user.click(screen.getByRole('option', { name: 'GPT-5.6 Sol · GPT' }));
-    await user.click(screen.getByLabelText('Room Partner默认思考强度'));
-    await user.click(await screen.findByRole('option', { name: 'Max' }));
-    await user.click(screen.getByRole('button', { name: '保存模型路由' }));
-    await waitFor(() => expect(transport.requests.find((call) => call.request.pathId === 'agent.configuration.update')?.request.body).toEqual({
-      expectedRevision: 7,
-      changes: {
-        'modelRouting.sessionModelProfile': 'gpt/gpt-5.6-sol',
-        'modelRouting.sessionThinkingLevel': 'max',
-        'modelRouting.roomPartnerModelProfile': 'gpt/gpt-5.6-sol',
-        'modelRouting.roomPartnerThinkingLevel': 'max',
-        'modelRouting.toolAgentModelProfile': 'gpt/gpt-5.6-luna',
-        'modelRouting.toolAgentThinkingLevel': 'low',
-      },
-      updatedBy: 'model-routing-ui',
+    expect(await screen.findByText('内置伙伴 · 复制后可以调整')).toBeInTheDocument();
+    await user.click(screen.getByText('新对话设置'));
+    expect((await screen.findAllByText('GPT-5.6 Sol · OpenAI API')).length).toBeGreaterThan(0);
+    await user.click(screen.getByLabelText('角色默认模型'));
+    expect(await screen.findByRole('option', { name: 'GPT-5.6 Terra · OpenAI API' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'DeepSeek V4 Flash' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' }));
+    await user.click(screen.getByLabelText('角色默认推理强度'));
+    expect(screen.queryByRole('option', { name: '不启用推理' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('option', { name: '高' }));
+    await user.click(screen.getByRole('button', { name: '保存默认设置' }));
+    await waitFor(() => expect(transport.requests.find((call) => call.request.pathId === 'agent.role.runtimeDefaults.update')?.request.body).toEqual({
+      roleId: configured.roleId,
+      roleVersion: configured.version,
+      provider: 'openai-codex',
+      modelId: 'gpt-5.6-terra',
+      thinkingLevel: 'high',
     }));
-    expect(await screen.findByRole('status')).toHaveTextContent('现有运行不会被中途切换');
   });
 
   it('exposes Flash as a selectable fast-scan role with explicit boundaries', async () => {
@@ -320,21 +453,25 @@ describe('Roles experience', () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.subagents.templates': { ok: true, items: previewTemplates },
-      'agent.role.models': modelCatalog(),
-      'agent.configuration.get': modelRoutingConfiguration(),
-      'agent.tools.list': { ok: true, items: [] },
-      'agent.extensions.list': { ok: true, items: [] },
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'gpt',
+          displayName: 'GPT',
+          models: [{ provider: 'gpt', id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 }],
+        }],
+      },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(await screen.findByRole('button', { name: /澄·瞬/ }));
+    await user.click(await screen.findByRole('button', { name: /Agent 4/ }));
     expect(screen.getByText('超长材料高速扫读与提取')).toBeInTheDocument();
     expect(screen.getByText('归类、去重和格式转换')).toBeInTheDocument();
     expect(screen.getByText('复杂推理')).toBeInTheDocument();
     expect(screen.getByText('最终验收')).toBeInTheDocument();
-    expect(screen.getByText('身份与运行边界')).toBeInTheDocument();
-    expect(screen.getByText('模型由上方的职责路由统一决定')).toBeInTheDocument();
-    expect(screen.getByLabelText('Tool Agent默认思考强度')).toHaveTextContent('低');
+    await user.click(screen.getByText('新对话设置'));
+    expect(screen.getAllByText('GPT-5.6 Luna · GPT').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('角色默认推理强度')).toHaveTextContent('低');
   });
 
   it('does not substitute preview Personas when the native catalog is empty', async () => {
@@ -359,7 +496,7 @@ describe('Roles experience', () => {
 
     expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '开始对话' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: /澄·初/ }));
+    await user.click(screen.getByRole('button', { name: /Agent 2/ }));
     expect(transport.requests.map((request) => request.pathId)).toEqual([
       'agent.roles.list',
       'agent.role.models',
@@ -396,8 +533,7 @@ describe('Roles experience', () => {
     });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    const catalogError = (await screen.findByText('伙伴目录没有打开')).closest('[role="alert"]');
-    expect(catalogError).toHaveTextContent('伙伴目录没有打开');
+    expect(await screen.findByRole('alert')).toHaveTextContent('伙伴目录没有打开');
     expect(screen.queryByText(/secret=abc/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '开始对话' })).not.toBeInTheDocument();
     expect(screen.queryByText('还没有伙伴')).not.toBeInTheDocument();
@@ -682,31 +818,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function modelCatalog() {
-  return {
-    ok: true,
-    providers: [{
-      id: 'gpt',
-      displayName: 'GPT',
-      models: [
-        { provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
-        { provider: 'gpt', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'high', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
-        { provider: 'gpt', id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
-      ],
-    }],
-  };
-}
-
 function modelRoutingConfiguration(
-  revision = 7,
-  overrides: Partial<{
-    sessionModelProfile: string;
-    sessionThinkingLevel: string;
-    roomPartnerModelProfile: string;
-    roomPartnerThinkingLevel: string;
-    toolAgentModelProfile: string;
-    toolAgentThinkingLevel: string;
-  }> = {},
+  revision: number,
+  toolAgent: { modelProfile: string; thinkingLevel: string } = {
+    modelProfile: 'inherit',
+    thinkingLevel: 'inherit',
+  },
 ) {
   return {
     ok: true,
@@ -718,13 +835,10 @@ function modelRoutingConfiguration(
           roleVersion: previewPersonas[0]!.version,
         },
         modelRouting: {
-          sessionModelProfile: 'gpt/gpt-5.6-sol',
-          sessionThinkingLevel: 'max',
-          roomPartnerModelProfile: 'gpt/gpt-5.6-terra',
-          roomPartnerThinkingLevel: 'high',
-          toolAgentModelProfile: 'gpt/gpt-5.6-luna',
-          toolAgentThinkingLevel: 'low',
-          ...overrides,
+          primary: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+          toolAgent,
+          subagent: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+          roomCoordinator: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
         },
       },
     },

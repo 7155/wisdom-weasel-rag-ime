@@ -31,10 +31,10 @@ function getStoredPreference(): ThemePreference {
   return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
+export function ThemeProvider({ children, forcedTheme }: { children: ReactNode; forcedTheme?: ResolvedTheme }) {
   const [preference, setPreferenceState] = useState<ThemePreference>(getStoredPreference);
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(getSystemTheme);
-  const resolvedTheme = preference === 'system' ? systemTheme : preference;
+  const resolvedTheme = forcedTheme ?? (preference === 'system' ? systemTheme : preference);
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return undefined;

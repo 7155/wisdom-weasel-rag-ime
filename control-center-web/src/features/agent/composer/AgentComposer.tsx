@@ -100,7 +100,6 @@ const piCommandIcons: Record<Exclude<ComposerCommand['source'], 'product'>, Luci
 };
 
 export function AgentComposer({
-  assistantName = '澄',
   draft,
   attachments,
   session,
@@ -448,7 +447,7 @@ export function AgentComposer({
           chrome rather than on a real control put the caret back in the
           message, which is what the surface appears to promise. */}
       <div
-        className="agent-composer"
+        className="agent-composer paw-unified-composer"
         data-busy={busy || undefined}
         data-jump-latest={showJumpLatest || undefined}
         onMouseDown={(event) => {
@@ -497,7 +496,7 @@ export function AgentComposer({
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          placeholder={composerPlaceholder(persona?.displayName ?? assistantName, imageSupport)}
+          placeholder={composerPlaceholder(persona?.displayName ?? 'Agent', imageSupport)}
           aria-label="消息"
           aria-autocomplete="list"
           aria-expanded={commandPanelVisible}
