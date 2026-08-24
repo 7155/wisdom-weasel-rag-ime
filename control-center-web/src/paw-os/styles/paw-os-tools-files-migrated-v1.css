@@ -508,26 +508,60 @@
   box-shadow: 0 0 0 4px rgb(20 184 200 / 13%);
 }
 
-/* Toolbar menu. */
+/* Toolbar menu: the shared .paw-menu language owns material and the
+   white-on-cobalt selection; this owner keeps only placement and width. */
 .paw-desktop-root .paw-browser-menu {
   top: 35px;
   width: 220px;
-  border-color: var(--paw-browser-line);
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 18px 46px rgb(15 23 42 / 18%), 0 1px 0 rgb(255 255 255 / 78%) inset;
+  border-color: var(--paw-menu-line);
+  border-radius: var(--paw-menu-radius);
+  background: var(--paw-menu-bg);
+  box-shadow: var(--paw-menu-shadow);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-.paw-desktop-root .paw-toolbar-actions .paw-browser-menu > button,
 .paw-desktop-root .paw-browser-menu-zoom {
-  color: var(--paw-browser-ink);
+  color: var(--paw-menu-ink);
   font-size: 13px;
+}
+
+/* The zoom row is a control group, not a menu item: its buttons keep compact
+   geometry while inheriting the shared selection colours. */
+.paw-desktop-root .paw-browser-menu .paw-browser-menu-zoom button {
+  width: 100%;
+  min-height: 26px;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 7px;
 }
 
 .paw-desktop-root .paw-browser-menu-narrow-only {
   display: none;
+}
+
+/* CDP-mode failure detail keeps muted evidence ink on the desktop skin. */
+.paw-desktop-root .paw-browser-error small {
+  color: var(--paw-browser-muted);
+}
+
+/* The omnibox commit preview is menu-like, so a highlighted commit row uses
+   the same solid selection pair as every OS menu. */
+.paw-desktop-root .paw-omnibox-commit-hint > button:is(:hover, :focus-visible) {
+  background: var(--paw-menu-selected-bg);
+  color: var(--paw-menu-selected-ink);
+  outline: 0;
+}
+
+.paw-desktop-root .paw-omnibox-commit-hint > button:is(:hover, :focus-visible) :is(.paw-omnibox-commit-icon, .paw-omnibox-commit-text > span, .paw-omnibox-commit-text small) {
+  color: rgb(255 255 255 / 86%);
+}
+
+.paw-desktop-root .paw-omnibox-commit-hint > button:is(:hover, :focus-visible) kbd {
+  border-color: rgb(255 255 255 / 34%);
+  background: rgb(255 255 255 / 14%);
+  color: rgb(255 255 255 / 88%);
 }
 
 .paw-desktop-root .paw-browser-find {
@@ -678,6 +712,22 @@
   border-color: rgb(31 157 77 / 24%);
   background: rgb(255 255 255 / 96%);
   color: var(--paw-browser-ink);
+}
+
+/* In-place destructive confirmations speak the shared OS button pair: quiet
+   bordered cancel, solid danger commit. Placed after the surface-card and
+   setting-row owners so the shared recipe wins their generic button paint. */
+.paw-desktop-root .paw-browser-confirm button {
+  border-color: var(--paw-control-line);
+  border-radius: var(--paw-control-radius);
+  background: var(--paw-control-bg);
+  color: var(--paw-control-ink);
+}
+
+.paw-desktop-root .paw-browser-confirm button[data-danger] {
+  border-color: var(--paw-button-danger-bg);
+  background: var(--paw-button-danger-bg);
+  color: var(--paw-button-danger-ink);
 }
 
 /* --------------------------------------------------------------------------
@@ -1012,9 +1062,20 @@
   }
   .paw-desktop-root .paw-browser-agent-stream article:hover,
   .paw-desktop-root .paw-browser-history li > button:first-child:hover,
-  .paw-desktop-root .paw-browser-surface-card > header button:hover,
-  .paw-desktop-root .paw-toolbar-actions .paw-browser-menu > button:hover {
+  .paw-desktop-root .paw-browser-surface-card > header button:hover {
     background: var(--paw-browser-hover);
+  }
+
+  .paw-desktop-root .paw-browser-confirm button:hover:not(:disabled) {
+    border-color: var(--paw-control-line-strong);
+    background: var(--paw-control-bg-soft);
+    color: var(--paw-control-ink);
+  }
+
+  .paw-desktop-root .paw-browser-confirm button[data-danger]:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--paw-button-danger-bg) 86%, #000);
+    background: color-mix(in srgb, var(--paw-button-danger-bg) 86%, #000);
+    color: var(--paw-button-danger-ink);
   }
 }
 
