@@ -63,6 +63,13 @@ const PERMISSION_PRESETS: ReadonlyArray<{
   { executionMode: 'full_trust', label: '全自动', description: '待审批操作由审批 Agent 自动判定' },
 ];
 
+/* 快速开始：只是把一句可编辑的开场白放进输入框，不代替用户发送。 */
+const PROMPT_STARTERS: ReadonlyArray<{ label: string; prompt: string }> = [
+  { label: '梳理现状', prompt: '梳理这个项目的当前状态：正在进行什么、被什么卡住、下一步最值得做什么。' },
+  { label: '审查改动', prompt: '审查最近的改动，指出风险、遗漏和需要跟进的问题。' },
+  { label: '拆解任务', prompt: '把这件事拆成可执行的步骤，并从第一步开始：' },
+];
+
 export function PawAgentHome({
   catalogError = '',
   catalogLoading = false,
@@ -106,6 +113,7 @@ export function PawAgentHome({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const composerRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const chipRefs = useRef<Record<Exclude<OptionsPanel, null>, HTMLButtonElement | null>>({
     permission: null,
     model: null,
@@ -322,17 +330,18 @@ export function PawAgentHome({
           </defs>
           <rect width="100%" height="100%" fill="url(#an-reg)" />
           <circle cx="86%" cy="18%" r="180" fill="none" stroke="var(--an-violet)" strokeOpacity=".08" strokeWidth="1.5" />
-          <circle cx="86%" cy="18%" r="120" fill="none" stroke="var(--an-cobalt)" strokeOpacity=".07" strokeWidth="1.5" strokeDasharray="2 7" />
+          <circle className="an-geo-orbit" cx="86%" cy="18%" r="120" fill="none" stroke="var(--an-cobalt)" strokeOpacity=".07" strokeWidth="1.5" strokeDasharray="2 7" />
         </svg>
         <div className="an-home-wrap">
           <div className="an-home-greet">{greeting}</div>
-          <h1 className="an-home-title">交给 Agent 一件事。</h1>
+          <h1 className="an-home-title">交给 Agent <em>一件事</em>。</h1>
 
           <div className="an-composer" ref={composerRef}>
             <textarea
               aria-describedby={modeBriefId}
               aria-label="描述你想完成的工作"
               onChange={(event) => setPrompt(event.target.value)}
+              ref={promptRef}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
@@ -492,6 +501,24 @@ export function PawAgentHome({
               </button>
             </div>
           </div>
+          {!prompt.trim() ? (
+            <div aria-label="快速开始" className="an-starters" role="group">
+              {PROMPT_STARTERS.map((starter) => (
+                <button
+                  className="an-starter"
+                  key={starter.label}
+                  onClick={() => {
+                    setPrompt(starter.prompt);
+                    promptRef.current?.focus();
+                  }}
+                  title={starter.prompt}
+                  type="button"
+                >
+                  {starter.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {mode === 'session' ? (
             <p className="an-mode-brief" id={modeBriefId}>
               一位 Agent 在同一条时间线里完成这件事；过程可展开，随时可中止或追问。
