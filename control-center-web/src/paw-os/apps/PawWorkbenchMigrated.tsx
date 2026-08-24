@@ -24,7 +24,8 @@ import '../styles/paw-os-workbench-migrated-v1.css';
  * THESIS: Workbench is a live project dependency field, never a summary-card dashboard.
  * OWN-WORLD: Glacier-cool canvas, ultramarine workbench identity, white rounded plates, dotted topology, azure flow, and restrained semantic inks.
  * STORY: Answer "what is the next unresolved thing" first, then inspect task ownership and dependencies, then open the authoritative task or WorkDocument.
- * FIRST VIEWPORT: The now-band leads the overview; planning keeps outline, labelled dependency lanes and selected truth; documents are a two-pane reader.
+ * FIRST VIEWPORT: A purpose-first command deck opens every page: what this page answers, then cross-page commands with truthful counts, then identity.
+ *   The now-band leads the overview; planning keeps outline, labelled dependency lanes and selected truth; documents are a two-pane reader.
  * FORM: Archive-led Operate extension, pawos-workbench-v1.
  */
 
@@ -183,15 +184,26 @@ export function PawWorkbenchMigrated({
   const activeDocument = openedOverviewDocument
     ? (selectedDocument && sameDocument(selectedDocument, openedOverviewDocument) ? selectedDocument : openedOverviewDocument)
     : selectedDocument;
+  // Deck counts are shown only once their backing resource has settled; an
+  // unresolved read must never masquerade as a truthful zero.
+  const unresolvedTaskCount = resourceSettled(resourceStates.planning)
+    ? tasks.filter((task) => taskLane(task) !== 'done').length
+    : null;
+  const documentCount = resourceSettled(resourceStates.documents)
+    ? Math.max(documents.length, documentTotal ?? 0)
+    : null;
 
   return (
     <section className="paw-workbench-migrated" data-page-id={activePageId}>
       <span aria-hidden data-paw-workbench-direction="pawos-workbench-v1" hidden />
       <WorkbenchChrome
+        documentCount={documentCount}
+        onNavigate={onNavigate}
         pageId={activePageId}
         primaryAction={primaryAction}
         projectName={projectName}
         projectPath={projectPath}
+        unresolvedTaskCount={unresolvedTaskCount}
       />
       {activePageId === 'overview' ? (
         <ProjectOverview
@@ -256,35 +268,81 @@ export function PawWorkbenchMigrated({
   );
 }
 
+const WORKBENCH_PAGES: Record<PawWorkbenchPageId, { label: string; intent: string }> = {
+  overview: { label: '项目概览', intent: '先处理最需要处理的事' },
+  planning: { label: '任务', intent: '编排任务与真实依赖' },
+  documents: { label: '工作文档', intent: '打开权威 WorkDocument' },
+};
+
+const DECK_COMMANDS: readonly { icon: typeof GitBranch; label: string; page: PawWorkbenchPageId }[] = [
+  { icon: PanelsTopLeft, label: '项目概览', page: 'overview' },
+  { icon: GitBranch, label: '任务编排', page: 'planning' },
+  { icon: FileText, label: '工作文档', page: 'documents' },
+];
+
+/**
+ * The project command deck is purpose-first: it opens with what the current
+ * page answers, then the cross-page commands with truthful counts, and keeps
+ * project identity as a quiet anchor on the right. Counts come from real
+ * planning tasks and registered WorkDocuments; while a resource is unsettled
+ * the command stays but its number is withheld.
+ */
 function WorkbenchChrome({
+  documentCount,
+  onNavigate,
   pageId,
   projectName,
   projectPath,
   primaryAction,
+  unresolvedTaskCount,
 }: {
+  documentCount: number | null;
+  onNavigate?: PawWorkbenchMigratedProps['onNavigate'];
   pageId: PawWorkbenchPageId;
   projectName: string;
   projectPath: string;
   primaryAction?: PawWorkbenchMigratedProps['primaryAction'];
+  unresolvedTaskCount: number | null;
 }) {
-  const pageLabel = { overview: '项目概览', planning: '任务', documents: '工作文档' }[pageId];
+  const page = WORKBENCH_PAGES[pageId];
   return (
     <header className="paw-wb-chrome">
-      <div className="paw-wb-chrome__identity">
-        <span>
-          <strong title={projectName}>{projectName}</strong>
-          <small title={projectPath || pageLabel}>{projectPath || pageLabel}</small>
-        </span>
+      <div className="paw-wb-chrome__purpose">
+        <h1>{page.label}</h1>
+        <p>{page.intent}</p>
       </div>
-      <div className="paw-wb-chrome__location" aria-label="当前位置">
-        <h1>{pageLabel}</h1>
-      </div>
+      {onNavigate ? (
+        // A group, not a second <nav>: the host shell owns the App's only
+        // navigation landmark and queries it by bare role.
+        <div aria-label="项目命令台" className="paw-wb-chrome__commands" role="group">
+          {DECK_COMMANDS.filter((command) => command.page !== pageId).map((command) => {
+            const count = command.page === 'planning' ? unresolvedTaskCount : command.page === 'documents' ? documentCount : null;
+            const countText = count === null ? '' : command.page === 'planning' ? `${count} 项未完成` : `共 ${count} 份`;
+            const commandName = countText ? `前往${command.label}：${countText}` : `前往${command.label}`;
+            const Icon = command.icon;
+            return (
+              <button aria-label={commandName} key={command.page} onClick={() => onNavigate(command.page)} title={commandName} type="button">
+                <Icon aria-hidden size={14} />
+                <span>{command.label}</span>
+                {count === null ? null : <em>{count}</em>}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      <span aria-hidden className="paw-wb-chrome__spacer" />
       {primaryAction ? (
         <button aria-label={primaryAction.label} className="paw-wb-primary" onClick={primaryAction.onClick} type="button">
           <Plus aria-hidden size={15} />
           <span>{primaryAction.label}</span>
         </button>
-      ) : <span className="paw-wb-chrome__spacer" />}
+      ) : null}
+      <div className="paw-wb-chrome__identity">
+        <span>
+          <strong title={projectName}>{projectName}</strong>
+          <small title={projectPath || page.label}>{projectPath || page.label}</small>
+        </span>
+      </div>
     </header>
   );
 }
@@ -345,7 +403,6 @@ function ProjectOverview({
         <NowBand
           documents={documents}
           documentsSettled={resourceSettled(documentsState)}
-          onNavigate={onNavigate}
           onOpenTask={onOpenTask}
           tasks={tasks}
         />
@@ -439,17 +496,17 @@ function ProjectOverview({
  * The overview leads with the next unresolved thing, before any metric.
  * Every value here is derived from real planning tasks and real registered
  * WorkDocuments; unresolved reads never masquerade as truthful zeros.
+ * Cross-page navigation lives in the command deck above, so the band keeps
+ * exactly one action: open the next unresolved task.
  */
 function NowBand({
   documents,
   documentsSettled,
-  onNavigate,
   onOpenTask,
   tasks,
 }: {
   documents: readonly PawWorkbenchRecord[];
   documentsSettled: boolean;
-  onNavigate?: PawWorkbenchMigratedProps['onNavigate'];
   onOpenTask: (task: PawWorkbenchRecord, index: number) => void;
   tasks: PawWorkbenchRecord[];
 }) {
@@ -477,14 +534,13 @@ function NowBand({
             <p>{tasks.length ? '当前计划的任务都已完成，可以规划下一步或复盘。' : '在任务编排里写下第一个可执行的下一步。'}</p>
           </>
         )}
-        <div className="paw-wb-now__actions">
-          {next ? (
+        {next ? (
+          <div className="paw-wb-now__actions">
             <button className="paw-wb-now__primary" onClick={() => onOpenTask(next.task, next.index)} type="button">
               打开任务窗口<ArrowRight aria-hidden size={14} />
             </button>
-          ) : null}
-          {onNavigate ? <button className="paw-wb-now__secondary" onClick={() => onNavigate('planning')} type="button">任务编排</button> : null}
-        </div>
+          </div>
+        ) : null}
       </div>
       {tasks.length ? (
         <div
