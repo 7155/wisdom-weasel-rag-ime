@@ -171,7 +171,7 @@ export function buildRoomFocusProjection(
         currentAction: latestActivity?.summary.trim()
           || owned.find((item) => ['running', 'review', 'blocked', 'waiting'].includes(item.state))?.objective
           || owned.at(0)?.objective
-          || '等待新的工作项',
+          || '等待新的任务',
         latestReceipt: latestMessage?.text.trim()
           || owned.find((item) => item.latestResult)?.latestResult
           || (latestActivity?.status === 'completed' ? latestActivity.summary.trim() : undefined),
@@ -239,6 +239,58 @@ export function roomFocusStateLabel(state: RoomFocusState): string {
     stopped: '已停止',
     disconnected: '已离线',
   } satisfies Record<RoomFocusState, string>)[state];
+}
+
+/** 跟随状态兜底给一句用户可读的话，而不是机器事件名。焦点面板与卫星
+ *  页脚共用同一套兜底文案，跨窗口读到的口径保持一致。 */
+export function roomFocusStateFallbackCopy(state: RoomFocusState): string {
+  if (state === 'running') return '正在推进当前工作';
+  if (state === 'completed') return '活动已完成';
+  if (state === 'failed' || state === 'blocked') return '最近一项活动需要关注';
+  if (state === 'waiting' || state === 'review') return '等待下一步安排';
+  return '等待新的任务';
+}
+
+/** 「原始记录」判定：JSON、绝对路径、长哈希、技术墙。这类正文不适合直接
+ *  作为摘要给人读，只能折进披露；判定被焦点面板与全部卫星窗共用。 */
+export function roomFocusRawDetail(source: string): boolean {
+  return /```|(?:^|\s)[{[]\s*["']/u.test(source)
+    || /\/(?:Users|Volumes|home|private|tmp|var)\//u.test(source)
+    || /\b[a-f\d]{48,}\b/iu.test(source)
+    || /["'](?:path|sha256|payload|metadata)["']\s*:/iu.test(source)
+    || roomFocusTechnicalWall(source);
+}
+
+/** 不含任何中日韩文字、又带着代码痕迹（RLE/AABB 这类缩写、camelCase、
+ * snake_case、`::`、`=>`…）的英文开发日志，对用户就是一堵技术墙：摘要位
+ * 改说人话，整段留在原文披露里，一次点击仍可完整读到。 */
+function roomFocusTechnicalWall(source: string): boolean {
+  if (source.length < 30 || /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(source)) return false;
+  return source.length > 90
+    || /\b[A-Z]{2,8}\b|[a-z][A-Z]|\w+_\w+|::|=>|->|\(\)/u.test(source);
+}
+
+/** 形如 participant_activity 的事件枚举是机器串，不能作为给人看的摘要。 */
+function roomFocusMachineToken(source: string): boolean {
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/iu.test(source);
+}
+
+/** 把一段真实正文压成一行可读摘要：剥掉 Markdown 痕迹、折叠空白、150 字
+ *  截断；原始记录与机器串直接换成 fallback。摘要只改显示投影，完整正文
+ *  始终留在各自的披露里。 */
+export function roomFocusReadableText(detail: string, fallback: string): string {
+  const source = detail.trim();
+  if (!source || roomFocusRawDetail(source) || roomFocusMachineToken(source)) return fallback;
+  const compact = source
+    .replace(/```[\s\S]*?```/gu, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/gu, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gmu, '')
+    .replace(/[*_`]/gu, '')
+    .replace(/(?:^|\s)[>~-]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!compact) return fallback;
+  return compact.length > 150 ? `${compact.slice(0, 147).trimEnd()}…` : compact;
 }
 
 function explicitFocusWork(item: RoomWorkItem, activities: RoomActivityProjection[]): RoomFocusWorkItem {

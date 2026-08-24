@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
-import { PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { createRoomProjection } from '@/contracts/room-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
@@ -277,7 +277,7 @@ describe('PawOsSatelliteHost', () => {
     });
 
     const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: /执行过程 1 项/ }));
     const row = timeline.querySelector('article[data-kind="activity"]');
     expect(row).not.toBeNull();
     expect(row?.querySelector('header')).toBeNull();
@@ -306,7 +306,7 @@ describe('PawOsSatelliteHost', () => {
     });
 
     const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: /执行过程 1 项/ }));
     const row = timeline.querySelector<HTMLElement>('article[data-kind="activity"][data-status="failed"]');
     expect(row).not.toBeNull();
     expect(within(row!).getByRole('img', { name: '执行失败' })).toBeInTheDocument();
@@ -403,10 +403,11 @@ describe('PawOsSatelliteHost', () => {
   it('shows a RoomPanel missing state when a successful response has another Room id', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.room.get': { room: { ...participantRoom(), id: 'room-other' } },
+      'agent.roles.list': { ok: true, items: [] },
     } });
 
     renderSatellite(transport, {
-      kind: 'room', id: 'room-live', panel: 'focus', title: '产品协作室',
+      kind: 'room', id: 'room-live', panel: 'flow', title: '产品协作室',
     });
 
     expect(await screen.findByText('找不到这个 Room')).toBeInTheDocument();
@@ -414,12 +415,11 @@ describe('PawOsSatelliteHost', () => {
     expect(screen.getByRole('button', { name: '回到 Room' })).toBeInTheDocument();
   });
 
-  it('projects the consolidated Sol console into the focus satellite and opens real participant targets', async () => {
-    const openWindow = vi.fn();
+  it('projects the execution satellite as a compact WorkItem flow instead of the full Room cockpit', async () => {
     const room = {
       ...participantRoom(),
       workItems: [{
-        id: 'work-a', roomId: 'room-live', topicId: '', rootTurnId: 'root-a', rootWorkId: 'work-a', parentWorkId: '',
+        id: 'work-a', roomId: 'room-participant', topicId: '', rootTurnId: 'root-a', rootWorkId: 'work-a', parentWorkId: '',
         objective: '实现 Room 任务图交互', expectedOutput: '可复查的任务图交互', acceptanceCriteria: ['保持真实依赖关系'],
         accountableParticipantId: 'participant-a', currentOwnerParticipantId: 'participant-a', offeredToParticipantId: '',
         createdByParticipantId: 'participant-a', clientMessageId: '', state: 'review' as const, depth: 0, revision: 2,
@@ -429,26 +429,20 @@ describe('PawOsSatelliteHost', () => {
     };
     const transport = new MockControlTransport({ routes: {
       'agent.room.get': { room },
+      'agent.roles.list': { ok: true, items: [] },
     } });
 
     const { container } = renderSatellite(transport, {
-      kind: 'room', id: room.id, panel: 'focus', title: room.title,
-    }, { openWindow });
+      kind: 'room', id: room.id, panel: 'execution', title: room.title,
+    });
 
-    const console = await screen.findByRole('region', { name: 'Sol 协作态势' });
-    expect(within(console).getByRole('tree', { name: '任务树' })).toHaveTextContent('实现 Room 任务图交互');
-    expect(within(console).getByLabelText('往来事件')).toHaveTextContent('实现 Room 任务图交互');
-    expect(within(console).getByText('验收条件 · 1')).toBeInTheDocument();
-    expect(within(console).getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
+    const flow = await screen.findByRole('list', { name: 'Room 任务拆解' });
+    expect(flow).toHaveTextContent('实现 Room 任务图交互');
+    expect(flow).toHaveTextContent('实现伙伴');
+    expect(flow).toHaveTextContent('任务 r2');
+    expect(screen.getByText('等待独立复核')).toBeVisible();
     expect(container.querySelector('.room-cockpit')).not.toBeInTheDocument();
     expect(container.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
-
-    fireEvent.click(within(console).getByRole('button', { name: '打开 Mars 伙伴窗口' }));
-
-    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
-      appId: 'agent',
-      target: expect.objectContaining({ kind: 'participant', id: 'participant-a', roomId: 'room-live', title: 'Mars' }),
-    }));
   });
 
   it('follows participant updates only while the reader is near the latest entry', async () => {
@@ -587,7 +581,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const trigger = await screen.findByRole('button', { name: /运行活动 1 项/ });
+    const trigger = await screen.findByRole('button', { name: /执行过程 1 项/ });
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await userEvent.setup().click(trigger);
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
@@ -644,7 +638,7 @@ describe('PawOsSatelliteHost', () => {
 function renderSatellite(
   transport: MockControlTransport,
   target: Parameters<typeof PawOsSatelliteHost>[0]['target'],
-  desktop?: { openRoute?: (route: string) => void; openWindow?: (request: PawOsWindowRequest) => void },
+  desktop?: { openRoute?: (route: string) => void },
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const host = (
@@ -655,7 +649,7 @@ function renderSatellite(
     </ControlTransportProvider>
   );
   const rendered = render(desktop
-    ? <PawOsDesktopProvider openRoute={desktop.openRoute} openWindow={desktop.openWindow ?? (() => undefined)}>{host}</PawOsDesktopProvider>
+    ? <PawOsDesktopProvider openRoute={desktop.openRoute} openWindow={() => undefined}>{host}</PawOsDesktopProvider>
     : host);
   return { ...rendered, queryClient };
 }

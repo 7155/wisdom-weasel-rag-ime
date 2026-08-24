@@ -68,7 +68,7 @@ describe('PawRoomConversation', () => {
       room={room}
     />);
 
-    const disclosure = screen.getByText('详情').closest('details') as HTMLDetailsElement;
+    const disclosure = screen.getByText('原始记录').closest('details') as HTMLDetailsElement;
     expect(disclosure).not.toHaveAttribute('open');
     expect(screen.queryByText(/Volumes\/private\/workspace/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '批准并继续' }));
@@ -87,7 +87,7 @@ describe('PawRoomConversation', () => {
       room={room}
     />);
 
-    const fold = screen.getByText('过程 1 步').closest('details') as HTMLDetailsElement;
+    const fold = screen.getByText('执行过程 1 项').closest('details') as HTMLDetailsElement;
     const summary = fold.querySelector('summary')!;
     expect(fold).toHaveAttribute('open');
     expect(summary).toHaveAttribute('aria-expanded', 'true');
@@ -120,7 +120,7 @@ describe('PawRoomConversation', () => {
       room={room}
     />);
 
-    const fold = screen.getByText('过程 1 步').closest('details') as HTMLDetailsElement;
+    const fold = screen.getByText('执行过程 1 项').closest('details') as HTMLDetailsElement;
     const summary = fold.querySelector('summary')!;
     await user.click(summary);
     await waitFor(() => expect(fold).not.toHaveAttribute('open'));
@@ -156,7 +156,7 @@ describe('PawRoomConversation', () => {
       room={room}
     />);
 
-    const detail = screen.getByText('详情').closest('details') as HTMLDetailsElement;
+    const detail = screen.getByText('原始记录').closest('details') as HTMLDetailsElement;
     const summary = detail.querySelector('summary')!;
     expect(detail).not.toHaveAttribute('open');
     fireEvent.click(summary);
