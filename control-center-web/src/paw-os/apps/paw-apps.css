@@ -307,7 +307,10 @@
   overflow: hidden; color: var(--paw-ink); background: var(--paw-panel-strong);
   container: paw-room-workspace / inline-size;
 }
-.paw-room-workspace__header { z-index: 6; min-width: 0; display: flex; align-items: center; gap: 11px; padding: 0 12px 0 17px; border-bottom: 1px solid var(--paw-line-soft); background: color-mix(in srgb, var(--paw-panel-strong) 94%, transparent); -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%); user-select: none; }
+/* The workspace surface behind this header is already opaque (or one glass
+   layer); a stacked header blur re-rasterizes the live Room timeline on every
+   event without any visible difference. */
+.paw-room-workspace__header { z-index: 6; min-width: 0; display: flex; align-items: center; gap: 11px; padding: 0 12px 0 17px; border-bottom: 1px solid var(--paw-line-soft); background: color-mix(in srgb, var(--paw-panel-strong) 97%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; user-select: none; }
 .paw-room-workspace__header > nav { flex: 1 1 auto; }
 .paw-room-workspace__header nav { display: flex; flex: none; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; background: var(--paw-panel-soft); }
 .paw-room-workspace__header nav button { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 7px; color: var(--paw-muted); font-size: 9px; cursor: pointer; transition: color 140ms ease, background 140ms ease, box-shadow 160ms ease, transform 100ms ease; }
@@ -367,7 +370,9 @@
 .paw-room-flow__detail dt { color: var(--paw-muted); }
 .paw-room-flow__detail dd { margin: 0; overflow: hidden; font-family: var(--paw-font-mono); text-overflow: ellipsis; white-space: pre-line; }
 .paw-room-governance { height: 100%; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
-.paw-room-governance > header { position: sticky; z-index: 3; top: 0; min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px 7px 13px; border-bottom: 1px solid var(--paw-line-soft); background: color-mix(in srgb, var(--paw-panel-strong) 92%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+/* Sticky over the scrolling governance list: an almost-opaque bar with its own
+   blur re-blurs the list every scroll frame; keep it opaque instead. */
+.paw-room-governance > header { position: sticky; z-index: 3; top: 0; min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px 7px 13px; border-bottom: 1px solid var(--paw-line-soft); background: color-mix(in srgb, var(--paw-panel-strong) 97%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
 .paw-room-governance > header > span { display: grid; gap: 1px; }
 .paw-room-governance > header strong { font-size: 14px; }
 .paw-room-governance > header small { color: var(--paw-muted); font-size: 12px; }

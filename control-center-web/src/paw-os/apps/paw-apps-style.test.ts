@@ -396,6 +396,28 @@ describe('PAWOS semantic type roles', () => {
     );
   });
 
+  it('scopes the virtualized turn entrance to the newest item and keeps streaming bands un-blurred', () => {
+    // Virtualized turns remount on plain scrolling; an unscoped entrance
+    // replays a full-viewport fade (flicker). Only the appended turn arrives.
+    expect(motionCss).toMatch(
+      /@starting-style\s*\{[^{}]*\.paw-session-workspace__conversation \[data-index\]:last-child \.agent-turn/s,
+    );
+    expect(motionCss).not.toMatch(
+      /@starting-style\s*\{[^{}]*\.paw-session-workspace__conversation \.agent-turn[,\s]/s,
+    );
+    // The bands that sit on the streaming timeline stay near-opaque without a
+    // stacked backdrop-filter, so streamed tokens are not re-blurred per frame.
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-session-workspace__header\s*\{[^}]*backdrop-filter:\s*none;/s,
+    );
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-session-workspace__composer\s*\{[^}]*backdrop-filter:\s*none;/s,
+    );
+    expect(appCss).toMatch(
+      /\.paw-room-workspace__header\s*\{[^}]*backdrop-filter:\s*none;/s,
+    );
+  });
+
   it('does not reserve the Composer twice inside the separated Agent timeline', () => {
     const separatedTimelineRules = [...agentMigratedCss.matchAll(
       /\.paw-session-workspace__conversation\[data-message-flow='separated'\] \.agent-timeline\s*\{([^}]*)\}/gs,
