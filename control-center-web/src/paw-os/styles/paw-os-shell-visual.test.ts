@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import shellCss from './paw-os-shell-migrated-v1.css?raw';
 import pawOsCss from './paw-os.css?raw';
 import motionCss from './paw-os-motion.css?raw';
+import controlsCss from './paw-os-controls.css?raw';
+import appIconCss from '../shell/paw-app-icon.css?raw';
 
 /* The redesigned OS shell speaks one chrome language: menu bar, Dock and the
  * Launchpad veil share a single --paw-chrome-* material recipe, blur exists on
@@ -144,5 +146,58 @@ describe('PAWOS shell visual language', () => {
     expect(motionCss).toMatch(/\.paw-desktop\[data-overview\]:not\(\[data-collaboration-focus\]\) \.paw-desktop-viewport::before\s*\{[^}]*opacity:\s*1;/s);
     // The plane itself only ever animates opacity — never inset or filters.
     expect(rule(motionCss, '.paw-desktop-viewport::before')).toMatch(/transition:\s*opacity/);
+  });
+
+  it('never transitions the all keyword anywhere in shell-owned styles', () => {
+    // `transition: all` re-runs unrelated computed-value changes (visibility,
+    // layout, filters) through the transition engine, which reads as flicker
+    // during drag and stream reflow. Every shell owner names its properties.
+    for (const [name, css] of Object.entries({
+      'paw-os.css': pawOsCss,
+      'paw-os-motion.css': motionCss,
+      'paw-os-shell-migrated-v1.css': shellCss,
+      'paw-os-controls.css': controlsCss,
+      'paw-app-icon.css': appIconCss,
+    })) {
+      expect(css, `${name} must not transition the all keyword`)
+        .not.toMatch(/transition(-property)?\s*:[^;]*\ball\b/);
+    }
+  });
+
+  it('moves placement changes as one gesture and promotes only the dragged frame', () => {
+    // Snap/maximize/restore animate transform and size on the same clock so
+    // the frame cannot tear; live drag/resize opts out entirely.
+    const shell = rule(pawOsCss, '.paw-window-shell');
+    expect(shell).toMatch(/transition:[^;]*transform 240ms/s);
+    expect(shell).toMatch(/transition:[^;]*width 240ms/s);
+    expect(shell).toMatch(/transition:[^;]*height 240ms/s);
+    expect(rule(pawOsCss, '.paw-window-shell[data-interaction]')).toContain('transition: none');
+    // will-change exists only for the duration of a drag gesture — the
+    // resting shell must never hold a compositor layer.
+    expect(rule(pawOsCss, ".paw-window-shell[data-interaction='dragging']")).toContain('will-change: transform');
+    expect(shell).not.toContain('will-change');
+  });
+
+  it('signs the focused window with a static aurora hairline in its own App key', () => {
+    const aurora = rule(shellCss, ".paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar::after");
+    expect(aurora).toContain('linear-gradient(');
+    expect(aurora).toContain('var(--paw-app-accent');
+    expect(aurora).toContain('var(--paw-app-support');
+    expect(aurora).toContain('height: 1px');
+    expect(aurora).toContain('pointer-events: none');
+    // A signature, not a show: the hairline never animates or blurs.
+    expect(aurora).not.toContain('animation');
+    expect(aurora).not.toContain('backdrop-filter');
+  });
+
+  it('lets Launchpad group headers lead their tiles in the same cascade', () => {
+    const header = rule(shellCss, '.paw-desktop-root .paw-launchpad-group');
+    expect(header).toMatch(/animation:\s*paw-shell-group-arrive/);
+    expect(header).toContain('animation-delay: calc(var(--paw-tile-i, 0) * 22ms)');
+    // The tile beat unit is identical, so headers and tiles share one clock.
+    expect(rule(shellCss, '.paw-desktop-root .paw-launchpad section > div > button'))
+      .toContain('animation-delay: calc(var(--paw-tile-i, 0) * 22ms)');
+    // Reduced motion silences the header cascade with everything else.
+    expect(shellCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-desktop-root \.paw-launchpad-group,/);
   });
 });

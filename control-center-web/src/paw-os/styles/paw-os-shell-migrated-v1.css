@@ -483,6 +483,11 @@
   line-height: 1.4;
   font-weight: 680;
   letter-spacing: .05em;
+  /* Headers lead the cascade on their own beat (--paw-tile-i from markup):
+     the section announces itself from the reading edge, then its tiles rise.
+     Keyed DOM keeps a still-matching header still while filtering. */
+  animation: paw-shell-group-arrive 320ms var(--paw-ease-out) backwards;
+  animation-delay: calc(var(--paw-tile-i, 0) * 22ms);
 }
 .paw-desktop-root .paw-launchpad-empty {
   grid-column: 1 / -1;
@@ -501,6 +506,10 @@
 @keyframes paw-shell-tile-arrive {
   from { opacity: 0; transform: translateY(10px) scale(.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes paw-shell-group-arrive {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 /* ------------------------------------------------------------------- Windows
@@ -540,6 +549,25 @@
    accent, which is enough identity without a painted strip. */
 .paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar {
   border-bottom-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 34%, rgb(23 26 33 / .08));
+}
+/* Aurora signature, continued from the menu bar into window chrome: the
+   focused window's titlebar edge carries the same hairline language, but
+   transposed into the App's own key — accent flowing into support. One
+   static composited gradient over the border row; it never animates, never
+   blurs, and resting windows keep the plain hairline. */
+.paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar::after {
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--paw-app-accent, #2f6bff) 62%, transparent) 16%,
+    color-mix(in srgb, var(--paw-app-support, #7048e8) 52%, transparent) 56%,
+    transparent 92%
+  );
+  content: '';
 }
 .paw-desktop-root .paw-window-title { gap: 8px; color: #171a21; font-size: 13px; line-height: 1.4; font-weight: 650; }
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-title { color: var(--paw-app-accent-strong, #171a21); }
@@ -608,6 +636,7 @@
   .paw-desktop-root .paw-launchpad,
   .paw-desktop-root .paw-launchpad > section,
   .paw-desktop-root .paw-launchpad section > div > button,
+  .paw-desktop-root .paw-launchpad-group,
   .paw-desktop-root .paw-dock button,
   .paw-desktop-root .paw-dock-tip,
   .paw-desktop-root .paw-app-icon {
