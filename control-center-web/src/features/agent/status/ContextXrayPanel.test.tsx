@@ -10,7 +10,7 @@ import { normalizeDebugContextResponse } from '@/features/context-debug/model';
 afterEach(cleanup);
 
 describe('ContextXraySections', () => {
-  it('reports real layer metrics and provider delivery without exposing raw content', async () => {
+  it('keeps layer content collapsed by default and opens each injected layer to its real text', async () => {
     const response = debugResponse();
     const transport = new StubControlTransport('mock', {
       'agent.session.debugContext.get': response,
@@ -58,6 +58,17 @@ describe('ContextXraySections', () => {
       pathId: 'agent.session.debugContext.get',
       params: { sessionId: 'session-xray' },
     }));
+
+    // PF-CM-010：分层摘要行不是死行——本人点开某一层时，能看到该层实际
+    // 注入的原文；再次点击恢复默认折叠，原文离开 DOM。
+    const roleToggle = within(layers).getByRole('button', { name: /伙伴画像/ });
+    expect(roleToggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(roleToggle);
+    const roleContent = await screen.findByRole('region', { name: '伙伴画像 实际注入内容，可滚动原文' });
+    expect(roleContent).toHaveTextContent('ROLE_BOOK_PRIVATE_TEXT');
+    expect(roleContent).toHaveAttribute('tabindex', '0');
+    await user.click(roleToggle);
+    expect(screen.queryByText('ROLE_BOOK_PRIVATE_TEXT')).not.toBeInTheDocument();
   });
 
   it('shows an explicit unavailable state instead of inventing metrics', async () => {

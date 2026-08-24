@@ -210,13 +210,18 @@
     transform var(--paw-motion-chrome) var(--paw-ease-out);
 }
 
+/* The Agent timeline is virtualized: scrolled-away turns unmount and remount,
+ * and a fast-scroll (scroll-seek) exit remounts every visible turn at once.
+ * An unscoped @starting-style entrance therefore replays a full-viewport
+ * fade/slide on plain scrolling, which reads as flicker. Only the newest
+ * appended turn — the last virtualized item — keeps the arrival motion. */
 @starting-style {
   .paw-session-workspace__error,
   .paw-session-workspace__loading,
   .paw-room-workspace__error,
   .paw-room-workspace__loading,
   .paw-room-workspace__empty,
-  .paw-session-workspace__conversation .agent-turn,
+  .paw-session-workspace__conversation [data-index]:last-child .agent-turn,
   .paw-room-timeline__canvas .room-turn {
     opacity: 0;
     transform: translate3d(0, 5px, 0);

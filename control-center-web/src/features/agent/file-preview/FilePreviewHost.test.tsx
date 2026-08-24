@@ -87,6 +87,9 @@ describe('file preview interaction', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(within(inline).getByRole('heading', { name: '交付' })).toBeInTheDocument();
     expect(within(inline).getByText('类型检查通过')).toBeInTheDocument();
+    expect(within(inline).getByText('文件内容 · 3 行')).toBeInTheDocument();
+    await user.click(within(inline).getByRole('button', { name: '复制acceptance.md 内容' }));
+    await expect(navigator.clipboard.readText()).resolves.toBe('# 交付\n\n- 类型检查通过');
     expect(transport.requests[0]).toMatchObject({
       pathId: 'agent.media.preview',
       params: { mediaId: MEDIA_ID },

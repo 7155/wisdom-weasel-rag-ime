@@ -9,10 +9,19 @@
 
 Thoroughly reconstruct PAWOS frontend from the user's design, not a colour pass.
 
-- Every App and the OS shell must understand the human purpose in `PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md`, then **refactor**. Quality bar is very high.
-- **Agent App is the most important surface.** Use the in-repo baseline `control-center-web/docs/references/pawos-conversation-baseline.html` plus BRIEF §2 and the interaction contracts. Do **not** fetch Tutti or CodingTo.
+- **Whole OS is in scope.** Windows, Dock, chrome, satellites, and every App may
+  be redesigned when the current surface is wrong or ugly. Invent within the
+  vision and UR/PF-CM ledger; do not preserve bad UI out of caution.
+- Every App and the OS shell must understand the human purpose in
+  `PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md`, then **refactor**. Quality bar is very high.
+- Near-term focus after Agent first pass: **satellite window mode** (interaction,
+  multi-window information flow, what each satellite shows), then OS shell, then
+  App-by-App polish. Use the in-repo baseline
+  `control-center-web/docs/references/pawos-conversation-baseline.html` plus BRIEF
+  interaction contracts. Do **not** fetch Tutti or CodingTo.
 - Also inspect performance, flicker, layout jump, and streaming reflow (user: 频闪 / 跳动抽搐 / 拖动卡顿).
 - Frontend-only. Do not edit `rag_ime/`, migrations, Pi Runtime, or backend contracts. Do not install unless the user asks.
+- Merges may ignore CI when failures are billing/account limits, not product proof.
 
 ## Git snapshot (verify at takeover)
 

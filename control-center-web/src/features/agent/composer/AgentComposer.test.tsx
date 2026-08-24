@@ -211,6 +211,50 @@ describe('AgentComposer macOS input methods', () => {
     expect(onJumpLatest).toHaveBeenCalledTimes(1);
   });
 
+  it('explains why send is unavailable instead of leaving a silently disabled button', () => {
+    function harness(overrides: Partial<Parameters<typeof AgentComposer>[0]> = {}) {
+      return (
+        <TooltipProvider>
+          <AgentComposer
+            draft=""
+            attachments={[]}
+            session={previewSessions[0]}
+            commands={[]}
+            tools={[]}
+            toolCatalogStatus="ready"
+            busy={false}
+            sending={false}
+            onDraftChange={() => {}}
+            onAttachmentsChange={() => {}}
+            onPickAttachments={() => {}}
+            onPasteImages={() => {}}
+            onToolSelect={() => {}}
+            onProductCommand={() => {}}
+            onSend={() => {}}
+            onStop={() => {}}
+            onPermissionChange={() => {}}
+            onWorkspaceRootsChange={() => {}}
+            onModelChange={() => {}}
+            {...overrides}
+          />
+        </TooltipProvider>
+      );
+    }
+
+    const { container, rerender } = render(harness());
+    const view = within(container);
+    expect(view.getByRole('button', { name: '发送（先输入内容或添加图片）' })).toBeDisabled();
+
+    rerender(harness({ draft: '已有内容', modelChanging: true }));
+    expect(view.getByRole('button', { name: '发送（正在切换模型）' })).toBeDisabled();
+
+    rerender(harness({ draft: '已有内容', session: undefined }));
+    expect(view.getByRole('button', { name: '发送（先选择或创建对话）' })).toBeDisabled();
+
+    rerender(harness({ draft: '已有内容' }));
+    expect(view.getByRole('button', { name: '发送' })).toBeEnabled();
+  });
+
   it('uses double Escape to request an in-place edit without disturbing IME input', () => {
     const onEditPrevious = vi.fn();
     const { container } = render(

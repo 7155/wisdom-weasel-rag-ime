@@ -9,6 +9,7 @@ import {
   DialogTitle,
   IconButton,
 } from '@/components/primitives';
+import { CopyTextButton } from './CopyTextButton';
 import { fileSizeLabel } from './file-descriptor';
 import { useFilePreviewStore } from './file-preview-store';
 import { FilePreviewRenderer } from './renderer-registry';
@@ -43,13 +44,18 @@ export function FilePreviewHost() {
           <DialogTitle>{fileName}</DialogTitle>
           <DialogDescription>{meta || '正在读取受控文件回执'}</DialogDescription>
           {descriptor ? (
-            <IconButton
-              className="agent-file-preview-dialog__download"
-              icon={<ExternalLink size={16} />}
-              label="打开原文件"
-              onClick={() => window.open(descriptor.contentUrl, '_blank', 'noopener,noreferrer')}
-              tooltip
-            />
+            <span className="agent-file-preview-dialog__actions">
+              {typeof preview?.content === 'string' && preview.content ? (
+                <CopyTextButton label={`${fileName} 内容`} value={preview.content} />
+              ) : null}
+              <IconButton
+                className="agent-file-preview-dialog__download"
+                icon={<ExternalLink size={16} />}
+                label="打开原文件"
+                onClick={() => window.open(descriptor.contentUrl, '_blank', 'noopener,noreferrer')}
+                tooltip
+              />
+            </span>
           ) : null}
         </DialogHeader>
         {preview?.truncated ? <div className="agent-file-preview-dialog__notice">文件较大，当前显示前 512 KB。</div> : null}

@@ -1025,6 +1025,10 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
 
 function setSnapPreview(root: HTMLElement | null, placement?: PawWindowPlacement): void {
   if (!root) return;
+  // Pointermove can outpace the frame rate; rewriting the same attribute on
+  // the desktop root would invalidate style for the whole desktop subtree on
+  // every event, so only touch the DOM when the preview actually changes.
+  if (root.dataset.snapPreview === placement) return;
   if (placement) root.dataset.snapPreview = placement;
   else delete root.dataset.snapPreview;
 }

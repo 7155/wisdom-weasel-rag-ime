@@ -1,18 +1,19 @@
 /**
- * PawAgentHome — Agent 新建工作主页（重构版）
+ * PawAgentHome — Agent 新建工作主页
  *
- * 替换 PawAgentApp.tsx 中原内联 PawNewWork 的表现层；创建链路、乐观入场
- * （optimistic admission）、模型/思考配置与 Room 创建语义与原实现逐项一致。
+ * 创建链路、乐观入场（optimistic admission）、模型/思考配置与 Room 创建语义
+ * 与 PawAgentApp 原内联实现逐项一致。
  *
  * 设计合同：
- * - UR-002/040：单一 Agent 入口，Session / Room 在 Composer 底栏选择。
+ * - UR-002/040：单一 Agent 入口，Session / Room 在 Composer 底栏选择；
+ *   PF-CM-003：所选工作类型的真实后果（谁来做、哪些伙伴加入）就写在 Composer 下方。
  * - UR-042/044/048：统一 Composer 骨架；锚定菜单紧贴触发控件，不撑开布局。
  * - UR-046：权限四档（按风险确认 / 只读 / 工作区托管 / 全自动），全自动需先选工作目录。
  * - UR-066/078：发送即乐观入场，后台补齐配置与回执。
- * - UR-011/025：空态只给真实信息与下一步（最近工作记录、真实状态），不写愿景文案。
+ * - UR-011/025 与 PF-CM-018/021：页脚只投影真实目录状态（读取中 / 失败可重试 /
+ *   模型数量），不虚构“Runtime 已连接”这类前端无法证明的声明。
  *
  * 样式：paw-os/styles/paw-os-agent-next.css（类名 an-* 作用域）。
- * 注意：本文件在沙盒中未编译；拷贝后请先运行 `pnpm exec tsc --noEmit`。
  */
 
 import {
@@ -24,7 +25,7 @@ import {
   LoaderCircle,
   Users,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   useAgentPreferencesRead,
@@ -62,23 +63,29 @@ const PERMISSION_PRESETS: ReadonlyArray<{
 ];
 
 export function PawAgentHome({
+  catalogError = '',
+  catalogLoading = false,
   defaultModel,
   initialDraft,
   models,
   onCreated,
   onOpenRoom,
   onOpenSession,
+  onReloadCatalog,
   personas,
   projectRoots,
   rooms,
   sessions,
 }: {
+  catalogError?: string;
+  catalogLoading?: boolean;
   defaultModel: string;
   initialDraft?: string;
   models: PiModelOption[];
   onCreated: (selection: Selection, created?: SessionSummary, createdRoom?: RoomSummary) => void;
   onOpenRoom: (id: string) => void;
   onOpenSession: (id: string) => void;
+  onReloadCatalog?: () => void;
   personas: AgentPersonaV1[];
   projectRoots: string[];
   rooms: RoomSummary[];
@@ -98,8 +105,14 @@ export function PawAgentHome({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const composerRef = useRef<HTMLDivElement>(null);
+  const chipRefs = useRef<Record<Exclude<OptionsPanel, null>, HTMLButtonElement | null>>({
+    permission: null,
+    model: null,
+    project: null,
+  });
   const preferenceHydratedRef = useRef(false);
   const preferenceEditedRef = useRef({ executionMode: false, modelReference: false, thinking: false });
+  const modeBriefId = useId();
 
   useEffect(() => {
     if (!modelReference && (preferences.modelReference || defaultModel)) {
@@ -120,6 +133,7 @@ export function PawAgentHome({
   const selectedModel = models.find((item) => item.reference === modelReference);
   const thinkingLevels = supportedPiThinkingLevels(selectedModel, { includeOff: true });
   const roomPersonas = personas.slice(0, 4);
+  const roomReady = roomPersonas.length >= 2;
   const modelGroups = useMemo(() => {
     const groups = new Map<string, PiModelOption[]>();
     for (const model of models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model]);
@@ -127,13 +141,13 @@ export function PawAgentHome({
   }, [models]);
   const permission = PERMISSION_PRESETS.find((item) => item.executionMode === executionMode) ?? PERMISSION_PRESETS[0]!;
 
-  const recents = useMemo(() => {
-    const sessionCards = sessions.slice(0, 3).map((item) => ({ kind: 'session' as const, item }));
-    const roomCards = rooms.slice(0, 1).map((item) => ({ kind: 'room' as const, item }));
-    return [...sessionCards, ...roomCards]
-      .sort((left, right) => right.item.updatedAtMs - left.item.updatedAtMs)
-      .slice(0, 4);
-  }, [rooms, sessions]);
+  // 继续工作按真实更新时间取最近四条，而不是按目录返回顺序截断。
+  const recents = useMemo(() => [
+    ...sessions.map((item) => ({ kind: 'session' as const, item })),
+    ...rooms.map((item) => ({ kind: 'room' as const, item })),
+  ]
+    .sort((left, right) => right.item.updatedAtMs - left.item.updatedAtMs)
+    .slice(0, 4), [rooms, sessions]);
 
   useEffect(() => {
     if (!optionsPanel) return;
@@ -141,7 +155,9 @@ export function PawAgentHome({
       if (event.target instanceof Node && !composerRef.current?.contains(event.target)) setOptionsPanel(null);
     };
     const closeWithEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOptionsPanel(null);
+      if (event.key !== 'Escape') return;
+      setOptionsPanel(null);
+      chipRefs.current[optionsPanel]?.focus();
     };
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeWithEscape);
@@ -177,7 +193,7 @@ export function PawAgentHome({
       setOptionsPanel('project');
       return;
     }
-    if (mode === 'room' && roomPersonas.length < 2) {
+    if (mode === 'room' && !roomReady) {
       setError('当前没有足够的 Room 伙伴。');
       return;
     }
@@ -313,6 +329,7 @@ export function PawAgentHome({
 
           <div className="an-composer" ref={composerRef}>
             <textarea
+              aria-describedby={modeBriefId}
               aria-label="描述你想完成的工作"
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
@@ -335,9 +352,10 @@ export function PawAgentHome({
                   aria-expanded={optionsPanel === 'permission'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'permission' ? null : 'permission')}
+                  ref={(node) => { chipRefs.current.permission = node; }}
                   type="button"
                 >
-                  <span className="mini-dot" />{permission.label}<ChevronDown className="caret" size={13} />
+                  <span className="mini-dot" data-execution-mode={executionMode} />{permission.label}<ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'permission' ? (
                   <div className="an-menu" role="menu">
@@ -371,6 +389,7 @@ export function PawAgentHome({
                   aria-expanded={optionsPanel === 'model'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
+                  ref={(node) => { chipRefs.current.model = node; }}
                   type="button"
                 >
                   {selectedModel?.name ?? '自动模型'} · {thinkingLabel(thinking)}<ChevronDown className="caret" size={13} />
@@ -426,6 +445,7 @@ export function PawAgentHome({
                   aria-expanded={optionsPanel === 'project'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'project' ? null : 'project')}
+                  ref={(node) => { chipRefs.current.project = node; }}
                   type="button"
                 >
                   <Folder size={12} />{workspaceRoot ? projectName([workspaceRoot]) : '选择工作目录'}<ChevronDown className="caret" size={13} />
@@ -463,7 +483,7 @@ export function PawAgentHome({
               <button
                 aria-label={submitting ? '正在创建' : `开始 ${mode === 'session' ? 'Session' : 'Room'}`}
                 className="an-send"
-                disabled={!prompt.trim() || submitting}
+                disabled={!prompt.trim() || submitting || (mode === 'room' && !roomReady)}
                 onClick={() => void startWork()}
                 type="button"
               >
@@ -471,6 +491,25 @@ export function PawAgentHome({
               </button>
             </div>
           </div>
+          {mode === 'session' ? (
+            <p className="an-mode-brief" id={modeBriefId}>
+              一位 Agent 在同一条时间线里完成这件事；过程可展开，随时可中止或追问。
+            </p>
+          ) : roomReady ? (
+            <div className="an-mode-brief an-room-plan" id={modeBriefId}>
+              <span className="an-room-plan__label">将加入的伙伴</span>
+              {roomPersonas.map((persona, index) => (
+                <span className="an-room-plan__chip" key={persona.roleId}>
+                  {persona.displayName}
+                  <i>{collaborationRoleLabel(index)}</i>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="an-mode-brief is-blocked" id={modeBriefId}>
+              Room 需要至少 2 位可用伙伴，当前只有 {roomPersonas.length} 位，暂时无法开始。
+            </p>
+          )}
           {preferenceRead.readError ? (
             <p className="an-home-error" role="alert">
               <CircleAlert size={14} />{preferenceRead.readError}
@@ -502,11 +541,22 @@ export function PawAgentHome({
             </div>
           ) : null}
 
-          <div className="an-home-foot">
-            <span><span className="an-dot is-ok" />Pi Runtime 已连接</span>
-            {models.length ? <span>{models.length} 个可用模型</span> : null}
-            {defaultModel ? <span>默认模型 {defaultModel.split('/').pop()}</span> : null}
-          </div>
+          {/* 只陈述有真实目录数据支撑的事实；连接状态由 Session 工作区的运行时行负责。 */}
+          {(catalogLoading || catalogError || models.length || defaultModel) ? (
+            <div className="an-home-foot">
+              {catalogLoading ? (
+                <span><LoaderCircle className="ui-spin" size={12} />正在读取模型与工作记录…</span>
+              ) : null}
+              {!catalogLoading && catalogError ? (
+                <span className="is-warn" role="status">
+                  <CircleAlert size={12} />{catalogError}
+                  {onReloadCatalog ? <button onClick={onReloadCatalog} type="button">重新读取目录</button> : null}
+                </span>
+              ) : null}
+              {models.length ? <span><span className="an-dot is-ok" />{models.length} 个可用模型</span> : null}
+              {defaultModel ? <span>默认模型 {defaultModel.split('/').pop()}</span> : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -596,6 +646,10 @@ function timeGreeting(): string {
   const hh = String(hour).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
   return `${weekdays[now.getDay()]} · ${hh}:${mm} · ${phase}`;
+}
+/** 与 startWork 的 Room 创建 payload 保持同一映射：0=协调，1=审阅，其余=专家。 */
+function collaborationRoleLabel(index: number): string {
+  return index === 0 ? '协调' : index === 1 ? '审阅' : '专家';
 }
 function thinkingLabel(level: string): string {
   if (!level || level === 'off') return '关闭';

@@ -382,13 +382,24 @@
   background: var(--color-surface-subtle);
 }
 
+/* Same reading contract as the conversation itself: what the person typed
+   sits on the right with the accent edge, the Agent answers from the left.
+   The single role caption is the only label — no repeated 你/我, no avatar. */
 .debug-context-inspector__messages > article[data-role='user'] {
+  justify-self: end;
   border: 1px solid color-mix(in srgb, var(--color-accent) 25%, var(--color-border));
-  border-left: 2px solid var(--color-accent);
+  border-right: 2px solid var(--color-accent);
+  border-radius: var(--radius-2) 4px 4px var(--radius-2);
   background: color-mix(in srgb, var(--color-accent-soft) 42%, var(--color-surface));
+  text-align: left;
+}
+
+.debug-context-inspector__messages > article[data-role='user'] > small {
+  justify-self: end;
 }
 
 .debug-context-inspector__messages > article[data-role='assistant'] {
+  justify-self: start;
   border-left-color: var(--color-success);
   background: transparent;
 }

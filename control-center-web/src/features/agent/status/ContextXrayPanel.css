@@ -99,27 +99,88 @@
 }
 
 .agent-context-xray__layers > li {
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+}
+
+.agent-context-xray__layer-row {
   display: grid;
+  width: 100%;
   min-width: 0;
   min-height: 52px;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: start;
   gap: 7px;
   padding: 8px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
 }
 
-.agent-context-xray__layers > li > svg {
+.agent-context-xray__layer-toggle {
+  grid-template-columns: 20px minmax(0, 1fr) auto 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-context-xray__layer-toggle:hover strong {
+  color: var(--color-accent-strong);
+}
+
+.agent-context-xray__layer-toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+  border-radius: var(--radius-1);
+}
+
+.agent-context-xray__layer-caret {
+  margin-top: 3px;
+  color: var(--color-text-tertiary);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.agent-context-xray__layers > li[data-expanded] .agent-context-xray__layer-caret {
+  transform: rotate(90deg);
+}
+
+.agent-context-xray__layer-content {
+  min-width: 0;
+  margin: 0 0 9px 20px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+}
+
+.agent-context-xray__layer-content > pre {
+  max-height: min(36dvh, 280px);
+  min-width: 0;
+  margin: 0;
+  padding: 9px 11px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--color-text);
+  font: 12px/1.6 var(--font-mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-context-xray__layer-content > pre:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.agent-context-xray__layer-row > svg {
   margin-top: 2px;
   color: var(--color-accent);
 }
 
-.agent-context-xray__layers > li[data-state='absent'] > svg,
-.agent-context-xray__layers > li[data-state='unavailable'] > svg {
+.agent-context-xray__layers > li[data-state='absent'] .agent-context-xray__layer-row > svg,
+.agent-context-xray__layers > li[data-state='unavailable'] .agent-context-xray__layer-row > svg {
   color: var(--color-text-tertiary);
 }
 
-.agent-context-xray__layers > li > span {
+.agent-context-xray__layer-row > span {
   display: grid;
   min-width: 0;
   gap: 1px;
@@ -146,7 +207,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.agent-context-xray__layers > li > b {
+.agent-context-xray__layer-row > b {
   display: inline-flex;
   min-height: 20px;
   align-items: center;
@@ -161,18 +222,18 @@
   white-space: nowrap;
 }
 
-.agent-context-xray__layers > li > b[data-state='delivered'] {
+.agent-context-xray__layer-row > b[data-state='delivered'] {
   border-color: color-mix(in srgb, var(--color-success) 34%, var(--color-border));
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
   color: var(--context-xray-success);
 }
 
-.agent-context-xray__layers > li > b[data-state='missing'] {
+.agent-context-xray__layer-row > b[data-state='missing'] {
   border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
   color: var(--color-danger);
 }
 
-.agent-context-xray__layers > li > b[data-state='pending'] {
+.agent-context-xray__layer-row > b[data-state='pending'] {
   border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
   color: var(--color-warning);
 }
@@ -211,7 +272,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-context-xray__trigger > svg {
+  .agent-context-xray__trigger > svg,
+  .agent-context-xray__layer-caret {
     transition: none;
   }
 }

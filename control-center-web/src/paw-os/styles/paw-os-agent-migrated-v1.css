@@ -111,8 +111,11 @@
   height: 48px;
   padding: 8px 12px 8px 46px;
   border-bottom: 1px solid var(--paw-chat-border);
-  background: rgb(255 255 255 / 94%);
-  backdrop-filter: saturate(1.2) blur(14px);
+  /* The session workspace surface beneath is already one blurred glass layer.
+     A second backdrop-filter on this near-opaque header forces a re-blur of
+     the streaming timeline on every scroll/stream frame for no visible gain. */
+  background: rgb(255 255 255 / 97%);
+  backdrop-filter: none;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -349,9 +352,8 @@
   gap: 18px;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body > header {
-  display: none;
-}
+/* The fx timeline no longer emits the repeated "Agent/状态" caption row
+   (UR-075): message side is the identity, so no hide rule is needed here. */
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn-sequence {
   gap: 18px;
@@ -522,8 +524,10 @@
   align-self: end;
   padding: 10px 24px 16px;
   border-top: 1px solid rgb(236 235 234 / 68%);
-  background: rgb(255 255 255 / 96%);
-  backdrop-filter: blur(14px);
+  /* The composer band sits directly on the streaming timeline; blurring an
+     already 96% opaque band re-rasterizes every streamed token beneath it. */
+  background: rgb(255 255 255 / 97%);
+  backdrop-filter: none;
 }
 
 .paw-desktop-root .paw-session-workspace__composer > .agent-composer-wrap {
@@ -601,8 +605,10 @@
   width: min(860px, 100%);
   margin: 0 auto 12px;
   padding: 4px 0 8px;
-  background: rgb(255 255 255 / 94%);
-  backdrop-filter: blur(10px);
+  /* Sticky over an opaque #fff trace body: keep it opaque instead of paying
+     a per-scroll-frame backdrop re-blur that cannot be seen. */
+  background: rgb(255 255 255 / 97%);
+  backdrop-filter: none;
 }
 
 .paw-agent-trace-v1__filters button {

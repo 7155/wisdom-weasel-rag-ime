@@ -115,6 +115,29 @@ export function parseUnifiedDiff(source: string): DiffFile[] {
   return files.filter((file) => file.hunks.length > 0 || file.status === 'renamed');
 }
 
+export interface DiffLineTotals {
+  added: number;
+  removed: number;
+}
+
+export function countFileDiffLines(file: DiffFile): DiffLineTotals {
+  const totals: DiffLineTotals = { added: 0, removed: 0 };
+  for (const hunk of file.hunks) {
+    for (const line of hunk.lines) {
+      if (line.kind === 'add') totals.added += 1;
+      else if (line.kind === 'remove') totals.removed += 1;
+    }
+  }
+  return totals;
+}
+
+export function countDiffLines(files: readonly DiffFile[]): DiffLineTotals {
+  return files.reduce<DiffLineTotals>((totals, file) => {
+    const fileTotals = countFileDiffLines(file);
+    return { added: totals.added + fileTotals.added, removed: totals.removed + fileTotals.removed };
+  }, { added: 0, removed: 0 });
+}
+
 export function pairDiffLines(lines: readonly DiffLine[]): Array<{ left: DiffLine | null; right: DiffLine | null }> {
   const pairs: Array<{ left: DiffLine | null; right: DiffLine | null }> = [];
   let index = 0;

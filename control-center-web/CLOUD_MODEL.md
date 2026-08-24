@@ -30,10 +30,28 @@ Historical user quotes that mention Tutti remain in the ledger as **intent** (ma
 
 ## What to do
 
-1. Reconstruct **Agent App first** (home, Session conversation tree, composer, rich results, trace). Keep the code-surface colour pair and its regression test.
-2. Then OS shell (windows, Dock, chrome uniqueness, motion/flicker).
-3. Then remaining Apps vertically against the brief's per-App chapters.
-4. Fix streaming reflow, layout jump, and flicker.
-5. Run focused vitest, `pnpm typecheck`, production `pnpm build` from `control-center-web/`. Do not claim install/foreground completion unless the user asks to install.
+**User mandate (2026-08-24, newest wins):** the whole PAWOS desktop may be
+optimized. Surfaces that look wrong, feel sticky, or fight the vision may be
+**torn down and redesigned**. Agents may invent better interaction and visual
+craft within the in-repo UR / PF-CM ledger and product boundaries—do not wait for
+a colour pass. Every App may be polished for interaction and UI once its owning
+vertical slice is clear.
+
+Suggested order (parallel only with hard file ownership):
+
+1. Finish / deepen **Agent App** (conversation, composer, trace, rich results) and
+   **Room satellites** (compact projection, cross-window flow, focus). Keep the
+   code-surface colour pair and its regression test.
+2. **OS shell** — windows, Dock, Wayfinder, chrome uniqueness, drag/resize,
+   motion/flicker, one visual language. Redesign freely when the current shell
+   fails the brand/purpose tests.
+3. **Remaining Apps one vertical slice at a time** (Files, Terminal, Memory,
+   Knowledge, Browser, Workbench, Input Studio, App Center, Monitor, Settings).
+   Each App may be redesigned for human purpose; preserve real Runtime contracts.
+4. Keep fixing streaming reflow, layout jump, and flicker wherever they appear.
+5. Run focused vitest, `pnpm typecheck`, production `pnpm build` from
+   `control-center-web/`. Do not claim install/foreground completion unless the
+   user asks to install.
 
 Work on `main`. Path-qualified frontend commits. Preserve unrelated dirty work.
+Ignore CI billing failures when merging unless the user asks otherwise.

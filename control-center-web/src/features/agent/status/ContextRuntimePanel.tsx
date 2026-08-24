@@ -31,6 +31,11 @@ import {
 } from '@/components/primitives';
 import type { AgentContextItemV1 } from '@/contracts/generated/agent-context-item.v1';
 import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
+import {
+  normalizeDebugContextResponse,
+  type DebugContextRecord,
+} from '@/features/context-debug/model';
+import { assemblyStageEvidence } from './context-evidence';
 import { DebugContextInspector } from './DebugContextInspector';
 
 interface ContextTraceSummary {
@@ -240,6 +245,25 @@ function ContextPipelineDialog({
     enabled: open && Boolean(selectedTraceId),
     retry: false,
   });
+  // 与下方内嵌的 DebugContextInspector 使用同一 queryKey，共享同一次
+  // debugContext 请求；节点详情因此能直接打开该阶段的具体捕获原文。
+  const evidenceTurnId = traceQuery.data?.turnId ?? '';
+  const evidenceQuery = useQuery({
+    queryKey: ['agent', 'debug-context', sessionId, evidenceTurnId || 'latest'],
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.session.debugContext.get',
+      params: { sessionId },
+      query: evidenceTurnId ? { turnId: evidenceTurnId } : {},
+      signal,
+    }),
+    enabled: open && Boolean(evidenceTurnId),
+    retry: false,
+    staleTime: 2_000,
+  });
+  const evidenceContext = useMemo(
+    () => normalizeDebugContextResponse(evidenceQuery.data).context,
+    [evidenceQuery.data],
+  );
 
   function beginResize(event: ReactMouseEvent<HTMLDivElement>): void {
     const dialog = event.currentTarget.closest<HTMLElement>('.agent-context-pipeline-dialog');
@@ -320,7 +344,11 @@ function ContextPipelineDialog({
             ) : null}
             {traceQuery.data ? (
               <>
-                <ContextTraceGraph trace={traceQuery.data} />
+                <ContextTraceGraph
+                  evidenceContext={evidenceContext}
+                  evidencePending={evidenceQuery.isPending && Boolean(evidenceTurnId)}
+                  trace={traceQuery.data}
+                />
                 <DebugContextInspector sessionId={sessionId} turnId={traceQuery.data.turnId} embedded />
               </>
             ) : null}
@@ -347,7 +375,15 @@ function clampContextDrawerWidth(width: number): number {
   return Math.min(contextDrawerMaximumWidth(), Math.max(contextDrawerMinimumWidth(), width));
 }
 
-function ContextTraceGraph({ trace }: { trace: AgentContextTraceV1 }) {
+function ContextTraceGraph({
+  evidenceContext,
+  evidencePending = false,
+  trace,
+}: {
+  evidenceContext?: DebugContextRecord;
+  evidencePending?: boolean;
+  trace: AgentContextTraceV1;
+}) {
   const layers = useMemo(() => contextTraceLayers(trace), [trace]);
   const [selectedNodeId, setSelectedNodeId] = useState(trace.nodes.at(-1)?.nodeId ?? '');
   useEffect(() => {
@@ -405,9 +441,58 @@ function ContextTraceGraph({ trace }: { trace: AgentContextTraceV1 }) {
             </div>
           ) : null}
           {selected.reason ? <p><TriangleAlert size={14} />{selected.reason}</p> : null}
+          <ContextNodeEvidence
+            context={evidenceContext}
+            node={selected}
+            pending={evidencePending}
+          />
         </section>
       ) : null}
     </>
+  );
+}
+
+function ContextNodeEvidence({
+  context,
+  node,
+  pending,
+}: {
+  context?: DebugContextRecord;
+  node: AgentContextTraceV1['nodes'][number];
+  pending: boolean;
+}) {
+  if (node.disposition === 'redacted') {
+    return <p className="agent-context-node-evidence__note">该阶段内容被权威标记为已隐藏，这里不展示原文。</p>;
+  }
+  if (node.disposition === 'omitted') {
+    return <p className="agent-context-node-evidence__note">该阶段本轮未加入上下文，因此没有随请求发送的原文。</p>;
+  }
+  if (!context) {
+    return (
+      <p className="agent-context-node-evidence__note">
+        {pending ? '正在读取本轮原文快照…' : '本轮原文快照不可用；以上指标仍来自真实装配记录。'}
+      </p>
+    );
+  }
+  const evidence = assemblyStageEvidence(node.stage, context);
+  if (!evidence) {
+    return <p className="agent-context-node-evidence__note">该阶段没有独立捕获的原文；完整证据见下方「模型上下文增量」。</p>;
+  }
+  return (
+    <section aria-label={evidence.label} className="agent-context-node-evidence">
+      <header>
+        <strong>{evidence.label}</strong>
+        <span>{evidence.value.length.toLocaleString('zh-CN')} 字符</span>
+      </header>
+      <pre
+        aria-label={`${evidence.label}，可滚动原文`}
+        data-kind={evidence.kind}
+        role="region"
+        tabIndex={0}
+      >
+        {evidence.value}
+      </pre>
+    </section>
   );
 }
 

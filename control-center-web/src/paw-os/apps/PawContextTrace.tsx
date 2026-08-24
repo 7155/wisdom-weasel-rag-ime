@@ -45,7 +45,16 @@ import {
   type DebugToolExecution,
   type DebugTurnSummary,
 } from '@/features/context-debug/model';
+import {
+  assemblyStageEvidence,
+  formatEvidenceValue,
+  modelContextMessages,
+  modelSystemPrompt,
+  modelToolSchemas,
+  type AssemblyEvidenceValue,
+} from '@/features/agent/status/context-evidence';
 import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
+import { CopyTextButton } from '@/features/agent/file-preview/CopyTextButton';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
@@ -347,7 +356,7 @@ export function PawContextTrace({
               <div className="an-stage-group">上下文节点 · 按装配顺序</div>
               {trace?.nodes?.length
                 ? trace.nodes.map((node) => {
-                    const evidence = traceNodeEvidence(node.stage, context);
+                    const evidence = assemblyStageEvidence(node.stage, context);
                     return (
                     <Disclosure
                       className="an-node"
@@ -374,7 +383,23 @@ export function PawContextTrace({
                           <span>处置 <b>{node.disposition}</b></span>
                         </div>
                         {node.reason ? <div className="nb-row"><span>原因 <b>{node.reason}</b></span></div> : null}
-                        {evidence ? <AssemblyEvidence evidence={evidence} /> : null}
+                        {evidence ? (
+                          <AssemblyEvidence evidence={evidence} />
+                        ) : (
+                          /* PF-CM-010: a summary row is never a dead end. When
+                             contextTrace carries no captured body for this
+                             stage, open to the node's complete real capture
+                             record and say so — do not stay silent and do not
+                             invent content. */
+                          <AssemblyEvidence
+                            evidence={{
+                              label: '节点捕获记录',
+                              value: traceNodeCaptureRecord(node),
+                              kind: 'json',
+                            }}
+                            note="contextTrace 未附带该阶段的原文捕获；以上为该节点记录的全部真实字段。"
+                          />
+                        )}
                     </Disclosure>
                     );
                   })
@@ -489,14 +514,14 @@ function FallbackNodes({ context }: { context: DebugContextRecord }) {
       sub: `tools.schemas · ${resolvedToolSchemas.length} 个可用工具`,
       tokens: resolvedToolSchemas.length * 110,
       disp: 'included',
-      evidence: { label: '本次模型调用收到的工具 Schema', value: formatEvidence(resolvedToolSchemas), kind: 'json' },
+      evidence: { label: '本次模型调用收到的工具 Schema', value: formatEvidenceValue(resolvedToolSchemas), kind: 'json' },
     },
     {
       label: '上下文消息',
       sub: `context.messages · 最近一次调用 ${resolvedContextMessages.length} 条`,
-      tokens: estimateTokens(formatEvidence(resolvedContextMessages)),
+      tokens: estimateTokens(formatEvidenceValue(resolvedContextMessages)),
       disp: 'included',
-      evidence: { label: '按 Provider 顺序装配的上下文消息', value: formatEvidence(resolvedContextMessages), kind: 'json' },
+      evidence: { label: '按 Provider 顺序装配的上下文消息', value: formatEvidenceValue(resolvedContextMessages), kind: 'json' },
     },
     {
       label: '当前输入',
@@ -538,18 +563,15 @@ function FallbackNodes({ context }: { context: DebugContextRecord }) {
   );
 }
 
-type AssemblyEvidenceValue = {
-  label: string;
-  value: string;
-  kind: 'json' | 'text';
-};
-
-function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
+function AssemblyEvidence({ evidence, note }: { evidence: AssemblyEvidenceValue; note?: string }) {
   return (
     <section className="an-assembly-evidence" aria-label={evidence.label}>
       <header>
         <strong>{evidence.label}</strong>
-        <span>{formatNumber(evidence.value.length)} 字符</span>
+        <span className="agent-trace-evidence-actions">
+          <small>{formatNumber(countLines(evidence.value))} 行 · {formatNumber(evidence.value.length)} 字符</small>
+          <CopyTextButton label={evidence.label} value={evidence.value} />
+        </span>
       </header>
       <pre
         aria-label={`${evidence.label}，可滚动原文`}
@@ -559,54 +581,26 @@ function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
       >
         {evidence.value}
       </pre>
+      {note ? <p className="agent-trace-evidence-note">{note}</p> : null}
     </section>
   );
 }
 
-function traceNodeEvidence(stage: string, context: DebugContextRecord): AssemblyEvidenceValue | undefined {
-  const normalized = stage.trim().toLowerCase();
-  if (normalized === 'input' || normalized.includes('prompt')) {
-    return { label: '本轮用户输入原文', value: context.prompt || '本轮未捕获用户输入。', kind: 'text' };
-  }
-  if (normalized === 'tools' || normalized.includes('tool')) {
-    return { label: '本次模型调用收到的工具 Schema', value: formatEvidence(modelToolSchemas(context)), kind: 'json' };
-  }
-  if (normalized.includes('message') || normalized.includes('context') || normalized === 'runtime_request') {
-    return { label: '按 Provider 顺序装配的上下文消息', value: formatEvidence(modelContextMessages(context)), kind: 'json' };
-  }
-  if (normalized === 'session' || normalized === 'system' || normalized === 'project') {
-    return { label: '本次模型调用收到的系统指令', value: modelSystemPrompt(context) || '本轮未捕获系统指令。', kind: 'text' };
-  }
-  return undefined;
-}
-
-function latestModelCall(context: DebugContextRecord): DebugModelCall | undefined {
-  return context.modelCalls.at(-1);
-}
-
-function modelSystemPrompt(context: DebugContextRecord): string {
-  const value = latestModelCall(context)?.providerContext.systemPrompt;
-  return typeof value === 'string' ? value : context.systemPrompt;
-}
-
-function modelToolSchemas(context: DebugContextRecord): unknown[] {
-  const providerContext = latestModelCall(context)?.providerContext;
-  return providerContext && Array.isArray(providerContext.tools) ? providerContext.tools : context.toolSchemas;
-}
-
-function modelContextMessages(context: DebugContextRecord): unknown[] {
-  const call = latestModelCall(context);
-  if (!call) return [];
-  return Array.isArray(call.providerContext.messages) ? call.providerContext.messages : call.contextMessages;
-}
-
-function formatEvidence(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value ?? null, null, 2) ?? String(value ?? '');
-  } catch {
-    return String(value ?? '');
-  }
+function traceNodeCaptureRecord(node: AgentContextTraceV1['nodes'][number]): string {
+  return formatEvidence(safeTraceEvidence({
+    stage: node.stage,
+    label: node.label || undefined,
+    sourceKind: node.sourceKind,
+    disposition: node.disposition,
+    summary: node.summary || undefined,
+    reason: node.reason || undefined,
+    tokenEstimate: node.tokenEstimate,
+    charCount: node.charCount,
+    durationMs: node.durationMs,
+    fingerprint: node.fingerprint,
+    metadata: node.metadata,
+    createdAtMs: node.createdAtMs,
+  }));
 }
 
 /* ---------- 数据派生 ---------- */
@@ -850,6 +844,10 @@ function TraceEvidenceSection({ section }: { section: TraceEvidenceSectionValue 
         </>
       )}
     >
+      <div className="agent-trace-evidence-tools">
+        <small>{formatNumber(countLines(section.value))} 行 · {formatNumber(section.value.length)} 字符</small>
+        <CopyTextButton label={section.label} value={section.value} />
+      </div>
       <pre
         aria-label={`${section.label}，可滚动原文`}
         role="region"
@@ -887,7 +885,7 @@ function activityEvidenceSections(payload: Record<string, unknown>): TraceEviden
     const key = keys.find((candidate) => Object.hasOwn(payload, candidate));
     if (!key) return;
     consumed.add(key);
-    sections.push({ label, value: formatEvidence(safeTraceEvidence(payload[key])) });
+    sections.push({ label, value: formatEvidenceValue(safeTraceEvidence(payload[key])) });
   };
   addFirst('调用参数', ['args', 'arguments', 'input', 'request']);
   addFirst('过程记录', ['progressHistory', 'updates', 'progress']);
@@ -897,7 +895,7 @@ function activityEvidenceSections(payload: Record<string, unknown>): TraceEviden
     Object.entries(payload).filter(([key]) => !consumed.has(key)),
   );
   if (Object.keys(remaining).length || sections.length === 0) {
-    sections.push({ label: '事件载荷', value: formatEvidence(safeTraceEvidence(remaining)) });
+    sections.push({ label: '事件载荷', value: formatEvidenceValue(safeTraceEvidence(remaining)) });
   }
   return sections;
 }
@@ -1109,9 +1107,8 @@ function text(value: unknown): string {
 function estimateTokens(content: string): number {
   return content ? Math.ceil(content.length / 4) : 0;
 }
-function lastMessageCount(context: DebugContextRecord): number {
-  const last = context.modelCalls[context.modelCalls.length - 1];
-  return last ? last.contextMessages.length : 0;
+function countLines(content: string): number {
+  return content ? content.split('\n').length : 0;
 }
 function findCache(cache: DebugCacheEvidence[], call: DebugModelCall): DebugCacheEvidence | undefined {
   return cache.find((item) => item.requestIndex === call.index);

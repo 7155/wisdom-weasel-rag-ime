@@ -1,15 +1,16 @@
 /* ============================================================================
- * PAWOS · Composition OS —— Agent 对话流与卫星窗口（UR-016/054/056/057/063）
+ * PAWOS · Agent 对话流与卫星窗口兼容层（UR-016/054/056/057/063）
  * 保留 Agent 事件投影的兼容视觉；共享桌面 chrome 由 shell migrated owner 负责。
  *
- * 对话流设计语言：构成主义信号时间线
- *   · 左侧 2px 墨线轨道贯穿全部事件，每个事件一个几何信号标记
- *     （用户=实心墨方、Agent=紫罗兰圆环、工具=明黄三角、结果=钴蓝圆、失败=信号红方）
- *   · 用户消息是"墨条"：墨底纸字，左上角红色套准小角
- *   · Agent 回复无重卡片：紫罗兰信号条 + 宽松排版；流式光标是闪烁的红色小方块
- *   · 每个工具调用是独立紧凑行（UR-016），运行中行底部虚线流动
- *   · 等待状态 = 圆→三角→方 三个几何形接力跳动（画中三母题），不是三个圆点
- *   · 卫星窗（UR-056）：只有对话内容，顶部 3px 伙伴色信号带，新消息到达边缘发光
+ * PF-CM-004：原 Composition-8 暖纸语言已被明亮冷静的桌面语言取代。本文件的
+ * comp8 变量由 paw-os-webmodel-v1.css 重映射到冷色板；文件内不得再出现
+ * 暖纸/暖墨字面色。代码/终端/原始输出一律使用共享 --color-code-bg /
+ * --color-code-text 色对（与 paw-apps-style 回归测试同一合同）。
+ *
+ * 现存职责：
+ *   · 流式光标与待答状态（.agent-assistant-pending）
+ *   · 工具行运行/失败信号与结果面板兜底
+ *   · 卫星窗（UR-056）：顶部 3px 伙伴色信号带，新消息到达边缘发光
  * ========================================================================== */
 
 .paw-desktop-root {
@@ -41,7 +42,7 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 .paw-desktop-root .paw-session-workspace__view-switch button:hover {
-  background: rgba(27, 21, 18, .06);
+  background: rgb(23 26 33 / .06);
   color: var(--comp8-ink);
 }
 .paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'],
@@ -52,7 +53,7 @@
 .paw-desktop-root .paw-session-workspace__runtime > span {
   border: 1px solid var(--paw-line);
   border-radius: 999px;
-  background: rgba(250, 247, 236, .6);
+  background: rgb(255 255 255 / .65);
   font-variant-numeric: tabular-nums;
 }
 .paw-desktop-root .paw-session-workspace__runtime > span[data-tone='busy'],
@@ -62,7 +63,8 @@
 }
 
 /* ============================================================================
- * 构成主义信号时间线：墨线轨道 + 几何信号标记
+ * 事件轨道兼容层：细线轨道 + 几何信号标记
+ * （分离式对话流 [data-message-flow='separated'] 由 webmodel-v1 显式停用）
  * ========================================================================== */
 
 .paw-desktop-root .agent-timeline {
@@ -70,7 +72,7 @@
   padding: 8px 26px 12px 34px;
   background: transparent;
 }
-/* 墨线轨道 */
+/* 事件轨道细线 */
 .paw-desktop-root .agent-timeline::before {
   position: absolute;
   top: 0;
@@ -79,8 +81,8 @@
   width: 2px;
   background: linear-gradient(180deg,
     transparent,
-    rgba(27, 21, 18, .3) 40px,
-    rgba(27, 21, 18, .3) calc(100% - 40px),
+    rgb(23 26 33 / .22) 40px,
+    rgb(23 26 33 / .22) calc(100% - 40px),
     transparent);
   content: '';
 }
@@ -123,7 +125,7 @@
 .paw-desktop-root .agent-turn__failure::before { background: var(--comp8-fail); }
 
 /* ============================================================================
- * 用户消息 = 墨条（墨底纸字 + 红色套准角标）
+ * 用户消息兜底（分离式对话流由 migrated/fx owner 重写为右侧气泡）
  * ========================================================================== */
 
 .paw-desktop-root .agent-user-message {
@@ -134,11 +136,11 @@
   border-radius: 3px 10px 10px 10px;
   color: var(--comp8-paper-hi);
   background: var(--comp8-ink);
-  box-shadow: 3px 3px 0 rgba(27, 21, 18, .14);
+  box-shadow: 3px 3px 0 rgb(23 26 33 / .12);
   font-size: var(--paw-type-body, 15px);
   line-height: 1.62;
 }
-/* 套准角标：左上角 4px 信号红方片，错位半格（版画套准标记） */
+/* 左上角信号角标 */
 .paw-desktop-root .agent-user-message::before {
   position: absolute;
   top: -4px;
@@ -153,8 +155,8 @@
   border-color: var(--comp8-red);
 }
 .paw-desktop-root .agent-user-message__delivery {
-  color: rgba(250, 247, 236, .62);
-  font-size: 11px;
+  color: rgb(255 255 255 / .72);
+  font-size: 12px;
 }
 .paw-desktop-root .agent-user-message a { color: #9db4ff; }
 
@@ -178,7 +180,7 @@
   transition: background-color 140ms ease;
 }
 .paw-desktop-root .agent-assistant-message-shell:hover {
-  background: rgba(250, 247, 236, .5);
+  background: rgb(23 26 33 / .04);
 }
 /* 流式光标：红色小方块闪烁（构成主义光标，不是竖线） */
 .paw-desktop-root .agent-assistant-turn[data-status='streaming'] .agent-markdown > :last-child::after,
@@ -196,18 +198,13 @@
   50% { opacity: 0; }
 }
 
-/* 等待状态：圆 → 三角 → 方 接力跳动（画中三母题），不是三个圆点 */
+/* 等待状态：安静的单行提示，光标由 ::after 提供 */
 .paw-desktop-root .agent-assistant-pending {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   min-height: 22px;
   color: var(--paw-muted);
-}
-.paw-desktop-root .agent-assistant-pending::before,
-.paw-desktop-root .agent-assistant-pending > i,
-.paw-desktop-root .agent-assistant-pending > i::before {
-  /* 由组件提供三个 <i>；若无则只用 ::before/::after 两个 */
 }
 /* ============================================================================
  * 工具调用：每个工具独立紧凑行（UR-016），运行中底部虚线流动
@@ -217,7 +214,7 @@
   margin: 2px 0 10px;
   border: 1px solid var(--paw-line);
   border-radius: 10px;
-  background: rgba(250, 247, 236, .55);
+  background: rgb(255 255 255 / .6);
   overflow: hidden;
 }
 .paw-desktop-root .agent-activity-group > summary,
@@ -245,7 +242,7 @@
   font-size: 12.5px;
   transition: background-color 110ms ease;
 }
-.paw-desktop-root .agent-activity-row:hover { background: rgba(27, 21, 18, .045); }
+.paw-desktop-root .agent-activity-row:hover { background: rgb(23 26 33 / .045); }
 
 /* 工具行图标：几何信号点替换通用圆点 */
 .paw-desktop-root .agent-activity-row__icon {
@@ -278,7 +275,7 @@
 .paw-desktop-root .agent-activity-row[data-status='active'] {
   background:
     linear-gradient(90deg, var(--comp8-tool) 55%, transparent 45%) bottom left / 12px 1.6px repeat-x,
-    rgba(227, 169, 28, .06);
+    color-mix(in srgb, var(--comp8-tool) 7%, transparent);
   animation: paw-comp8-marching 700ms linear infinite;
 }
 @keyframes paw-comp8-marching {
@@ -287,15 +284,15 @@
 
 .paw-desktop-root .agent-activity-row__meta {
   color: var(--paw-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .paw-desktop-root .agent-activity-row__details {
   margin: 2px 6px 6px 27px;
   border: 1px solid var(--paw-line);
   border-radius: 8px;
-  background: rgba(27, 21, 18, .93);
-  color: #efe9d8;
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
@@ -308,20 +305,22 @@
 .paw-desktop-root .agent-tool-result-panel {
   border: 1px solid var(--paw-line);
   border-radius: 9px;
-  background: rgba(250, 247, 236, .6);
+  background: rgb(255 255 255 / .65);
 }
 .paw-desktop-root .agent-tool-result-panel__header {
   border-bottom: 1px dashed var(--paw-line);
   color: var(--paw-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 650;
 }
+/* 代码/终端/原始输出统一走共享 code 色对（--color-code-bg / --color-code-text），
+   与 paw-os-agent-migrated-v1 的分离式对话流规则同一合同。 */
 .paw-desktop-root .agent-tool-raw-result__body,
 .paw-desktop-root .agent-tool-code-result,
 .paw-desktop-root .agent-tool-terminal-result {
   border-radius: 8px;
-  background: rgba(27, 21, 18, .93);
-  color: #efe9d8;
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
   font-family: var(--font-mono);
 }
 
@@ -330,7 +329,7 @@
   border: 1px solid var(--comp8-ink);
   border-left: 4px solid var(--comp8-yellow);
   border-radius: 10px;
-  background: rgba(250, 247, 236, .75);
+  background: rgb(255 255 255 / .8);
 }
 .paw-desktop-root .agent-approval-block__actions :is(button, .ui-button)[data-tone='primary'],
 .paw-desktop-root .agent-approval-block__actions :is(button, .ui-button):first-child {
@@ -355,7 +354,7 @@
 .paw-desktop-root .agent-message-usage,
 .paw-desktop-root .agent-message-usage__model {
   color: var(--paw-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .paw-desktop-root .agent-message-actions {
@@ -368,12 +367,12 @@
 }
 
 /* ============================================================================
- * Composer：纸面磨砂条 + 聚焦紫罗兰信号条；发送=墨方，停止=红方
+ * Composer：冷白磨砂条 + 聚焦紫罗兰信号条；发送=墨方，停止=红方
  * ========================================================================== */
 
 .paw-desktop-root .paw-session-workspace__composer {
   border-top: 1px solid var(--paw-line);
-  background: rgba(246, 242, 230, .66);
+  background: rgb(255 255 255 / .66);
   -webkit-backdrop-filter: blur(20px) saturate(150%);
   backdrop-filter: blur(20px) saturate(150%);
 }
@@ -381,8 +380,8 @@
   position: relative;
   border: 1px solid var(--comp8-ink-soft);
   border-radius: 12px;
-  background: rgba(250, 247, 236, .9);
-  box-shadow: 0 2px 10px rgba(27, 21, 18, .06);
+  background: rgb(255 255 255 / .9);
+  box-shadow: 0 2px 10px rgb(23 26 33 / .06);
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 .paw-desktop-root .agent-composer::before {
@@ -418,7 +417,7 @@
 }
 .paw-desktop-root .agent-composer__actions :is(button[type='submit'], [data-action='send']):hover {
   transform: translateY(-1px);
-  background: #2c241e;
+  background: color-mix(in srgb, var(--comp8-ink) 86%, #fff);
 }
 .paw-desktop-root .agent-composer__stop {
   border-radius: 8px;
@@ -485,7 +484,7 @@
   margin-bottom: 8px;
   padding: 7px 10px 7px 12px;
   border-radius: 3px 9px 9px 9px;
-  background: rgba(250, 247, 236, .8);
+  background: rgb(255 255 255 / .8);
   border: 1px solid var(--paw-line-soft);
   font-size: 12.5px;
   line-height: 1.55;
@@ -511,8 +510,8 @@
 }
 .paw-desktop-root .paw-participant-chat__timeline article > header {
   color: var(--paw-muted);
-  font-size: 10.5px;
-  letter-spacing: .04em;
+  font-size: 12px;
+  letter-spacing: .02em;
 }
 .paw-desktop-root .paw-participant-chat__timeline article p {
   margin: 2px 0 0;
@@ -524,7 +523,7 @@
 }
 .paw-desktop-root .paw-participant-chat__activity-group > summary {
   color: var(--paw-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* 新消息到达：伙伴色边缘发光脉冲（替换默认 accent 脉冲） */
@@ -540,39 +539,21 @@
   100% { box-shadow: var(--paw-shadow); }
 }
 
-/* 进程终端卫星窗：墨面 + 纸字（已经是深色，统一进构成色板） */
+/* 进程终端卫星窗：统一走共享 code 色对（同一石墨终端，不另造深色面） */
 .paw-desktop-root .paw-os-satellite--process {
-  background: #171310;
-  color: #efe9d8;
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
 }
 .paw-desktop-root .paw-process-terminal__meta {
-  border-bottom-color: rgba(239, 233, 216, .12);
-  color: rgba(239, 233, 216, .62);
+  border-bottom-color: color-mix(in srgb, var(--color-code-text) 14%, transparent);
+  color: var(--color-code-muted);
 }
 .paw-desktop-root .paw-process-terminal__feedback { color: var(--comp8-teal); }
 
-/* ============================================================================
- * 逐 App 表面（UR-104）：保留每 App 主色，材质统一进暖纸玻璃体系
- * ========================================================================== */
+/* rail 行的 hover / aria-current 状态由 paw-apps.css 单一负责；
+   此前这里的 [data-selected] / [aria-selected] 覆写没有对应的 DOM 输出
+   （WorkRow 只输出 aria-current 与 data-active），已删除。 */
 
-/* App 选中态：App 主色信号条，不再灰白一片 */
-.paw-desktop-root .paw-agent-row[data-selected],
-.paw-desktop-root .paw-agent-row[aria-selected='true'],
-.paw-desktop-root .paw-agent-row:hover {
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--paw-app-accent, var(--comp8-cobalt)) 10%, transparent);
-}
-.paw-desktop-root .paw-agent-row[data-selected],
-.paw-desktop-root .paw-agent-row[aria-selected='true'] {
-  box-shadow: inset 2.5px 0 0 var(--paw-app-accent, var(--comp8-cobalt));
-}
-.paw-desktop-root .paw-agent-group > header {
-  color: var(--paw-muted);
-  font-family: var(--font-ui);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .12em;
-}
 /* ============================================================================
  * reduced-motion：对话流与卫星窗动效全停（UR-053/057 合同）
  * ========================================================================== */
