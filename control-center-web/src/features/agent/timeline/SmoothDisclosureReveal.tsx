@@ -9,12 +9,12 @@ import {
   type TransitionEvent,
 } from 'react';
 
-/* One disclosure voice across the conversation: the same gentle spring the
-   baseline uses for chevrons and reveals (--paw-chat-spring). The duration
-   also bounds the component's fallback finish timer. */
+/* One disclosure voice across the conversation: a calm ease-out shared by
+   every reveal (.agent-smooth-reveal, .agent-turn-work__reveal,
+   .paw-activity__detail). The duration also bounds the fallback finish timer. */
 export const DISCLOSURE_MOTION = {
-  durationMs: 220,
-  easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)',
+  durationMs: 180,
+  easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
 } as const;
 
 type DisclosurePhase = 'closed' | 'closing' | 'opening' | 'open';

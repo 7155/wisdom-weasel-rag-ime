@@ -21,14 +21,29 @@
   gap: 20px;
 }
 
-/* Session 上下文 chips：对话首屏一次性陈述工作区绑定与权限模式，
-   与用户消息同侧，随记录滚动，不占用固定视口（UR-011 / PF-CM-007）。 */
+/* Session 上下文 chips：对话开篇的一块居中铭牌，两侧 hairline 像章节起始线。
+   一次性陈述工作区绑定与权限模式，随记录滚动，不占用固定视口
+   （UR-011 / PF-CM-007）。 */
 .paw-desktop-root .paw-chatfx .fx-context-chips {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 2px 4px 14px 0;
+  padding: 4px 0 22px;
+}
+
+.paw-desktop-root .paw-chatfx .fx-context-chips::before,
+.paw-desktop-root .paw-chatfx .fx-context-chips::after {
+  content: '';
+  height: 1px;
+  flex: 1 1 24px;
+  max-width: 120px;
+  background: linear-gradient(90deg, transparent, var(--paw-chat-border));
+}
+
+.paw-desktop-root .paw-chatfx .fx-context-chips::after {
+  background: linear-gradient(90deg, var(--paw-chat-border), transparent);
 }
 
 .paw-desktop-root .paw-chatfx .fx-context-chip {
@@ -36,12 +51,15 @@
   overflow: hidden;
   max-width: 55%;
   align-items: center;
-  gap: 5px;
-  padding: 3px 10px 3px 8px;
-  border-radius: 12px;
+  gap: 6px;
+  padding: 3px 11px 3px 9px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 999px;
   color: var(--paw-chat-text-secondary);
-  background: var(--paw-chat-surface-subtle);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%);
   font-size: 12px;
+  font-weight: 550;
   line-height: 16px;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -67,12 +85,15 @@
   margin-bottom: 16px;
 }
 
+/* 用户气泡：冷钴微渐变 + hairline 边 + 收紧的右下角，像一枚落款。 */
 .paw-desktop-root .paw-chatfx .paw-user-message {
   max-width: calc(95% - 40px);
   margin-left: 70px;
-  padding: 7px 14px;
-  border-radius: var(--paw-chat-radius-message);
-  background: var(--paw-chat-user-bubble);
+  padding: 8px 15px;
+  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
+  border-radius: 18px 18px 6px 18px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
   font-size: 16px;
   line-height: 24px;
   overflow-wrap: anywhere;
@@ -116,26 +137,35 @@
   gap: 8px;
 }
 
+/* 折叠的工作胶囊：一枚白色仪表片——状态环、步数、耗时、折角，
+   打开对话第一眼即知这一轮做了什么、花了多久、结局如何。 */
 .paw-desktop-root .paw-chatfx .agent-turn-work__toggle {
   width: fit-content;
   max-width: 100%;
-  min-height: 30px;
+  min-height: 32px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 7px 4px 5px;
-  border: 0;
-  border-radius: 8px;
+  gap: 8px;
+  padding: 5px 11px 5px 6px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 999px;
   color: var(--paw-chat-text-secondary);
-  background: transparent;
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%);
   cursor: pointer;
   text-align: left;
-  transition: color 140ms ease, background-color 140ms ease;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work__toggle:hover {
+  border-color: color-mix(in srgb, var(--paw-chat-text-tertiary) 42%, var(--paw-chat-border));
   color: var(--paw-chat-text);
-  background: var(--paw-chat-surface-hover);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 5%), 0 4px 12px rgb(24 32 43 / 6%);
+}
+
+.paw-desktop-root .paw-chatfx .agent-turn-work[data-expanded] .agent-turn-work__toggle {
+  border-color: color-mix(in srgb, var(--paw-chat-accent) 26%, var(--paw-chat-border));
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work__toggle:focus-visible {
@@ -186,6 +216,7 @@
   color: var(--paw-chat-text-tertiary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -211,7 +242,7 @@
 .paw-desktop-root .paw-chatfx .agent-turn-work__reveal {
   min-width: 0;
   transition:
-    height 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)),
+    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
     opacity 150ms ease;
 }
 
@@ -238,16 +269,18 @@
   content: '';
 }
 
+/* 步骤节点：白心细环。已完成安静地留下刻度，运行中由实心蓝点接管。 */
 .paw-desktop-root .paw-chatfx .agent-turn-work__rail-dot {
   position: absolute;
   z-index: 1;
-  top: 9px;
-  left: 5px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid var(--paw-chat-surface);
+  top: 8px;
+  left: 4px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid color-mix(in srgb, var(--paw-chat-text-tertiary) 62%, var(--paw-chat-border));
   border-radius: 50%;
-  background: var(--paw-chat-text-tertiary);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 0 0 2px var(--paw-chat-surface);
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work__step-body {
@@ -284,26 +317,30 @@
 .paw-desktop-root .paw-chatfx .paw-activity-node::after {
   position: absolute;
   z-index: 1;
-  top: 11px;
-  left: 5px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid var(--paw-chat-surface);
+  top: 10px;
+  left: 4px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid color-mix(in srgb, var(--paw-chat-text-tertiary) 62%, var(--paw-chat-border));
   border-radius: 50%;
-  background: var(--paw-chat-text-tertiary);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 0 0 2px var(--paw-chat-surface);
   content: '';
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after {
+  border-color: var(--paw-chat-accent);
   background: var(--paw-chat-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-chat-accent) 12%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='waiting']::after {
-  background: var(--paw-chat-warn);
+  border-color: var(--paw-chat-warn);
+  background: color-mix(in srgb, var(--paw-chat-warn) 18%, var(--paw-chat-surface));
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='failed']::after {
+  border-color: var(--paw-chat-danger);
   background: var(--paw-chat-danger);
 }
 
@@ -396,7 +433,7 @@
   color: var(--paw-chat-text-secondary);
   font-size: 13px;
   transition:
-    height 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)),
+    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
     opacity 150ms ease,
     margin 200ms ease;
 }
@@ -514,8 +551,9 @@
   overflow: hidden;
   margin: 4px 0 4px 20px;
   border: 1px solid var(--paw-chat-border);
-  border-radius: var(--paw-chat-radius-tool);
+  border-radius: 12px;
   background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 8px 22px rgb(24 32 43 / 6%);
 }
 
 .paw-desktop-root .paw-chatfx .fx-approval::before {
@@ -709,6 +747,155 @@
   50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--paw-chat-accent) 5%, transparent); }
 }
 
+/* ================= Conversation states (deep pass) =================
+   等待条、空态、加载态、回到最新——同一张冷白工作面上的四件小器物。
+   只投影真实 reducer/加载状态，不虚构进度。 */
+
+/* 正在工作：一枚安静的白胶囊——旋转刻度环、扫光标签、真实耗时、波点收尾。
+   替换构成主义红方块光标（组合 8 遗产）为对话自己的语汇。 */
+.paw-desktop-root .paw-chatfx .agent-assistant-pending {
+  display: inline-flex;
+  min-height: 34px;
+  max-width: 100%;
+  align-items: center;
+  gap: 9px;
+  margin: 2px 0 4px;
+  padding: 5px 13px 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 18%, var(--paw-chat-border));
+  border-radius: 999px;
+  color: var(--paw-chat-text-secondary);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 4px 14px rgb(47 107 255 / 6%);
+}
+
+.paw-desktop-root .paw-chatfx .agent-assistant-pending::after {
+  content: none;
+}
+
+.paw-desktop-root .paw-chatfx .agent-assistant-pending > svg {
+  color: var(--paw-chat-accent);
+}
+
+.paw-desktop-root .paw-chatfx .agent-assistant-pending > span {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.paw-desktop-root .paw-chatfx .agent-assistant-pending strong {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 7px;
+  color: transparent;
+  background:
+    linear-gradient(
+      100deg,
+      var(--paw-chat-text) 10%,
+      var(--paw-chat-text) 36%,
+      var(--paw-chat-accent) 50%,
+      var(--paw-chat-text) 64%,
+      var(--paw-chat-text) 90%
+    );
+  background-clip: text;
+  background-size: 230% 100%;
+  -webkit-background-clip: text;
+  animation: paw-agent-fx-text-sweep 1.85s ease-in-out infinite;
+  font-size: 13.5px;
+  font-weight: 620;
+}
+
+.paw-desktop-root .paw-chatfx .agent-assistant-pending time {
+  color: var(--paw-chat-text-tertiary);
+  background: none;
+  -webkit-text-fill-color: var(--paw-chat-text-tertiary);
+  font: 550 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-desktop-root .paw-chatfx .agent-assistant-pending small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--paw-chat-text-tertiary);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-desktop-root .paw-chatfx .agent-working-dots b {
+  background: var(--paw-chat-accent);
+}
+
+/* 空态：居中的邀请卡——环形图标、一句话主张、可行动的下一步。 */
+.paw-desktop-root .paw-chatfx .agent-timeline-empty,
+.paw-desktop-root .paw-chatfx .agent-timeline-loading {
+  width: min(100% - 32px, 440px);
+  min-height: 0;
+  margin: clamp(48px, 16cqh, 150px) auto 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 34px 28px 30px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 16px;
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 18px 44px rgb(24 32 43 / 6%);
+  text-align: center;
+}
+
+.paw-desktop-root .paw-chatfx :is(.agent-timeline-empty, .agent-timeline-loading) > svg {
+  width: 46px;
+  height: 46px;
+  margin-bottom: 8px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 22%, var(--paw-chat-border));
+  border-radius: 50%;
+  color: var(--paw-chat-accent);
+  background: color-mix(in srgb, var(--paw-chat-accent) 6%, var(--paw-chat-surface));
+}
+
+.paw-desktop-root .paw-chatfx :is(.agent-timeline-empty, .agent-timeline-loading) > span {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+}
+
+.paw-desktop-root .paw-chatfx :is(.agent-timeline-empty, .agent-timeline-loading) strong {
+  color: var(--paw-chat-text);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+
+.paw-desktop-root .paw-chatfx :is(.agent-timeline-empty, .agent-timeline-loading) small {
+  max-width: 30ch;
+  color: var(--paw-chat-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* 回到最新：悬浮小药丸，落在 Composer 上方，随手可归位。 */
+.paw-desktop-root .paw-chatfx .agent-jump-latest {
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 999px;
+  color: var(--paw-chat-text-secondary);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 6%), 0 10px 26px rgb(24 32 43 / 12%);
+  font-weight: 600;
+}
+
+.paw-desktop-root .paw-chatfx .agent-jump-latest:hover {
+  color: var(--paw-chat-text);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 7%), 0 12px 30px rgb(24 32 43 / 15%);
+}
+
+.paw-desktop-root .paw-chatfx .agent-jump-latest > svg {
+  color: var(--paw-chat-accent);
+}
+
 @container paw-session-workspace (max-width: 520px) {
   .paw-desktop-root .paw-chatfx .paw-user-message {
     max-width: calc(100% - 18px);
@@ -762,10 +949,22 @@
     background: none;
     animation: none;
   }
+
+  .paw-desktop-root .paw-chatfx .agent-assistant-pending strong {
+    color: var(--paw-chat-text);
+    background: none;
+    animation: none;
+  }
 }
 
 :root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label {
   color: var(--paw-chat-text-secondary);
+  background: none;
+  animation: none;
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .agent-assistant-pending strong {
+  color: var(--paw-chat-text);
   background: none;
   animation: none;
 }
@@ -793,7 +992,8 @@
 }
 
 @media (forced-colors: active) {
-  .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label {
+  .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label,
+  .paw-desktop-root .paw-chatfx .agent-assistant-pending strong {
     color: CanvasText;
     background: none;
     animation: none;

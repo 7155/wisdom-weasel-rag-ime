@@ -639,7 +639,7 @@
   overflow: clip;
   opacity: 0;
   transition:
-    height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
+    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
     opacity 150ms ease;
   will-change: height;
 }
