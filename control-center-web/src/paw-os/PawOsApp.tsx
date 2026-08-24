@@ -10,6 +10,7 @@ import './styles/paw-os-agent-composition.css';
 import './styles/paw-os-agent-next.css';
 import './styles/paw-os-webmodel-v1.css';
 import './styles/paw-os-shell-migrated-v1.css';
+import './styles/paw-os-controls.css';
 import './styles/paw-os-agent-migrated-v1.css';
 import './styles/paw-os-agent-fx.css';
 import './styles/paw-os-room-migrated-v1.css';

@@ -2,10 +2,11 @@
  * This file owns shell structure and state semantics: tokens, layout geometry,
  * interaction targets, window states and flow signals. Visual identity (colour,
  * material, blur, shadows) is owned by paw-os-shell-migrated-v1.css; timing and
- * choreography by paw-os-motion.css. Windows are opaque working surfaces;
- * backdrop blur is reserved for true chrome (menu bar, Dock, Launchpad and
- * context menu) so dragging or resizing a window never re-rasterizes a filter
- * stack behind it. */
+ * choreography by paw-os-motion.css; the shared control language (select,
+ * menu, button, panel) by paw-os-controls.css. Windows are opaque working
+ * surfaces; backdrop blur is reserved for true chrome (menu bar, Dock and
+ * Launchpad) so dragging or resizing a window never re-rasterizes a filter
+ * stack behind it. Menus are opaque by contract — see paw-os-controls.css. */
 
 .paw-desktop-root {
   /* PAWOS uses the product typography authority instead of inventing a second
@@ -239,25 +240,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   background: color-mix(in srgb, var(--paw-accent) 15%, transparent);
 }
 
-.paw-context-menu {
-  position: fixed; z-index: 220; width: 220px; padding: 5px;
-  border: 1px solid var(--paw-line); border-radius: 10px;
-  background: color-mix(in srgb, var(--paw-panel-strong) 92%, transparent);
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.06);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  backdrop-filter: blur(24px) saturate(160%);
-}
-.paw-context-menu button {
-  width: 100%; height: 30px; display: flex; align-items: center; gap: 8px;
-  padding: 0 10px; border-radius: 6px; font-size: 12px; color: var(--paw-ink);
-  cursor: pointer; transition: background-color 100ms ease, color 100ms ease;
-}
-.paw-context-menu button:hover {
-  background: var(--paw-accent); color: #fff;
-}
-.paw-context-menu button[data-danger]:hover {
-  background: var(--paw-danger); color: #fff;
-}
+/* Structure only. The menu material, item colours, hover/focus selection and
+   separators are the shared control language in paw-os-controls.css. */
+.paw-context-menu { position: fixed; z-index: 220; width: 220px; }
 
 /* Windows sit above the Dock (z 8) and below the menu bar (z 80). */
 .paw-window-layer { position: absolute; z-index: 10; inset: 0 0 76px; pointer-events: none; }

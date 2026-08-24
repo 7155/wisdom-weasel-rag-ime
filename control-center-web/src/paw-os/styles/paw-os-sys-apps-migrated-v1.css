@@ -239,7 +239,9 @@
   font-family: inherit;
 }
 
-.paw-desktop-root .paw-system-app :is(.ui-button, .ui-input, .ui-select__trigger, select) {
+/* Native <select> now inherits the shared control language
+   (paw-os-controls.css); only the ui-* primitives keep the compact height. */
+.paw-desktop-root .paw-system-app :is(.ui-button, .ui-input, .ui-select__trigger) {
   min-height: 30px;
   border-radius: 8px;
 }
@@ -621,13 +623,11 @@
   font-weight: 620;
 }
 
+/* Field skin comes from the shared control language; this rule keeps only the
+   grid-local sizing. A background shorthand here would erase the shared
+   chevron, so never reintroduce one. */
 .paw-desktop-root .paw-system-agent-fields select {
   width: 100%;
-  min-height: 32px;
-  padding: 0 30px 0 10px;
-  background: #fff;
-  border: 1px solid var(--paw-system-line);
-  color: var(--paw-system-ink);
   font-size: 14px;
 }
 

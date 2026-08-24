@@ -1,0 +1,220 @@
+/* PAWOS shared control language ------------------------------------------------
+ * One default recipe for the shell's small controls: select, menu, button and
+ * floating panel. Apps inherit these defaults instead of re-inventing a
+ * translucent variant per window; an App may still override consciously with
+ * a scoped, higher-specificity rule (for example a dark Terminal toolbar).
+ *
+ * Non-negotiables encoded here and guarded by paw-os-controls.test.ts:
+ * - control and menu surfaces are OPAQUE (hex, no color-mix ... transparent),
+ *   so text can never sit on an unknown backdrop;
+ * - no backdrop-filter on controls or menus (glass belongs to true chrome:
+ *   menu bar, Dock, Launchpad — owned by paw-os-shell-migrated-v1.css);
+ * - ink/surface pairs keep WCAG AA contrast, including disabled and the
+ *   native <option> popup (color-scheme: light pins the UA popup palette).
+ *
+ * Scale: 32px control height, 8px control radius, 10px menu radius, 12px
+ * panel radius, 13px control text, 14px (--paw-type-ui) menu items.
+ */
+
+.paw-desktop-root {
+  --paw-control-h: 32px;
+  --paw-control-h-sm: 28px;
+  --paw-control-radius: 8px;
+  --paw-control-font: 13px;
+  --paw-control-ink: #171a21;
+  --paw-control-muted: #5d6675;
+  --paw-control-bg: #ffffff;
+  --paw-control-bg-soft: #f6f8fb;
+  --paw-control-line: rgb(23 26 33 / .16);
+  --paw-control-line-strong: rgb(23 26 33 / .3);
+  --paw-focus-line: rgb(47 107 255 / .55);
+  --paw-focus-halo: rgb(47 107 255 / .14);
+  --paw-menu-radius: 10px;
+  --paw-menu-ink: #171a21;
+  --paw-menu-bg: #ffffff;
+  --paw-menu-line: rgb(23 26 33 / .12);
+  --paw-menu-shadow: 0 18px 44px -12px rgb(23 32 52 / .24), 0 3px 10px rgb(23 26 33 / .08);
+  --paw-menu-selected-ink: #ffffff;
+  --paw-menu-selected-bg: #1e57e7;
+  --paw-panel-radius: 12px;
+  --paw-panel-bg: #ffffff;
+  --paw-panel-line: rgb(23 26 33 / .1);
+  --paw-button-primary-ink: #ffffff;
+  --paw-button-primary-bg: #1e57e7;
+  --paw-button-danger-ink: #ffffff;
+  --paw-button-danger-bg: #d92d20;
+}
+
+/* Buttons keep their bespoke looks, but pointer affordance is one system-wide
+   decision, not a per-App rediscovery. :where keeps this overridable. */
+.paw-desktop-root button:where(:not(:disabled)) { cursor: pointer; }
+.paw-desktop-root button:disabled { cursor: default; }
+
+/* ---------------------------------------------------------------- Select
+ * Default skin for every native <select> in PAWOS plus the .paw-select
+ * opt-in class for non-native triggers. Opaque field, graphite chevron,
+ * light-scheme popup. App rules at .paw-desktop-root <scope> select strength
+ * (0,2,1) still win where a surface consciously differs. */
+.paw-desktop-root :is(select:where(:not([multiple], [size])), .paw-select) {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: var(--paw-control-h);
+  padding: 0 26px 0 10px;
+  border: 1px solid var(--paw-control-line);
+  border-radius: var(--paw-control-radius);
+  color: var(--paw-control-ink);
+  background-color: var(--paw-control-bg);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235d6675' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  font-size: var(--paw-control-font);
+  line-height: 1.4;
+  cursor: pointer;
+  color-scheme: light;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+.paw-desktop-root :is(select, .paw-select):hover:not(:disabled) {
+  border-color: var(--paw-control-line-strong);
+}
+.paw-desktop-root :is(select, .paw-select):focus {
+  border-color: var(--paw-focus-line);
+  box-shadow: 0 0 0 3px var(--paw-focus-halo);
+}
+.paw-desktop-root :is(select, .paw-select):disabled {
+  color: var(--paw-control-muted);
+  background-color: var(--paw-control-bg-soft);
+  cursor: default;
+}
+/* The UA option list must stay readable regardless of the field's context:
+   explicit ink on an explicit opaque ground, never inherited chrome colour. */
+.paw-desktop-root select option,
+.paw-desktop-root select optgroup {
+  color: var(--paw-control-ink);
+  background: var(--paw-control-bg);
+}
+.paw-desktop-root .paw-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+/* ---------------------------------------------------------------- Menu
+ * One dropdown/context menu material: opaque white, hairline border, soft
+ * offset shadow. Hover and keyboard focus share the same solid selection
+ * colour so a highlighted row is always white-on-cobalt, never white-on-glass. */
+.paw-desktop-root :is(.paw-menu, .paw-context-menu) {
+  padding: 5px;
+  border: 1px solid var(--paw-menu-line);
+  border-radius: var(--paw-menu-radius);
+  color: var(--paw-menu-ink);
+  background: var(--paw-menu-bg);
+  box-shadow: var(--paw-menu-shadow);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.paw-desktop-root .paw-menu { min-width: 200px; }
+.paw-desktop-root :is(.paw-menu, .paw-context-menu) :is(button, [role='menuitem']) {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  color: var(--paw-menu-ink);
+  font-size: var(--paw-type-ui, 14px);
+  line-height: var(--paw-leading-ui, 20px);
+  text-align: left;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.paw-desktop-root :is(.paw-menu, .paw-context-menu) :is(button, [role='menuitem']):is(:hover, :focus-visible):not(:disabled) {
+  color: var(--paw-menu-selected-ink);
+  background: var(--paw-menu-selected-bg);
+  outline: 0;
+}
+.paw-desktop-root :is(.paw-menu, .paw-context-menu) :is(button, [role='menuitem'])[data-danger]:is(:hover, :focus-visible):not(:disabled) {
+  color: var(--paw-button-danger-ink);
+  background: var(--paw-button-danger-bg);
+}
+.paw-desktop-root :is(.paw-menu, .paw-context-menu) :is(button, [role='menuitem']):disabled {
+  color: var(--paw-control-muted);
+}
+.paw-desktop-root :is(.paw-menu__row, .paw-context-menu__row)[data-separator] {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--paw-menu-line);
+}
+
+/* ---------------------------------------------------------------- Button
+ * Opt-in shared button. Default is the quiet bordered field look; variants
+ * cover the two saturated cases every App keeps re-deriving. */
+.paw-desktop-root .paw-button {
+  min-height: var(--paw-control-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--paw-control-line);
+  border-radius: var(--paw-control-radius);
+  color: var(--paw-control-ink);
+  background: var(--paw-control-bg);
+  font-size: var(--paw-control-font);
+  line-height: 1.4;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease, transform 100ms ease;
+}
+.paw-desktop-root .paw-button:hover:not(:disabled) {
+  border-color: var(--paw-control-line-strong);
+  background: var(--paw-control-bg-soft);
+}
+.paw-desktop-root .paw-button:active:not(:disabled) { transform: scale(.98); }
+.paw-desktop-root .paw-button:disabled { color: var(--paw-control-muted); background: var(--paw-control-bg-soft); }
+.paw-desktop-root .paw-button[data-variant='primary'] {
+  border-color: var(--paw-button-primary-bg);
+  color: var(--paw-button-primary-ink);
+  background: var(--paw-button-primary-bg);
+}
+.paw-desktop-root .paw-button[data-variant='primary']:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--paw-button-primary-bg) 86%, #000);
+  background: color-mix(in srgb, var(--paw-button-primary-bg) 86%, #000);
+}
+.paw-desktop-root .paw-button[data-variant='quiet'] {
+  border-color: transparent;
+  color: var(--paw-control-muted);
+  background: transparent;
+}
+.paw-desktop-root .paw-button[data-variant='quiet']:hover:not(:disabled) {
+  color: var(--paw-control-ink);
+  background: var(--paw-control-bg-soft);
+}
+.paw-desktop-root .paw-button[data-variant='danger'] {
+  border-color: var(--paw-button-danger-bg);
+  color: var(--paw-button-danger-ink);
+  background: var(--paw-button-danger-bg);
+}
+.paw-desktop-root .paw-button[data-variant='danger']:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--paw-button-danger-bg) 86%, #000);
+  background: color-mix(in srgb, var(--paw-button-danger-bg) 86%, #000);
+}
+
+/* ---------------------------------------------------------------- Panel
+ * Opt-in floating/inset panel surface. Opaque by contract; data-floating adds
+ * the shared menu shadow for popover-like placements. */
+.paw-desktop-root .paw-panel {
+  border: 1px solid var(--paw-panel-line);
+  border-radius: var(--paw-panel-radius);
+  color: var(--paw-control-ink);
+  background: var(--paw-panel-bg);
+}
+.paw-desktop-root .paw-panel[data-floating] { box-shadow: var(--paw-menu-shadow); }
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root :is(select, .paw-select, .paw-button),
+  .paw-desktop-root :is(.paw-menu, .paw-context-menu) :is(button, [role='menuitem']) {
+    transition: none;
+  }
+  .paw-desktop-root .paw-button:active:not(:disabled) { transform: none; }
+}
