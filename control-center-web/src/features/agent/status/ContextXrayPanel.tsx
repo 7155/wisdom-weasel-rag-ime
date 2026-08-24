@@ -19,7 +19,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   normalizeDebugContextResponse,
@@ -53,6 +53,8 @@ export interface ContextXrayLayer {
   characters: number | null;
   estimatedTokens: number | null;
   providerDelivery: ProviderDelivery;
+  /** 该层实际注入的捕获原文；absent/unavailable 层为 null（PF-CM-010）。 */
+  content: string | null;
 }
 
 export interface ContextXraySnapshot {
@@ -214,9 +216,13 @@ function XrayRuntimeStrip({ snapshot }: { snapshot: ContextXraySnapshot }) {
 }
 
 function ContextLayerRow({ layer }: { layer: ContextXrayLayer }) {
+  // 每个已注入分层都能展开到实际内容，摘要行不允许是死行（PF-CM-010）。
+  // 原文默认折叠，只有本人显式点开这一层时才进入 DOM。
+  const [expanded, setExpanded] = useState(false);
+  const contentId = `agent-context-xray-layer-${useId().replaceAll(':', '')}`;
   const Icon = layerIcons[layer.id];
-  return (
-    <li data-state={layer.state}>
+  const summary = (
+    <>
       <Icon size={14} />
       <span>
         <strong>{layer.label}</strong>
@@ -224,6 +230,34 @@ function ContextLayerRow({ layer }: { layer: ContextXrayLayer }) {
         <em>{layer.source}</em>
       </span>
       <ProviderState delivery={layer.providerDelivery} state={layer.state} />
+    </>
+  );
+  if (layer.content === null) {
+    return <li data-state={layer.state}><div className="agent-context-xray__layer-row">{summary}</div></li>;
+  }
+  return (
+    <li data-expanded={expanded || undefined} data-state={layer.state}>
+      <button
+        aria-controls={expanded ? contentId : undefined}
+        aria-expanded={expanded}
+        className="agent-context-xray__layer-row agent-context-xray__layer-toggle"
+        onClick={() => setExpanded((value) => !value)}
+        type="button"
+      >
+        {summary}
+        <ChevronRight className="agent-context-xray__layer-caret" size={13} />
+      </button>
+      {expanded ? (
+        <div className="agent-context-xray__layer-content" id={contentId}>
+          <pre
+            aria-label={`${layer.label} 实际注入内容，可滚动原文`}
+            role="region"
+            tabIndex={0}
+          >
+            {layer.content}
+          </pre>
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -288,6 +322,7 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
           characters: null,
           estimatedTokens: null,
           providerDelivery: 'unavailable',
+          content: null,
         };
       }
       const content = source.content.trim();
@@ -300,6 +335,7 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
           characters: 0,
           estimatedTokens: 0,
           providerDelivery: providerCaptured ? 'missing' : 'unavailable',
+          content: null,
         };
       }
       const payloadContainsLayer = providerCaptured
@@ -319,6 +355,7 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
             : !providerAcknowledged
               ? 'pending'
               : 'delivered',
+        content,
       };
     }),
     contextTokens: finiteNumber(telemetryContext.tokens),
@@ -646,6 +683,7 @@ function emptySnapshot(): ContextXraySnapshot {
     characters: null,
     estimatedTokens: null,
     providerDelivery: 'unavailable',
+    content: null,
   });
   return {
     available: false,
