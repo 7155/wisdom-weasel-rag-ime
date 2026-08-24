@@ -71,6 +71,57 @@ describe('PAWOS Agent App', () => {
     expect(chip).toHaveFocus();
   });
 
+  it('moves focus onto the checked item when a composer menu opens and cycles with arrow keys', async () => {
+    const user = userEvent.setup();
+    renderAgent();
+
+    const chip = await screen.findByRole('button', { name: /按风险确认/ });
+    expect(chip).toHaveAttribute('aria-haspopup', 'menu');
+    await user.click(chip);
+
+    const menu = screen.getByRole('menu', { name: '权限模式' });
+    const items = within(menu).getAllByRole('menuitemradio');
+    await waitFor(() => expect(items[0]).toHaveFocus());
+
+    await user.keyboard('{ArrowDown}');
+    expect(within(menu).getByRole('menuitemradio', { name: /^只读/ })).toHaveFocus();
+    await user.keyboard('{ArrowUp}{ArrowUp}');
+    expect(within(menu).getByRole('menuitemradio', { name: /^全自动/ })).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(items[items.length - 1]).toHaveFocus();
+  });
+
+  it('opens a composer menu from its chip with ArrowDown and returns focus after a choice', async () => {
+    const user = userEvent.setup();
+    renderAgent();
+
+    const chip = await screen.findByRole('button', { name: /按风险确认/ });
+    chip.focus();
+    await user.keyboard('{ArrowDown}');
+    const menu = screen.getByRole('menu', { name: '权限模式' });
+    await waitFor(() => expect(within(menu).getAllByRole('menuitemradio')[0]).toHaveFocus());
+
+    await user.click(within(menu).getByRole('menuitemradio', { name: /^只读/ }));
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /只读/ })).toHaveFocus();
+  });
+
+  it('keeps the start action name stable and moves the block reason into the accessible description', async () => {
+    const user = userEvent.setup();
+    renderAgent();
+
+    const start = await screen.findByRole('button', { name: '开始 Session' });
+    expect(start).toBeDisabled();
+    expect(start).toHaveAccessibleDescription('先描述要完成的工作');
+
+    await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '检查发布门禁');
+    expect(start).toBeEnabled();
+    expect(start).not.toHaveAccessibleDescription();
+  });
+
   it('keeps the containing window identity aligned when the same Agent window moves between Room and Session', async () => {
     const bindAgentMain = vi.fn();
     const transport = createTransport();
