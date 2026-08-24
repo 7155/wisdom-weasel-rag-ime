@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { createElement } from 'react';
 import { createRoomProjection } from '@/contracts/room-reducer';
 import { createPawDesktopStore, type PawWindowNode } from '../runtime/desktop-store';
 import {
   isCollaborationSatellite,
   layoutCollaborationFocus,
+  PAW_WINDOW_FLOW_GEOMETRY_EVENT,
   PawRoomWindowFlowLayer,
   roomWindowFlowGroups,
   windowBelongsToFocus,
   windowFlowArrivalPulse,
+  windowFlowGroupsWithLivePoints,
 } from './PawWindowLayer';
 
 describe('PAWOS collaboration focus', () => {
@@ -396,6 +398,70 @@ describe('PAWOS collaboration focus', () => {
     }));
 
     expect(container.querySelectorAll('.paw-room-window-flow__label')).toHaveLength(1);
+    unmount();
+  });
+
+  it('overrides only the dragged window point and keeps committed groups untouched otherwise', () => {
+    const group = {
+      roomId: 'room-a',
+      points: new Map([
+        ['root', { x: 10, y: 10 }],
+        ['participant-a', { x: 100, y: 100 }],
+      ]),
+      windowIds: new Map([
+        ['root', 'main'],
+        ['participant-a', 'participant'],
+      ]),
+      packets: [],
+    };
+
+    expect(windowFlowGroupsWithLivePoints([group], {})[0]).toBe(group);
+    const adjusted = windowFlowGroupsWithLivePoints([group], { participant: { x: 300, y: 200 } });
+    expect(adjusted[0]?.points.get('participant-a')).toEqual({ x: 300, y: 200 });
+    expect(adjusted[0]?.points.get('root')).toEqual({ x: 10, y: 10 });
+    expect(group.points.get('participant-a')).toEqual({ x: 100, y: 100 });
+    expect(windowFlowGroupsWithLivePoints([group], { unrelated: { x: 1, y: 1 } })[0]).toBe(group);
+  });
+
+  it('moves the flow path with the live window transform during drag and settles after release', () => {
+    const pulseKey = 'message:answer-a:completed:12';
+    const group = {
+      roomId: 'room-a',
+      points: new Map([
+        ['root', { x: 10, y: 10 }],
+        ['participant-a', { x: 100, y: 100 }],
+      ]),
+      windowIds: new Map([
+        ['root', 'main'],
+        ['participant-a', 'participant'],
+      ]),
+      packets: [{
+        id: 'message:answer-a', pulseKey,
+        sourceId: 'participant-a', targetIds: ['root'], kind: 'answer' as const,
+        summary: '迁移完成', status: 'completed', createdAtMs: 12,
+      }],
+    };
+    const { container, unmount } = render(createElement(PawRoomWindowFlowLayer, {
+      activePulseKeys: new Set<string>(),
+      focusGroup: 'room:room-a',
+      groups: [group],
+    }));
+    const initialPath = container.querySelector('.paw-room-window-flow__base')?.getAttribute('d');
+    expect(initialPath).toContain('M 100 100');
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(PAW_WINDOW_FLOW_GEOMETRY_EVENT, {
+        detail: { windowId: 'participant', point: { x: 320, y: 240 } },
+      }));
+    });
+    expect(container.querySelector('.paw-room-window-flow__base')?.getAttribute('d')).toContain('M 320 240');
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(PAW_WINDOW_FLOW_GEOMETRY_EVENT, {
+        detail: { windowId: 'participant', point: null },
+      }));
+    });
+    expect(container.querySelector('.paw-room-window-flow__base')?.getAttribute('d')).toBe(initialPath);
     unmount();
   });
 

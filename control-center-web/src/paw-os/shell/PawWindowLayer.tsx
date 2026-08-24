@@ -249,11 +249,79 @@ function roomFocusStatus(projection?: RoomProjectionState): { key: string; label
   return { key: 'synced', label: 'Sol 已同步' };
 }
 
-export function PawRoomWindowFlowLayer({ activePulseKeys, focusGroup, groups }: {
+/** UR-057：拖动/resize 期间路径跟随窗口 transform 的实时几何，
+ *  不回写窗口布局，也不重放已见过的到达特效。 */
+export const PAW_WINDOW_FLOW_GEOMETRY_EVENT = 'paw-window-flow-geometry';
+
+type WindowFlowGeometryDetail = { windowId: string; point: WindowFlowPoint | null };
+
+function publishLiveWindowFlowPoint(shell: HTMLElement, clear = false): void {
+  const windowId = shell.dataset.pawWindowId;
+  if (!windowId) return;
+  let point: WindowFlowPoint | null = null;
+  if (!clear) {
+    const layer = shell.closest('.paw-window-layer');
+    if (!layer) return;
+    const rect = shell.getBoundingClientRect();
+    const layerRect = layer.getBoundingClientRect();
+    point = {
+      x: rect.left - layerRect.left + rect.width / 2,
+      y: rect.top - layerRect.top + rect.height / 2,
+    };
+  }
+  window.dispatchEvent(new CustomEvent<WindowFlowGeometryDetail>(PAW_WINDOW_FLOW_GEOMETRY_EVENT, {
+    detail: { windowId, point },
+  }));
+}
+
+export function windowFlowGroupsWithLivePoints(
+  groups: WindowFlowGroup[],
+  livePointsByWindowId: Record<string, WindowFlowPoint>,
+): WindowFlowGroup[] {
+  if (!Object.keys(livePointsByWindowId).length) return groups;
+  return groups.map((group) => {
+    let changed = false;
+    const points = new Map(group.points);
+    for (const [actor, windowId] of group.windowIds) {
+      const livePoint = livePointsByWindowId[windowId];
+      if (!livePoint) continue;
+      points.set(actor, livePoint);
+      changed = true;
+    }
+    return changed ? { ...group, points } : group;
+  });
+}
+
+function useLiveWindowFlowPoints(): Record<string, WindowFlowPoint> {
+  const [livePoints, setLivePoints] = useState<Record<string, WindowFlowPoint>>({});
+  useEffect(() => {
+    const handle = (event: Event) => {
+      const detail = (event as CustomEvent<WindowFlowGeometryDetail>).detail;
+      if (!detail?.windowId) return;
+      setLivePoints((current) => {
+        if (detail.point) return { ...current, [detail.windowId]: detail.point };
+        if (!(detail.windowId in current)) return current;
+        const next = { ...current };
+        delete next[detail.windowId];
+        return next;
+      });
+    };
+    window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
+    return () => window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
+  }, []);
+  return livePoints;
+}
+
+export function PawRoomWindowFlowLayer({ activePulseKeys, focusGroup, groups: committedGroups }: {
   activePulseKeys: ReadonlySet<string>;
   focusGroup: string | null;
   groups: WindowFlowGroup[];
 }) {
+  const livePoints = useLiveWindowFlowPoints();
+  const groups = useMemo(
+    () => windowFlowGroupsWithLivePoints(committedGroups, livePoints),
+    [committedGroups, livePoints],
+  );
   if (!groups.length) return null;
   const focusedRoomId = focusGroup?.startsWith('room:') ? focusGroup.slice('room:'.length) : '';
   const focusedGroup = groups.find((group) => group.roomId === focusedRoomId);
@@ -987,7 +1055,11 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
     const origin = { x: event.clientX, y: event.clientY };
     let next = bounds;
     let frame = 0;
-    const render = () => { frame = 0; shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`; };
+    const render = () => {
+      frame = 0;
+      shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`;
+      publishLiveWindowFlowPoint(shell);
+    };
     const move = (moveEvent: PointerEvent) => {
       next = { ...bounds, x: bounds.x + moveEvent.clientX - origin.x, y: Math.max(0, bounds.y + moveEvent.clientY - origin.y) };
       setSnapPreview(desktopRoot, snapPlacement(moveEvent.clientX, moveEvent.clientY));
@@ -1004,9 +1076,11 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       const placement = snapPlacement(finishEvent.clientX, finishEvent.clientY);
       if (placement && snap) {
         snap(placement);
+        publishLiveWindowFlowPoint(shell, true);
         return;
       }
       commit(next);
+      publishLiveWindowFlowPoint(shell, true);
     };
     const cancel = () => {
       if (frame) window.cancelAnimationFrame(frame);
@@ -1016,6 +1090,7 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
+      publishLiveWindowFlowPoint(shell, true);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish);
@@ -1057,6 +1132,7 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
       shell.style.width = `${next.width}px`;
       shell.style.height = `${next.height}px`;
       shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`;
+      publishLiveWindowFlowPoint(shell);
     };
     const move = (moveEvent: PointerEvent) => {
       next = resizeWindowBounds(bounds, handle, moveEvent.clientX - origin.x, moveEvent.clientY - origin.y);
@@ -1070,6 +1146,7 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
       commit(next);
+      publishLiveWindowFlowPoint(shell, true);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish);
