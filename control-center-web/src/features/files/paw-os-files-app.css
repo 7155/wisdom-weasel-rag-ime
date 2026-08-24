@@ -1,56 +1,42 @@
-/* ==========================================================================
-   Files App — one coherent stylesheet.
+/* Files — the bounded workspace inspection instrument.
+ *
+ * Three regions: a command bar (Session scope, filter, refresh), a navigator
+ * (authorized workspace tree), and a reader (one document at a time). Every
+ * number shown is a receipt of what the transport actually returned; nothing
+ * here decorates beyond loaded state.
+ *
+ * Standalone fallbacks keep the App readable outside the window shell; inside
+ * the shell, paw-os.css bridges the same custom properties to the Files App
+ * palette (blue accent, amber support). */
 
-   Files is the Session workspace inspector: a chrome scope bar, a directory
-   rail, and a paper reading pane. The design language derives everything from
-   the shell-provided App palette (work-document family: blue accent, amber
-   support) via color-mix, so one window repaint recolours the whole App while
-   the standalone fallbacks stay a readable light theme.
-
-   Cross-owner contracts pinned by tests (do not "clean up"):
-   - `--color-canvas: #f4f6f8` stays a literal light fallback.
-   - `.paw-files-preview` keeps its true paper-white `background: #fff` even
-     when the shell tints the surrounding chrome.
-   - Narrow behaviour lives in `@container paw-files (...)` queries, never
-     `@media`, because the App reflows with its window, not the viewport.
-   - The shared code/diff/plain readers own the `--color-code-bg` /
-     `--color-code-text` pair; no `.agent-file-code` block here may repaint it.
-   - `paw-os.css` re-points the `--color-*` tokens per window
-     (`.paw-window-shell[data-app='files'] …`) and repaints `.paw-files-tree`;
-     `paw-os-motion.css` owns arrival motion for the reader/state surfaces.
-   ========================================================================== */
-
-/* -------------------------------------------------------------------------
-   Scoped tokens. `--color-*` fallbacks keep the App legible outside a PAWOS
-   window; `--paw-files-*` derivations give every surface one hue system.
-   ------------------------------------------------------------------------- */
 .paw-files-app {
   --color-canvas: #f4f6f8;
   --color-paper: #fff;
   --color-surface: #fff;
-  --color-chrome: #eef1f5;
+  --color-chrome: #f5f6f8;
   --color-text: #1d1d1f;
-  --color-text-secondary: #5d6470;
-  --color-text-tertiary: #858c97;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #828994;
+  --color-border: rgb(29 29 31 / 10%);
+  --color-border-soft: rgb(29 29 31 / 6%);
+  --color-border-strong: rgb(29 29 31 / 18%);
   --color-accent: var(--paw-app-accent, #2c6cb8);
+  --color-support: var(--paw-app-support, #c79427);
   --color-danger: #d70015;
   --color-warning: #a86408;
-  --paw-files-support: var(--paw-app-support, #c79427);
-  --paw-files-ink: var(--color-text);
-  --paw-files-tint: color-mix(in srgb, var(--color-accent) 8%, transparent);
-  --paw-files-tint-strong: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  --paw-files-support-tint: color-mix(in srgb, var(--paw-files-support) 14%, transparent);
-  --paw-files-hairline: color-mix(in srgb, var(--paw-files-ink) 11%, transparent);
-  --paw-files-hairline-soft: color-mix(in srgb, var(--paw-files-ink) 7%, transparent);
-  --paw-files-hairline-strong: color-mix(in srgb, var(--paw-files-ink) 18%, transparent);
-  --paw-files-hue-code: #0e7f95;
-  --paw-files-hue-doc: #7053b8;
-  --paw-files-hue-data: #a97a14;
-  --paw-files-hue-media: #bb4a6c;
-  --paw-files-hue-diff: #2f7d4f;
-  --paw-files-hue-plain: #697483;
-  --paw-files-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  --paw-files-ease: var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+
+  /* Object families: each loaded entry kind keeps one recognizable hue so a
+     dense tree reads by shape and colour, not by filename alone. */
+  --files-family-folder: var(--color-accent);
+  --files-family-symlink: var(--color-accent);
+  --files-family-code: #14809d;
+  --files-family-script: #0f7a6d;
+  --files-family-doc: #7656bd;
+  --files-family-data: #b07714;
+  --files-family-web: #3b5fc0;
+  --files-family-media: #c04a68;
+  --files-family-diff: #2e8154;
+  --files-family-plain: #68717d;
   display: grid;
   width: 100%;
   height: 100%;
@@ -64,19 +50,7 @@
   container: paw-files / inline-size;
 }
 
-.paw-files-app ::selection { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
-
 .paw-files-app__title {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.paw-files-app__toolbar .sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -98,15 +72,12 @@
   grid-template-rows: auto minmax(0, 1fr) 28px;
 }
 
-/* -------------------------------------------------------------------------
-   Window-chrome projection. When the window frames Files, the scope bar
-   moves into the titlebar and the body keeps every pixel for content.
-   ------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------- chrome -- */
+
 .paw-window-titlebar[data-window-chrome='files-tools'] {
   --color-surface: #fff;
   --color-text: #1d1d1f;
-  --color-text-secondary: #5d6470;
-  --color-text-tertiary: #858c97;
+  --color-text-secondary: #545b66;
   --color-border: rgb(29 29 31 / 10%);
   --color-accent: var(--paw-app-accent, #2c6cb8);
   grid-template-columns: 76px minmax(44px, 74px) minmax(0, 1fr);
@@ -121,89 +92,73 @@
   min-width: 0;
 }
 
-/* -------------------------------------------------------------------------
-   Scope bar: which Session's authority, one bounded filter, one refresh.
-   ------------------------------------------------------------------------- */
 .paw-files-app__toolbar {
   display: grid;
   min-width: 0;
-  min-height: 44px;
-  grid-template-columns: minmax(150px, 280px) minmax(120px, 280px) auto;
+  grid-template-columns: minmax(0, 240px) minmax(110px, 260px) auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--paw-files-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 78%, var(--color-paper));
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-chrome);
   user-select: none;
 }
 
 .paw-files-app__toolbar[data-window-chrome] {
   width: 100%;
   height: 100%;
-  min-height: 0;
   padding: 4px 0;
   border: 0;
   background: transparent;
 }
 
-.paw-files-scope,
-.paw-files-filter {
-  position: relative;
+.paw-files-app__toolbar label {
   display: grid;
   min-width: 0;
-  height: 30px;
-  align-items: center;
-  border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
-  background: var(--color-paper);
-  color: var(--color-text-tertiary);
-  transition: border-color 150ms var(--paw-files-ease), box-shadow 150ms var(--paw-files-ease);
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.paw-files-scope { grid-template-columns: auto minmax(0, 1fr); }
-
-.paw-files-scope > svg {
-  position: absolute;
-  left: 9px;
-  color: var(--color-accent);
-  pointer-events: none;
-}
-
-.paw-files-scope select {
+.paw-files-app__toolbar select {
   width: 100%;
   min-width: 0;
-  height: 100%;
-  grid-column: 1 / -1;
-  border: 0;
-  border-radius: inherit;
-  padding: 0 24px 0 28px;
-  background: transparent;
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  padding: 0 28px 0 10px;
+  background: var(--color-paper);
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
   line-height: 1.4;
   text-overflow: ellipsis;
+  transition: border-color 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-app__toolbar select:focus-visible {
   outline: none;
-}
-
-.paw-files-scope select:disabled {
-  color: var(--color-text-tertiary);
-  cursor: not-allowed;
-}
-
-.paw-files-scope:focus-within,
-.paw-files-filter:focus-within {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 /* The filter narrows what is already loaded from the authorized roots; it is
    a projection of local state, never a workspace-wide server search. */
-.paw-files-filter {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.paw-files-app__toolbar .paw-files-filter {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   gap: 6px;
-  padding: 0 8px 0 9px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-paper);
+  color: var(--color-text-tertiary);
+  transition: border-color 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-app__toolbar .paw-files-filter:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 .paw-files-filter input {
@@ -230,20 +185,7 @@
   appearance: none;
 }
 
-.paw-files-filter__count {
-  min-width: 20px;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--paw-files-tint-strong);
-  color: var(--color-accent);
-  font-size: 11px;
-  line-height: 1.5;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-.paw-files-refresh,
+.paw-files-app__toolbar > button,
 .paw-native-app__error button,
 .paw-files-tree__state button,
 .paw-files-preview__state button,
@@ -253,8 +195,8 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
   padding: 0 10px;
   background: var(--color-paper);
   color: var(--color-text-secondary);
@@ -262,15 +204,15 @@
   font: inherit;
   font-size: 13px;
   line-height: 1.4;
-  transition: transform 130ms var(--paw-files-ease), border-color 140ms var(--paw-files-ease), background-color 140ms var(--paw-files-ease), color 140ms var(--paw-files-ease);
+  transition: transform 130ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
-.paw-files-refresh:disabled {
+.paw-files-app__toolbar > button:disabled {
   cursor: wait;
   opacity: .52;
 }
 
-.paw-files-refresh:active:not(:disabled),
+.paw-files-app__toolbar > button:active:not(:disabled),
 .paw-native-app__error button:active,
 .paw-files-tree__state button:active,
 .paw-files-preview__state button:active,
@@ -284,51 +226,94 @@
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-danger) 24%, transparent);
-  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  border-bottom: 1px solid rgb(215 0 21 / 24%);
+  background: rgb(215 0 21 / 7%);
   color: var(--color-danger);
   font-size: 14px;
   line-height: 1.45;
-  animation: paw-files-state-enter 180ms var(--paw-files-ease) both;
+  animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
 }
 
 .paw-native-app__error button {
   margin-left: auto;
 }
 
-/* -------------------------------------------------------------------------
-   Workspace split: directory rail beside the reading pane.
-   ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------- navigator -- */
+
 .paw-files-app__workspace {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: minmax(220px, 30%) minmax(0, 1fr);
+  grid-template-columns: minmax(224px, 30%) minmax(0, 1fr);
   overflow: hidden;
   background: var(--color-paper);
 }
 
-/* -------------------------------------------------------------------------
-   Directory rail. The shell repaints its surface per window; everything
-   inside stays hairline-and-tint so it follows automatically.
-   ------------------------------------------------------------------------- */
 .paw-files-tree {
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid var(--paw-files-hairline);
+  border-right: 1px solid var(--color-border);
   background: var(--color-chrome);
+}
+
+/* The scope strip is the navigator's honest receipt line: how many roots this
+   Session authorizes and how many entries have actually been read so far. */
+.paw-files-tree__scope {
+  display: flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 8px 2px 14px;
+  border-bottom: 1px solid var(--color-border-soft);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.paw-files-tree__scope-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-files-tree__scope button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-tree__scope button:disabled {
+  cursor: default;
+  opacity: .38;
+}
+
+.paw-files-tree__scope button:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 .paw-files-tree__scroll {
   min-height: 0;
   flex: 1 1 auto;
-  padding: 8px 7px 18px;
+  padding: 8px 6px 18px;
   overflow: auto;
-  scrollbar-color: color-mix(in srgb, var(--paw-files-ink) 18%, transparent) transparent;
-  scrollbar-width: thin;
+  scrollbar-color: rgb(29 29 31 / 18%) transparent;
 }
 
 .paw-files-tree nav,
@@ -338,10 +323,8 @@
   list-style: none;
 }
 
-/* Workspace root: the authority card. The amber support hue marks "this is
-   a granted root", distinct from the accent used for ordinary selection. */
 .paw-files-tree__root {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 
 .paw-files-tree__root-button,
@@ -355,76 +338,43 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   text-align: left;
-  transition: color 140ms var(--paw-files-ease), background-color 140ms var(--paw-files-ease), box-shadow 140ms var(--paw-files-ease), transform 120ms var(--paw-files-ease);
+  transition: color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), transform 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
 .paw-files-tree__root-button {
   min-height: 44px;
-  grid-template-columns: 14px 24px minmax(0, 1fr) auto;
+  grid-template-columns: 14px 24px minmax(0, 1fr);
   gap: 7px;
   padding: 5px 8px;
-  border: 1px solid transparent;
   border-radius: 10px;
   color: var(--color-text);
 }
 
-.paw-files-tree__root-button[aria-expanded='true'] {
-  border-color: var(--paw-files-hairline-soft);
-  background: color-mix(in srgb, var(--color-paper) 62%, transparent);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--paw-files-ink) 5%, transparent);
-}
-
-.paw-files-tree__root-glyph {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: 7px;
-  background: var(--paw-files-support-tint);
-  color: color-mix(in srgb, var(--paw-files-support) 78%, var(--paw-files-ink));
-}
-
-.paw-files-tree__root-id {
+.paw-files-tree__root-label {
   display: grid;
   min-width: 0;
   gap: 1px;
 }
 
-.paw-files-tree__root-id strong,
-.paw-files-tree__root-id small {
+.paw-files-tree__root-label strong,
+.paw-files-tree__root-label small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.paw-files-tree__root-id strong {
+.paw-files-tree__root-label strong {
   color: var(--color-text);
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.4;
   font-weight: 680;
-  letter-spacing: -.008em;
 }
 
-.paw-files-tree__root-id small {
+.paw-files-tree__root-label small {
   color: var(--color-text-tertiary);
-  font: 12px/1.4 var(--paw-files-mono);
+  font: 13px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
-.paw-files-tree__root-count {
-  align-self: start;
-  margin-top: 3px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--paw-files-ink) 6%, transparent);
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.5;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Branch guides: one hairline per level; the branch holding the open file
-   carries an accent trail so deep positions stay legible. */
 .paw-files-tree ul[role='group'] {
   position: relative;
   margin-left: 12px;
@@ -436,77 +386,22 @@
   inset: 2px auto 2px 0;
   width: 1px;
   border-radius: 1px;
-  background: var(--paw-files-hairline);
+  background: var(--color-border);
   content: '';
-  transition: background-color 160ms var(--paw-files-ease);
-}
-
-.paw-files-tree ul[role='group']:has(.paw-files-tree__row[data-selected])::before {
-  background: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .paw-files-tree__row {
   position: relative;
-  min-height: 29px;
-  grid-template-columns: 13px 20px minmax(0, 1fr) auto;
+  min-height: 31px;
+  grid-template-columns: 14px 22px minmax(0, 1fr) auto;
   gap: 6px;
-  padding: 3px 8px 3px calc(6px + var(--paw-files-depth, 1) * 11px);
-  border-radius: 7px;
-  font-size: 13.5px;
+  padding: 3px 8px 3px calc(6px + var(--paw-files-depth, 1) * 13px);
+  border-radius: 8px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
-.paw-files-tree__disclosure {
-  color: var(--color-text-tertiary);
-  transition: transform 180ms var(--paw-ease-in-out, cubic-bezier(.77, 0, .175, 1));
-}
-
-.paw-files-tree__disclosure[data-open] {
-  transform: rotate(90deg);
-}
-
-i.paw-files-tree__disclosure {
-  display: block;
-}
-
-/* Recognition chips: each family keeps one hue for its glyph so a directory
-   scan reads by colour before it reads by name. */
-.paw-files-tree__row,
-.paw-files-preview__badge {
-  --paw-files-family: var(--paw-files-hue-plain);
-}
-
-.paw-files-tree__row[data-family='code'],
-.paw-files-preview__badge[data-family='code'] { --paw-files-family: var(--paw-files-hue-code); }
-.paw-files-tree__row[data-family='doc'],
-.paw-files-preview__badge[data-family='doc'] { --paw-files-family: var(--paw-files-hue-doc); }
-.paw-files-tree__row[data-family='data'],
-.paw-files-preview__badge[data-family='data'] { --paw-files-family: var(--paw-files-hue-data); }
-.paw-files-tree__row[data-family='media'],
-.paw-files-preview__badge[data-family='media'] { --paw-files-family: var(--paw-files-hue-media); }
-.paw-files-tree__row[data-family='diff'],
-.paw-files-preview__badge[data-family='diff'] { --paw-files-family: var(--paw-files-hue-diff); }
-.paw-files-tree__row[data-family='symlink'],
-.paw-files-preview__badge[data-family='symlink'] { --paw-files-family: var(--color-accent); }
-.paw-files-tree__row[data-kind='directory'] { --paw-files-family: var(--color-accent); }
-
-.paw-files-tree__glyph {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--paw-files-family) 11%, transparent);
-  color: color-mix(in srgb, var(--paw-files-family) 84%, var(--paw-files-ink));
-}
-
-.paw-files-tree__label {
-  display: block;
-  min-width: 0;
-}
-
-.paw-files-tree__label > span {
-  display: block;
+.paw-files-tree__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -514,22 +409,29 @@ i.paw-files-tree__disclosure {
 
 .paw-files-tree__row small {
   color: var(--color-text-tertiary);
-  font: 11.5px/1.4 var(--paw-files-mono);
+  font: 12.5px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+}
+
+/* Loaded directories carry their real child count — a receipt of the bounded
+   listing, not a filesystem promise. */
+.paw-files-tree__count {
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: color-mix(in srgb, var(--color-text-tertiary) 9%, transparent);
 }
 
 .paw-files-tree__root-button:focus-visible,
 .paw-files-tree__row:focus-visible {
   outline: none;
-  background: var(--paw-files-tint);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 48%, transparent);
 }
 
 .paw-files-tree__row[data-selected] {
-  background: var(--paw-files-tint-strong);
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
   color: var(--color-text);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--paw-files-ink) 4%, transparent);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
 }
 
 .paw-files-tree__row[data-selected]::before {
@@ -546,84 +448,76 @@ i.paw-files-tree__disclosure {
   transform: scale(.99);
 }
 
+.paw-files-tree__chevron {
+  color: var(--color-text-tertiary);
+  transition: transform 180ms var(--paw-ease-in-out, cubic-bezier(.77, 0, .175, 1));
+}
+
+.paw-files-tree__chevron[data-open] {
+  transform: rotate(90deg);
+}
+
+.paw-files-tree__busy {
+  color: var(--color-accent);
+}
+
+/* Family glyph chips: one tinted tile per object family so directories,
+   code, documents, data, media, diffs and links scan apart at a glance. */
+.paw-files-tree__glyph {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--files-family, var(--files-family-plain)) 11%, transparent);
+  color: var(--files-family, var(--files-family-plain));
+}
+
+.paw-files-tree__glyph--root {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--files-family-folder) 15%, transparent);
+}
+
+.paw-files-tree__glyph[data-family='folder'] { --files-family: var(--files-family-folder); }
+.paw-files-tree__glyph[data-family='symlink'] { --files-family: var(--files-family-symlink); }
+.paw-files-tree__glyph[data-family='code'] { --files-family: var(--files-family-code); }
+.paw-files-tree__glyph[data-family='script'] { --files-family: var(--files-family-script); }
+.paw-files-tree__glyph[data-family='doc'] { --files-family: var(--files-family-doc); }
+.paw-files-tree__glyph[data-family='data'] { --files-family: var(--files-family-data); }
+.paw-files-tree__glyph[data-family='web'] { --files-family: var(--files-family-web); }
+.paw-files-tree__glyph[data-family='media'] { --files-family: var(--files-family-media); }
+.paw-files-tree__glyph[data-family='diff'] { --files-family: var(--files-family-diff); }
+.paw-files-tree__glyph[data-family='plain'] { --files-family: var(--files-family-plain); }
+
+.paw-files-tree__row[data-selected] .paw-files-tree__glyph {
+  background: color-mix(in srgb, var(--color-accent) 17%, transparent);
+  color: var(--color-accent);
+}
+
 .paw-files-tree__limit {
-  margin: 3px 8px 5px calc(6px + var(--paw-files-depth, 1) * 11px);
+  margin: 2px 8px 4px calc(6px + var(--paw-files-depth, 1) * 13px);
   padding: 4px 9px;
-  border: 1px dashed var(--paw-files-hairline-strong);
+  border: 1px dashed var(--color-border-strong);
   border-radius: 7px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 
 .paw-files-tree__state {
-  display: grid;
+  display: flex;
   min-height: 40px;
-  align-content: center;
+  align-items: center;
   gap: 6px;
   padding: 8px 12px;
   color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.4;
-  animation: paw-files-state-enter 180ms var(--paw-files-ease) both;
+  animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
 }
 
-.paw-files-tree__state[data-error] {
-  color: var(--color-danger);
-}
-
-.paw-files-tree__state-line {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-}
-
-.paw-files-tree__state-line > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.paw-files-tree__state-line button {
-  margin-left: auto;
-}
-
-/* Loading placeholders sketch the rows that are about to arrive; they carry
-   no fake names and disappear with the real listing. */
-.paw-files-skeleton {
-  display: grid;
-  gap: 7px;
-}
-
-.paw-files-skeleton > i {
-  display: block;
-  height: 9px;
-  border-radius: 4px;
-  background:
-    linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-paper) 70%, transparent), transparent) 0 0 / 200% 100%,
-    color-mix(in srgb, var(--paw-files-ink) 7%, transparent);
-  animation: paw-files-shimmer 1.3s linear infinite;
-}
-
-.paw-files-skeleton--tree > i:nth-child(1) { width: 72%; }
-.paw-files-skeleton--tree > i:nth-child(2) { width: 54%; margin-left: 14px; }
-.paw-files-skeleton--tree > i:nth-child(3) { width: 63%; margin-left: 14px; }
-
-.paw-files-skeleton--reader {
-  width: min(560px, 82%);
-  margin-top: 6px;
-}
-
-.paw-files-skeleton--reader > i:nth-child(1) { width: 88%; }
-.paw-files-skeleton--reader > i:nth-child(2) { width: 72%; }
-.paw-files-skeleton--reader > i:nth-child(3) { width: 94%; }
-.paw-files-skeleton--reader > i:nth-child(4) { width: 60%; }
-.paw-files-skeleton--reader > i:nth-child(5) { width: 78%; }
-.paw-files-skeleton--reader > i:nth-child(6) { width: 44%; }
-
-/* -------------------------------------------------------------------------
-   Filter projection: truthful coverage over already-loaded entries.
-   ------------------------------------------------------------------------- */
 .paw-files-filter-results {
   display: grid;
   min-width: 0;
@@ -637,7 +531,6 @@ i.paw-files-tree__disclosure {
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.45;
-  font-variant-numeric: tabular-nums;
 }
 
 .paw-files-filter-results ul {
@@ -647,7 +540,6 @@ i.paw-files-tree__disclosure {
 
 .paw-files-filter-results .paw-files-tree__row {
   min-height: 34px;
-  padding-left: 8px;
 }
 
 .paw-files-filter-results .paw-files-tree__row small {
@@ -664,10 +556,10 @@ i.paw-files-tree__disclosure {
   color: inherit;
 }
 
-/* -------------------------------------------------------------------------
-   Reading pane. The frozen cross-owner contract keeps this a true
-   paper-white sheet regardless of the window tint around it.
-   ------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------- reader -- */
+
+/* The reading pane stays a true paper-white sheet even when the shell tints
+   the surrounding chrome; that literal is a frozen cross-owner contract. */
 .paw-files-preview {
   display: grid;
   min-width: 0;
@@ -681,12 +573,13 @@ i.paw-files-tree__disclosure {
   display: flex;
   min-width: 0;
   min-height: 56px;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 10px;
-  padding: 9px 16px 9px 14px;
-  border-bottom: 1px solid var(--paw-files-hairline);
+  padding: 10px 18px 11px;
+  border-bottom: 1px solid var(--color-border);
   background: var(--color-paper);
-  animation: paw-files-preview-enter 190ms var(--paw-files-ease) both;
+  animation: paw-files-preview-enter 190ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
 }
 
 .paw-files-preview__back {
@@ -695,110 +588,76 @@ i.paw-files-tree__disclosure {
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--paw-files-hairline);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-paper);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: transform 140ms var(--paw-files-ease), border-color 140ms var(--paw-files-ease);
+  transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
-/* The identity badge answers "what am I reading" before the name does. */
-.paw-files-preview__badge {
-  display: grid;
-  min-width: 34px;
-  height: 30px;
-  flex: 0 0 auto;
-  place-items: center;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--paw-files-family) 12%, transparent);
-  color: color-mix(in srgb, var(--paw-files-family) 82%, var(--paw-files-ink));
-  font-size: 10.5px;
-  line-height: 1;
-  font-weight: 750;
-  letter-spacing: .05em;
-}
-
-.paw-files-preview__id {
-  display: grid;
+/* The identity row reads as one path: directory crumbs, then the filename as
+   the document title, then a metadata receipt underneath. */
+.paw-files-reader__identity {
+  display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  gap: 2px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 3px;
+  row-gap: 2px;
 }
 
-.paw-files-preview__id h2 {
+.paw-files-crumb {
+  max-width: 20ch;
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  padding: 1px 3px;
+  margin: 0 -1px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font: 12.5px/1.5 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 130ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 130ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-crumb:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 40%, transparent);
+  color: var(--color-accent);
+}
+
+.paw-files-crumb__sep {
+  color: var(--color-border-strong);
+  font: 12.5px/1.5 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  user-select: none;
+}
+
+.paw-files-reader__identity h2 {
+  max-width: 100%;
   overflow: hidden;
   margin: 0;
   color: var(--color-text);
   font-size: 15px;
   line-height: 1.4;
   font-weight: 700;
-  letter-spacing: -.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The crumb line is live navigation: each segment relocates its directory
-   in the tree. The raw path stays one hover/copy away via the title. */
-.paw-files-crumbs {
-  display: flex;
-  min-width: 0;
-  align-items: center;
+.paw-files-reader__identity small {
+  display: block;
+  flex-basis: 100%;
+  max-width: min(78ch, 100%);
   overflow: hidden;
-  font: 12px/1.5 var(--paw-files-mono);
   color: var(--color-text-tertiary);
-  white-space: nowrap;
-}
-
-.paw-files-crumbs__segment {
-  min-width: 0;
-  flex: 0 1 auto;
-  overflow: hidden;
-  border: 0;
-  border-radius: 5px;
-  padding: 1px 4px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
+  font: 12.5px/1.5 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background-color 130ms var(--paw-files-ease), color 130ms var(--paw-files-ease);
-}
-
-.paw-files-crumbs__segment[data-root] {
-  flex-shrink: 0;
-  background: var(--paw-files-support-tint);
-  color: color-mix(in srgb, var(--paw-files-support) 72%, var(--paw-files-ink));
-  font-weight: 650;
-}
-
-.paw-files-crumbs__segment:focus-visible {
-  outline: none;
-  background: var(--paw-files-tint);
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 48%, transparent);
-}
-
-.paw-files-crumbs__segment + .paw-files-crumbs__segment::before {
-  margin-right: 4px;
-  margin-left: 2px;
-  color: color-mix(in srgb, var(--color-text-tertiary) 62%, transparent);
-  content: '/';
-}
-
-.paw-files-crumbs__plain {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.paw-files-crumbs__meta {
-  flex: 0 0 auto;
-  margin-left: 4px;
-  padding-left: 8px;
-  border-left: 1px solid var(--paw-files-hairline);
-  font-variant-numeric: tabular-nums;
 }
 
 .paw-files-preview__actions {
@@ -814,12 +673,12 @@ i.paw-files-tree__disclosure {
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--paw-files-hairline);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-paper);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: transform 140ms var(--paw-files-ease), border-color 140ms var(--paw-files-ease), background-color 140ms var(--paw-files-ease), color 140ms var(--paw-files-ease);
+  transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
 .paw-files-preview__action:active:not(:disabled) {
@@ -831,22 +690,34 @@ i.paw-files-tree__disclosure {
   opacity: .45;
 }
 
-.paw-files-preview__action[data-copied] {
+.paw-files-preview__action[data-copied],
+.paw-files-preview__action[data-active] {
   border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
-  background: var(--paw-files-tint);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
   color: var(--color-accent);
 }
 
-/* -------------------------------------------------------------------------
-   Reader body. The shared code/diff/Markdown/HTML surfaces keep their own
-   colour ownership; Files only sizes and frames them.
-   ------------------------------------------------------------------------- */
+/* Closing a file is a lighter action than the copy receipts: it sits last,
+   separated by a hairline, and never carries an accent state. */
+.paw-files-preview__action--close {
+  margin-left: 4px;
+  position: relative;
+}
+
+.paw-files-preview__action--close::before {
+  position: absolute;
+  inset: 5px auto 5px -6px;
+  width: 1px;
+  background: var(--color-border);
+  content: '';
+}
+
 .paw-files-preview__body {
   min-width: 0;
   min-height: 0;
   overflow: auto;
   background: #fff;
-  scrollbar-color: color-mix(in srgb, var(--paw-files-ink) 18%, transparent) transparent;
+  scrollbar-color: rgb(29 29 31 / 18%) transparent;
 }
 
 .paw-files-preview__body:has(> .agent-file-code),
@@ -872,7 +743,7 @@ i.paw-files-tree__disclosure {
 
 /* The code, diff, and plain readers keep the shared
    --color-code-bg / --color-code-text pair owned by the file-preview styles.
-   Repainting only part of that pair once left the light plain-text fallback
+   Repainting only the background here once left the light plain-text fallback
    unreadable on a light surface; Files must not recolour the code surface. */
 
 /* The Files header already names the open file and owns the copy actions, so
@@ -898,9 +769,8 @@ i.paw-files-tree__disclosure {
   padding: 24px 30px 70px;
 }
 
-/* -------------------------------------------------------------------------
-   SVG stage: safe image rendering with an explicit source toggle.
-   ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------- svg viewer -- */
+
 .paw-files-svg {
   display: grid;
   width: 100%;
@@ -916,7 +786,7 @@ i.paw-files-tree__disclosure {
   justify-content: flex-end;
   gap: 4px;
   padding: 7px 14px;
-  border-bottom: 1px solid var(--paw-files-hairline);
+  border-bottom: 1px solid var(--color-border);
   background: var(--color-paper);
 }
 
@@ -934,12 +804,12 @@ i.paw-files-tree__disclosure {
   font: inherit;
   font-size: 12.5px;
   line-height: 1.4;
-  transition: border-color 140ms var(--paw-files-ease), background-color 140ms var(--paw-files-ease), color 140ms var(--paw-files-ease);
+  transition: border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
 .paw-files-svg__bar button[aria-pressed='true'] {
   border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
-  background: var(--paw-files-tint);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   color: var(--color-accent);
 }
 
@@ -957,9 +827,9 @@ i.paw-files-tree__disclosure {
   padding: 26px;
   overflow: auto;
   background:
-    repeating-conic-gradient(color-mix(in srgb, var(--paw-files-ink) 5%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 18px 18px,
+    repeating-conic-gradient(rgb(29 29 31 / 5%) 0% 25%, transparent 0% 50%) 0 0 / 18px 18px,
     var(--color-canvas);
-  scrollbar-color: color-mix(in srgb, var(--paw-files-ink) 18%, transparent) transparent;
+  scrollbar-color: rgb(29 29 31 / 18%) transparent;
 }
 
 .paw-files-svg__stage img {
@@ -968,124 +838,182 @@ i.paw-files-tree__disclosure {
   filter: drop-shadow(0 2px 8px rgb(15 23 42 / 12%));
 }
 
-/* -------------------------------------------------------------------------
-   Reader states: empty desk, loading sketch, explicit binary/empty cards.
-   ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------ start state -- */
+
 .paw-files-preview__empty {
   display: grid;
   grid-row: 1 / -1;
   place-content: center;
   justify-items: center;
-  gap: 8px;
-  padding: 24px;
+  gap: 9px;
+  padding: 26px;
   color: var(--color-text-tertiary);
   text-align: center;
 }
 
-/* A quiet paper stack drawn from the palette itself — identity without a
-   stock illustration. */
-.paw-files-preview__empty-art {
-  position: relative;
-  width: 74px;
-  height: 62px;
-  margin-bottom: 8px;
-}
-
-.paw-files-preview__empty-art > i,
-.paw-files-preview__empty-art > span {
-  position: absolute;
-  inset: 0 auto auto 50%;
-  width: 46px;
-  height: 56px;
-  border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--color-paper), color-mix(in srgb, var(--color-canvas) 72%, var(--color-paper)));
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--paw-files-ink) 7%, transparent);
-}
-
-.paw-files-preview__empty-art > i:nth-child(1) {
-  transform: translateX(-50%) rotate(-9deg) translateX(-11px);
-}
-
-.paw-files-preview__empty-art > i:nth-child(2) {
-  transform: translateX(-50%) rotate(8deg) translateX(11px);
-}
-
-.paw-files-preview__empty-art > span {
+.paw-files-preview__empty-mark {
   display: grid;
+  width: 54px;
+  height: 54px;
   place-items: center;
-  border-color: color-mix(in srgb, var(--color-accent) 32%, var(--paw-files-hairline));
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   color: var(--color-accent);
-  transform: translateX(-50%);
 }
 
-.paw-files-preview__empty strong {
+.paw-files-preview__empty > strong {
   color: var(--color-text);
   font-size: 15px;
   line-height: 1.4;
 }
 
 .paw-files-preview__empty > span {
-  max-width: 34ch;
+  max-width: 36ch;
   font-size: 13px;
   line-height: 1.55;
 }
 
-.paw-files-preview__state {
-  min-height: 160px;
+.paw-files-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px 14px;
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.paw-files-keys > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.paw-files-keys kbd {
+  min-width: 20px;
+  border: 1px solid var(--color-border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 0 5px;
+  background: var(--color-paper);
+  color: var(--color-text-secondary);
+  font: 12px/1.6 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  text-align: center;
+}
+
+/* This window's own read history — quick returns to what was just inspected.
+   It resets with the Session because file authority does. */
+.paw-files-recents {
+  width: min(440px, 100%);
+  margin-top: 10px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 12px;
+  padding: 10px 10px 8px;
+  background: var(--color-chrome);
+  text-align: left;
+}
+
+.paw-files-recents h3 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 6px;
+  padding: 0 4px;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 650;
+}
+
+.paw-files-recents ul {
   display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 10px;
+  margin: 0;
+  padding: 0;
+  gap: 1px;
+  list-style: none;
+}
+
+.paw-files-recents button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 7px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.45;
+  text-align: left;
+  transition: background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-recents button:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 48%, transparent);
+}
+
+.paw-files-recents__name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-files-recents small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font: 12px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- states -- */
+
+.paw-files-preview__state {
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 7px;
   padding: 18px;
   color: var(--color-text-tertiary);
   font-size: 14px;
   line-height: 1.45;
+  animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+}
+
+.paw-files-preview__state--binary,
+.paw-files-preview__state--empty {
+  align-content: center;
+  flex-direction: column;
   text-align: center;
-  animation: paw-files-state-enter 180ms var(--paw-files-ease) both;
 }
 
-.paw-files-preview__state[role='alert'] {
-  grid-auto-flow: row;
-  color: var(--color-danger);
+.paw-files-preview__state--binary svg {
+  color: var(--files-family-media);
 }
 
-.paw-files-preview__state-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.paw-files-preview__state-mark {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--paw-files-ink) 6%, transparent);
-  color: var(--color-text-secondary);
-}
-
-.paw-files-preview__state--binary .paw-files-preview__state-mark {
-  background: color-mix(in srgb, var(--paw-files-hue-media) 11%, transparent);
-  color: var(--paw-files-hue-media);
-}
-
-/* -------------------------------------------------------------------------
-   Bounded reader receipt: how much is on screen, how much exists, and the
-   one real continuation the read route supports. Never pretends the whole
-   file is loaded.
-   ------------------------------------------------------------------------- */
+/* The bounded reader receipt: a real loaded/total meter plus the one honest
+   continuation the read route supports. It never pretends the whole file is
+   loaded. */
 .paw-files-preview__more {
   display: flex;
   min-width: 0;
-  min-height: 42px;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 14px;
-  padding: 6px 18px;
-  border-top: 1px solid var(--paw-files-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 72%, var(--color-paper));
+  gap: 6px 10px;
+  padding: 7px 18px 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-chrome);
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.4;
@@ -1093,27 +1021,21 @@ i.paw-files-tree__disclosure {
 }
 
 .paw-files-preview__range {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.paw-files-preview__meter {
   display: block;
-  width: min(180px, 100%);
   height: 3px;
+  flex: 1 1 100%;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--paw-files-ink) 10%, transparent);
   overflow: hidden;
+  background: color-mix(in srgb, var(--color-text-tertiary) 16%, transparent);
 }
 
-.paw-files-preview__meter > i {
+.paw-files-preview__range > i {
   display: block;
-  width: var(--paw-files-loaded, 0%);
+  width: var(--paw-files-range, 0%);
   height: 100%;
   border-radius: inherit;
   background: var(--color-accent);
-  transition: width 300ms var(--paw-files-ease);
+  transition: width 220ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
 .paw-files-preview__more > em {
@@ -1126,7 +1048,10 @@ i.paw-files-tree__disclosure {
 }
 
 .paw-files-preview__more > button {
+  min-height: 26px;
   margin-left: auto;
+  border-radius: 7px;
+  font-size: 12.5px;
   white-space: nowrap;
 }
 
@@ -1136,13 +1061,12 @@ i.paw-files-tree__disclosure {
 }
 
 .paw-files-tree li > ul {
-  animation: paw-files-branch-enter 180ms var(--paw-files-ease) both;
+  animation: paw-files-branch-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
   transform-origin: top;
 }
 
-/* -------------------------------------------------------------------------
-   Status bar: honest counters left, granted authority right.
-   ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------- status bar -- */
+
 .paw-files-statusbar {
   min-width: 0;
   display: flex;
@@ -1150,10 +1074,10 @@ i.paw-files-tree__disclosure {
   gap: 9px;
   overflow: hidden;
   padding: 0 12px;
-  border-top: 1px solid var(--paw-files-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 78%, var(--color-paper));
+  border-top: 1px solid var(--color-border);
+  background: var(--color-chrome);
   color: var(--color-text-tertiary);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
@@ -1174,32 +1098,15 @@ i.paw-files-tree__disclosure {
   white-space: nowrap;
 }
 
+/* Workspace authority reads in the Files support colour — the one warm
+   signal in an otherwise cool instrument. */
 .paw-files-statusbar__root {
-  display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
   margin-left: auto;
-  color: var(--color-text-secondary);
+  color: color-mix(in srgb, var(--color-support, #c79427) 74%, var(--color-text));
   font-weight: 650;
 }
 
-.paw-files-statusbar__root[data-live] {
-  color: #16845b;
-}
-
-.paw-files-statusbar__root[data-live]::before {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 0 2.5px color-mix(in srgb, currentColor 18%, transparent);
-  content: '';
-}
-
-/* -------------------------------------------------------------------------
-   Motion.
-   ------------------------------------------------------------------------- */
 @keyframes paw-files-preview-enter {
   from { opacity: 0; transform: translate3d(8px, 0, 0); }
 }
@@ -1212,16 +1119,8 @@ i.paw-files-tree__disclosure {
   from { opacity: 0; transform: translate3d(0, -4px, 0); }
 }
 
-@keyframes paw-files-shimmer {
-  from { background-position: 200% 0, 0 0; }
-  to { background-position: -200% 0, 0 0; }
-}
+/* -------------------------------------------------------------- responsive -- */
 
-/* -------------------------------------------------------------------------
-   Reflow. Files reflows with its window (container queries), never the
-   viewport: 860 stacks the rail above the reader, 560 swaps list for reader
-   with an explicit Back, and the titlebar variants compact in parallel.
-   ------------------------------------------------------------------------- */
 @container paw-files (max-width: 860px) {
   .paw-files-app__workspace {
     grid-template-columns: minmax(0, 1fr);
@@ -1231,7 +1130,7 @@ i.paw-files-tree__disclosure {
   .paw-files-tree {
     max-height: 40%;
     border-right: 0;
-    border-bottom: 1px solid var(--paw-files-hairline);
+    border-bottom: 1px solid var(--color-border);
   }
 }
 
@@ -1249,7 +1148,7 @@ i.paw-files-tree__disclosure {
     grid-template-columns: minmax(0, 1fr) minmax(80px, 1fr) auto;
   }
 
-  .paw-files-tree__root-id small {
+  .paw-files-tree__root-label small {
     display: none;
   }
 
@@ -1272,16 +1171,16 @@ i.paw-files-tree__disclosure {
     display: grid;
   }
 
-  .paw-files-preview__badge {
-    display: none;
-  }
-
-  .paw-files-crumbs__meta {
-    display: none;
+  .paw-files-preview > header {
+    align-items: center;
   }
 
   .paw-files-preview__more {
     padding-inline: 12px;
+  }
+
+  .paw-files-keys {
+    display: none;
   }
 
   .paw-files-statusbar__root {
@@ -1294,35 +1193,44 @@ i.paw-files-tree__disclosure {
     padding-inline: 8px;
   }
 
-  .paw-files-refresh {
+  .paw-files-app__toolbar > button {
     width: 32px;
     padding: 0;
   }
 
-  .paw-files-refresh span {
+  .paw-files-app__toolbar > button span {
     display: none;
+  }
+
+  .paw-files-tree__root-button {
+    min-height: 42px;
   }
 }
 
-/* -------------------------------------------------------------------------
-   Pointer refinement.
-   ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------ hover -- */
+
 @media (hover: hover) and (pointer: fine) {
-  .paw-files-refresh:hover:not(:disabled),
+  .paw-files-app__toolbar > button:hover:not(:disabled),
   .paw-native-app__error button:hover,
   .paw-files-tree__state button:hover,
   .paw-files-preview__state button:hover,
   .paw-files-preview__more > button:hover:not(:disabled),
-  .paw-files-preview__back:hover,
   .paw-files-preview__action:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
     background: color-mix(in srgb, var(--color-accent) 7%, transparent);
     color: var(--color-text);
   }
 
-  .paw-files-preview__action[data-copied]:hover {
-    background: var(--paw-files-tint-strong);
+  .paw-files-preview__action[data-copied]:hover,
+  .paw-files-preview__action[data-active]:hover {
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
     color: var(--color-accent);
+  }
+
+  .paw-files-tree__scope button:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+    color: var(--color-text);
   }
 
   .paw-files-svg__bar button:hover {
@@ -1334,31 +1242,25 @@ i.paw-files-tree__disclosure {
     color: var(--color-accent);
   }
 
-  .paw-files-crumbs__segment:hover {
-    background: var(--paw-files-tint);
+  .paw-files-crumb:hover {
+    background: color-mix(in srgb, var(--color-accent) 9%, transparent);
     color: var(--color-accent);
   }
 
-  .paw-files-crumbs__segment[data-root]:hover {
-    background: color-mix(in srgb, var(--paw-files-support) 22%, transparent);
-    color: color-mix(in srgb, var(--paw-files-support) 62%, var(--paw-files-ink));
+  .paw-files-recents button:hover {
+    background: color-mix(in srgb, var(--color-accent) 8%, transparent);
   }
 
   .paw-files-tree__root-button:hover,
   .paw-files-tree__row:hover {
-    background: var(--paw-files-tint);
+    background: color-mix(in srgb, var(--color-accent) 8%, transparent);
     color: var(--color-text);
     transform: translate3d(2px, 0, 0);
   }
-
-  .paw-files-tree__row[data-selected]:hover {
-    background: var(--paw-files-tint-strong);
-  }
 }
 
-/* -------------------------------------------------------------------------
-   Reduced motion: state changes stay visible, nothing travels or shimmers.
-   ------------------------------------------------------------------------- */
+/* --------------------------------------------------------- reduced motion -- */
+
 @media (prefers-reduced-motion: reduce) {
   .paw-native-app__error,
   .paw-files-tree__state,
@@ -1369,32 +1271,30 @@ i.paw-files-tree__disclosure {
     transform: none;
   }
 
-  .paw-files-skeleton > i {
-    animation: none;
-  }
-
-  .paw-files-preview__meter > i {
-    transition: none;
-  }
-
   .paw-files-tree__root-button,
   .paw-files-tree__row,
-  .paw-files-refresh,
+  .paw-files-app__toolbar > button,
   .paw-native-app__error button,
   .paw-files-tree__state button,
+  .paw-files-tree__scope button,
   .paw-files-preview__state button,
   .paw-files-preview__more > button,
   .paw-files-preview__back,
   .paw-files-preview__action,
   .paw-files-svg__bar button,
-  .paw-files-crumbs__segment,
-  .paw-files-scope,
+  .paw-files-crumb,
+  .paw-files-recents button,
   .paw-files-filter {
     transition-property: color, background-color, border-color, box-shadow;
   }
 
+  /* The reading meter still reports the honest range; it just stops easing. */
+  .paw-files-preview__range > i {
+    transition: none;
+  }
+
   /* The chevron still communicates open/closed state; it just stops travelling. */
-  .paw-files-tree__disclosure {
+  .paw-files-tree__chevron {
     transition: none;
   }
 
@@ -1402,7 +1302,7 @@ i.paw-files-tree__disclosure {
   .paw-files-tree__row:hover,
   .paw-files-tree__root-button:active,
   .paw-files-tree__row:active,
-  .paw-files-refresh:active:not(:disabled),
+  .paw-files-app__toolbar > button:active:not(:disabled),
   .paw-native-app__error button:active,
   .paw-files-tree__state button:active,
   .paw-files-preview__state button:active,
