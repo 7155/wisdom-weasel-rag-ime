@@ -361,7 +361,7 @@ export function KnowledgeFeature() {
                 <Tabs className="knowledge-library__tabs" onValueChange={(value) => selectTab(asDetailTab(value))} value={tab}>
                   <TabsList aria-label="知识库管理视图">
                     <TabsTrigger value="materials"><Files aria-hidden="true" size={14} />资料</TabsTrigger>
-                    <TabsTrigger aria-label="查看材料" value="viewer"><BookOpen aria-hidden="true" size={14} />材料</TabsTrigger>
+                    <TabsTrigger aria-label="查看材料" value="viewer"><BookOpen aria-hidden="true" size={14} />阅读</TabsTrigger>
                     <TabsTrigger aria-label="检索测试" value="search"><Search aria-hidden="true" size={14} />检索</TabsTrigger>
                     <TabsTrigger aria-label="知识图谱" value="graph"><Network aria-hidden="true" size={14} />图谱</TabsTrigger>
                     <TabsTrigger aria-label="处理记录" value="jobs"><RefreshCw aria-hidden="true" size={14} />处理</TabsTrigger>
@@ -778,7 +778,7 @@ function relevanceLabel(score: number | null, detailed = true): string {
   if (score === null) return detailed ? '相关度未知' : '未知';
   if (score >= 0.75) return detailed ? '高相关' : '高';
   if (score >= 0.45) return detailed ? '相关' : '中';
-  return detailed ? '较低' : '较低';
+  return '较低';
 }
 
 interface SettingsDraftChange {
