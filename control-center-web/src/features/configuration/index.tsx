@@ -16,7 +16,7 @@ import {
   Sparkles,
   UsersRound,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Disclosure, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
 import {
@@ -102,6 +102,17 @@ export function ConfigurationFeature() {
       && !Object.is(valueAt(settings, key), next)
     )),
   ) as Record<string, DraftValue>, [changes, sections, settings]);
+  const pendingSectionCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const key of Object.keys(pendingChanges)) {
+      const owner = sections.find((item) => (
+        arrayRecords(item.fields).some((field) => stringValue(field.key) === key)
+      ));
+      const id = stringValue(owner?.id);
+      if (id) counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return counts;
+  }, [pendingChanges, sections]);
   const diffRows = useMemo(() => Object.entries(pendingChanges).map(([key, next]) => {
     const field = findField(sections, key);
     const applyMode = stringValue(field.applyMode, 'live');
@@ -197,6 +208,7 @@ export function ConfigurationFeature() {
                   const meta = runtimeSectionMeta[id] ?? runtimeSectionMeta.other;
                   const Icon = meta.icon;
                   const active = id === stringValue(section?.id);
+                  const pendingInSection = pendingSectionCounts[id] ?? 0;
                   return (
                     <button
                       aria-current={active ? 'page' : undefined}
@@ -209,6 +221,11 @@ export function ConfigurationFeature() {
                         <strong>{publicSectionLabel(id, stringValue(item.label))}</strong>
                         <small>{meta.description}</small>
                       </span>
+                      {pendingInSection ? (
+                        <em aria-label={`${pendingInSection} 项未保存`} className="configuration-section-nav__pending">
+                          {pendingInSection}
+                        </em>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -220,8 +237,12 @@ export function ConfigurationFeature() {
                     <small>{(runtimeSectionMeta[stringValue(section?.id)] ?? runtimeSectionMeta.other).description}</small>
                   </span>
                   <StatusBadge
-                    label={runtimeRevision === null ? '等待刷新' : '已获取当前状态'}
-                    tone={runtimeRevision === null ? 'warning' : 'success'}
+                    label={runtimeRevision === null
+                      ? '等待刷新'
+                      : diffRows.length
+                        ? `共 ${diffRows.length} 项未保存`
+                        : '没有未保存的更改'}
+                    tone={runtimeRevision === null ? 'warning' : diffRows.length ? 'info' : 'success'}
                   />
                 </header>
                 <div className="mgmt-list">
@@ -240,14 +261,22 @@ export function ConfigurationFeature() {
                 </div>
               </div>
               <div className="configuration-editor__review mgmt-stack" data-has-changes={diffRows.length > 0 || hasSensitiveChanges}>
-                <h3 className="configuration-editor__title">保存设置</h3>
+                <header className="configuration-editor__review-heading">
+                  <h3 className="configuration-editor__title">保存设置</h3>
+                  {diffRows.length ? (
+                    <Button onClick={() => setChanges({})} size="small" variant="quiet">放弃更改</Button>
+                  ) : null}
+                </header>
                 {diffRows.length ? (
-                  <DataTable caption="准备保存的设置" columns={[
-                    { key: 'key', label: '设置项', width: '32%' },
-                    { key: 'before', label: '当前' },
-                    { key: 'after', label: '更改后' },
-                    { key: 'applyMode', label: '生效方式', width: '18%' },
-                  ]} rows={diffRows} />
+                  <>
+                    <p className="configuration-review-consequence">{reviewConsequenceSummary(diffRows)}</p>
+                    <DataTable caption="准备保存的设置" columns={[
+                      { key: 'key', label: '设置项', width: '32%' },
+                      { key: 'before', label: '当前' },
+                      { key: 'after', label: '更改后' },
+                      { key: 'applyMode', label: '生效方式', width: '18%' },
+                    ]} rows={diffRows} />
+                  </>
                 ) : <p className="mgmt-muted configuration-editor__empty-review">更改设置后，可以在这里直接保存；需要重启、部署或权限的更改会先说明需要采取的操作。</p>}
                 <ManagementMutationWorkflow
                   availability={mutationBoundary.availability(
@@ -390,21 +419,31 @@ function SettingField({
 }) {
   const key = stringValue(field.key);
   const label = publicFieldLabel(key, stringValue(field.label));
-  const description = publicDescription(stringValue(field.description));
   const type = stringValue(field.type, 'string');
   const secret = isSecretConfigurationField(field, key);
   const id = `configuration-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  // Consequence-first: a field that will not take effect immediately says so
+  // next to its control, before the person edits, not only in the save diff.
+  const consequence = secret ? '' : fieldConsequenceLabel(stringValue(field.applyMode, 'live'));
+  const description = withConsequence(publicDescription(stringValue(field.description)), consequence);
+  const changed = !secret
+    && key in changes
+    && !Object.is(valueAt(settings, key), changes[key]);
+  const rowProps = {
+    className: 'mgmt-list__row',
+    'data-changed': changed || undefined,
+  } as const;
 
   if (type === 'pi-model' && !secret) {
     const available = models;
     if (!modelCatalogSupported) {
-      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="暂时无法读取模型列表" tone="warning" /></div>;
+      return <div {...rowProps}><span>{label}</span><StatusBadge label="暂时无法读取模型列表" tone="warning" /></div>;
     }
     if (!available.length) {
-      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="当前没有可用模型" tone="warning" /></div>;
+      return <div {...rowProps}><span>{label}</span><StatusBadge label="当前没有可用模型" tone="warning" /></div>;
     }
     return (
-      <div className="mgmt-list__row">
+      <div {...rowProps}>
         <Field description={description} htmlFor={id} label={label}>
           <Select
             id={id}
@@ -426,10 +465,10 @@ function SettingField({
     const selected = models.find((model) => model.reference === modelReference);
     const levels = supportedPiThinkingLevels(selected);
     if (!modelCatalogSupported || !selected || !levels.length) {
-      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="请先选择支持思考的模型" tone="warning" /></div>;
+      return <div {...rowProps}><span>{label}</span><StatusBadge label="请先选择支持思考的模型" tone="warning" /></div>;
     }
     return (
-      <div className="mgmt-list__row">
+      <div {...rowProps}>
         <Field description={description} htmlFor={id} label={label}>
           <Select
             id={id}
@@ -443,11 +482,11 @@ function SettingField({
   }
 
   if (type === 'boolean' && !secret) {
-    return <div className="mgmt-list__row"><Switch checked={value === true} description={description} label={label} onCheckedChange={onChange} /></div>;
+    return <div {...rowProps}><Switch checked={value === true} description={description} label={label} onCheckedChange={onChange} /></div>;
   }
   if (Array.isArray(field.options) && !secret) {
     return (
-      <div className="mgmt-list__row">
+      <div {...rowProps}>
         <Field description={description} htmlFor={id} label={label}>
           <Select
             id={id}
@@ -464,7 +503,7 @@ function SettingField({
       return <div className="mgmt-list__row"><Field description="请使用下方模型账号或对应安全功能修改。" htmlFor={id} label={label}><Input disabled id={id} placeholder={configuredLabel(value)} type="password" value="" /></Field></div>;
     }
     return (
-      <div className="mgmt-list__row">
+      <div {...rowProps}>
         <Field
           description={description}
           htmlFor={id}
@@ -491,6 +530,16 @@ function SettingField({
   return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="请在对应功能中调整" tone="info" /></div>;
 }
 
+function withConsequence(description: string, consequence: string): ReactNode {
+  if (!consequence) return description;
+  return (
+    <>
+      {description}
+      <em className="configuration-field-consequence">{consequence}</em>
+    </>
+  );
+}
+
 function findField(sections: Record<string, unknown>[], key: string): Record<string, unknown> {
   return sections.flatMap((section) => arrayRecords(section.fields)).find((field) => stringValue(field.key) === key) ?? {};
 }
@@ -509,6 +558,32 @@ function displayDraftValue(value: unknown, field: Record<string, unknown> = {}, 
 
 function applyModeLabel(value: string): string {
   return ({ live: '立即生效', reload: '重新载入后生效', restart: '重新启动后生效', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启本机补全服务', restart_agent_gateway: '重启对话服务', restart_predictor: '重启本机模型', next_voice_session: '下次语音输入时生效' } as Record<string, string>)[value] ?? '保存后生效';
+}
+
+function fieldConsequenceLabel(value: string): string {
+  if (value === 'live') return '';
+  return ({
+    reload: '保存后需重新载入',
+    restart: '保存后需重新启动',
+    restart_input_method: '保存后需重新载入输入法',
+    redeploy_rime: '保存后需重新载入输入法',
+    restart_sidecar: '保存后需重启本机补全服务',
+    restart_agent_gateway: '保存后需重启对话服务',
+    restart_predictor: '保存后需重启本机模型',
+    next_voice_session: '下次语音输入时生效',
+  } as Record<string, string>)[value] ?? '保存后按提示生效';
+}
+
+function reviewConsequenceSummary(
+  rows: readonly { requiresReload: boolean; applyMode: string }[],
+): string {
+  const deferred = rows.filter((row) => row.requiresReload);
+  if (!deferred.length) return `这 ${rows.length} 项更改保存后立即生效。`;
+  const followUps = [...new Set(deferred.map((row) => row.applyMode))].join('、');
+  if (deferred.length === rows.length) {
+    return `这 ${rows.length} 项更改保存后不会立即生效（${followUps}）。`;
+  }
+  return `共 ${rows.length} 项更改：${rows.length - deferred.length} 项立即生效，其余 ${deferred.length} 项（${followUps}）。`;
 }
 
 function previewDiffItems(rows: readonly { key: string; before: string; after: string; applyMode: string }[]): string[] {
