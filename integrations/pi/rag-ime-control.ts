@@ -1423,7 +1423,7 @@ const toolSpecs: ToolSpec[] = [
       "Goal 是当前 Session 的长期目标，不是 Todo 任务清单；只有用户已经明确确认目标、验收标准和禁区时才能 confirm_setup。",
       "先 list 读取当前 revision 和状态；不要覆盖既有 Goal，也不要把 Todo 任务伪装成 Goal。",
       "complete 必须附带至少一条可核验 evidence；工具回执会写入权威完成审计，再由控制中心投影。",
-      "pause、resume 和 cancel 会改变后续执行状态；只有符合用户明确意图时才能调用。删除 Goal 及审计记录只能由用户在控制中心操作。",
+      "pause 只用于用户明确要求停止当前 Goal。不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息；那会让 Root 无法被用户消息唤醒。受阻时发出 blocked/partial，保持 Goal active。resume 和 cancel 同样只在符合用户明确意图时调用。删除 Goal 及审计记录只能由用户在控制中心操作。",
     ],
     parameterSchema: {
       oneOf: [
@@ -1673,6 +1673,7 @@ const coordinatorToolSpecs: ToolSpec[] = [
       "An explicit user execution request is sufficient to attempt an in-scope reversible write. Todo tracks progress but grants no authority; workspace scope, resourceRevision checks, and the existing action-risk approval policy remain authoritative.",
       "For an existing file, read it immediately before writing and copy resourceRevision. For a new path, pass resourceRevision as missing.",
       "Prefer edit for small changes to an existing file; use write for new files or complete rewrites.",
+      "When workDocument is set, copy authorityKind, authorityId, and authorityRevision from the current workboard or work_documents projection for that authority. Do not reuse a previously remembered bound revision after the authority has advanced.",
     ],
     parameterSchema: {
       type: "object",
