@@ -602,7 +602,7 @@ describe('PAWOS semantic type roles', () => {
     expect(systemMigratedCss).toMatch(/\.paw-system-agent-fields small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);
     expect(memoryCss).toMatch(/\.memory-lineage-panel > div:first-child > p,[\s\S]*?font-size:\s*14px;[\s\S]*?line-height:\s*1\.55;/);
-    expect(memoryCss).toMatch(/\.memory-system-overview__trust-note span\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/s);
+    expect(memoryCss).toMatch(/\.memory-pipeline__trust span\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/s);
     expect(knowledgeCss).toMatch(/\.knowledge-graph__inspector > p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/s);
     expect(knowledgeCss).toMatch(/\.knowledge-chunk-grid p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.62;/s);
   });
