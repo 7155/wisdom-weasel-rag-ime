@@ -2010,6 +2010,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(browser_tool["operationRisks"]["screenshot"], "R0")
         self.assertEqual(browser_tool["operationRisks"]["navigate"], "R0")
         self.assertEqual(browser_tool["operationRisks"]["type"], "R0")
+        self.assertTrue(
+            any("Chrome/Edge" in item for item in browser_tool["notFor"])
+        )
         workspace_lsp = next(
             manifest for manifest in manifests if manifest["id"] == "workspace_lsp"
         )
@@ -2038,6 +2041,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(workspace_job["availability"], "offline")
         desktop = next(manifest for manifest in manifests if manifest["id"] == "desktop_semantic")
         self.assertEqual(desktop["riskLevel"], "R2")
+        self.assertTrue(
+            any("独立 Chrome/Edge" in item for item in desktop["notFor"])
+        )
         self.assertEqual(
             desktop["operationRisks"],
             {
@@ -2242,6 +2248,10 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("agent_goal", facilitator_manifests)
         self.assertNotIn("todo", facilitator_manifests)
         self.assertNotIn("modelVisible", facilitator_manifests["agent_goal"])
+        self.assertIn(
+            "把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息",
+            facilitator_manifests["agent_goal"]["notFor"],
+        )
         complete = next(
             branch
             for branch in facilitator_manifests["agent_goal"]["parameters"]["oneOf"]
@@ -4623,6 +4633,8 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertIn("默认省略 modelProfile 并继承父 Session", extension)
         self.assertIn('operations: ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"]', extension)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息", extension)
+        self.assertIn("Do not reuse a previously remembered bound revision", extension)
         self.assertIn('error.errorCode === "workflow_gate_closed"', extension)
         self.assertIn('requiredAction: "review_workflow_state"', extension)
         self.assertIn(

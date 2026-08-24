@@ -180,7 +180,9 @@ def room_participant_prompt(
                     "这是当前 WorkItem 的第一步：在 Room 工作区 docs/ 下创建 Markdown，"
                     f"workspace_write.workDocument 必须原样使用 {authority_binding}。"
                     "成功回执会给出 workDocumentRegistration.document.path；"
-                    "后续 read/write 立即改用该规范路径，不再沿用首次请求路径，也不要重猜 revision。"
+                    "后续 read/write 立即改用该规范路径，不再沿用首次请求路径；"
+                    "后续 bound write 使用当前文档索引给出的 authorityRevision，"
+                    "不要沿用更早记住的旧值。"
                 )
             continue
         owner_id = (
@@ -279,8 +281,13 @@ def room_participant_prompt(
                         "交付到达后先 collect 当前 WorkItem、WorkDocument 与证据，再显式 accept 或 return。"
                         "分别判断运行可操作性和需求满足度；两轴均通过才用 expectedRevision、verdicts、"
                         "evidenceRefs accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
-                        "文档修订都不能代替验收。return 后重新委派修订时，必须用新的 Tool 调用并携带"
-                        "原 workItemId；不要新建一个 WorkItem 来冒充同一修订链。",
+                        "文档修订都不能代替验收。审查报告 unverified、changes_required、failed 或未解决 "
+                        "HIGH/MEDIUM 时必须 return，不得写成 passed/satisfied。return 后重新委派修订时，"
+                        "必须用新的 Tool 调用并携带原 workItemId；不要新建一个 WorkItem 来冒充同一修订链。"
+                        "不要把仍在进行的 Room Goal 暂停来等待用户或界面；受阻时发 blocked/partial，"
+                        "保持 Goal active。网页验收只用 product browser（PAW Browser）；"
+                        "禁止 desktop_semantic 去操作独立 Chrome/Edge。"
+                        "bound write 使用当前文档索引上的 live authorityRevision，不要沿用更早记住的旧值。",
                         "room_partner 的 typed post 合同：op=post、kind=progress 只发布过程信息；"
                         "progress 是非终态，不会完成 WorkItem、Room Goal 或当前 Session 回合，"
                         "也不得根据 content 前缀或其他文本内容推断终态。主管完成全部 WorkItem 对账，"
