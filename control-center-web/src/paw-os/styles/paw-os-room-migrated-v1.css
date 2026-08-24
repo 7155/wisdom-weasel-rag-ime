@@ -85,9 +85,12 @@
   min-height: 44px;
   padding-inline: 16px 13px;
   border-bottom-color: rgb(29 36 48 / .08);
-  background: rgb(255 255 255 / .9);
-  -webkit-backdrop-filter: blur(20px) saturate(130%);
-  backdrop-filter: blur(20px) saturate(130%);
+  /* The Room workspace surface below already provides the single glass layer;
+     a stacked blur on this near-opaque header re-rasterizes the live timeline
+     on every Room event for no visible difference. */
+  background: rgb(255 255 255 / .97);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .paw-desktop-root .paw-room-window-chrome > nav {
@@ -818,10 +821,12 @@
   padding: 0 132px 0 14px;
   border-bottom: 1px solid rgb(29 36 48 / .09);
   color: #5f6978;
-  background: rgb(255 255 255 / .9);
+  /* The focus plane behind the modebar is itself a backdrop-filter layer;
+     stacking a second blur on a 90%+ opaque bar doubles the rasterize cost. */
+  background: rgb(255 255 255 / .96);
   box-shadow: 0 8px 24px rgb(35 47 66 / .06);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
-  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .paw-desktop-root .paw-room-focus-modebar > span { min-width: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-modebar strong { color: #6845d8; font: 760 12px/18px var(--font-mono); letter-spacing: .08em; }

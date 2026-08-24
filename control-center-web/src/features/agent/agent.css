@@ -1151,7 +1151,10 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-composer__attachment-chip > button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .agent-composer__attachment-chip > button:active { transform: translateY(1px); }
 .agent-command-palette { position: absolute; z-index: 25; inset-inline-start: var(--workspace-gutter); bottom: calc(100% + 7px); display: grid; width: min(640px, calc(100% - (var(--workspace-gutter) * 2))); max-height: min(336px, calc(100dvh - 176px)); padding: 6px; border: 1px solid color-mix(in srgb, var(--color-border-strong) 72%, var(--color-border)); border-radius: 9px; background: color-mix(in srgb, var(--color-surface) 96%, transparent); box-shadow: var(--shadow-dialog); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-backdrop-filter: blur(18px) saturate(128%); backdrop-filter: blur(18px) saturate(128%); animation: agent-panel-enter var(--duration-panel) var(--ease-standard) both; transform-origin: 24px 100%; }
-.agent-command-palette > header { position: sticky; z-index: 1; top: -6px; display: flex; min-width: 0; min-height: 34px; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 7px 6px; border-bottom: 1px solid var(--color-border-soft); background: color-mix(in srgb, var(--color-surface) 96%, transparent); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+/* The palette surface above already blurs its backdrop; a second blur on this
+   sticky header (backed by the palette's own 96% surface) only re-rasterizes
+   the option list on every scroll frame. */
+.agent-command-palette > header { position: sticky; z-index: 1; top: -6px; display: flex; min-width: 0; min-height: 34px; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 7px 6px; border-bottom: 1px solid var(--color-border-soft); background: color-mix(in srgb, var(--color-surface) 98%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
 .agent-command-palette__heading { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--color-text-secondary); }
 .agent-command-palette__heading > svg { color: var(--color-accent); }
 .agent-command-palette > header strong { color: var(--color-text); font-size: 12px; font-weight: var(--font-weight-semibold); }
@@ -2622,11 +2625,14 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--color-border-soft) 72%, transparent);
 }
 
+/* These headers sit over the scrolling rail/conversation inside an OS window
+   that already owns the glass layer; a nested blur re-rasterizes the streaming
+   content beneath them on every frame. */
 .paw-os-app-window[data-paw-os-app='agent'] .agent-session-rail > header,
 .paw-os-app-window[data-paw-os-app='agent'] .agent-conversation__header {
-  background: color-mix(in srgb, var(--color-chrome) 82%, transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
-  backdrop-filter: blur(18px) saturate(125%);
+  background: color-mix(in srgb, var(--color-chrome) 95%, transparent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .paw-os-app-window[data-paw-os-app='agent'] .agent-conversation {
