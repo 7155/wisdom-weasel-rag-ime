@@ -1,5 +1,5 @@
 import { CircleAlert, Globe2, LoaderCircle, Plus, X } from 'lucide-react';
-import { useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import './browser-chrome.css';
 
 export type BrowserTabItem = {
@@ -26,6 +26,10 @@ export function browserTabTooltip(tab: BrowserTabItem): string {
  * always-visible close control; background tabs reveal a named close on
  * hover, close on middle click, and the strip follows the tablist keyboard
  * pattern (arrows/Home/End move selection, Delete closes the focused tab).
+ *
+ * Only tabs scroll: the new-tab control sits outside the scrolling tablist,
+ * so it stays reachable however many guests are open, and the tablist itself
+ * contains nothing but tabs. Selecting a tab brings it into view.
  */
 export function BrowserTabStrip({
   inWindowChrome,
@@ -43,6 +47,14 @@ export function BrowserTabStrip({
   tabs: BrowserTabItem[];
 }) {
   const tabButtons = useRef(new Map<string, HTMLButtonElement>());
+  const activeTabId = tabs.find((tab) => tab.active)?.id ?? '';
+
+  useEffect(() => {
+    const active = activeTabId ? tabButtons.current.get(activeTabId) : undefined;
+    if (typeof active?.scrollIntoView === 'function') {
+      active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [activeTabId]);
 
   const selectByOffset = (index: number, key: string) => {
     const target = key === 'Home'
@@ -114,17 +126,17 @@ export function BrowserTabStrip({
             </button>
           </div>
         ))}
-        <button
-          aria-label="新建标签页"
-          className="paw-browser-new-tab"
-          disabled={newTabDisabled}
-          onClick={onNewTab}
-          title="新建标签页"
-          type="button"
-        >
-          <Plus size={14} />
-        </button>
       </div>
+      <button
+        aria-label="新建标签页"
+        className="paw-browser-new-tab"
+        disabled={newTabDisabled}
+        onClick={onNewTab}
+        title="新建标签页"
+        type="button"
+      >
+        <Plus size={14} />
+      </button>
     </div>
   );
 }

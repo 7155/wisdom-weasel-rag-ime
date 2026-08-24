@@ -14,21 +14,25 @@ afterEach(() => {
 });
 
 describe('PAW Browser real guest state', () => {
-  it('reflects real loading in the tab and swaps reload for stop', async () => {
+  it('reflects real loading in the tab and load hairline and swaps reload for stop', async () => {
     renderBrowser();
     const webview = guest();
     const stop = vi.fn();
     Object.assign(webview, { stop });
     expect(await screen.findByRole('button', { name: '刷新网页' })).toBeInTheDocument();
+    // No loading theatre before the guest reports anything.
+    expect(document.querySelector('.paw-browser-loadbar')).toBeNull();
 
     fireEvent(webview, new Event('did-start-loading'));
     expect(document.querySelector('.paw-browser-tab-icon .ui-spin')).not.toBeNull();
+    expect(document.querySelector('.paw-browser-loadbar')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '停止加载' }));
     expect(stop).toHaveBeenCalledTimes(1);
 
     fireEvent(webview, new Event('did-stop-loading'));
     expect(screen.getByRole('button', { name: '刷新网页' })).toBeInTheDocument();
     expect(document.querySelector('.paw-browser-tab-icon .ui-spin')).toBeNull();
+    expect(document.querySelector('.paw-browser-loadbar')).toBeNull();
   });
 
   it('shows the real page favicon reported by the guest', async () => {

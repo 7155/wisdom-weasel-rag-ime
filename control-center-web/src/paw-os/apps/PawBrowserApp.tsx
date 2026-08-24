@@ -76,8 +76,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const [traces, setTraces] = useState<BrowserRecord[]>([]);
   const [snapshot, setSnapshot] = useState<BrowserRecord>({});
   const [selectedTabId, setSelectedTabId] = useState(0);
-  const [address, setAddress] = useState('');
-  const [currentUrl, setCurrentUrl] = useState('');
+  const [cdpUrl, setCdpUrl] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [showTrace, setShowTrace] = useState(false);
@@ -106,6 +105,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const selectedTab = tabs.find((tab) => number(tab.tabId) === selectedTabId) ?? tabs[0];
   const selectedHostTab = hostTabs.find((tab) => tab.id === selectedHostTabId) ?? hostTabs[0];
   const selectedTabUrl = electronHost ? selectedHostTab?.url ?? 'about:blank' : text(selectedTab?.url);
+  // One committed truth for the address model: the real guest URL owns the
+  // omnibox rest state; the human draft lives inside BrowserOmnibox.
+  const currentUrl = electronHost ? selectedHostTab?.url || 'about:blank' : cdpUrl;
+  const omniboxTabKey = electronHost ? selectedHostTabId : String(selectedTabId);
 
   const refreshShell = useCallback(async () => {
     const [tabsValue, tracesValue] = await Promise.all([
@@ -147,10 +150,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       }));
       setSnapshot(value);
       const url = text(value.url);
-      if (url) {
-        setAddress(url);
-        setCurrentUrl(url);
-      }
+      if (url) setCdpUrl(url);
       setError('');
     } catch (requestError) {
       setError(errorText(requestError));
@@ -219,17 +219,12 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   }, [electronHost, hostTabs, selectedHostTabId, selectedTabId, tabs, target]);
 
   useEffect(() => {
-    if (!electronHost || !selectedHostTab) return;
-    const selectedUrl = selectedHostTab.url || 'about:blank';
-    setAddress(selectedUrl === 'about:blank' ? '' : selectedUrl);
-    setCurrentUrl(selectedUrl);
-    if (selectedHostTab.webContentsId) {
-      electronHost.activate({
-        title: selectedHostTab.title,
-        url: selectedUrl,
-        webContentsId: selectedHostTab.webContentsId,
-      });
-    }
+    if (!electronHost || !selectedHostTab?.webContentsId) return;
+    electronHost.activate({
+      title: selectedHostTab.title,
+      url: selectedHostTab.url || 'about:blank',
+      webContentsId: selectedHostTab.webContentsId,
+    });
   }, [electronHost, selectedHostTab]);
 
   // Find state and zoom are per-guest: switching tabs drops the stale query
@@ -286,13 +281,11 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     if (!selectedTabId) return;
     if (!selectedTabUrl || selectedTabUrl === 'about:blank') {
       setSnapshot({});
-      setAddress('');
-      setCurrentUrl('about:blank');
+      setCdpUrl('about:blank');
       setError('');
       return;
     }
-    setAddress(selectedTabUrl);
-    setCurrentUrl(selectedTabUrl);
+    setCdpUrl(selectedTabUrl);
     void captureSnapshot(selectedTabId);
   }, [captureSnapshot, electronHost, selectedTabId, selectedTabUrl]);
 
@@ -315,16 +308,16 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       const nextTabId = number(result.tabId) || selectedTabId;
       if (action === 'new_tab' && nextTabId) {
         setSelectedTabId(nextTabId);
-        const nextUrl = text(extra.url) || 'about:blank';
-        setAddress(nextUrl === 'about:blank' ? '' : nextUrl);
-        setCurrentUrl(nextUrl);
+        setCdpUrl(text(extra.url) || 'about:blank');
       } else if (nextTabId && action !== 'close_tab' && text(result.url) !== 'about:blank') {
         await captureSnapshot(nextTabId);
       }
       return value;
     } catch (requestError) {
+      // Every caller fire-and-forgets; the surfaced error state is the
+      // failure channel, so rethrowing would only leak unhandled rejections.
       setError(errorText(requestError));
-      throw requestError;
+      return null;
     } finally {
       setBusy('');
     }
@@ -333,8 +326,6 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const navigateTo = (rawUrl: string) => {
     const url = normalizedAddress(rawUrl);
     if (!url) return;
-    setAddress(url);
-    setCurrentUrl(url);
     if (electronHost && selectedHostTab) {
       loadPawBrowserUrl(
         { current: hostWebviews.current.get(selectedHostTab.id) ?? null },
@@ -343,6 +334,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       updateHostTab(selectedHostTab.id, { url });
       return;
     }
+    setCdpUrl(url);
     if (selectedTabId && !busy) {
       void run('navigate', { url });
     }
@@ -356,8 +348,6 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     const tab = hostTab(url);
     setHostTabs((current) => [...current, tab]);
     setSelectedHostTabId(tab.id);
-    setAddress(url === 'about:blank' ? '' : url);
-    setCurrentUrl(url);
   };
 
   const closeHostTab = (tabId: string) => {
@@ -605,6 +595,8 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const homePage = electronHost ? (browserSettings?.startPage || 'about:blank') : 'about:blank';
 
   const selectedTabLoading = Boolean(electronHost && selectedHostTab?.loading);
+  // The load hairline mirrors only what the selected guest actually reported.
+  const selectedGuestLoading = electronHost ? Boolean(selectedHostTab?.loading) : Boolean(selectedTab?.loading);
   const selectedPageFailure = electronHost ? selectedHostTab?.failure ?? null : null;
   const selectedPageCrash = electronHost ? selectedHostTab?.crashedReason : undefined;
   const tabItems: BrowserTabItem[] = electronHost
@@ -629,8 +621,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       inWindowChrome={Boolean(windowChromeTarget)}
       newTabDisabled={Boolean(busy)}
       onClose={(tabId) => {
+        // Close exactly the clicked tab, never whichever tab happens to be
+        // selected: the managed runtime is told the precise tab id.
         if (electronHost) closeHostTab(tabId);
-        else void run('close_tab');
+        else void run('close_tab', { tabId: Number(tabId) });
       }}
       onNewTab={() => {
         if (electronHost) addHostTab();
@@ -691,10 +685,9 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
         </div>
 
         <BrowserOmnibox
-          address={address}
-          currentUrl={currentUrl}
-          onAddressChange={setAddress}
+          committedUrl={currentUrl}
           onNavigate={navigateTo}
+          tabKey={omniboxTabKey}
         />
 
         <div className="paw-toolbar-actions">
@@ -708,46 +701,52 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           >
             {showTrace ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
           </button>
-          <button
-            aria-label="浏览历史"
-            className="paw-browser-history-toggle"
-            disabled={Boolean(busy)}
-            onClick={() => { setShowSettings(false); setShowHistory((value) => !value); }}
-            title="浏览历史"
-            type="button"
-          >
-            <History size={14} />
-          </button>
-          <button
-            aria-label="Browser 设置"
-            className="paw-browser-settings-toggle"
-            disabled={!electronHost || Boolean(busy)}
-            onClick={() => { setShowHistory(false); setShowSettings((value) => !value); if (!showSettings) void refreshBrowserSettings(); }}
-            title={electronHost ? 'Browser 设置' : 'Browser 设置需要 PAWOS 桌面版宿主'}
-            type="button"
-          >
-            <Settings size={14} />
-          </button>
-          <button
-            aria-expanded={showBrowserMenu}
-            aria-haspopup="menu"
-            aria-label="Browser 菜单"
-            disabled={!electronHost || Boolean(busy)}
-            onClick={() => {
-              const next = !showBrowserMenu;
-              if (next) {
-                const factor = selectedWebview()?.getZoomFactor?.();
-                if (typeof factor === 'number') setZoomPercent(Math.round(factor * 100));
-              }
-              setShowBrowserMenu(next);
-            }}
-            title={electronHost ? 'Browser 菜单' : '页内查找、打印、缩放等操作需要 PAWOS 桌面版宿主'}
-            type="button"
-          >
-            <EllipsisVertical size={14} />
-          </button>
+          {electronHost ? (
+            <button
+              aria-label="浏览历史"
+              className="paw-browser-history-toggle"
+              disabled={Boolean(busy)}
+              onClick={() => { setShowSettings(false); setShowHistory((value) => !value); }}
+              title="浏览历史"
+              type="button"
+            >
+              <History size={14} />
+            </button>
+          ) : null}
+          {electronHost ? (
+            <button
+              aria-label="Browser 设置"
+              className="paw-browser-settings-toggle"
+              disabled={Boolean(busy)}
+              onClick={() => { setShowHistory(false); setShowSettings((value) => !value); if (!showSettings) void refreshBrowserSettings(); }}
+              title="Browser 设置"
+              type="button"
+            >
+              <Settings size={14} />
+            </button>
+          ) : null}
+          {electronHost ? (
+            <button
+              aria-expanded={showBrowserMenu}
+              aria-haspopup="menu"
+              aria-label="Browser 菜单"
+              disabled={Boolean(busy)}
+              onClick={() => {
+                const next = !showBrowserMenu;
+                if (next) {
+                  const factor = selectedWebview()?.getZoomFactor?.();
+                  if (typeof factor === 'number') setZoomPercent(Math.round(factor * 100));
+                }
+                setShowBrowserMenu(next);
+              }}
+              title="Browser 菜单"
+              type="button"
+            >
+              <EllipsisVertical size={14} />
+            </button>
+          ) : null}
           {electronHost && showBrowserMenu ? (
-            <div className="paw-browser-menu" role="menu">
+            <div className="paw-browser-menu paw-menu" role="menu">
               <button onClick={() => { setShowFind(true); setShowBrowserMenu(false); }} role="menuitem" type="button"><Search size={13} />页内查找</button>
               <button onClick={() => { selectedWebview()?.print(); setShowBrowserMenu(false); }} role="menuitem" type="button"><Printer size={13} />打印</button>
               <div className="paw-browser-menu-zoom">
@@ -776,6 +775,9 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
 
       <section className="paw-browser-workspace" data-show-agent={showTrace || undefined}>
         <div className="paw-browser-viewport" data-agent-state={agentExecutionState || undefined}>
+          {selectedGuestLoading ? (
+            <span aria-hidden="true" className="paw-browser-loadbar" data-testid="paw-browser-loadbar" />
+          ) : null}
           {electronHost && showFind ? (
             <BrowserFindBar
               match={findMatch}
@@ -877,13 +879,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
             <NativeBrowserWebview
               active={tab.id === selectedHostTabId}
               key={tab.id}
-              onChange={({ title, url, webContentsId }) => {
+              onChange={({ title, url }) => {
+                // Guest identity flows into the tab record; the activate
+                // effect and the omnibox read from that single source.
                 updateHostTab(tab.id, { title, url });
-                if (tab.id === selectedHostTabId) {
-                  setAddress(url === 'about:blank' ? '' : url);
-                  setCurrentUrl(url);
-                  electronHost.activate({ title, url, webContentsId });
-                }
               }}
               onFoundInPage={(match) => {
                 if (tab.id === selectedHostTabId) setFindMatch(match);
@@ -917,7 +916,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           {!electronHost && error && !isStartPage ? (
             <div className="paw-browser-error" role="alert">
               <CircleAlert size={16} />
-              <span><strong>页面没有打开</strong></span>
+              <span>
+                <strong>页面没有打开</strong>
+                <small>{error}</small>
+              </span>
               <button onClick={() => void refreshShell()} type="button">重试</button>
             </div>
           ) : null}
