@@ -481,6 +481,20 @@
   background: var(--paw-chat-surface-subtle);
 }
 
+/* Installed Agent code surfaces keep their text/background pair after the
+   separated-message paper rule above. Raw JSON, code, and terminal output are
+   bounded readers rather than prose cards. */
+.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] :is(
+  .agent-tool-raw-result__body > pre,
+  .agent-tool-raw-result__virtual-scroll,
+  .agent-tool-raw-result__virtual-scroll pre,
+  .agent-tool-code-result > pre,
+  .agent-tool-terminal-result > pre
+) {
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
+}
+
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] :is(
   [data-status='completed'],
   [data-state='completed']

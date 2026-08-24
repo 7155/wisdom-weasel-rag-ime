@@ -118,6 +118,14 @@ describe('PAWOS semantic type roles', () => {
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-error\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
   });
 
+  it('keeps installed Agent raw, code, and terminal readers on a readable code colour pair', () => {
+    const paperRule = agentMigratedCss.indexOf("pre:not(.agent-code-block__content)");
+    const codeSurfaceRule = agentMigratedCss.indexOf('Installed Agent code surfaces keep their text/background pair');
+    expect(paperRule).toBeGreaterThan(-1);
+    expect(codeSurfaceRule).toBeGreaterThan(paperRule);
+    expect(agentMigratedCss.slice(codeSurfaceRule)).toMatch(/\.agent-tool-raw-result__body > pre,[\s\S]*?\.agent-tool-raw-result__virtual-scroll pre,[\s\S]*?\.agent-tool-code-result > pre,[\s\S]*?\.agent-tool-terminal-result > pre[\s\S]*?background:\s*var\(--color-code-bg\);[\s\S]*?color:\s*var\(--color-code-text\);/s);
+  });
+
   it('keeps ordinary App windows above the desktop Dock', () => {
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock\s*\{[^}]*z-index:\s*8;/s);
   });
