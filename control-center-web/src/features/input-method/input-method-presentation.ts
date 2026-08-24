@@ -37,6 +37,132 @@ export function componentStatus(
   };
 }
 
+/* ---------------------------------------------------------------------------
+ * 生成阶段（上屏后的智能候选）
+ *
+ * 三步车道与候选面板示意都只从真实设置和真实运行状态派生；这里绝不
+ * 编造候选正文或运行结果。示意图是"当前配置长什么样"，不是运行证据。
+ * ------------------------------------------------------------------------- */
+
+export type SuggestionPanel = {
+  /** 上屏后是否生成智能候选；只有明确写为 false 才算关闭。 */
+  enabled: boolean;
+  /** 真实配置的候选数量；配置缺失或超界时为 0（示意用抽象槽位）。 */
+  candidateCount: number;
+  /** 候选界面：紧凑单行或展开列表。 */
+  expanded: boolean;
+  /** 已配置的采纳方式与停留时长，逐条可扫读。 */
+  hints: readonly string[];
+};
+
+export function suggestionPanel(settings: Record<string, unknown>): SuggestionPanel {
+  const enabled = valueAt(settings, 'interaction.postCommit.enabled') !== false;
+  const rawCount = valueAt(settings, 'display.maxPostCommitCandidates');
+  const candidateCount = typeof rawCount === 'number' && Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= 8
+    ? rawCount
+    : 0;
+  const hints: string[] = [];
+  const tabAction = stringValue(valueAt(settings, 'interaction.postCommit.tabAction'));
+  if (tabAction === 'accept_top_prediction') hints.push('Tab 采纳第 1 条');
+  if (tabAction === 'rime_default') hints.push('Tab 保留给输入法');
+  const optionNumber = stringValue(valueAt(settings, 'interaction.postCommit.optionNumber'));
+  if (optionNumber === 'select_prediction_by_ordinal' || optionNumber === 'select_prediction') {
+    hints.push('Option+数字 选对应候选');
+  }
+  const ttl = valueAt(settings, 'interaction.postCommit.panelTtlMs');
+  if (typeof ttl === 'number' && Number.isFinite(ttl) && ttl > 0) {
+    hints.push(`约 ${secondsLabel(ttl)}后自动收起`);
+  }
+  return {
+    enabled,
+    candidateCount,
+    expanded: stringValue(valueAt(settings, 'display.panelStyle')) === 'expanded',
+    hints: enabled ? hints : [],
+  };
+}
+
+export type GenerationLaneFacts = {
+  /** 车道是否参与本次生成；召回与联想由设置决定。 */
+  enabled: boolean;
+  /** 一句话说明这一步做什么（人话，不出现实现字段）。 */
+  summary: string;
+  /** 可扫读的事实项，全部来自真实设置。 */
+  facts: readonly string[];
+};
+
+export function contextLaneFacts(settings: Record<string, unknown>): GenerationLaneFacts {
+  const facts: string[] = [];
+  const baseline = valueAt(settings, 'context.recentInputBaseline');
+  if (typeof baseline === 'number' && Number.isInteger(baseline) && baseline > 0) {
+    facts.push(`最近 ${baseline} 段输入作基线`);
+  }
+  if (valueAt(settings, 'context.temporalRecall') === true) {
+    facts.push('理解"昨天 / 上周"这类时间说法');
+  }
+  return {
+    enabled: true,
+    summary: '读取当前输入位置附近的文本，让候选贴合你正在写的内容。',
+    facts,
+  };
+}
+
+export function recallLaneFacts(settings: Record<string, unknown>): GenerationLaneFacts {
+  const enabled = valueAt(settings, 'memory.enabled') === true;
+  if (!enabled) {
+    return {
+      enabled,
+      summary: '不查找个人记忆，候选只依据眼前的上下文。',
+      facts: [],
+    };
+  }
+  const facts: string[] = [];
+  if (valueAt(settings, 'rag.lanes.tagMemo') === true) facts.push('标签记忆');
+  if (valueAt(settings, 'rag.lanes.timeDailyBook') === true) facts.push('时间与日记');
+  const detail = stringValue(valueAt(settings, 'memory.recall.detailLevel'));
+  if (detail) facts.push(`${inputOptionLabel(detail)}召回`);
+  if (valueAt(settings, 'memory.recall.timelineEnabled') === true) facts.push('按需展开时间线');
+  return {
+    enabled,
+    summary: '从你的记录里找相关内容，作为联想的依据。',
+    facts,
+  };
+}
+
+export function completionLaneFacts(
+  settings: Record<string, unknown>,
+  modelLabel: string,
+): GenerationLaneFacts {
+  const enabled = valueAt(settings, 'interaction.postCommit.enabled') !== false;
+  if (!enabled) {
+    return {
+      enabled,
+      summary: '上屏后不再生成智能候选，输入完全交回系统输入法。',
+      facts: [],
+    };
+  }
+  const facts: string[] = [];
+  if (modelLabel) facts.push(modelLabel);
+  const count = valueAt(settings, 'display.maxPostCommitCandidates');
+  if (typeof count === 'number' && Number.isInteger(count) && count > 0) {
+    facts.push(`每次最多 ${count} 条`);
+  }
+  const idle = valueAt(settings, 'interaction.postCommit.idleTriggerMs');
+  if (typeof idle === 'number' && Number.isFinite(idle) && idle > 0) {
+    facts.push(`停顿 ${secondsLabel(idle)}后生成`);
+  }
+  return {
+    enabled,
+    summary: '本机模型结合上下文与召回结果，续写出候选。',
+    facts,
+  };
+}
+
+export function secondsLabel(milliseconds: number): string {
+  const seconds = milliseconds / 1000;
+  const rounded = Math.round(seconds * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded} 秒`;
+}
+
 export function inferInputMode(settings: Record<string, unknown>): InputMode | '' {
   if (
     valueAt(settings, 'diagnostics.liveTrace') === true
@@ -69,11 +195,11 @@ export function inferInputMode(settings: Record<string, unknown>): InputMode | '
 
 export function modeSettingLabel(key: string): string {
   return ({
-    'interaction.postCommit.enabled': '提交后预测',
-    'memory.enabled': '记忆增强',
+    'interaction.postCommit.enabled': '上屏后联想',
+    'memory.enabled': '记忆召回',
     'activeRag.allowRemoteModel': '远程生成',
-    'rag.lanes.tagMemo': '标签记忆',
-    'rag.lanes.timeDailyBook': '时间与日记联想',
+    'rag.lanes.tagMemo': '标签记忆召回',
+    'rag.lanes.timeDailyBook': '时间与日记召回',
     'memory.recall.detailLevel': '召回详细程度',
     'memory.recall.timelineEnabled': '按需召回时间线',
     'diagnostics.liveTrace': '实时诊断',
@@ -112,9 +238,9 @@ export function publicInputText(value: string, fallback: string): string {
   const text = value.trim();
   if (!text || text.length > 120 || /pathId|schema|revision|hash|receipt|provider|policy|profile|\/api\/|https?:\/\//i.test(text)) return fallback;
   return text
-    .replace(/Post-commit/gi, '输入完成后')
+    .replace(/Post-commit/gi, '上屏后')
     .replace(/Active RAG/gi, '主动知识生成')
-    .replace(/RAG/gi, '知识检索')
+    .replace(/RAG/gi, '知识召回')
     .replace(/Rime/gi, '输入法')
     .replace(/fallback/gi, '备用方式')
     .replace(/TTL/gi, '保留时间')
@@ -123,43 +249,43 @@ export function publicInputText(value: string, fallback: string): string {
 
 export function inputFieldFallback(key: string): string {
   return ({
-    'interaction.postCommit.enabled': '提交后预测',
-    'interaction.postCommit.idleTriggerMs': '停顿多久开始预测',
+    'interaction.postCommit.enabled': '上屏后联想',
+    'interaction.postCommit.idleTriggerMs': '停顿多久开始联想',
     'interaction.postCommit.minDeltaChars': '最少新增字符数',
-    'interaction.postCommit.maxCallsPer10s': '10 秒最多预测次数',
-    'interaction.postCommit.cooldownMs': '两次预测最短间隔',
-    'interaction.postCommit.panelTtlMs': '生成结果停留时间',
+    'interaction.postCommit.maxCallsPer10s': '10 秒最多联想次数',
+    'interaction.postCommit.cooldownMs': '两次联想最短间隔',
+    'interaction.postCommit.panelTtlMs': '联想候选停留时间',
     'interaction.postCommit.modelBudgetMs': '本机模型最长等待',
     'interaction.postCommit.tabAction': 'Tab 键行为',
     'interaction.postCommit.optionNumber': 'Option+数字行为',
-    'display.maxPostCommitCandidates': '续写候选数量',
+    'display.maxPostCommitCandidates': '联想候选数量',
     'display.panelStyle': '候选界面样式',
     'activeRag.defaultPlacement': '结果插入方式',
     'activeRag.latencyBudgetMs': '生成框最长等待',
     'pinyin.fuzzyProfile': '模糊音方案',
     'lexiconOrganization.enabled': '定期整理',
     'lexiconOrganization.runsPerDay': '每天整理次数',
-    'models.modelId': '本机补全模型',
-    'models.hot': '补全模式',
+    'models.modelId': '本机联想模型',
+    'models.hot': '联想引擎',
     'models.path': '本机模型目录',
-    'models.promptMode': '补全方式',
-    'models.maxTokens': '单次补全长度',
+    'models.promptMode': '联想方式',
+    'models.maxTokens': '单次联想长度',
     'models.temperature': '表达变化程度',
     'models.topP': '表达变化范围',
   } as Record<string, string>)[key] ?? '输入设置';
 }
 
 export function sectionLabel(value: string): string {
-  return ({ interaction: '输入体验', display: '候选界面', activeRag: '知识建议', pinyin: '拼音习惯', models: '本机补全', lexiconOrganization: '词库整理' } as Record<string, string>)[value] ?? publicInputText(value, '输入设置');
+  return ({ interaction: '输入体验', display: '候选界面', activeRag: '知识建议', pinyin: '拼音习惯', models: '本机联想', lexiconOrganization: '词库整理' } as Record<string, string>)[value] ?? publicInputText(value, '输入设置');
 }
 
 export function inputOptionLabel(value: string): string {
   if (!value) return '未设置';
   return ({
     pass_through: '保持输入法默认行为',
-    select_prediction: '选择对应的续写候选',
+    select_prediction: '选择对应的联想候选',
     select_prediction_by_ordinal: '按序号选择智能候选',
-    accept_top_prediction: '接受首个续写候选',
+    accept_top_prediction: '接受首个联想候选',
     rime_default: '保持输入法默认行为',
     disabled: '关闭',
     compact: '紧凑',
@@ -172,8 +298,8 @@ export function inputOptionLabel(value: string): string {
     'sichuan-mild': '四川轻度模糊音',
     minimind_ime_v2: 'MiniMind 输入法 v2',
     qwen3_06b_ime_hot: 'Qwen3 0.6B IME Hot',
-    'base-completion': '基础续写',
-    'chat-json': 'Chat JSON',
+    'base-completion': '直接续写',
+    'chat-json': '对话式生成',
     none: '关闭',
   } as Record<string, string>)[value] ?? (/[\u3400-\u9fff]/u.test(value) ? value : '自定义设置');
 }
@@ -185,12 +311,6 @@ export function numericDraftValue(value: unknown, fallback: number): number {
 export function modelConfigValue(value: unknown): string {
   const normalized = stringValue(value).trim();
   return normalized && !/[\\/]/.test(normalized) ? normalized : '由本机注册表决定';
-}
-
-export function modelTokenLabel(value: unknown): string {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
-    ? `单次最多补全 ${value} 段`
-    : '按所选补全模式确定';
 }
 
 export function readinessLabel(source: Record<string, unknown>): string {
@@ -222,7 +342,7 @@ export function applyModeLabel(value: string): string {
     restart_input_method: '重新载入输入法',
     redeploy_rime: '重新部署输入法',
     restart_sidecar: '重新连接本机补全服务',
-    restart_predictor: '应用并重启本机模型',
+    restart_predictor: '应用并重启联想模型',
   } as Record<string, string>)[value] ?? '应用后生效';
 }
 

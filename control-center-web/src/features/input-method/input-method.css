@@ -1,8 +1,310 @@
+/* ---------------------------------------------------------------------------
+ * 智能候选：面板示意 + 三步生成车道
+ *
+ * 示意与车道都只反映真实设置与真实运行状态；槽位是抽象占位而不是候选
+ * 正文。布局在宽窗横排、窄窗纵排，动效只用透明度与颜色，不改布局尺寸。
+ * ------------------------------------------------------------------------- */
+
+main[data-route-id='input'] .input-suggest-preview {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  gap: var(--space-2);
+}
+
+main[data-route-id='input'] .input-suggest-preview__stage {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-subtle) 100%);
+}
+
+/* 刚上屏的内容：灰色占位条 + 静态光标线，不使用闪烁动画。 */
+main[data-route-id='input'] .input-suggest-preview__committed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+main[data-route-id='input'] .input-suggest-preview__committed i {
+  display: inline-block;
+  width: 84px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--color-border-strong);
+}
+
+main[data-route-id='input'] .input-suggest-preview__committed::after {
+  content: '';
+  display: inline-block;
+  width: 1.5px;
+  height: 18px;
+  border-radius: 1px;
+  background: var(--color-text-secondary);
+}
+
+main[data-route-id='input'] .input-suggest-preview__committed em {
+  order: -1;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+/* 智能候选区：以强调色边界与"智能候选"角标表达与原生候选的可见区分。 */
+main[data-route-id='input'] .input-suggest-preview__panel {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-3);
+  background: var(--color-accent-subtle);
+}
+
+main[data-route-id='input'] .input-suggest-preview__panel--off {
+  border: 1px dashed var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+main[data-route-id='input'] .input-suggest-preview__tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-suggest-preview__slots {
+  display: inline-flex;
+  min-width: 0;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+main[data-route-id='input'] .input-suggest-preview__slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--color-accent-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+
+main[data-route-id='input'] .input-suggest-preview__slot b {
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='input'] .input-suggest-preview__slot i {
+  display: inline-block;
+  width: 42px;
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-accent) 26%, var(--color-surface-subtle));
+}
+
+/* 抽象槽位宽度错落，读起来像真实候选而不是等宽积木。 */
+main[data-route-id='input'] .input-suggest-preview__slot:nth-child(2n) i { width: 58px; }
+main[data-route-id='input'] .input-suggest-preview__slot:nth-child(3n) i { width: 34px; }
+main[data-route-id='input'] .input-suggest-preview__slot:first-child i { width: 66px; }
+
+/* 展开样式：候选面板变为纵向列表，对应 panelStyle=expanded。 */
+main[data-route-id='input'] .input-suggest-preview[data-panel='expanded'] .input-suggest-preview__slots {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+main[data-route-id='input'] .input-suggest-preview[data-panel='expanded'] .input-suggest-preview__slot i {
+  flex: 1;
+  min-width: 64px;
+}
+
+main[data-route-id='input'] .input-suggest-preview figcaption {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+main[data-route-id='input'] .input-suggest-preview__note {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+main[data-route-id='input'] .input-suggest-preview__hints {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+main[data-route-id='input'] .input-suggest-preview__hints > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-gen-lanes {
+  display: grid;
+  min-width: 0;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  counter-reset: input-gen-lane;
+  list-style: none;
+}
+
+main[data-route-id='input'] .input-gen-lane {
+  counter-increment: input-gen-lane;
+  position: relative;
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 7px;
+  padding: 13px 15px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-surface);
+}
+
+main[data-route-id='input'] .input-gen-lane[data-dimmed] {
+  background: var(--color-surface-subtle);
+}
+
+main[data-route-id='input'] .input-gen-lane[data-dimmed] > p,
+main[data-route-id='input'] .input-gen-lane[data-dimmed] .input-gen-lane__head strong {
+  color: var(--color-text-secondary);
+}
+
+/* 车道之间的流向箭头：只在横排时出现，窄窗纵排时隐藏。 */
+main[data-route-id='input'] .input-gen-lane:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: calc(-1 * var(--space-3) / 2 - 4px);
+  width: 8px;
+  height: 8px;
+  border-top: 1.5px solid var(--color-text-tertiary);
+  border-right: 1.5px solid var(--color-text-tertiary);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+main[data-route-id='input'] .input-gen-lane__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+main[data-route-id='input'] .input-gen-lane__head::before {
+  content: counter(input-gen-lane);
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='input'] .input-gen-lane__icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-text-secondary);
+}
+
+main[data-route-id='input'] .input-gen-lane__head strong {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-gen-lane__badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-inline-start: auto;
+}
+
+main[data-route-id='input'] .input-gen-lane > p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='input'] .input-gen-lane > small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+main[data-route-id='input'] .input-gen-lane__facts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='input'] .input-gen-lane__facts > li {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 main[data-route-id='input'] .input-status-grid {
   display: grid;
   min-width: 0;
   border-block: 1px solid var(--color-border);
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 main[data-route-id='input'] .input-status-item {
@@ -631,12 +933,11 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-status-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  main[data-route-id='input'] .input-gen-lanes {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-status-item:nth-child(2) { border-right: 0; }
-  main[data-route-id='input'] .input-status-item:nth-child(-n + 2) { border-bottom: 1px solid var(--color-border); }
+  main[data-route-id='input'] .input-gen-lane:not(:last-child)::after { content: none; }
 }
 
 @media (max-width: 620px) {
@@ -652,6 +953,11 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   }
 
   main[data-route-id='input'] .input-status-item:last-child { border-bottom: 0; }
+
+  main[data-route-id='input'] .input-suggest-preview__stage {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action { grid-template-columns: minmax(0, 1fr); }
   main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .ui-button { justify-self: start; }
   main[data-route-id='input'] .input-setting-row { grid-template-columns: minmax(0, 1fr); }
@@ -700,8 +1006,9 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 @container paw-window (max-width: 900px) {
   main[data-route-id='input'][data-paw-os-app] .input-mode-layout,
   main[data-route-id='input'][data-paw-os-app] .input-settings-layout,
-  main[data-route-id='input'][data-paw-os-app] .input-settings-grid { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='input'][data-paw-os-app] .input-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main[data-route-id='input'][data-paw-os-app] .input-settings-grid,
+  main[data-route-id='input'][data-paw-os-app] .input-gen-lanes { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='input'][data-paw-os-app] .input-gen-lane:not(:last-child)::after { content: none; }
 }
 
 @container paw-window (max-width: 860px) {
@@ -716,6 +1023,12 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'][data-paw-os-app] .input-setting-row,
   main[data-route-id='input'][data-paw-os-app] .input-setting-editor-row .ui-field { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='input'][data-paw-os-app] .input-status-item { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  main[data-route-id='input'][data-paw-os-app] .input-status-item:last-child { border-bottom: 0; }
+
+  main[data-route-id='input'][data-paw-os-app] .input-suggest-preview__stage {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   main[data-route-id='input'][data-paw-os-app] .input-setting-row dd { justify-items: start; text-align: left; }
   main[data-route-id='input'][data-paw-os-app] .input-settings-save__heading { display: grid; }
 

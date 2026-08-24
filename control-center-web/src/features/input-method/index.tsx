@@ -1,10 +1,11 @@
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import {
+  BookMarked,
   ChevronDown,
-  Cpu,
   Keyboard,
   Network,
   RefreshCw,
+  Sparkles,
   TextCursorInput,
   type LucideIcon,
 } from 'lucide-react';
@@ -17,7 +18,9 @@ import {
 } from './api';
 import {
   applyModeLabel,
+  completionLaneFacts,
   componentStatus,
+  contextLaneFacts,
   formatSetting,
   inferInputMode,
   inputFieldFallback,
@@ -26,16 +29,18 @@ import {
   inputSourceMessage,
   modeSettingLabel,
   modelConfigValue,
-  modelTokenLabel,
   numericDraftValue,
   profileLabel,
   publicInputText,
   readinessLabel,
+  recallLaneFacts,
   sectionLabel,
+  suggestionPanel,
   validInputSettingValue,
   type DraftValue,
   type InputMode,
   type StatusTone,
+  type SuggestionPanel,
 } from './input-method-presentation';
 import { LexiconWorkflow } from './lexicon-workflow';
 import { DiagnosticsRuntimeWorkflow } from '@/features/diagnostics/runtime-actions';
@@ -65,8 +70,8 @@ import './input-method.css';
 /* 每个模式卡片的描述必须与 inputModeChanges 里真实写入的键一致，
  * 不许把没有配置差异的宣传语放进选择器。 */
 const inputModes = [
-  { value: '安全模式', label: '安全', description: '关闭续写、记忆与远程生成，输入完全交回系统输入法。' },
-  { value: '标准模式', label: '标准', description: '输入完成后提供本机续写，记忆按紧凑方式召回。' },
+  { value: '安全模式', label: '安全', description: '关闭联想、记忆与远程生成，输入完全交回系统输入法。' },
+  { value: '标准模式', label: '标准', description: '上屏后提供本机联想，记忆按紧凑方式召回。' },
   { value: '记忆增强', label: '记忆增强', description: '在标准之上使用详尽记忆召回，并按需展开时间线。' },
   { value: '调试模式', label: '调试', description: '显示实时诊断与候选解释，用于排查输入问题。' },
 ] as const;
@@ -247,6 +252,40 @@ export function InputMethodFeature() {
     ]);
   };
 
+  const panel = suggestionPanel(settings);
+  const activeModelId = modelConfigValue(activeModelConfig.modelId);
+  const completionLane = completionLaneFacts(
+    settings,
+    activeModelId === '由本机注册表决定' ? '' : activeModelId,
+  );
+  const recallLane = recallLaneFacts(settings);
+  const contextLane = contextLaneFacts(settings);
+  const contextLive = componentStatus(
+    asRecord(components.foregroundContext),
+    '上下文获取',
+    TextCursorInput,
+    queries.overview.isPending,
+    overviewError,
+  );
+  const predictorLive = componentStatus(
+    asRecord(components.predictor),
+    '本机联想',
+    Sparkles,
+    queries.overview.isPending,
+    overviewError,
+  );
+  const modelStatusUnavailable = booleanValue(modelsStatus.statusUnavailable);
+  const modelHealthBadge: { label: string; tone: StatusTone } | null =
+    !completionLane.enabled || queries.models.isPending || modelStatusUnavailable
+      ? null
+      : modelHealthReady && !modelConfigurationPending
+        ? { label: '配置已生效', tone: 'success' }
+        : { label: '等待应用', tone: 'warning' };
+  const modelActionNeeded = completionLane.enabled
+    && !queries.models.isPending
+    && !modelStatusUnavailable
+    && (modelConfigurationPending || !modelHealthReady);
+
   return (
     <ManagementPage
       actions={(
@@ -259,20 +298,92 @@ export function InputMethodFeature() {
           刷新
         </Button>
       )}
-      description="检查输入链路，选择补全方式，并核对每一项设置在保存前后的变化。普通拼音输入仍由系统输入法负责。"
+      description="看清上屏后智能候选是怎么生成的，并管理它的每一项设置。普通拼音输入仍由系统输入法负责。"
       eyebrow="输入体验"
       routeId="input"
       title="输入法"
     >
       <ManagementSection
-        description="确认输入法、补全建议和当前输入环境是否已经准备好。"
-        title="准备情况"
+        description="上屏后按三步生成智能候选：读取上下文、召回记忆、本机联想；结果与原生候选并排出现。"
+        title="智能候选"
         trailing={(
           <StatusBadge
-            label={queries.overview.isPending ? '正在读取模式' : profileLabel(reportedProfile)}
-            tone={overviewError ? 'danger' : 'neutral'}
+            label={settingsPending ? '正在读取' : settingsError ? '读取失败' : panel.enabled ? '已开启' : '已关闭'}
+            tone={settingsError ? 'danger' : !settingsPending && panel.enabled ? 'info' : 'neutral'}
           />
         )}
+      >
+        <QueryState
+          error={settingsError}
+          headingLevel={3}
+          isPending={settingsPending}
+          onRetry={() => void Promise.all([queries.settings.refetch(), queries.schema.refetch()])}
+        >
+          <SuggestionPanelPreview panel={panel} />
+          <ol aria-label="智能候选的生成步骤" className="input-gen-lanes">
+            <GenerationLane
+              badges={[{ label: contextLive.value, tone: contextLive.tone }]}
+              facts={contextLane.facts}
+              icon={TextCursorInput}
+              liveDetail={contextLive.detail}
+              summary={contextLane.summary}
+              title="上下文获取"
+            />
+            <GenerationLane
+              badges={[recallLane.enabled
+                ? { label: '已启用', tone: 'success' }
+                : { label: '已关闭', tone: 'neutral' }]}
+              dimmed={!recallLane.enabled}
+              facts={recallLane.facts}
+              icon={BookMarked}
+              summary={recallLane.summary}
+              title="记忆召回"
+            />
+            <GenerationLane
+              badges={completionLane.enabled
+                ? [{ label: predictorLive.value, tone: predictorLive.tone }, ...(modelHealthBadge ? [modelHealthBadge] : [])]
+                : [{ label: '已关闭', tone: 'neutral' }]}
+              dimmed={!completionLane.enabled}
+              facts={completionLane.facts}
+              icon={Sparkles}
+              liveDetail={completionLane.enabled ? predictorLive.detail : undefined}
+              summary={completionLane.summary}
+              title="本机联想"
+            />
+          </ol>
+
+          {modelStatusUnavailable ? (
+            <div className="input-inline-action">
+              <InlineNotice title="模型状态暂不可用" tone="warning">
+                已保存的选择不会改变；重新检查成功前不会把它当作已生效。
+              </InlineNotice>
+              <Button loading={queries.models.isFetching} onClick={() => void queries.models.refetch()} size="small">重试模型检查</Button>
+            </div>
+          ) : null}
+          {modelActionNeeded ? (
+            runtimeRevision === null ? (
+              <InlineNotice title="正在等待运行版本" tone="warning">运行版本返回后才能安全应用联想模型。</InlineNotice>
+            ) : !nativeExternalActions ? (
+              <InlineNotice title="请在已安装的应用中操作" tone="warning">网页端可以查看和保存选择；应用到本机联想服务需要在已安装的应用中完成。</InlineNotice>
+            ) : (
+              <DiagnosticsRuntimeWorkflow
+                action="restart_predictor"
+                description="应用已保存的联想模型并重启本机服务；完成后会检查候选是否能正常使用。"
+                nativeExternalActions={nativeExternalActions}
+                onApplied={refresh}
+                risk="R2"
+                runtimeRevision={runtimeRevision}
+                title="应用联想模型"
+                transport={queries.transport}
+              />
+            )
+          ) : null}
+        </QueryState>
+      </ManagementSection>
+
+      <ManagementSection
+        description="系统输入源与本机补全服务的当前状态。"
+        title="输入链路"
       >
         <QueryState
           error={sourceError}
@@ -280,7 +391,7 @@ export function InputMethodFeature() {
           isPending={queries.source.isPending}
           onRetry={() => void queries.source.refetch()}
         >
-          <div aria-label="输入法运行链状态" className="input-status-grid" role="list">
+          <div aria-label="输入链路状态" className="input-status-grid" role="list">
             <InputStatusItem
               detail={inputSourceDetail(source)}
               icon={Keyboard}
@@ -293,24 +404,6 @@ export function InputMethodFeature() {
                 asRecord(components.sidecar),
                 '补全服务',
                 Network,
-                queries.overview.isPending,
-                overviewError,
-              )}
-            />
-            <InputStatusItem
-              {...componentStatus(
-                asRecord(components.predictor),
-                '本机补全',
-                Cpu,
-                queries.overview.isPending,
-                overviewError,
-              )}
-            />
-            <InputStatusItem
-              {...componentStatus(
-                asRecord(components.foregroundContext),
-                '前台上下文',
-                TextCursorInput,
                 queries.overview.isPending,
                 overviewError,
               )}
@@ -340,7 +433,12 @@ export function InputMethodFeature() {
       <ManagementSection
         description="选择更适合你的输入方式；选择后不会立刻改变现在的设置。"
         title="使用方式"
-        trailing={<StatusBadge label={displayedMode || '自定义设置'} tone={displayedMode ? 'info' : 'neutral'} />}
+        trailing={(
+          <StatusBadge
+            label={queries.overview.isPending ? '正在读取模式' : profileLabel(reportedProfile)}
+            tone={overviewError ? 'danger' : 'neutral'}
+          />
+        )}
       >
         <div className="input-mode-layout">
           <div className="input-mode-choice">
@@ -440,59 +538,6 @@ export function InputMethodFeature() {
             title="保存使用方式"
           />
         </div>
-      </ManagementSection>
-
-      <ManagementSection
-        description="选择本机补全建议使用的模型。保存后，请在已安装的应用中应用设置；完成后建议才会按新选择出现。"
-        title="本机补全建议"
-        trailing={(
-          <StatusBadge
-            label={queries.models.isPending ? '正在读取' : modelHealthReady && !modelConfigurationPending ? '配置已生效' : '等待应用'}
-            tone={modelHealthReady && !modelConfigurationPending ? 'success' : 'warning'}
-          />
-        )}
-      >
-        {booleanValue(modelsStatus.statusUnavailable) ? (
-          <div className="input-inline-action">
-            <InlineNotice title="模型状态暂不可用" tone="warning">
-              已保存的选择不会改变；重新检查成功前不会把它当作已生效。
-            </InlineNotice>
-            <Button loading={queries.models.isFetching} onClick={() => void queries.models.refetch()} size="small">重试模型检查</Button>
-          </div>
-        ) : queries.models.isPending ? (
-          <InlineNotice title="正在读取模型状态" tone="info">正在检查已保存的模型选择和本机补全服务。</InlineNotice>
-        ) : null}
-          <dl className="mgmt-kv">
-            <dt>当前模型</dt><dd>{modelConfigValue(activeModelConfig.modelId)}</dd>
-            <dt>已登记模型</dt><dd>{availableModelIds.length ? availableModelIds.join('、') : '等待注册表状态'}</dd>
-            <dt>补全方式</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.profileId))}</dd>
-            <dt>建议方式</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.promptMode))}</dd>
-            <dt>生成上限</dt><dd>{modelTokenLabel(activeModelConfig.maxTokens)}</dd>
-          </dl>
-          <InlineNotice
-            title={modelHealthReady && !modelConfigurationPending ? '模型配置一致' : modelConfigurationPending ? '设置已保存，等待应用' : '运行配置需要修复'}
-            tone={modelHealthReady && !modelConfigurationPending ? 'success' : 'warning'}
-          >
-            {modelHealthReady && !modelConfigurationPending
-              ? '已保存的模型选择与本机补全服务一致。'
-              : '先在下方修改并保存设置，再在已安装的应用中应用；普通数字键始终保留给输入法。'}
-          </InlineNotice>
-          {runtimeRevision === null ? (
-            <InlineNotice title="正在等待运行版本" tone="warning">运行版本返回后才能安全应用模型配置。</InlineNotice>
-          ) : !nativeExternalActions ? (
-            <InlineNotice title="请在已安装的应用中操作" tone="warning">网页端可以查看和保存选择；更新本机补全服务需要在已安装的应用中完成。</InlineNotice>
-          ) : (
-            <DiagnosticsRuntimeWorkflow
-              action="restart_predictor"
-              description="应用已保存的模型选择并重启本机补全服务。完成后会检查建议是否能正常使用。"
-              nativeExternalActions={nativeExternalActions}
-              onApplied={refresh}
-              risk="R2"
-              runtimeRevision={runtimeRevision}
-              title="应用本机补全建议"
-              transport={queries.transport}
-            />
-          )}
       </ManagementSection>
 
       <ManagementSection
@@ -1092,6 +1137,96 @@ function inputSettingHint(key: string, field: Record<string, unknown>): string {
   if (key === 'models.temperature' && field.min === 0 && field.max === 1) return '0–1，越高变化越明显';
   if (key === 'models.topP' && field.min === 0 && field.max === 1) return '0–1，越高范围更宽';
   return '';
+}
+
+/* 候选面板示意只按当前真实设置绘制：槽位数量、紧凑/展开、采纳方式与
+ * 停留时长全部来自已保存配置。槽位内容是抽象占位，绝不编造候选正文，
+ * 也不冒充前台运行证据。 */
+function SuggestionPanelPreview({ panel }: { panel: SuggestionPanel }) {
+  const slotCount = panel.candidateCount || 3;
+  return (
+    <figure
+      aria-label="上屏后智能候选面板示意"
+      className="input-suggest-preview"
+      data-enabled={panel.enabled ? 'true' : 'false'}
+      data-panel={panel.expanded ? 'expanded' : 'compact'}
+    >
+      <div aria-hidden="true" className="input-suggest-preview__stage">
+        <span className="input-suggest-preview__committed">
+          <i />
+          <em>刚上屏</em>
+        </span>
+        {panel.enabled ? (
+          <span className="input-suggest-preview__panel">
+            <span className="input-suggest-preview__tag">智能候选</span>
+            <span className="input-suggest-preview__slots">
+              {Array.from({ length: slotCount }, (_, index) => (
+                <span className="input-suggest-preview__slot" key={index}>
+                  <b>{index + 1}</b>
+                  <i />
+                </span>
+              ))}
+            </span>
+          </span>
+        ) : (
+          <span className="input-suggest-preview__panel input-suggest-preview__panel--off">
+            不出现智能候选
+          </span>
+        )}
+      </div>
+      <figcaption>
+        <span className="input-suggest-preview__note">
+          {panel.enabled
+            ? '与输入法原生候选并排出现、样式可见区分；拼音解码与选字仍由输入法负责。'
+            : '已关闭：上屏后不出现智能候选，输入完全交回系统输入法。'}
+        </span>
+        {panel.hints.length ? (
+          <span aria-label="采纳方式" className="input-suggest-preview__hints" role="list">
+            {panel.hints.map((hint) => <span key={hint} role="listitem">{hint}</span>)}
+          </span>
+        ) : null}
+      </figcaption>
+    </figure>
+  );
+}
+
+function GenerationLane({
+  badges,
+  dimmed,
+  facts,
+  icon: Icon,
+  liveDetail,
+  summary,
+  title,
+}: {
+  badges: readonly { label: string; tone: StatusTone }[];
+  dimmed?: boolean;
+  facts: readonly string[];
+  icon: LucideIcon;
+  liveDetail?: string;
+  summary: string;
+  title: string;
+}) {
+  return (
+    <li className="input-gen-lane" data-dimmed={dimmed || undefined}>
+      <div className="input-gen-lane__head">
+        <span aria-hidden="true" className="input-gen-lane__icon"><Icon size={15} /></span>
+        <strong>{title}</strong>
+        <span className="input-gen-lane__badges">
+          {badges.map((badge) => (
+            <StatusBadge key={badge.label} label={badge.label} tone={badge.tone} />
+          ))}
+        </span>
+      </div>
+      <p>{summary}</p>
+      {liveDetail ? <small>{liveDetail}</small> : null}
+      {facts.length ? (
+        <ul className="input-gen-lane__facts">
+          {facts.map((fact) => <li key={fact}>{fact}</li>)}
+        </ul>
+      ) : null}
+    </li>
+  );
 }
 
 function InputStatusItem({
