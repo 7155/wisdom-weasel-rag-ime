@@ -610,8 +610,7 @@ main.mgmt-page[data-paw-os-app] :where(
 .mgmt-page > * { width: min(100%, calc(var(--workspace-measure) + 160px)); }
 
 .mgmt-page__heading h1,
-.mgmt-section__header h2,
-.memory-system-overview__headline h2 {
+.mgmt-section__header h2 {
   font-weight: var(--font-weight-semibold);
   letter-spacing: -.012em;
 }
