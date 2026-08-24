@@ -18,7 +18,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
@@ -94,6 +94,9 @@ export function PawRoomWorkspace({
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
   const timelineRef = useRef<HTMLDivElement>(null);
+  /* 主 Room 时间线与卫星窗同一套滚动合同：贴着底部才跟随新事件；
+     向上翻历史时，新回执绝不把阅读位置拽走。 */
+  const followLatestRef = useRef(true);
   const [draft, setDraft] = useState(initialDraft ?? '');
   const [attachments, setAttachments] = useState<RoomAttachmentReceipt[]>([]);
   const [sending, setSending] = useState(false);
@@ -114,9 +117,17 @@ export function PawRoomWorkspace({
 
   useEffect(() => {
     setView('conversation');
+    followLatestRef.current = true;
   }, [recordId]);
 
   const projection = useRoomLiveStore((state) => state.projections[recordId]);
+
+  /* 新公开消息 / 流式增量到达时只在读者贴底的情况下贴住最新；
+     没有平滑动画介入，reduced-motion 下行为完全一致。 */
+  useEffect(() => {
+    const timeline = timelineRef.current;
+    if (timeline && followLatestRef.current) timeline.scrollTop = timeline.scrollHeight;
+  }, [projection, view]);
   const focusProjection = useMemo(
     () => record ? buildRoomFocusProjection(record, projection) : undefined,
     [projection, record],
@@ -246,6 +257,7 @@ export function PawRoomWorkspace({
         ...record,
         workItems: [...(record.workItems ?? []).filter((item) => item.id !== workItem.id), workItem],
       });
+      followLatestRef.current = true;
       requestAnimationFrame(() => timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' }));
       return true;
     } catch (reason) {
@@ -421,7 +433,13 @@ export function PawRoomWorkspace({
               roomId={recordId}
               onOpenParticipant={openParticipantById}
             />
-          ) : <div aria-label="Root 对话与公开协作事件" className="paw-room-timeline" ref={timelineRef} role="log">
+          ) : <div
+              aria-label="Root 对话与公开协作事件"
+              className="paw-room-timeline"
+              onScroll={(event) => { followLatestRef.current = pawRoomTimelineNearLatest(event.currentTarget); }}
+              ref={timelineRef}
+              role="log"
+            >
               <div className="paw-room-timeline__canvas">
                 {loading && !turnOrder.length ? <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div> : null}
                 {!loading && !turnOrder.length ? <div className="paw-room-workspace__empty"><Users size={24} /><strong>Room 已准备好</strong><p>发送目标，伙伴会分工、执行并汇合结果。</p></div> : null}
@@ -500,12 +518,27 @@ function PawRoomToolWorkspace({
   room: RoomSummary;
 }) {
   const tabId = useId();
+  const panels = Object.keys(roomToolPanelLabels) as RoomToolPanel[];
+  /* roving tabindex 的另一半合同：方向键在标签间移动选择与焦点。缺了它，
+     键盘读者永远到不了第二个标签页。 */
+  const moveTabFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const index = panels.indexOf(panel);
+    const next = event.key === 'ArrowLeft'
+      ? panels[(index - 1 + panels.length) % panels.length]!
+      : event.key === 'ArrowRight'
+        ? panels[(index + 1) % panels.length]!
+        : event.key === 'Home' ? panels[0]! : panels[panels.length - 1]!;
+    onPanelChange(next);
+    document.getElementById(`${tabId}-${next}`)?.focus();
+  };
   return <aside aria-label="Room 协作态势" className="paw-room-tools">
     <header className="paw-room-tools__header">
       <span><Focus aria-hidden="true" size={15} /><strong>协作态势</strong></span>
       <button aria-label="关闭协作态势" onClick={onClose} type="button"><X aria-hidden="true" size={15} /></button>
     </header>
-    <nav aria-label="协作工具视图" className="paw-room-tools__tabs" role="tablist">
+    <nav aria-label="协作工具视图" className="paw-room-tools__tabs" onKeyDown={moveTabFocus} role="tablist">
       {(Object.keys(roomToolPanelLabels) as RoomToolPanel[]).map((item) => {
         const Icon = roomToolPanelIcons[item];
         return <button
@@ -902,6 +935,11 @@ function pawRoomTechnicalWall(value: string): boolean {
 function pawRoomCompactText(value: string): string {
   const compact = value.replace(/\s+/gu, ' ').trim();
   return compact.length > 180 ? `${compact.slice(0, 177).trimEnd()}…` : compact;
+}
+
+/** 与卫星时间线一致的 48px 贴底判定：滚动合同跨窗口只有一份。 */
+function pawRoomTimelineNearLatest(timeline: HTMLDivElement): boolean {
+  return timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 48;
 }
 
 function pawRoomClock(timestamp: number): string {

@@ -39,7 +39,9 @@
 .paw-process-terminal__meta > span[data-status='failed'] { color: #fca5a5; }
 .paw-process-terminal__meta code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paw-process-terminal__command { margin: 0; padding: 10px 12px; border-bottom: 1px solid rgb(255 255 255 / 8%); color: #f4f4f5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.paw-process-terminal__output { min-height: 0; overflow: auto; padding: 12px; }
+/* 尾随实时日志的滚动容器：滚动不外溢到窗口层，滚动条占位稳定，
+   700ms 一页的追加不会引起横向抖动。 */
+.paw-process-terminal__output { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px; scrollbar-gutter: stable; }
 .paw-process-terminal__output pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .paw-process-terminal__output pre[data-stream='stderr'] { color: #fca5a5; }
 .paw-process-terminal__output > span { color: #71717a; }

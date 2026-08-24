@@ -20,7 +20,14 @@ import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import { toggleDisclosurePreservingAnchor } from '@/features/agent/timeline/disclosure-anchor';
-import { buildRoomFocusProjection, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
+import {
+  buildRoomFocusProjection,
+  roomFocusRawDetail,
+  roomFocusReadableText,
+  roomFocusStateFallbackCopy,
+  roomFocusStateLabel,
+  type RoomFocusState,
+} from '@/paw-os/apps/room-focus-projection';
 import './paw-os-satellite.css';
 
 export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
@@ -78,10 +85,19 @@ function ProcessTerminalSatellite({ target }: { target: Extract<PawOsWindowTarge
   });
   const evidence = processEvidence(activity?.payload);
   const liveOutput = stringValue(logs.data?.text);
+  /* 实时日志每 700ms 追加一页；只有读者本来就贴着尾部时才继续跟随，
+     向上翻看历史时保持原位（与伙伴/子 Agent 时间线同一套滚动合同）。 */
+  const outputRef = useRef<HTMLDivElement>(null);
+  const followTailRef = useRef(true);
 
   useEffect(() => {
     if (!cancellable) setConfirmingStop(false);
   }, [cancellable]);
+
+  useEffect(() => {
+    const output = outputRef.current;
+    if (output && followTailRef.current) output.scrollTop = output.scrollHeight;
+  }, [liveOutput, evidence.stdout, evidence.stderr]);
 
   async function stopJob(): Promise<void> {
     if (!cancellable || !target.runId || stopping) return;
@@ -125,7 +141,13 @@ function ProcessTerminalSatellite({ target }: { target: Extract<PawOsWindowTarge
       {stopError ? <div className="paw-process-terminal__feedback" data-error role="alert">{stopError}</div> : null}
       {stopNotice ? <div className="paw-process-terminal__feedback" role="status">{stopNotice}</div> : null}
       <pre className="paw-process-terminal__command"><code>$ {target.command}</code></pre>
-      <div aria-live="polite" className="paw-process-terminal__output" role="log">
+      <div
+        aria-live="polite"
+        className="paw-process-terminal__output"
+        onScroll={(event) => { followTailRef.current = timelineNearLatest(event.currentTarget); }}
+        ref={outputRef}
+        role="log"
+      >
         {liveOutput || evidence.stdout ? <pre data-stream="stdout">{liveOutput || evidence.stdout}</pre> : null}
         {evidence.stderr ? <pre data-stream="stderr">{evidence.stderr}</pre> : null}
         {!liveOutput && !evidence.stdout && !evidence.stderr ? <span>{logs.error ? '真实运行日志暂时不可用。' : status === 'running' ? '等待运行输出…' : '运行没有公开输出。'}</span> : null}
@@ -401,7 +423,7 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
         status: message.status,
         eventType: message.status === 'streaming' ? 'message_streaming' : 'message',
         text: message.text || '完成了一项操作',
-        summary: conciseParticipantEntry(message.text, message.status === 'streaming' ? '正在撰写公开回复' : '公开回复已更新'),
+        summary: roomFocusReadableText(message.text, message.status === 'streaming' ? '正在撰写公开回复' : '公开回复已更新'),
         time: message.createdAtMs,
         order: message.sequence ?? message.createdAtMs,
       }));
@@ -474,7 +496,7 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
           {/* PF-CM-013：卫星只补一条极薄状态行——当前工作一句、文字+色状态、
               去完整 Session 的入口；身份与治理留在标题栏和主 Room。 */}
           <SatelliteStatusline
-            currentWork={conciseParticipantEntry(focusPartner?.currentAction ?? '', satelliteStatuslineFallback(focusPartner?.state ?? 'idle'))}
+            currentWork={roomFocusReadableText(focusPartner?.currentAction ?? '', roomFocusStateFallbackCopy(focusPartner?.state ?? 'idle'))}
             sessionId={participant.sessionId}
             sessionLabel={`在 Agent 中打开 ${participant.displayName} 的完整 Session`}
             state={focusPartner?.state ?? 'idle'}
@@ -681,7 +703,7 @@ function conciseParticipantActivity(
   payload: Record<string, unknown>,
   detail: string,
 ): string {
-  if (!participantDetailNeedsDisclosure(detail)) return conciseParticipantEntry(detail, '运行状态已更新');
+  if (!participantDetailNeedsDisclosure(detail)) return roomFocusReadableText(detail, '运行状态已更新');
   const tool = stringValue(payload.displayName, stringValue(payload.toolName, stringValue(payload.toolId, '工具')));
   if (eventType === 'tool' || eventType.startsWith('tool_')) return `${tool} ${participantToolStatusLabel(status)}`;
   if (eventType.includes('reasoning') || eventType.includes('thinking')) return status === 'running' ? '正在形成可公开的思考摘要' : '思考摘要已更新';
@@ -689,58 +711,12 @@ function conciseParticipantActivity(
   return '运行状态已更新';
 }
 
-function conciseParticipantEntry(detail: string, fallback: string): string {
-  const source = detail.trim();
-  if (!source || participantDetailIsRaw(source) || participantDetailIsMachineToken(source)) return fallback;
-  const compact = source
-    .replace(/```[\s\S]*?```/gu, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/gu, '$1')
-    .replace(/^\s{0,3}#{1,6}\s+/gmu, '')
-    .replace(/[*_`]/gu, '')
-    .replace(/(?:^|\s)[>~-]+/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim();
-  if (!compact) return fallback;
-  return compact.length > 150 ? `${compact.slice(0, 147).trimEnd()}…` : compact;
-}
-
 function participantDetailNeedsDisclosure(detail: string): boolean {
   const source = detail.trim();
   return source.includes('\n')
-    || participantDetailIsRaw(source)
+    || roomFocusRawDetail(source)
     || /[*_`]|^\s{0,3}#{1,6}\s+|\[[^\]]+\]\([^)]+\)/mu.test(source)
     || source.length > 150;
-}
-
-function participantDetailIsRaw(source: string): boolean {
-  return /```|(?:^|\s)[{[]\s*["']/u.test(source)
-    || /\/(?:Users|Volumes|home|private|tmp|var)\//u.test(source)
-    || /\b[a-f\d]{48,}\b/iu.test(source)
-    || /["'](?:path|sha256|payload|metadata)["']\s*:/iu.test(source)
-    || participantDetailIsTechnicalWall(source);
-}
-
-/** 不含任何中日韩文字、又带着代码痕迹（RLE/AABB 这类缩写、camelCase、
- * snake_case、`::`、`=>`…）的英文开发日志，对用户就是一堵技术墙：紧凑的
- * 行星卡里摘要位改说人话，整段进「查看公开原文」，一次点击仍可完整读到。 */
-function participantDetailIsTechnicalWall(source: string): boolean {
-  if (source.length < 30 || /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(source)) return false;
-  return source.length > 90
-    || /\b[A-Z]{2,8}\b|[a-z][A-Z]|\w+_\w+|::|=>|->|\(\)/u.test(source);
-}
-
-/** 形如 participant_activity 的事件枚举是机器串，不能作为给人看的摘要。 */
-function participantDetailIsMachineToken(source: string): boolean {
-  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/iu.test(source);
-}
-
-/** 页脚兜底跟随状态给一句用户可读的话，而不是机器事件名。 */
-function satelliteStatuslineFallback(state: RoomFocusState): string {
-  if (state === 'running') return '正在推进当前工作';
-  if (state === 'completed') return '活动已完成';
-  if (state === 'failed' || state === 'blocked') return '最近一项活动需要关注';
-  if (state === 'waiting' || state === 'review') return '等待下一步安排';
-  return '等待新的任务';
 }
 
 function participantToolStatusLabel(status: string): string {
@@ -856,7 +832,7 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
             {!entries.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>{run.state === 'queued' ? '等待开始' : '还没有公开进度'}</span></div> : null}
           </div>
           <SatelliteStatusline
-            currentWork={conciseParticipantEntry(run.task || run.todoTask, satelliteStatuslineFallback(subagentFocusState(run.state)))}
+            currentWork={roomFocusReadableText(run.task || run.todoTask, roomFocusStateFallbackCopy(subagentFocusState(run.state)))}
             sessionId={target.sessionId}
             sessionLabel="在 Agent 中打开所属 Session"
             state={subagentFocusState(run.state)}
@@ -891,7 +867,7 @@ function timelineNearLatest(timeline: HTMLDivElement): boolean {
 }
 
 function SatelliteTimelineEntry({ entry }: { entry: SubagentTimelineEntry }) {
-  const summary = conciseParticipantEntry(entry.text, entry.kind === 'activity' ? '运行状态已更新' : '公开消息已更新');
+  const summary = roomFocusReadableText(entry.text, entry.kind === 'activity' ? '运行状态已更新' : '公开消息已更新');
   if (entry.kind === 'activity') {
     return <SatelliteActivityRow
       direction={entry.direction}

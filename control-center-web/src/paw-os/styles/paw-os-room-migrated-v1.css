@@ -572,9 +572,20 @@
 .paw-desktop-root .paw-room-chronology__activity-detail > summary { width: fit-content; cursor: pointer; color: #758092; }
 .paw-desktop-root .paw-room-chronology__activity-detail p { max-height: 160px; margin: 6px 0 0; padding: 8px; overflow: auto; border-radius: 8px; background: #f2f4f7; font: 12px/18px var(--font-mono); white-space: pre-wrap; }
 .paw-desktop-root .paw-room-chronology__activity > footer { grid-column: 2 / -1; display: flex; gap: 7px; }
+/* 审批与重试按钮：去掉 UA 默认外凸边框，补上悬停/按下/提交中状态，
+   让「批准并继续」在时间线里是一颗真正的按钮而不是系统控件。 */
 .paw-desktop-root .paw-room-chronology__activity > footer button,
-.paw-desktop-root .paw-room-chronology__terminal > button { min-height: 30px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--room-violet); font-size: 14px; cursor: pointer; }
+.paw-desktop-root .paw-room-chronology__terminal > button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 7px; color: #fff; background: var(--room-violet); font-size: 14px; font-weight: 600; cursor: pointer; transition: background-color 120ms ease, transform 100ms ease; }
+.paw-desktop-root .paw-room-chronology__activity > footer button:hover,
+.paw-desktop-root .paw-room-chronology__terminal > button:hover { background: color-mix(in srgb, var(--room-violet) 86%, #1d2430); }
+.paw-desktop-root .paw-room-chronology__activity > footer button:active,
+.paw-desktop-root .paw-room-chronology__terminal > button:active { transform: scale(.97); }
+.paw-desktop-root .paw-room-chronology__activity > footer button:disabled,
+.paw-desktop-root .paw-room-chronology__terminal > button:disabled { opacity: .55; cursor: default; transform: none; }
+.paw-desktop-root .paw-room-chronology__activity > footer button:focus-visible,
+.paw-desktop-root .paw-room-chronology__terminal > button:focus-visible { outline: 2px solid var(--room-blue); outline-offset: 2px; }
 .paw-desktop-root .paw-room-chronology__activity > footer button + button { color: #5f6b7c; background: #edf1f6; }
+.paw-desktop-root .paw-room-chronology__activity > footer button + button:hover { background: #e2e8f0; }
 .paw-desktop-root .paw-room-chronology__activity > small[role='alert'] { grid-column: 2 / -1; color: var(--room-red); font-size: 13px; }
 .paw-desktop-root .paw-room-chronology__terminal { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 4px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #c53d46 24%, rgb(29 36 48 / .08)); border-radius: 10px; background: color-mix(in srgb, #c53d46 5%, #fff); color: #c53d46; }
 .paw-desktop-root .paw-room-chronology__terminal[data-status='aborted'] { border-color: color-mix(in srgb, #b56808 26%, rgb(29 36 48 / .08)); background: color-mix(in srgb, #b56808 5%, #fff); color: #b56808; }

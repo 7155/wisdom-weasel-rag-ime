@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  roomFocusReadableText,
+  roomFocusStateFallbackCopy,
   roomFocusStateLabel,
   type RoomFocusPartner,
   type RoomFocusProjection,
@@ -93,13 +95,16 @@ export function PawRoomFocusOverview({
               const partner = focus.partners.find((candidate) => candidate.participantId === item.ownerParticipantId);
               const level = item.parentId ? 2 : 1;
               const selected = selection.kind === 'work' && selection.id === item.id;
+              /* 行内摘要位只放能读的话：原始工具日志换成状态兜底语，完整
+                 记录仍在伙伴窗口的披露里。空段不参与拼接，避免行首悬点。 */
+              const action = [workAction(item), partner?.celestialName].filter(Boolean).join(' · ');
               return (
                 <li aria-level={level} aria-selected={selected} data-level={level} data-state={item.state} key={item.id} role="treeitem">
-                  <button onClick={() => setSelection({ kind: 'work', id: item.id })} type="button">
+                  <button onClick={() => setSelection({ kind: 'work', id: item.id })} title={item.objective} type="button">
                     <span aria-hidden="true" className="paw-room-focus-overview__tree-node"><i /></span>
                     <span className="paw-room-focus-overview__tree-copy">
                       <strong>{item.objective}</strong>
-                      <small>{workAction(item)}{partner ? ` · ${partner.celestialName}` : ''}</small>
+                      {action ? <small>{action}</small> : null}
                     </span>
                     <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(item.state)}</span>
                   </button>
@@ -115,30 +120,32 @@ export function PawRoomFocusOverview({
           <span><Orbit aria-hidden="true" size={14} /><strong id="paw-room-focus-partners-title">协作伙伴</strong></span>
           <small>{focus.partners.length} 位</small>
         </header>
-        <ul aria-label="协作伙伴" className="paw-room-focus-overview__planet-list" role="list">
-          {focus.partners.map((partner, index) => {
-            const selected = selection.kind === 'partner' && selection.id === partner.participantId;
-            return (
-              <li data-orbit={index % 4} data-state={partner.state} key={partner.participantId}>
-                <button
-                  aria-pressed={selected}
-                  aria-label={`${partner.celestialName}，${partner.displayName}，${roomFocusStateLabel(partner.state)}`}
-                  onClick={() => setSelection({ kind: 'partner', id: partner.participantId })}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    setSelection({ kind: 'partner', id: partner.participantId });
-                  }}
-                  type="button"
-                >
-                  <span aria-hidden="true" className="paw-room-focus-overview__planet"><i /></span>
-                  <span><strong>{partner.celestialName}</strong><small>{partner.displayName}</small></span>
-                  <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(partner.state)}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        {focus.partners.length ? (
+          <ul aria-label="协作伙伴" className="paw-room-focus-overview__planet-list" role="list">
+            {focus.partners.map((partner, index) => {
+              const selected = selection.kind === 'partner' && selection.id === partner.participantId;
+              return (
+                <li data-orbit={index % 4} data-state={partner.state} key={partner.participantId}>
+                  <button
+                    aria-pressed={selected}
+                    aria-label={`${partner.celestialName}，${partner.displayName}，${roomFocusStateLabel(partner.state)}`}
+                    onClick={() => setSelection({ kind: 'partner', id: partner.participantId })}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      setSelection({ kind: 'partner', id: partner.participantId });
+                    }}
+                    type="button"
+                  >
+                    <span aria-hidden="true" className="paw-room-focus-overview__planet"><i /></span>
+                    <span><strong>{partner.celestialName}</strong><small>{partner.displayName}</small></span>
+                    <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(partner.state)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p className="paw-room-focus-overview__empty">还没有伙伴加入。邀请伙伴后，他们的行星会出现在这里。</p>}
       </section>
 
       <section aria-label="任务交接" className="paw-room-focus-overview__section paw-room-focus-overview__handoffs">
@@ -181,7 +188,15 @@ function FocusInspector({
   work?: RoomFocusWorkItem;
 }) {
   const state = work?.state ?? partner?.state ?? 'idle';
-  const action = workAction(work) || partner?.currentAction || '等待新的任务';
+  /* 详情面板同样只说人话：原始工具日志与机器串换成跟随状态的兜底语，
+     完整原文留在伙伴窗口的「查看公开原文」披露里。 */
+  const action = roomFocusReadableText(
+    workAction(work) || partner?.currentAction || '',
+    roomFocusStateFallbackCopy(state),
+  );
+  const receipt = partner ? roomFocusReadableText(partner.latestReceipt ?? '', '') : '';
+  const result = work ? roomFocusReadableText(work.latestResult ?? '', '') : '';
+  const acceptance = work?.acceptanceCriteria.filter((criterion) => criterion.trim()) ?? [];
   const evidence = work?.evidence ?? [];
   return (
     <section aria-label="焦点详情" className="paw-room-focus-overview__inspector" data-state={state} key={`${work?.id ?? ''}:${partner?.participantId ?? ''}`} role="region">
@@ -197,7 +212,7 @@ function FocusInspector({
       {partner ? (
         <dl>
           <div><dt>负责人</dt><dd>{partner.celestialName} · {partner.displayName}</dd></div>
-          {partner.latestReceipt ? <div><dt>最近回执</dt><dd>{partner.latestReceipt}</dd></div> : null}
+          {receipt ? <div><dt>最近回执</dt><dd>{receipt}</dd></div> : null}
         </dl>
       ) : null}
       {work?.blocker ? (
@@ -206,7 +221,15 @@ function FocusInspector({
           {work.blocker.nextStep ? <span>下一步：{work.blocker.nextStep}</span> : null}
         </div>
       ) : null}
-      {work?.latestResult ? <p className="paw-room-focus-overview__result">{work.latestResult}</p> : null}
+      {result ? <p className="paw-room-focus-overview__result">{result}</p> : null}
+      {acceptance.length ? (
+        <div className="paw-room-focus-overview__acceptance">
+          <small>验收标准</small>
+          <ul aria-label="验收标准">
+            {acceptance.map((criterion) => <li key={criterion}>{criterion}</li>)}
+          </ul>
+        </div>
+      ) : null}
       {evidence.length ? (
         <ul aria-label="依据与产物" className="paw-room-focus-overview__evidence">
           {evidence.map((item) => <li key={`${item.kind}:${item.ref}`}><span>{item.kind === 'artifact' ? '产物' : '依据'}</span><code>{item.ref}</code></li>)}
@@ -240,10 +263,13 @@ function defaultFocusSelection(focus: RoomFocusProjection): FocusSelection {
   return partner ? { kind: 'partner', id: partner.participantId } : { kind: 'work', id: '' };
 }
 
+/** 运行时动作沿真实字段逐级回落；来自工具日志的字段先过可读性投影，
+ *  读不成话的段落让位给下一级真实事实，而不是把 JSON 摆进摘要位。 */
 function workAction(work?: RoomFocusWorkItem): string {
   if (!work) return '';
-  if (work.currentAction) return work.currentAction;
+  const action = roomFocusReadableText(work.currentAction ?? '', '');
+  if (action) return action;
   if (work.blocker?.reason) return work.blocker.reason;
   if (work.reviewRequired) return '等待独立复核';
-  return work.latestResult || work.expectedOutput || '';
+  return roomFocusReadableText(work.latestResult || work.expectedOutput || '', '');
 }
