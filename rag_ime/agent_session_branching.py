@@ -240,6 +240,7 @@ class AgentSessionBranchingService:
             raise ValueError(
                 "managed Pi runtime does not support in-place conversation rewrite"
             )
+        self.sessions.require_goal_execution(session_id)
         if attachment_ids:
             selected = self.runtime.model_catalog(
                 session_id
