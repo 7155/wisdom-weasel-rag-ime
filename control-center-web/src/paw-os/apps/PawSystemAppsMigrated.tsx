@@ -43,6 +43,7 @@ import { ConfigurationFeature } from '@/features/configuration';
 import { PawOsAppearanceSettings } from '@/features/configuration/PawOsAppearanceSettings';
 import { ContextDebugFeature } from '@/features/context-debug';
 import { DiagnosticsFeature } from '@/features/diagnostics';
+import { diagnosticsQueryKeys } from '@/features/diagnostics/api';
 import { GovernanceFeature } from '@/features/governance';
 import { HistoryFeature } from '@/features/history';
 import { InputLexiconFeature, InputMethodFeature } from '@/features/input-method';
@@ -59,7 +60,7 @@ import {
 } from '@/features/overview/management-ui';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { PluginsFeature } from '@/features/plugins';
-import { usePluginCatalog } from '@/features/plugins/api';
+import { pluginQueryKeys, usePluginCatalog } from '@/features/plugins/api';
 import { ObservabilityFeature } from '@/features/observability';
 import { VoiceFeature } from '@/features/voice';
 import type { PawAppId } from '../runtime/app-registry';
@@ -130,24 +131,12 @@ export function PawSystemAppsMigrated({
   const pages = systemPages[appId];
   const app = pawApp(appId);
   const desktop = usePawOsDesktop();
-  const transport = useControlTransport();
   const route = initialRoute || app.route || pages[0].route;
   const page = systemPageForRoute(pages, route);
-  // Settings surfaces the human decision queue in its own navigation. The
-  // query key matches the approvals feature so a decision there refreshes
-  // this count without a second request cycle.
-  const approvalsBadge = useQuery({
-    queryKey: ['approvals', 'all'],
-    queryFn: ({ signal }) => transport.request({
-      pathId: 'agent.approvals.list',
-      query: { limit: 500 },
-      signal,
-    }),
-    enabled: appId === 'system-settings',
-    refetchInterval: 60_000,
-    retry: false,
-  });
-  const pendingApprovals = appId === 'system-settings' ? pendingApprovalCount(approvalsBadge.data) : 0;
+  // Each system rail reports one honest number from its own Runtime evidence:
+  // Settings queues human approvals, App Center queues install proposals, and
+  // Monitor relays components that report a problem.
+  const railSignal = useSystemRailSignal(appId);
 
   return (
     <div className="paw-system-app" data-page-id={page.id} data-system-app={appId}>
@@ -156,8 +145,10 @@ export function PawSystemAppsMigrated({
           {pages.map((candidate, index) => {
             const Icon = candidate.icon;
             const current = candidate.id === page.id;
-            const badge = candidate.id === 'approvals' ? pendingApprovals : 0;
-            const name = badge ? `${candidate.label}（${badge} 项待处理）` : candidate.label;
+            const badge = railSignal && candidate.id === railSignal.pageId ? railSignal.count : 0;
+            const name = badge && railSignal
+              ? `${candidate.label}（${railSignal.describe(badge)}）`
+              : candidate.label;
             return (
               <Fragment key={candidate.id}>
                 {candidate.group && candidate.group !== pages[index - 1]?.group ? (
@@ -172,7 +163,11 @@ export function PawSystemAppsMigrated({
                 >
                   <Icon aria-hidden="true" size={16} />
                   <span>{candidate.label}</span>
-                  {badge ? <span aria-hidden="true" className="paw-system-app__nav-badge">{badge > 99 ? '99+' : badge}</span> : null}
+                  {badge && railSignal ? (
+                    <span aria-hidden="true" className="paw-system-app__nav-badge" data-tone={railSignal.tone}>
+                      {badge > 99 ? '99+' : badge}
+                    </span>
+                  ) : null}
                 </button>
               </Fragment>
             );
@@ -181,7 +176,7 @@ export function PawSystemAppsMigrated({
       </aside>
 
       <section className="paw-system-app__stage">
-        <span aria-hidden="true" className="paw-system-app__page-title">
+        <span aria-hidden="true" className="paw-system-app__page-title" key={page.id}>
           {page.group ? `${page.group} · ${page.label}` : page.label}
         </span>
         <MemoryRouter initialEntries={[route]} key={route}>
@@ -373,6 +368,26 @@ function PawAgentSettings() {
   );
 }
 
+/**
+ * Decision tracks over the Package catalogue. Every track is a real count on
+ * the same Runtime list — switching narrows the view without hiding items.
+ */
+const catalogTracks = [
+  { value: 'all', label: '全部' },
+  { value: 'updates', label: '有更新' },
+  { value: 'installable', label: '可安装' },
+  { value: 'installed', label: '已安装' },
+] as const;
+
+type CatalogTrack = (typeof catalogTracks)[number]['value'];
+
+function matchesCatalogTrack(item: Record<string, unknown>, track: CatalogTrack): boolean {
+  if (track === 'updates') return item.updateAvailable === true;
+  if (track === 'installed') return item.installed === true;
+  if (track === 'installable') return item.installed !== true && item.actionable === true;
+  return true;
+}
+
 function PawPackageCatalog() {
   const {
     apply,
@@ -382,6 +397,7 @@ function PawPackageCatalog() {
     versions,
   } = usePluginCatalog();
   const [query, setQuery] = useState('');
+  const [track, setTrack] = useState<CatalogTrack>('all');
   const [enableAfterInstall, setEnableAfterInstall] = useState(true);
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
   const [validation, setValidation] = useState<Record<string, unknown>>({});
@@ -399,6 +415,13 @@ function PawPackageCatalog() {
       stringValue(asRecord(item.source).label),
     ].join(' ').toLocaleLowerCase('zh-CN').includes(needle));
   }, [query, versionItems]);
+  const trackCounts = useMemo(() => Object.fromEntries(catalogTracks.map(({ value }) => [
+    value,
+    filteredItems.filter((item) => matchesCatalogTrack(item, value)).length,
+  ])) as Record<CatalogTrack, number>, [filteredItems]);
+  const visibleItems = track === 'all'
+    ? filteredItems
+    : filteredItems.filter((item) => matchesCatalogTrack(item, track));
   const pendingSummary = asRecord(pendingChange.summary);
   const busy = validate.isPending || preview.isPending || apply.isPending;
   const queryError = asError(versions.error ?? installed.error);
@@ -451,17 +474,31 @@ function PawPackageCatalog() {
         <ManagementSection
           description="目录只展示真实注册项；没有可用条目时保持空状态。"
           title="目录"
-          trailing={<StatusBadge label={`${filteredItems.length} 项`} tone="neutral" />}
+          trailing={<StatusBadge label={`${visibleItems.length} 项`} tone="neutral" />}
         >
           {!runtimeAvailable ? <InlineNotice title="Pi Runtime 暂时未连接" tone="warning">目录仍可阅读，但安装和更新要等 Runtime 恢复后再继续。</InlineNotice> : null}
           <div className="paw-system-catalog-tools">
             <label><Search aria-hidden="true" size={15} /><Input aria-label="搜索 Package 目录" onChange={(event) => setQuery(event.target.value)} placeholder="名称、用途或来源" value={query} /></label>
             <Switch checked={enableAfterInstall} label="安装后立即启用" onCheckedChange={setEnableAfterInstall} />
           </div>
+          <div aria-label="目录范围" className="paw-system-catalog-tracks" role="group">
+            {catalogTracks.map((candidate) => (
+              <button
+                aria-pressed={track === candidate.value}
+                data-active={track === candidate.value || undefined}
+                key={candidate.value}
+                onClick={() => setTrack(candidate.value)}
+                type="button"
+              >
+                {candidate.label}
+                <span aria-hidden="true">{trackCounts[candidate.value]}</span>
+              </button>
+            ))}
+          </div>
 
-          {filteredItems.length ? (
+          {visibleItems.length ? (
             <div className="paw-system-package-grid" aria-label="受管 Package 目录">
-              {filteredItems.map((item) => {
+              {visibleItems.map((item) => {
                 const id = stringValue(item.id);
                 const source = asRecord(item.source);
                 const security = asRecord(item.security);
@@ -489,14 +526,23 @@ function PawPackageCatalog() {
                         onClick={() => void previewCatalogAction(item)}
                         size="small"
                       >
-                        {item.updateAvailable === true ? '查看更新内容' : upToDate ? '已安装' : actionable ? '查看安装内容' : '不可安装'}
+                        {item.updateAvailable === true ? '查看更新内容' : upToDate ? '已是最新' : actionable ? '查看安装内容' : '不可安装'}
                       </Button>
                     </footer>
                   </article>
                 );
               })}
             </div>
-          ) : <EmptyState description={versionItems.length ? '换一个关键词试试。' : 'Runtime 没有返回可安装或可更新的 Package。'} icon={PackageOpen} title={versionItems.length ? '没有匹配的 Package' : '目录为空'} />}
+          ) : (
+            <EmptyState
+              action={versionItems.length && (query.trim() || track !== 'all')
+                ? <Button onClick={() => { setQuery(''); setTrack('all'); }} size="small">查看全部</Button>
+                : undefined}
+              description={versionItems.length ? '换一个关键词或范围试试。' : 'Runtime 没有返回可安装或可更新的 Package。'}
+              icon={PackageOpen}
+              title={versionItems.length ? '没有匹配的 Package' : '目录为空'}
+            />
+          )}
 
           {validation.validationToken && pendingChange.previewToken ? (
             <InlineNotice title="等待你的确认" tone="warning">
@@ -539,6 +585,83 @@ function useAgentModelResource() {
   return { data, error, loading, reload };
 }
 
+type SystemRailTransport = ReturnType<typeof useControlTransport>;
+
+type SystemRailContract = {
+  pageId: string;
+  /** decision: a queue waiting for the human; attention: self-reported health. */
+  tone: 'decision' | 'attention';
+  queryKey: readonly unknown[];
+  read: (transport: SystemRailTransport, signal: AbortSignal | undefined) => Promise<unknown>;
+  count: (value: unknown) => number;
+  describe: (count: number) => string;
+};
+
+/**
+ * One honest number per system rail. Each query key matches the owning
+ * feature exactly (approvals desk, plugin proposals, diagnostics runtime), so
+ * acting inside the page refreshes the rail without a second request cycle.
+ * A rail with no data — route missing, Runtime down — stays quiet instead of
+ * inventing a zero-risk story.
+ */
+const systemRailContracts: Partial<Record<PawSystemAppId, SystemRailContract>> = {
+  'system-settings': {
+    pageId: 'approvals',
+    tone: 'decision',
+    // Matches the approvals feature key ['approvals', 'all'].
+    queryKey: ['approvals', 'all'],
+    read: (transport, signal) => transport.request({
+      pathId: 'agent.approvals.list',
+      query: { limit: 500 },
+      signal,
+    }),
+    count: pendingApprovalCount,
+    describe: (count) => `${count} 项待处理`,
+  },
+  'app-center': {
+    pageId: 'proposals',
+    tone: 'decision',
+    queryKey: pluginQueryKeys.proposals(),
+    read: (transport, signal) => transport.request({ pathId: 'agent.extensions.proposals', signal }),
+    count: (value) => arrayRecords(asRecord(value).items).length,
+    describe: (count) => `${count} 项待确认`,
+  },
+  'system-monitor': {
+    pageId: 'diagnostics',
+    tone: 'attention',
+    queryKey: diagnosticsQueryKeys.runtime(),
+    read: (transport, signal) => transport.request({ pathId: 'diagnostics.runtime', signal }),
+    count: componentAttentionCount,
+    describe: (count) => `${count} 项需要检查`,
+  },
+};
+
+function useSystemRailSignal(appId: PawSystemAppId): {
+  count: number;
+  describe: (count: number) => string;
+  pageId: string;
+  tone: 'decision' | 'attention';
+} | null {
+  const transport = useControlTransport();
+  const contract = systemRailContracts[appId];
+  const signalQuery = useQuery({
+    queryKey: contract?.queryKey ?? ['paw-system-rail', appId],
+    queryFn: ({ signal }) => contract
+      ? contract.read(transport, signal)
+      : Promise.resolve(null),
+    enabled: Boolean(contract),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  if (!contract) return null;
+  return {
+    count: contract.count(signalQuery.data),
+    describe: contract.describe,
+    pageId: contract.pageId,
+    tone: contract.tone,
+  };
+}
+
 function pendingApprovalCount(value: unknown): number {
   const items = asRecord(value).items;
   if (!Array.isArray(items)) return 0;
@@ -546,6 +669,17 @@ function pendingApprovalCount(value: unknown): number {
     const approval = asRecord(item);
     return approval.schemaVersion === 'rag-ime.agent-approval.v1' && approval.state === 'pending';
   }).length;
+}
+
+/**
+ * Mirrors the diagnostics service list: any component that does not report
+ * ok=true is worth a check. The count never distinguishes "broken" from
+ * "awaiting foreground verification" — that judgement belongs to the page.
+ */
+function componentAttentionCount(value: unknown): number {
+  return Object.values(asRecord(asRecord(value).components))
+    .filter((component) => asRecord(component).ok !== true)
+    .length;
 }
 
 function systemPageForRoute(pages: readonly SystemPage[], route: string): SystemPage {
