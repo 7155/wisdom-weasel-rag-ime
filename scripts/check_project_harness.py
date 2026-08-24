@@ -9,10 +9,10 @@ from pathlib import Path
 
 ROOT_DOCUMENT_BUDGETS = {
     "AGENTS.md": 1_250,
-    "docs/project/PROJECT.md": 900,
-    "docs/project/OUTCOMES.md": 1_300,
-    "docs/project/DECISIONS.md": 1_200,
-    "docs/project/CONTEXT.md": 900,
+    "PROJECT.md": 900,
+    "OUTCOMES.md": 1_300,
+    "DECISIONS.md": 1_200,
+    "CONTEXT.md": 900,
 }
 
 CORE_SKILLS = (
@@ -39,20 +39,12 @@ RETIRED_FLOW_NAMES = (
 
 CURRENT_CONTRACT_DOCS = (
     "AGENTS.md",
-    "docs/README.md",
-    "docs/project/README.md",
-    "docs/project/PROJECT.md",
-    "docs/project/PRODUCT.md",
-    "docs/project/OUTCOMES.md",
-    "docs/project/DECISIONS.md",
-    "docs/project/CONTEXT.md",
-    "docs/project/DESIGN.md",
-    "docs/project/design-qa.md",
-    "docs/pawos/README.md",
-    "docs/pawos/PAWOS_REQUIREMENTS.md",
-    "docs/pawos/PAWOS_FRONTEND_HANDOFF.md",
+    "PROJECT.md",
+    "OUTCOMES.md",
+    "DECISIONS.md",
+    "CONTEXT.md",
     "README.md",
-    "docs/project/ARCHITECTURE.md",
+    "ARCHITECTURE.md",
 )
 
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -242,13 +234,7 @@ def validate_project_harness(root: Path) -> list[str]:
     documents = _read_documents(root, errors)
 
     agents = documents.get("AGENTS.md", "")
-    for relative in (
-        "docs/README.md",
-        "docs/project/PROJECT.md",
-        "docs/project/OUTCOMES.md",
-        "docs/project/CONTEXT.md",
-        "docs/project/DECISIONS.md",
-    ):
+    for relative in ("PROJECT.md", "OUTCOMES.md", "CONTEXT.md", "DECISIONS.md"):
         if f"]({relative})" not in agents:
             errors.append(f"AGENTS.md must route progressively to {relative}")
 
@@ -272,11 +258,11 @@ def validate_project_harness(root: Path) -> list[str]:
             if retired in text:
                 errors.append(f"{relative} still references retired flow name: {retired}")
 
-    outcomes = documents.get("docs/project/OUTCOMES.md", "")
+    outcomes = documents.get("OUTCOMES.md", "")
     if "release/product-status.json" not in outcomes:
         errors.append("OUTCOMES.md must name the machine-readable release evidence")
 
-    context = documents.get("docs/project/CONTEXT.md", "")
+    context = documents.get("CONTEXT.md", "")
     for implementation_marker in ("rag_ime/", "control-center-web/", "scripts/", ".py"):
         if implementation_marker in context:
             errors.append(
@@ -285,7 +271,7 @@ def validate_project_harness(root: Path) -> list[str]:
             )
 
     gitignore = root / ".gitignore"
-    if not gitignore.is_file() or "/docs/*" not in gitignore.read_text(encoding="utf-8"):
+    if not gitignore.is_file() or "/docs/" not in gitignore.read_text(encoding="utf-8"):
         errors.append("ignored local docs/ history boundary is missing from .gitignore")
 
     for retired in RETIRED_FLOW_NAMES[:5]:
