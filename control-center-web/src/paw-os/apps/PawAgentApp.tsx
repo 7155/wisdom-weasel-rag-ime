@@ -221,17 +221,17 @@ export function PawAgentApp({
     }
   }
 
-  const railToggle = <button aria-controls="paw-agent-work-records" aria-expanded={railOpen} aria-label={railOpen ? '收起会话列表' : '打开会话列表'} className="paw-agent-rail-toggle" onClick={() => setRailOpen((open) => !open)} ref={railToggleRef} type="button"><PanelLeft size={16} /></button>;
+  const railToggle = <button aria-controls="paw-agent-work-records" aria-expanded={railOpen} aria-label={railOpen ? '收起工作记录' : '打开工作记录'} className="paw-agent-rail-toggle" onClick={() => setRailOpen((open) => !open)} ref={railToggleRef} type="button"><PanelLeft size={16} /></button>;
   return (
     <main className="paw-agent-app" data-rail-open={railOpen || undefined} data-selection={selection.kind}>
       {windowChromeTarget ? <PawWindowChromePortal>{railToggle}</PawWindowChromePortal> : null}
       <aside aria-label="Agent 工作记录" className="paw-agent-rail" id="paw-agent-work-records">
         <header>
-          <span><strong>会话</strong></span>
+          <span><strong>工作记录</strong></span>
           <div className="paw-agent-rail__actions">
             <button aria-label="新建工作" onClick={() => { setSelection({ kind: 'new' }); setRailOpen(false); }} type="button"><Plus size={17} /></button>
             <Menu>
-              <MenuTrigger asChild><button aria-label="会话列表选项" type="button"><MoreHorizontal size={17} /></button></MenuTrigger>
+              <MenuTrigger asChild><button aria-label="工作记录选项" type="button"><MoreHorizontal size={17} /></button></MenuTrigger>
               <MenuContent align="end">
                 <MenuCheckboxItem checked={showArchived} onCheckedChange={(checked) => setShowArchived(checked === true)}>显示已归档 Session</MenuCheckboxItem>
               </MenuContent>
@@ -258,7 +258,7 @@ export function PawAgentApp({
               />
             ))}
           </WorkGroup> : null}
-          {visibleRooms.length ? <WorkGroup label="Sol">
+          {visibleRooms.length ? <WorkGroup label="Room">
             {visibleRooms.map((room) => (
               <WorkRow
                 active={selection.kind === 'room' && selection.id === room.id}
@@ -273,16 +273,19 @@ export function PawAgentApp({
         </div>
       </aside>
       {windowChromeTarget ? null : railToggle}
-      {railOpen ? <button aria-label="关闭会话列表" className="paw-agent-rail-backdrop" onClick={() => { setRailOpen(false); railToggleRef.current?.focus(); }} type="button" /> : null}
+      {railOpen ? <button aria-label="关闭工作记录" className="paw-agent-rail-backdrop" onClick={() => { setRailOpen(false); railToggleRef.current?.focus(); }} type="button" /> : null}
       <section className="paw-agent-stage">
         {selection.kind === 'new' ? (
           <PawAgentHome
+            catalogError={loadError}
+            catalogLoading={loading}
             defaultModel={defaultModel}
             initialDraft={selection.draft}
             key={`new:${selection.draft ?? ''}`}
             models={models}
             onOpenRoom={(id) => setSelection({ kind: 'room', id })}
             onOpenSession={(id) => setSelection({ kind: 'session', id })}
+            onReloadCatalog={() => setCatalogRevision((value) => value + 1)}
             personas={personas}
             projectRoots={projectRoots}
             rooms={visibleRooms}
