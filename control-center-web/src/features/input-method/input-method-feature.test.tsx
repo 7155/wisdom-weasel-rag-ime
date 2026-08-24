@@ -10,7 +10,10 @@ import { InputLexiconFeature, InputMethodFeature } from './index';
 import {
   completionLaneFacts,
   inferInputMode,
+  inputModeChanges,
+  modeFactChips,
   modeSettingLabel,
+  presetInputModes,
   recallLaneFacts,
   secondsLabel,
   suggestionPanel,
@@ -373,7 +376,7 @@ describe('InputMethodFeature', () => {
     renderFeature(transport);
 
     await user.click(await screen.findByRole('radio', { name: '安全' }));
-    expect(screen.getByText('3 项设置将发生变化')).toBeInTheDocument();
+    expect(screen.getByText('改用安全模式将改动 3 项')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存使用方式' }));
 
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(true));
@@ -452,7 +455,10 @@ describe('InputMethodFeature', () => {
 
     // 曾经 记忆增强 与 标准模式 共用同一份变更，从标准设置出发时选它是零变化的死选项。
     await user.click(await screen.findByRole('radio', { name: '记忆增强' }));
-    expect(screen.getByText('2 项设置将发生变化')).toBeInTheDocument();
+    // 保存之前，差异台账已经逐行给出具体变化，而不是只报一个数字。
+    expect(screen.getByText('改用记忆增强将改动 2 项')).toBeInTheDocument();
+    expect(screen.getByText('召回详细程度：紧凑 → 详尽')).toBeInTheDocument();
+    expect(screen.getByText('按需召回时间线：已关闭 → 已启用')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存使用方式' }));
 
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(true));
@@ -465,8 +471,9 @@ describe('InputMethodFeature', () => {
       expectedRuntimeRevision: 12,
     });
 
-    expect(await screen.findByText('召回详细程度：紧凑 → 详尽')).toBeInTheDocument();
-    expect(screen.getByText('按需召回时间线：已关闭 → 已启用')).toBeInTheDocument();
+    // R3 影响面板与差异台账说同一句话。
+    expect(await screen.findAllByText('召回详细程度：紧凑 → 详尽')).toHaveLength(2);
+    expect(screen.getAllByText('按需召回时间线：已关闭 → 已启用')).toHaveLength(2);
     expect(document.body).not.toHaveTextContent('memory.recall.detailLevel');
   });
 
@@ -880,7 +887,7 @@ describe('InputMethodFeature', () => {
     renderFeature(transport);
 
     expect(await screen.findByText('模型状态暂不可用')).toBeInTheDocument();
-    expect(screen.getByText(/已保存的选择不会改变/)).toBeInTheDocument();
+    expect(screen.getByText(/已保存的选择保持不变/)).toBeInTheDocument();
     const before = transport.requests.filter(({ request }) => request.pathId === 'diagnostics.models').length;
     await user.click(screen.getByRole('button', { name: '重试模型检查' }));
     await waitFor(() => expect(
@@ -901,7 +908,7 @@ describe('InputMethodFeature', () => {
       },
     }));
 
-    expect(await screen.findByText(/当前版本没有提供完整的审阅、写入与撤销能力/)).toBeInTheDocument();
+    expect(await screen.findByText(/当前版本缺少完整的审阅、写入与撤销能力/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看已选词条' })).not.toBeInTheDocument();
     expect(screen.queryByText('演练 / 未执行')).not.toBeInTheDocument();
   });
@@ -952,7 +959,6 @@ describe('InputMethodFeature', () => {
     expect(screen.getByText(/本机数据库暂时不可写。/)).toBeInTheDocument();
     const failureNotice = screen.getByText('上次定期整理失败').closest('.mgmt-notice');
     expect(failureNotice?.textContent?.match(/本机数据库暂时不可写。/gu)).toHaveLength(1);
-    expect(screen.getByText('已启用，结果会先交给你审阅。')).toBeInTheDocument();
   });
 
   it('uses the live review token, renders an unapplied redeploy state, and rolls back by receipt', async () => {
@@ -1141,7 +1147,7 @@ describe('InputMethodFeature', () => {
     expect(figure).toHaveAttribute('data-enabled', 'true');
     expect(figure).toHaveAttribute('data-panel', 'compact');
     expect(figure.querySelectorAll('.input-suggest-preview__slot')).toHaveLength(5);
-    expect(figure).toHaveTextContent('与输入法原生候选并排出现、样式可见区分');
+    expect(figure).toHaveTextContent('与原生候选并排出现、样式可见区分');
     const hints = within(figure).getByRole('list', { name: '采纳方式' });
     expect(within(hints).getByText('Tab 采纳第 1 条')).toBeInTheDocument();
     expect(within(hints).getByText('Option+数字 选对应候选')).toBeInTheDocument();
@@ -1213,7 +1219,7 @@ describe('InputMethodFeature', () => {
     expect(screen.queryByText('应用联想模型')).not.toBeInTheDocument();
   });
 
-  it('presents the four input modes as described cards instead of a segmented strip', async () => {
+  it('presents the four input modes as fact-signed cards instead of a segmented strip', async () => {
     renderFeature(new MockControlTransport({
       routes: {
         'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
@@ -1223,11 +1229,176 @@ describe('InputMethodFeature', () => {
       },
     }));
 
-    expect(await screen.findByRole('radiogroup', { name: '希望怎样输入' })).toBeInTheDocument();
+    expect(await screen.findByRole('radiogroup', { name: '使用方式' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '记忆增强' })).toBeInTheDocument();
-    expect(screen.getByText('在标准之上使用详尽记忆召回，并按需展开时间线。')).toBeInTheDocument();
+    expect(screen.getByText('召回更详尽、可展开时间线，其余与标准一致。')).toBeInTheDocument();
     expect(document.querySelectorAll('.input-mode-card')).toHaveLength(4);
     expect(document.querySelector('.input-mode-choice .ui-segmented')).toBeNull();
+
+    // 每张卡片带真实写入的事实签名；标准与记忆增强的分界键在两侧都被强调。
+    const memoryCard = screen.getByRole('radio', { name: '记忆增强' });
+    expect(within(memoryCard).getByText('详尽召回')).toHaveAttribute('data-highlight');
+    expect(within(memoryCard).getByText('按需时间线')).toHaveAttribute('data-highlight');
+    const standardCard = screen.getByRole('radio', { name: '标准' });
+    expect(within(standardCard).getByText('紧凑召回')).toHaveAttribute('data-highlight');
+    expect(within(standardCard).getByText('本机联想')).not.toHaveAttribute('data-highlight');
+    const safeCard = screen.getByRole('radio', { name: '安全' });
+    expect(within(safeCard).getByText('联想关闭')).toHaveAttribute('data-off');
+    expect(within(safeCard).getByText('远程生成关闭')).toHaveAttribute('data-off');
+  });
+
+  it('keeps the 当前 marker on the active mode while another card is only a draft', async () => {
+    const user = userEvent.setup();
+    renderFeature(new MockControlTransport({
+      capabilities: {
+        features: {
+          managementWorkContract: true,
+          configurationSettingsWorkContract: true,
+        },
+      },
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 5,
+          settings: {
+            interaction: { postCommit: { enabled: true } },
+            memory: { enabled: true, recall: { detailLevel: 'compact', timelineEnabled: false } },
+            rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+          },
+        },
+        'configuration.schema': { ok: true, sections: [] },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    expect(await screen.findByText('当前设置与「标准模式」一致。')).toBeInTheDocument();
+    const standardCard = screen.getByRole('radio', { name: '标准' });
+    expect(standardCard).toHaveAttribute('data-current');
+    expect(standardCard).toHaveAttribute('data-state', 'checked');
+
+    await user.click(screen.getByRole('radio', { name: '记忆增强' }));
+
+    // 草稿勾选移动，但“当前”标记留在真实生效的模式上。
+    const memoryCard = screen.getByRole('radio', { name: '记忆增强' });
+    expect(memoryCard).toHaveAttribute('data-state', 'checked');
+    expect(memoryCard).not.toHaveAttribute('data-current');
+    expect(standardCard).toHaveAttribute('data-current');
+    expect(standardCard).toHaveAttribute('data-state', 'unchecked');
+    expect(within(standardCard).getByText('当前')).toBeInTheDocument();
+  });
+
+  it('returns the checked card to the applied mode after a successful save', async () => {
+    const user = userEvent.setup();
+    const payloadSha256 = 'e'.repeat(64);
+    let persistedRecall: Record<string, unknown> = { detailLevel: 'compact', timelineEnabled: false };
+    const transport = new MockControlTransport({
+      capabilities: {
+        features: {
+          managementWorkContract: true,
+          configurationSettingsWorkContract: true,
+        },
+      },
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': () => ({
+          ok: true,
+          runtimeRevision: 8,
+          settings: {
+            interaction: { postCommit: { enabled: true } },
+            memory: { enabled: true, recall: { ...persistedRecall } },
+            rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+          },
+        }),
+        'configuration.schema': { ok: true, sections: [] },
+        'configuration.settings.preview': {
+          ok: true,
+          pathId: 'configuration.settings.apply',
+          previewToken: 'preview-memory-apply',
+          payloadSha256,
+          requiredConfirm: 'apply',
+          expiresAtMs: Date.now() + 60_000,
+          expectedRevision: { runtimeRevision: 8 },
+          summary: { title: '应用控制中心设置', items: ['更新运行模式'], risk: 'R2' },
+        },
+        'configuration.settings.apply': () => {
+          persistedRecall = { detailLevel: 'detailed', timelineEnabled: true };
+          return {
+            ok: true,
+            pathId: 'configuration.settings.apply',
+            receiptId: 'receipt-memory-apply',
+            payloadSha256,
+            appliedAtMs: Date.now(),
+            rollbackAvailable: true,
+            rollbackToken: 'rollback-memory-apply',
+          };
+        },
+        'input.lexicon.review': emptyReview,
+      },
+    });
+    renderFeature(transport);
+
+    await user.click(await screen.findByRole('radio', { name: '记忆增强' }));
+    await user.click(screen.getByRole('button', { name: '保存使用方式' }));
+
+    expect(await screen.findByText('已保存')).toBeInTheDocument();
+    // 保存成功后草稿清空：勾选与“当前”一起回到真实生效的模式。
+    await waitFor(() => {
+      const memoryCard = screen.getByRole('radio', { name: '记忆增强' });
+      expect(memoryCard).toHaveAttribute('data-current');
+      expect(memoryCard).toHaveAttribute('data-state', 'checked');
+    });
+    expect(screen.getByText('当前设置与「记忆增强」一致。')).toBeInTheDocument();
+    // 回执与撤销入口在草稿清空后仍然保留。
+    expect(screen.getByRole('button', { name: '撤销' })).toBeInTheDocument();
+  });
+
+  it('reports a runtime profile that disagrees with the saved settings instead of blending them', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '安全模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 3,
+          settings: {
+            interaction: { postCommit: { enabled: true } },
+            memory: { enabled: true },
+            rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+          },
+        },
+        'configuration.schema': { ok: true, sections: [] },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    expect(await screen.findByText('运行端与已保存设置不一致')).toBeInTheDocument();
+    expect(screen.getByText(/运行端仍报告「安全模式」，已保存设置对应「标准模式」/)).toBeInTheDocument();
+  });
+
+  it('stays quiet when the runtime profile matches the saved settings', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 3,
+          settings: {
+            interaction: { postCommit: { enabled: true } },
+            memory: { enabled: true },
+            rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+          },
+        },
+        'configuration.schema': { ok: true, sections: [] },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    expect(await screen.findByRole('radiogroup', { name: '使用方式' })).toBeInTheDocument();
+    expect(screen.queryByText('运行端与已保存设置不一致')).not.toBeInTheDocument();
   });
 
   it('keeps lexicon review rows and the first app viewport readable at wide and narrow widths', async () => {
@@ -1326,6 +1497,28 @@ describe('inferInputMode', () => {
       diagnostics: { liveTrace: true, candidateExplain: true },
       display: { showDiagnosticsInline: true },
     })).toBe('调试模式');
+  });
+});
+
+describe('modeFactChips', () => {
+  it('signs every card with exactly the keys the mode really writes', () => {
+    for (const mode of presetInputModes) {
+      const chips = modeFactChips(mode);
+      // 一键一枚：事实签名不能多于、也不能少于真实写入。
+      expect(chips.map((chip) => chip.key)).toEqual(Object.keys(inputModeChanges[mode]));
+      for (const chip of chips) {
+        expect(chip.off).toBe(inputModeChanges[mode][chip.key] === false);
+      }
+    }
+  });
+
+  it('highlights only the honest split between 标准 and 记忆增强', () => {
+    const highlighted = (mode: (typeof presetInputModes)[number]) =>
+      modeFactChips(mode).filter((chip) => chip.highlight).map((chip) => chip.label);
+    expect(highlighted('标准模式')).toEqual(['紧凑召回']);
+    expect(highlighted('记忆增强')).toEqual(['详尽召回', '按需时间线']);
+    expect(highlighted('安全模式')).toEqual([]);
+    expect(highlighted('调试模式')).toEqual([]);
   });
 });
 

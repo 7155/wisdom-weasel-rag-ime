@@ -9,7 +9,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -106,6 +106,7 @@ export function MemoryFeature() {
   const [ownerKey, setOwnerKey] = useState('');
   const [selectedId, setSelectedId] = useState(routeSelection.id);
   const [editOpen, setEditOpen] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
   const [reference, setReference] = useState<MemoryReferenceSelection | null>(
     routeSelection.reference,
   );
@@ -167,6 +168,21 @@ export function MemoryFeature() {
     setReference(next.reference);
   }, [location.search]);
 
+  // The search reacts while typing; Enter commits immediately. A selected
+  // record stays selected while it remains in the filtered result.
+  useEffect(() => {
+    const next = draftQuery.trim();
+    if (next === query) return;
+    const handle = window.setTimeout(() => setQuery(next), 300);
+    return () => window.clearTimeout(handle);
+  }, [draftQuery, query]);
+
+  // A newly selected record always starts reading at the top; the previous
+  // record's scroll position must not leak into the next one.
+  useEffect(() => {
+    if (detailRef.current) detailRef.current.scrollTop = 0;
+  }, [selectedId]);
+
   return (
     <ManagementPage
       actions={<>
@@ -216,9 +232,11 @@ export function MemoryFeature() {
             >
               <div className="mgmt-filter-row memory-catalog-filters">
                 <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
-                  <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
+                  <span className="memory-catalog-filters__query-box">
+                    <Search aria-hidden="true" size={14} />
+                    <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="标题、正文或标签，输入即筛选" value={draftQuery} />
+                  </span>
                 </Field>
-                <Button className="memory-catalog-filters__submit" leadingIcon={<Search size={14} />} onClick={runSearch} size="small">筛选</Button>
                 <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
                   <Select
                     id="memory-status-filter"
@@ -276,7 +294,7 @@ export function MemoryFeature() {
                     />
                   )}
                 </aside>
-                <div className="memory-layer-detail">
+                <div className="memory-layer-detail" ref={detailRef}>
                   {selected ? (
                     <>
                       <button aria-label="返回记忆目录" className="memory-layer-detail__back" onClick={() => {
@@ -285,6 +303,7 @@ export function MemoryFeature() {
                       }} type="button"><ArrowLeft aria-hidden size={15} />返回目录</button>
                       <MemoryCatalogDetail
                         assistantName={identity.assistantName}
+                        key={selectedId}
                         kind={kind}
                         onOpenReference={(next) => setReference(next)}
                         row={selected}
@@ -417,12 +436,6 @@ export function MemoryFeature() {
       </div>
     </ManagementPage>
   );
-
-  function runSearch() {
-    setSelectedId('');
-    setEditOpen(false);
-    setQuery(draftQuery.trim());
-  }
 
   function openCatalogLayer(next: MemoryLayer) {
     setView('catalog');
@@ -1319,7 +1332,7 @@ function memoryStatusOptions(kind: MemoryKind) {
     { value: 'hidden', label: '历史保留' },
     { value: 'superseded', label: '已合并' },
     { value: 'conflict', label: '有冲突' },
-    { value: 'source_archive', label: '碎片证据' },
+    { value: 'source_archive', label: '来源归档' },
     { value: 'disabled', label: '已暂停' },
     { value: 'suppressed', label: '已抑制' },
   ];
@@ -1333,7 +1346,7 @@ function statusLabel(status: string): string {
     archived: '已归档',
     hidden: '历史保留',
     superseded: '已合并',
-    source_archive: '碎片证据',
+    source_archive: '来源归档',
     disabled: '已暂停',
     suppressed: '已抑制',
     inactive: '未启用',
@@ -1381,7 +1394,7 @@ function catalogSourceLabel(kind: MemoryKind, row: Record<string, unknown>, assi
   }
   if (transport.toLocaleLowerCase('en-US').includes('rime')) return '输入法';
   if (stringValue(row.type) === 'session_digest') return `${assistantName}主动记录`;
-  return '统一记忆来源';
+  return '本机记录';
 }
 
 function ownerAwareKind(kind: MemoryKind): boolean {

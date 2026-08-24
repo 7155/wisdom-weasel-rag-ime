@@ -296,7 +296,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
       ) : !canRead || timeline.error ? null : timelineId && !semanticReady ? (
         <div className="activity-timeline__semantic-empty">
           <Sparkles aria-hidden="true" size={19} />
-          <span>当天来源已经收集；语义活动会在模型整理和独立校验通过后显示。</span>
+          <span>当天来源已经收集；整理并核对通过后，这里会显示当天的活动故事。</span>
         </div>
       ) : timelineId ? (
         <>
@@ -357,7 +357,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
                   onClick={() => build.mutate({ targetDate: date })}
                   size="small"
                 >
-                  {semanticReady ? '重新整理' : '语义整理'}
+                  {semanticReady ? '重新整理' : '整理这一天'}
                 </Button>
               )}
             </div>
@@ -464,7 +464,7 @@ function DailyJournal({
         </div>
         {timelineId ? (
           <StatusBadge
-            label={semanticReady ? timelineStatusLabel(status) : '待语义整理'}
+            label={semanticReady ? timelineStatusLabel(status) : '待整理成日记'}
             tone={semanticReady ? timelineStatusTone(status) : 'info'}
           />
         ) : null}
@@ -496,8 +496,8 @@ function DailyJournal({
         </div>
       ) : !semanticReady ? (
         <div className="daily-journal__empty-copy">
-          <strong>这一天还没有形成语义日记</strong>
-          <span>现有时间线只完成了来源分组，尚未通过语义整理与独立校验，因此不再把原始输入句子当作日记正文。</span>
+          <strong>这一天还没有整理成日记</strong>
+          <span>目前只按来源做了分组，还没有整理核对成日记；原始输入不会被直接当作日记正文。</span>
           <Button
             disabled={busy || !canWrite}
             leadingIcon={<Sparkles size={15} />}
@@ -506,7 +506,7 @@ function DailyJournal({
             size="small"
             variant="primary"
           >
-            语义整理这一天
+            整理这一天
           </Button>
         </div>
       ) : (
@@ -1300,7 +1300,7 @@ function deriveTaskTitle(summary: string, apps: TimelineApp[], index: number): s
   const firstClause = withoutAppPrefix.split(/[。；\n]/, 1)[0]?.trim() || '';
   if (firstClause) return firstClause.length > 42 ? `${firstClause.slice(0, 42)}...` : firstClause;
   if (apps.length > 1) return '跨应用协同任务';
-  return apps[0]?.name ? `${apps[0].name} 中的任务` : `语义任务 ${index + 1}`;
+  return apps[0]?.name ? `${apps[0].name} 中的任务` : `任务 ${index + 1}`;
 }
 
 function normalizePeriod(value: string, startMs: number, endMs: number): TimelinePeriod {
