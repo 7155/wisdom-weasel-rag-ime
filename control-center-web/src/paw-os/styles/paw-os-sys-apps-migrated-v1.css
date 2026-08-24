@@ -94,6 +94,7 @@
 }
 
 .paw-desktop-root .paw-system-app__nav nav button {
+  position: relative;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
@@ -174,7 +175,8 @@
 }
 
 /* Every system page reserves the same 40px chrome strip; naming the current
-   page there removes the anonymous empty band without adding a second h1. */
+   page there removes the anonymous empty band without adding a second h1.
+   The strip remounts per page, so the name settles in with the content. */
 .paw-desktop-root .paw-system-app__page-title {
   position: absolute;
   top: 0;
@@ -188,6 +190,12 @@
   font-weight: 700;
   letter-spacing: -.01em;
   pointer-events: none;
+  animation: paw-system-title-in 200ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes paw-system-title-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
 }
 
 /* Shared operational canvas ------------------------------------------------ */
@@ -451,7 +459,7 @@
   align-items: end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .paw-desktop-root .paw-system-catalog-tools > label:first-child {
@@ -471,6 +479,62 @@
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* Decision tracks: honest counts over one Runtime list. The active track
+   borrows the App accent so narrowing never looks like a different dataset. */
+.paw-desktop-root .paw-system-catalog-tracks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.paw-desktop-root .paw-system-catalog-tracks button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 6px 0 11px;
+  border: 1px solid var(--paw-system-line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--paw-system-muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background-color 130ms ease-out, border-color 130ms ease-out, color 130ms ease-out;
+}
+
+.paw-desktop-root .paw-system-catalog-tracks button:hover {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 30%, var(--paw-system-line));
+  color: var(--paw-system-ink);
+}
+
+.paw-desktop-root .paw-system-catalog-tracks button[data-active] {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 45%, var(--paw-system-line));
+  background: var(--paw-system-accent-soft);
+  color: var(--paw-system-ink);
+  font-weight: 620;
+}
+
+.paw-desktop-root .paw-system-catalog-tracks button > span {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--paw-system-fill);
+  color: var(--paw-system-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 640;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.paw-desktop-root .paw-system-catalog-tracks button[data-active] > span {
+  background: color-mix(in srgb, var(--paw-system-accent) 16%, #fff);
+  color: var(--paw-system-accent);
 }
 
 .paw-desktop-root .paw-system-package-grid {
@@ -842,7 +906,19 @@
     padding: 0;
   }
 
-  .paw-desktop-root .paw-system-app__nav nav button span { display: none; }
+  /* Only the label collapses with the rail; a live decision or health count
+     must stay visible, so the badge shrinks onto the icon's corner. */
+  .paw-desktop-root .paw-system-app__nav nav button > span:not(.paw-system-app__nav-badge) { display: none; }
+
+  .paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 3px;
+    min-width: 17px;
+    padding: 0 4px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
 
   /* The icon-only rail keeps its truthful signal as a dot; the exact count
      stays available through the button's accessible name and tooltip. */
@@ -881,10 +957,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-system-app .mgmt-section { animation: none; }
+  .paw-desktop-root .paw-system-app__page-title { animation: none; }
   .paw-desktop-root .paw-system-app .mgmt-status i,
   .paw-desktop-root .paw-system-resource-state[data-state='loading'] svg { animation: none; }
   .paw-desktop-root .paw-system-app__nav nav button,
   .paw-desktop-root .paw-system-package,
+  .paw-desktop-root .paw-system-catalog-tracks button,
   .paw-desktop-root .paw-agent-mode,
   .paw-desktop-root .paw-system-app :is(.ui-button, button) { transition: none; }
 }

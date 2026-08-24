@@ -171,7 +171,7 @@ export function PawSystemAppsMigrated({
       </aside>
 
       <section className="paw-system-app__stage">
-        <span aria-hidden="true" className="paw-system-app__page-title">
+        <span aria-hidden="true" className="paw-system-app__page-title" key={page.id}>
           {page.group ? `${page.group} · ${page.label}` : page.label}
         </span>
         <MemoryRouter initialEntries={[route]} key={route}>
@@ -440,6 +440,26 @@ function PawAgentSettings() {
   );
 }
 
+/**
+ * Decision tracks over the Package catalogue. Every track is a real count on
+ * the same Runtime list — switching narrows the view without hiding items.
+ */
+const catalogTracks = [
+  { value: 'all', label: '全部' },
+  { value: 'updates', label: '有更新' },
+  { value: 'installable', label: '可安装' },
+  { value: 'installed', label: '已安装' },
+] as const;
+
+type CatalogTrack = (typeof catalogTracks)[number]['value'];
+
+function matchesCatalogTrack(item: Record<string, unknown>, track: CatalogTrack): boolean {
+  if (track === 'updates') return item.updateAvailable === true;
+  if (track === 'installed') return item.installed === true;
+  if (track === 'installable') return item.installed !== true && item.actionable === true;
+  return true;
+}
+
 function PawPackageCatalog() {
   const {
     apply,
@@ -449,6 +469,7 @@ function PawPackageCatalog() {
     versions,
   } = usePluginCatalog();
   const [query, setQuery] = useState('');
+  const [track, setTrack] = useState<CatalogTrack>('all');
   const [enableAfterInstall, setEnableAfterInstall] = useState(true);
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
   const [validation, setValidation] = useState<Record<string, unknown>>({});
@@ -466,6 +487,13 @@ function PawPackageCatalog() {
       stringValue(asRecord(item.source).label),
     ].join(' ').toLocaleLowerCase('zh-CN').includes(needle));
   }, [query, versionItems]);
+  const trackCounts = useMemo(() => Object.fromEntries(catalogTracks.map(({ value }) => [
+    value,
+    filteredItems.filter((item) => matchesCatalogTrack(item, value)).length,
+  ])) as Record<CatalogTrack, number>, [filteredItems]);
+  const visibleItems = track === 'all'
+    ? filteredItems
+    : filteredItems.filter((item) => matchesCatalogTrack(item, track));
   const pendingSummary = asRecord(pendingChange.summary);
   const busy = validate.isPending || preview.isPending || apply.isPending;
   const queryError = asError(versions.error ?? installed.error);
@@ -517,19 +545,45 @@ function PawPackageCatalog() {
     >
       <QueryState error={queryError} isPending={versions.isPending || installed.isPending} onRetry={() => void Promise.all([versions.refetch(), installed.refetch()])}>
         <ManagementSection
-          description="只列出 Runtime 真正注册的 Package，为空就是真的没有。安装或更新都先经过来源检查和内容预览，你确认之前本机不会有任何改动。"
-          title="可以安装或更新什么"
-          trailing={<StatusBadge label={`${filteredItems.length} 项`} tone="neutral" />}
+          description="目录只展示真实注册项；没有可用条目时保持空状态。"
+          title="目录"
+          trailing={<StatusBadge label={`${visibleItems.length} 项`} tone="neutral" />}
         >
           {!runtimeAvailable ? <InlineNotice title="Pi Runtime 暂时未连接" tone="warning">目录仍可阅读，但安装和更新要等 Runtime 恢复后再继续。</InlineNotice> : null}
           <div className="paw-system-catalog-tools">
             <label><Search aria-hidden="true" size={15} /><Input aria-label="搜索 Package 目录" onChange={(event) => setQuery(event.target.value)} placeholder="名称、用途或来源" value={query} /></label>
             <Switch checked={enableAfterInstall} label="安装后立即启用" onCheckedChange={setEnableAfterInstall} />
           </div>
+          <div aria-label="目录范围" className="paw-system-catalog-tracks" role="group">
+            {catalogTracks.map((candidate) => (
+              <button
+                aria-pressed={track === candidate.value}
+                data-active={track === candidate.value || undefined}
+                key={candidate.value}
+                onClick={() => setTrack(candidate.value)}
+                type="button"
+              >
+                {candidate.label}
+                <span aria-hidden="true">{trackCounts[candidate.value]}</span>
+              </button>
+            ))}
+          </div>
 
-          {filteredItems.length ? (
+          {/* The one pending decision sits above the grid, never below the
+              fold of a long catalogue. */}
+          {validation.validationToken && pendingChange.previewToken ? (
+            <InlineNotice title="等待你的确认" tone="warning">
+              <div className="paw-system-package-approval">
+                <span><strong>{packageActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</strong><small>{stringArray(pendingSummary.permissions).length ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}` : '无额外权限'}</small></span>
+                <div><Button disabled={busy} onClick={() => { setPendingChange({}); setValidation({}); }} size="small" variant="quiet">取消</Button><Button disabled={busy} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button></div>
+              </div>
+            </InlineNotice>
+          ) : null}
+          {error ? <InlineNotice title="Package 操作未完成" tone="danger">{error}</InlineNotice> : null}
+
+          {visibleItems.length ? (
             <div className="paw-system-package-grid" aria-label="受管 Package 目录">
-              {filteredItems.map((item) => {
+              {visibleItems.map((item) => {
                 const id = stringValue(item.id);
                 const source = asRecord(item.source);
                 const security = asRecord(item.security);
@@ -557,31 +611,23 @@ function PawPackageCatalog() {
                         onClick={() => void previewCatalogAction(item)}
                         size="small"
                       >
-                        {item.updateAvailable === true ? '查看更新内容' : upToDate ? '已安装' : actionable ? '查看安装内容' : '不可安装'}
+                        {item.updateAvailable === true ? '查看更新内容' : upToDate ? '已是最新' : actionable ? '查看安装内容' : '不可安装'}
                       </Button>
                     </footer>
                   </article>
                 );
               })}
             </div>
-          ) : <EmptyState description={versionItems.length ? '换一个关键词试试。' : 'Runtime 没有返回可安装或可更新的 Package。'} icon={PackageOpen} title={versionItems.length ? '没有匹配的 Package' : '目录为空'} />}
-
-          {validation.validationToken && pendingChange.previewToken ? (
-            <InlineNotice title="等待你的确认" tone="warning">
-              <div className="paw-system-package-approval">
-                <span>
-                  <strong>{packageActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</strong>
-                  <small>
-                    {stringValue(pendingSummary.version) ? `v${stringValue(pendingSummary.version)} · ` : ''}
-                    {stringArray(pendingSummary.permissions).length ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}` : '无额外权限'}
-                    {' · 确认后才会写入本机'}
-                  </small>
-                </span>
-                <div><Button disabled={busy} onClick={() => { setPendingChange({}); setValidation({}); }} size="small" variant="quiet">取消</Button><Button disabled={busy} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button></div>
-              </div>
-            </InlineNotice>
-          ) : null}
-          {error ? <InlineNotice title="Package 操作未完成" tone="danger">{error}</InlineNotice> : null}
+          ) : (
+            <EmptyState
+              action={versionItems.length && (query.trim() || track !== 'all')
+                ? <Button onClick={() => { setQuery(''); setTrack('all'); }} size="small">查看全部</Button>
+                : undefined}
+              description={versionItems.length ? '换一个关键词或范围试试。' : 'Runtime 没有返回可安装或可更新的 Package。'}
+              icon={PackageOpen}
+              title={versionItems.length ? '没有匹配的 Package' : '目录为空'}
+            />
+          )}
         </ManagementSection>
       </QueryState>
     </ManagementPage>

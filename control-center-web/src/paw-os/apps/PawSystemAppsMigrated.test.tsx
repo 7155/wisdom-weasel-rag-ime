@@ -111,14 +111,7 @@ describe('PawSystemAppsMigrated', () => {
     expect(badge).toHaveAttribute('data-tone', 'attention');
   });
 
-  it('keeps the Settings rail quiet when the approvals route is unavailable', async () => {
-    renderSystemApp('system-settings', '/configuration');
-
-    expect(await screen.findByRole('button', { name: '审批' })).toBeInTheDocument();
-    await waitFor(() => expect(document.querySelector('.paw-system-app__nav-badge')).toBeNull());
-  });
-
-  it('counts pending Package proposals on the App Center rail without inventing numbers', async () => {
+  it('counts pending install proposals on the App Center rail', async () => {
     const transport = baseTransport({
       'agent.extensions.proposals': {
         ok: true,
@@ -131,7 +124,33 @@ describe('PawSystemAppsMigrated', () => {
     renderSystemApp('app-center', '/plugins', transport);
 
     const proposalsButton = await screen.findByRole('button', { name: '建议（2 项待确认）' });
-    expect(proposalsButton.querySelector('.paw-system-app__nav-badge')?.textContent).toBe('2');
+    const badge = proposalsButton.querySelector('.paw-system-app__nav-badge');
+    expect(badge?.textContent).toBe('2');
+    expect(badge).not.toHaveAttribute('data-tone');
+  });
+
+  it('relays components that report a problem on the Monitor rail', async () => {
+    const transport = baseTransport({
+      'diagnostics.runtime': {
+        ok: true,
+        components: {
+          sidecar: { ok: false, status: 'stopped' },
+          predictor: { ok: true, status: 'ready' },
+          inputMethod: { ok: false, status: 'unavailable' },
+        },
+      },
+    });
+    renderSystemApp('system-monitor', '/observability', transport);
+
+    const diagnosticsButton = await screen.findByRole('button', { name: '诊断（2 项需要检查）' });
+    expect(diagnosticsButton.querySelector('.paw-system-app__nav-badge')).toHaveAttribute('data-tone', 'attention');
+  });
+
+  it('keeps the Settings rail quiet when the approvals route is unavailable', async () => {
+    renderSystemApp('system-settings', '/configuration');
+
+    expect(await screen.findByRole('button', { name: '审批' })).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.paw-system-app__nav-badge')).toBeNull());
   });
 
   it('marks available Package updates on the App Center rail as a quiet count', async () => {
@@ -172,7 +191,7 @@ describe('PawSystemAppsMigrated', () => {
     expect(badge).toHaveAttribute('data-tone', 'attention');
   });
 
-  it('keeps the Monitor and App Center rails quiet without a truthful status source', async () => {
+  it('keeps the Monitor and App Center rails quiet without live evidence', async () => {
     renderSystemApp('system-monitor', '/observability');
     expect(await screen.findByRole('button', { name: '诊断' })).toBeInTheDocument();
     await waitFor(() => expect(document.querySelector('.paw-system-app__nav-badge')).toBeNull());
@@ -332,6 +351,36 @@ describe('PawSystemAppsMigrated', () => {
     await user.click(screen.getByRole('button', { name: '确认更改' }));
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.extensions.apply')).toBe(true));
   });
+
+  it('narrows the Package catalog to one decision track without hiding the full list', async () => {
+    const user = userEvent.setup();
+    const transport = baseTransport({
+      'agent.extensions.catalog': {
+        ok: true,
+        items: [
+          catalogItemStub('pkg-fresh', 'Fresh Package', { installed: false, updateAvailable: false }),
+          catalogItemStub('pkg-stale', 'Stale Package', { installed: true, updateAvailable: true }),
+          catalogItemStub('pkg-current', 'Current Package', { installed: true, updateAvailable: false }),
+        ],
+      },
+    });
+    renderSystemApp('app-center', '/plugins?view=catalog', transport);
+
+    expect(await screen.findByText('Fresh Package')).toBeInTheDocument();
+    expect(screen.getByText('Stale Package')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '有更新' }));
+    expect(screen.getByText('Stale Package')).toBeInTheDocument();
+    expect(screen.queryByText('Fresh Package')).not.toBeInTheDocument();
+    expect(screen.queryByText('Current Package')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '可安装' }));
+    expect(screen.getByText('Fresh Package')).toBeInTheDocument();
+    expect(screen.queryByText('Stale Package')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '全部' }));
+    expect(screen.getByText('Current Package')).toBeInTheDocument();
+  });
 });
 
 function renderSystemApp(
@@ -344,6 +393,26 @@ function renderSystemApp(
 
 function groupLabels(): string[] {
   return [...document.querySelectorAll('.paw-system-app__nav-group')].map((node) => node.textContent?.trim() ?? '');
+}
+
+function catalogItemStub(
+  id: string,
+  displayName: string,
+  state: { installed: boolean; updateAvailable: boolean },
+) {
+  return {
+    id,
+    displayName,
+    description: `${displayName} 的说明`,
+    publisher: 'Local registry',
+    source: { kind: 'local', label: '本机目录' },
+    permissions: [],
+    security: { notes: '来源已验证' },
+    versions: [{ version: '1.0.0' }],
+    latestVersion: '1.0.0',
+    actionable: true,
+    ...state,
+  };
 }
 
 function previewApprovalStub(
