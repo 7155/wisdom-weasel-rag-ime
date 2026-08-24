@@ -42,9 +42,15 @@
 }
 
 .paw-system-mark:active,
-.paw-dock button:active,
 .paw-desktop-shortcuts button:active > span {
   transform: scale(.96);
+  transition-duration: var(--paw-motion-feedback);
+}
+
+/* Dock press feedback rides the magnification transform through its own
+ * multiplier, so pressing a magnified icon dips it without snapping the
+ * proximity scale (owned by paw-os.css). */
+.paw-dock button:active {
   transition-duration: var(--paw-motion-feedback);
 }
 

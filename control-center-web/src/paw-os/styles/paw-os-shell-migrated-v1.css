@@ -90,6 +90,25 @@
   backdrop-filter: var(--paw-chrome-blur);
 }
 
+/* Signature light: one static aurora hairline along the bottom edge of the
+   bar — cobalt into violet into teal, the same triad the wallpaper carries.
+   A single composited gradient; it never animates. */
+.paw-desktop-root .paw-menu-bar::after {
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(47 107 255 / .5) 16%,
+    rgb(112 72 232 / .4) 46%,
+    rgb(15 139 128 / .4) 74%,
+    transparent
+  );
+  content: '';
+}
+
 .paw-desktop-root .paw-system-mark {
   min-width: 40px;
   border: 0;
@@ -99,7 +118,13 @@
   box-shadow: none;
 }
 
+/* The wordmark carries the aurora triad as ink. Every stop stays dark enough
+   for AA on the bright veil, so the brand reads before it shimmers. */
 .paw-brand-wordmark {
+  background: linear-gradient(105deg, #1e57e7, #6d3fd4 52%, #0c7568);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
   font-size: 13px;
   font-weight: 800;
   letter-spacing: .06em;
@@ -126,6 +151,12 @@
 .paw-desktop-root .paw-menu-app:hover { background: rgb(23 26 33 / .05); }
 .paw-desktop-root .paw-menu-app:active,
 .paw-desktop-root .paw-menu-app[aria-expanded='true'] { background: rgb(23 26 33 / .08); }
+/* The current App signs the menu bar in its own accent-strong ink, so the
+   orientation row answers "where am I" at a glance. */
+.paw-desktop-root .paw-menu-app[data-app] { color: var(--paw-app-accent-strong, var(--paw-chrome-ink)); }
+.paw-desktop-root .paw-menu-app[data-app]:hover {
+  background: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 8%, transparent);
+}
 .paw-desktop-root .paw-menu-app[data-idle] {
   color: var(--paw-chrome-muted);
   font-weight: 550;
@@ -193,6 +224,20 @@
 .paw-desktop-root .paw-field__packet--cobalt { fill: #2f6bff; }
 .paw-desktop-root .paw-field__packet--teal { fill: #18a999; }
 .paw-desktop-root .paw-field__packet--gold { fill: #e0a53f; }
+
+/* Optical depth over the field: a static aurora wash high in the sky and a
+   quiet vignette that settles the horizon behind Dock and windows. One
+   composited layer — no filter, no animation, nothing to re-rasterize. */
+.paw-desktop-root .paw-field-media::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(90rem 34rem at 16% -10%, rgb(122 162 247 / .17), transparent 62%),
+    radial-gradient(72rem 30rem at 86% -6%, rgb(167 139 250 / .12), transparent 58%),
+    radial-gradient(140% 96% at 50% 10%, transparent 64%, rgb(23 34 58 / .15) 100%);
+  content: '';
+}
 
 @keyframes paw-field-arrive {
   from { opacity: .62; transform: scale(1.012); }
@@ -301,10 +346,11 @@
   font-weight: 620;
 }
 
+/* Hover lift is owned by the proximity magnification (structure owner);
+   colour answers here with a soft halo in the App's own accent. */
 @media (hover: hover) and (pointer: fine) {
   .paw-desktop-root .paw-dock button:hover {
-    background: rgb(47 107 255 / .075);
-    transform: translateY(-4px) scale(1.055);
+    background: color-mix(in srgb, var(--app-color, #2f6bff) 10%, rgb(255 255 255 / .55));
   }
 }
 
@@ -315,6 +361,12 @@
 .paw-desktop-root .paw-launchpad {
   padding: clamp(20px, 6vh, 56px) 24px;
   background: rgb(240 243 248 / .86);
+  /* The aurora triad drifts into the veil as three static low-alpha washes;
+     the pinned veil colour above still owns contrast for every ink. */
+  background-image:
+    radial-gradient(58rem 34rem at 14% -8%, rgb(129 170 255 / .3), transparent 62%),
+    radial-gradient(52rem 32rem at 88% -2%, rgb(178 156 255 / .24), transparent 58%),
+    radial-gradient(64rem 40rem at 50% 116%, rgb(126 214 199 / .26), transparent 64%);
   -webkit-backdrop-filter: blur(26px) saturate(135%);
   backdrop-filter: blur(26px) saturate(135%);
   animation: paw-shell-launchpad-backdrop 180ms ease-out both;
@@ -383,12 +435,20 @@
   border: 1px solid transparent;
   border-radius: 16px;
   background: transparent;
+  /* Cascade arrival: each tile enters on its own beat (--paw-tile-i from the
+     markup). One-shot, opacity/transform only; filtering re-runs it solely
+     for newly matching tiles because keyed nodes keep their DOM. */
+  animation: paw-shell-tile-arrive 360ms var(--paw-ease-out) backwards;
+  animation-delay: calc(var(--paw-tile-i, 0) * 22ms);
 }
 .paw-desktop-root .paw-launchpad section > div > button:hover,
 .paw-desktop-root .paw-launchpad section > div > button:focus-visible {
   border-color: var(--paw-chrome-hairline);
   background: #fff;
-  box-shadow: 0 14px 34px -20px rgb(31 43 66 / .35), 0 2px 8px rgb(23 26 33 / .05);
+  box-shadow:
+    0 0 0 1.5px color-mix(in srgb, var(--app-color, #2f6bff) 30%, transparent),
+    0 14px 34px -20px color-mix(in srgb, var(--app-color, #2f6bff) 26%, rgb(31 43 66 / .35)),
+    0 2px 8px rgb(23 26 33 / .05);
   transform: translateY(-2px);
 }
 .paw-desktop-root .paw-launchpad section > div > button:active { transform: translateY(0) scale(.985); }
@@ -438,6 +498,10 @@
   from { opacity: .6; transform: translateY(14px) scale(.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+@keyframes paw-shell-tile-arrive {
+  from { opacity: 0; transform: translateY(10px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 /* ------------------------------------------------------------------- Windows
  * Opaque white working surfaces. Focus reads through border ink, an accent
@@ -453,9 +517,16 @@
   border-color: rgb(23 26 33 / .1);
   box-shadow: var(--paw-shadow-rest);
 }
+/* The lifted window casts its own light: a whisper-thin accent ring plus an
+   ambient shadow tinted toward the App identity. Shadow colour only — the
+   surface stays opaque white, so nothing re-rasterizes while dragging. */
 .paw-desktop-root .paw-window-shell[data-active] .paw-window {
   border-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 38%, rgb(23 26 33 / .16));
-  box-shadow: 0 1px 0 rgb(255 255 255 / .75) inset, 0 30px 74px -22px rgb(23 32 52 / .34), 0 5px 18px rgb(23 26 33 / .07);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / .75) inset,
+    0 0 0 4px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 8%, transparent),
+    0 30px 74px -22px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 26%, rgb(23 32 52 / .34)),
+    0 5px 18px rgb(23 26 33 / .07);
 }
 .paw-desktop-root .paw-window-titlebar {
   border-bottom: 1px solid rgb(23 26 33 / .1);
@@ -485,6 +556,12 @@
 .paw-desktop-root .paw-traffic-lights button:nth-child(1) { border-color: #f04438; }
 .paw-desktop-root .paw-traffic-lights button:nth-child(2) { border-color: #f5a623; }
 .paw-desktop-root .paw-traffic-lights button:nth-child(3) { border-color: #2f9e55; }
+/* The lifted window's lights are lit; resting windows keep hollow rings, so
+   focus reads across the desktop before any title is parsed. Glyphs still
+   surface on group hover for the explicit affordance. */
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights button:nth-child(1) { border-color: color-mix(in srgb, #f04438 74%, #8a1f16); background: #ff5f57; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights button:nth-child(2) { border-color: color-mix(in srgb, #f5a623 74%, #8f5c07); background: #febc2e; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights button:nth-child(3) { border-color: color-mix(in srgb, #2f9e55 74%, #175c2f); background: #28c840; }
 .paw-desktop-root .paw-traffic-lights:hover button { border-color: transparent; color: rgb(23 26 33 / .7); }
 .paw-desktop-root .paw-traffic-lights:hover button:nth-child(1) { background: #ff5f57; }
 .paw-desktop-root .paw-traffic-lights:hover button:nth-child(2) { background: #febc2e; }
