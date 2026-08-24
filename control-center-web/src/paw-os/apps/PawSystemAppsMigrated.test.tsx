@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
+import { MotionProvider } from '@/design/motion';
 import { PawOsAppearanceProvider } from '@/design/paw-os-themes';
 import { PawOsAppSurfaceProvider, PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
@@ -54,6 +55,13 @@ describe('PawSystemAppsMigrated', () => {
     expect(rail?.querySelector('.paw-app-icon')).toBeNull();
     expect(rail?.firstElementChild?.tagName).toBe('NAV');
     expect(screen.getByRole('navigation', { name: 'Input Studio页面' })).toBeInTheDocument();
+  });
+
+  it('names the current page in the stage chrome strip', () => {
+    renderSystemApp('system-settings', '/appearance');
+
+    const title = document.querySelector('.paw-system-app__page-title');
+    expect(title?.textContent).toBe('外观');
   });
 
   it('moves between Input Studio pages while retaining the real feature owners', async () => {
@@ -232,11 +240,13 @@ function SystemHarness({
       <QueryClientProvider client={client}>
         <ControlTransportProvider transport={transport}>
           <PawOsAppearanceProvider>
-            <PawOsDesktopProvider openRoute={setRoute} openWindow={() => undefined}>
-              <PawOsAppSurfaceProvider appId={appId} height={720} width={1_080}>
-                <PawSystemAppsMigrated appId={appId} initialRoute={route} />
-              </PawOsAppSurfaceProvider>
-            </PawOsDesktopProvider>
+            <MotionProvider>
+              <PawOsDesktopProvider openRoute={setRoute} openWindow={() => undefined}>
+                <PawOsAppSurfaceProvider appId={appId} height={720} width={1_080}>
+                  <PawSystemAppsMigrated appId={appId} initialRoute={route} />
+                </PawOsAppSurfaceProvider>
+              </PawOsDesktopProvider>
+            </MotionProvider>
           </PawOsAppearanceProvider>
         </ControlTransportProvider>
       </QueryClientProvider>

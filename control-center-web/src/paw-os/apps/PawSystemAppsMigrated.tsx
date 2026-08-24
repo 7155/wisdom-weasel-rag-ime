@@ -2,7 +2,6 @@ import {
   Activity,
   Bot,
   BookOpen,
-  ChevronRight,
   CircleAlert,
   Fingerprint,
   Gauge,
@@ -145,9 +144,8 @@ export function PawSystemAppsMigrated({
                 title={candidate.label}
                 type="button"
               >
-                <Icon aria-hidden="true" size={15} />
+                <Icon aria-hidden="true" size={16} />
                 <span>{candidate.label}</span>
-                <ChevronRight aria-hidden="true" size={13} />
               </button>
             );
           })}
@@ -155,6 +153,7 @@ export function PawSystemAppsMigrated({
       </aside>
 
       <section className="paw-system-app__stage">
+        <span aria-hidden="true" className="paw-system-app__page-title">{page.label}</span>
         <MemoryRouter initialEntries={[route]} key={route}>
           <PawSystemRouteReporter expectedRoute={route} />
           <div className="paw-system-app__page" key={`${appId}:${page.id}`}>
@@ -202,7 +201,7 @@ function PawSystemSurface({ appId, pageId }: { appId: PawSystemAppId; pageId: st
 function PawAppearanceSettings() {
   return (
     <ManagementPage
-      description="选择 PAWOS 的显示主题；外观不会改变运行状态。"
+      description="桌面主题、界面动效与 App 身份色。"
       routeId="appearance"
       title="外观"
     >
