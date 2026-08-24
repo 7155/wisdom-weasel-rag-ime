@@ -22,7 +22,8 @@ import {
   Sparkles,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Input, Switch } from '@/components/primitives';
@@ -75,6 +76,7 @@ type SystemPage = {
   label: string;
   icon: LucideIcon;
   route: string;
+  group?: string;
 };
 
 const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
@@ -90,16 +92,16 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
     { id: 'proposals', label: '建议', icon: Sparkles, route: '/plugins?view=proposals' },
   ],
   'system-monitor': [
-    { id: 'activity', label: '活动', icon: Activity, route: '/observability' },
-    { id: 'context', label: '上下文', icon: Network, route: '/context-debug' },
-    { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics' },
+    { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时' },
+    { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查' },
+    { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics', group: '排查' },
   ],
   'system-settings': [
-    { id: 'agent', label: 'Agent', icon: Bot, route: '/configuration?view=agent' },
-    { id: 'appearance', label: '外观', icon: Palette, route: '/appearance' },
-    { id: 'configuration', label: '配置', icon: Settings2, route: '/configuration' },
-    { id: 'governance', label: '治理', icon: ShieldCheck, route: '/governance' },
-    { id: 'approvals', label: '审批', icon: Fingerprint, route: '/approvals' },
+    { id: 'configuration', label: '配置', icon: Settings2, route: '/configuration', group: '通用' },
+    { id: 'appearance', label: '外观', icon: Palette, route: '/appearance', group: '通用' },
+    { id: 'agent', label: 'Agent', icon: Bot, route: '/configuration?view=agent', group: 'Agent' },
+    { id: 'governance', label: '治理', icon: ShieldCheck, route: '/governance', group: '安全与信任' },
+    { id: 'approvals', label: '审批', icon: Fingerprint, route: '/approvals', group: '安全与信任' },
   ],
 };
 
@@ -125,35 +127,60 @@ export function PawSystemAppsMigrated({
   const pages = systemPages[appId];
   const app = pawApp(appId);
   const desktop = usePawOsDesktop();
+  const transport = useControlTransport();
   const route = initialRoute || app.route || pages[0].route;
   const page = systemPageForRoute(pages, route);
+  // Settings surfaces the human decision queue in its own navigation. The
+  // query key matches the approvals feature so a decision there refreshes
+  // this count without a second request cycle.
+  const approvalsBadge = useQuery({
+    queryKey: ['approvals', 'all'],
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.approvals.list',
+      query: { limit: 500 },
+      signal,
+    }),
+    enabled: appId === 'system-settings',
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const pendingApprovals = appId === 'system-settings' ? pendingApprovalCount(approvalsBadge.data) : 0;
 
   return (
     <div className="paw-system-app" data-page-id={page.id} data-system-app={appId}>
       <aside className="paw-system-app__nav">
         <nav aria-label={`${app.label}页面`}>
-          {pages.map((candidate) => {
+          {pages.map((candidate, index) => {
             const Icon = candidate.icon;
             const current = candidate.id === page.id;
+            const badge = candidate.id === 'approvals' ? pendingApprovals : 0;
+            const name = badge ? `${candidate.label}（${badge} 项待处理）` : candidate.label;
             return (
-              <button
-                aria-current={current ? 'page' : undefined}
-                aria-label={candidate.label}
-                key={candidate.id}
-                onClick={() => openPawOsRoute(desktop, candidate.route)}
-                title={candidate.label}
-                type="button"
-              >
-                <Icon aria-hidden="true" size={16} />
-                <span>{candidate.label}</span>
-              </button>
+              <Fragment key={candidate.id}>
+                {candidate.group && candidate.group !== pages[index - 1]?.group ? (
+                  <span aria-hidden="true" className="paw-system-app__nav-group">{candidate.group}</span>
+                ) : null}
+                <button
+                  aria-current={current ? 'page' : undefined}
+                  aria-label={name}
+                  onClick={() => openPawOsRoute(desktop, candidate.route)}
+                  title={name}
+                  type="button"
+                >
+                  <Icon aria-hidden="true" size={16} />
+                  <span>{candidate.label}</span>
+                  {badge ? <span aria-hidden="true" className="paw-system-app__nav-badge">{badge > 99 ? '99+' : badge}</span> : null}
+                </button>
+              </Fragment>
             );
           })}
         </nav>
       </aside>
 
       <section className="paw-system-app__stage">
-        <span aria-hidden="true" className="paw-system-app__page-title">{page.label}</span>
+        <span aria-hidden="true" className="paw-system-app__page-title">
+          {page.group ? `${page.group} · ${page.label}` : page.label}
+        </span>
         <MemoryRouter initialEntries={[route]} key={route}>
           <PawSystemRouteReporter expectedRoute={route} />
           <div className="paw-system-app__page" key={`${appId}:${page.id}`}>
@@ -467,6 +494,15 @@ function useAgentModelResource() {
   }, [revision, transport]);
 
   return { data, error, loading, reload };
+}
+
+function pendingApprovalCount(value: unknown): number {
+  const items = asRecord(value).items;
+  if (!Array.isArray(items)) return 0;
+  return items.filter((item) => {
+    const approval = asRecord(item);
+    return approval.schemaVersion === 'rag-ime.agent-approval.v1' && approval.state === 'pending';
+  }).length;
 }
 
 function systemPageForRoute(pages: readonly SystemPage[], route: string): SystemPage {

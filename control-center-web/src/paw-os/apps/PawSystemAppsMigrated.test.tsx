@@ -57,11 +57,44 @@ describe('PawSystemAppsMigrated', () => {
     expect(screen.getByRole('navigation', { name: 'Input Studio页面' })).toBeInTheDocument();
   });
 
-  it('names the current page in the stage chrome strip', () => {
+  it('names the current page with its group in the stage chrome strip', () => {
     renderSystemApp('system-settings', '/appearance');
 
     const title = document.querySelector('.paw-system-app__page-title');
-    expect(title?.textContent).toBe('外观');
+    expect(title?.textContent?.trim()).toBe('通用 · 外观');
+  });
+
+  it('carves the Settings and Monitor rails into labelled groups', () => {
+    renderSystemApp('system-settings', '/configuration');
+    expect(groupLabels()).toEqual(['通用', 'Agent', '安全与信任']);
+
+    cleanup();
+    renderSystemApp('system-monitor', '/observability');
+    expect(groupLabels()).toEqual(['实时', '排查']);
+  });
+
+  it('counts pending approvals on the Settings rail without inventing numbers', async () => {
+    const transport = baseTransport({
+      'agent.approvals.list': {
+        ok: true,
+        items: [
+          previewApprovalStub('approval:one', 'pending'),
+          previewApprovalStub('approval:two', 'pending'),
+          previewApprovalStub('approval:done', 'applied'),
+        ],
+      },
+    });
+    renderSystemApp('system-settings', '/configuration', transport);
+
+    const approvalsButton = await screen.findByRole('button', { name: '审批（2 项待处理）' });
+    expect(approvalsButton.querySelector('.paw-system-app__nav-badge')?.textContent).toBe('2');
+  });
+
+  it('keeps the Settings rail quiet when the approvals route is unavailable', async () => {
+    renderSystemApp('system-settings', '/configuration');
+
+    expect(await screen.findByRole('button', { name: '审批' })).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.paw-system-app__nav-badge')).toBeNull());
   });
 
   it('moves between Input Studio pages while retaining the real feature owners', async () => {
@@ -220,6 +253,28 @@ function renderSystemApp(
   transport = baseTransport(),
 ) {
   return render(<SystemHarness appId={appId} initialRoute={initialRoute} transport={transport} />);
+}
+
+function groupLabels(): string[] {
+  return [...document.querySelectorAll('.paw-system-app__nav-group')].map((node) => node.textContent?.trim() ?? '');
+}
+
+function previewApprovalStub(approvalId: string, state: 'pending' | 'applied') {
+  return {
+    schemaVersion: 'rag-ime.agent-approval.v1',
+    approvalId,
+    sessionId: 'session-preview',
+    toolCallId: `tool-call:${approvalId}`,
+    toolId: 'workspace_shell',
+    operation: 'run',
+    payloadSha256: 'a'.repeat(64),
+    preview: { summary: '示例请求' },
+    riskLevel: 'R2',
+    state,
+    requestedAtMs: Date.now() - 1_000,
+    expiresAtMs: Date.now() + 60_000,
+    decidedBy: '',
+  };
 }
 
 function SystemHarness({

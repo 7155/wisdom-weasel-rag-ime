@@ -114,7 +114,7 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     defaultRouteId: 'configuration',
     presentation: 'system',
     accent: 'slate',
-    tagline: '配置、安全、治理与 Provider',
+    tagline: '通用配置、外观与安全审批',
   },
   {
     id: 'files',
