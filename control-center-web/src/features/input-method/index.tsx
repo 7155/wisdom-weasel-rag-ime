@@ -501,7 +501,7 @@ export function InputMethodFeature() {
                     ? '当前设置已符合所选模式。'
                     : '',
             )}
-            description="只写入左侧列出的差异，其余设置不动。"
+            description="只写入差异清单里的设置，其余不动。"
             draftKey={JSON.stringify({ mode: modeDraft, changes: pendingModeChanges, runtimeRevision })}
             mutationKey={['input-method', 'mutation', 'mode']}
             onApply={async (preview) => parseManagementWorkReceipt(
