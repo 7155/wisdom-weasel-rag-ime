@@ -1,26 +1,266 @@
-main[data-route-id='approvals'] .approvals-count { color: var(--color-text-tertiary); font: 650 12px var(--font-mono); }
-main[data-route-id='approvals'] .approvals-toolbar { display: grid; min-width: 0; grid-template-columns: auto minmax(150px, .35fr) minmax(220px, 1fr); align-items: end; gap: var(--space-3); padding: 10px 0 12px; border-block: 1px solid var(--color-border); }
-main[data-route-id='approvals'] .approvals-toolbar > .ui-segmented-control { align-self: center; }
-main[data-route-id='approvals'] .approvals-list { display: grid; gap: 9px; margin: 12px 0 0; padding: 0; list-style: none; }
-main[data-route-id='approvals'] .approvals-list > li { overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); }
-main[data-route-id='approvals'] .approvals-list > li[data-state='applied'] { border-color: color-mix(in srgb, var(--color-success) 46%, var(--color-border)); }
-main[data-route-id='approvals'] .approvals-list > li[data-state='failed'] { border-color: color-mix(in srgb, var(--color-danger) 50%, var(--color-border)); }
-main[data-route-id='approvals'] .approvals-list > li[data-state='rejected'],
-main[data-route-id='approvals'] .approvals-list > li[data-state='expired'],
-main[data-route-id='approvals'] .approvals-list > li[data-state='stale'] { border-color: var(--color-border-strong); }
-main[data-route-id='approvals'] .approvals-list > li > header { display: grid; min-height: 58px; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 11px; border-bottom: 1px solid var(--color-border-soft); }
-main[data-route-id='approvals'] .approvals-list__risk { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--color-warning-soft); color: var(--color-warning); font: 750 11px var(--font-mono); }
-main[data-route-id='approvals'] li[data-risk='R3'] .approvals-list__risk { background: var(--color-danger-soft); color: var(--color-danger); }
-main[data-route-id='approvals'] .approvals-list > li > header > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
-main[data-route-id='approvals'] .approvals-list > li > header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-main[data-route-id='approvals'] .approvals-list > li > header small { color: var(--color-text-tertiary); font-size: 12px; }
-main[data-route-id='approvals'] .approvals-list__context { display: flex; flex-wrap: wrap; gap: 5px 14px; padding: 8px 11px; color: var(--color-text-tertiary); font-size: 11px; }
-main[data-route-id='approvals'] .approvals-list__context a { display: inline-flex; align-items: center; gap: 4px; color: var(--color-accent); font-weight: 650; }
-main[data-route-id='approvals'] .approvals-list dl { display: grid; margin: 0; padding: 0 11px 8px; }
-main[data-route-id='approvals'] .approvals-list dl > div { display: grid; min-width: 0; grid-template-columns: minmax(70px, auto) minmax(0, 1fr); gap: 8px; padding: 5px 0; border-top: 1px solid var(--color-border-soft); font-size: 12px; }
-main[data-route-id='approvals'] .approvals-list dt { color: var(--color-text-tertiary); }
-main[data-route-id='approvals'] .approvals-list dd { min-width: 0; margin: 0; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-main[data-route-id='approvals'] .approvals-preview { margin: 0 11px 9px; border-block: 1px solid var(--color-border-soft); }
+/* ============================= 审批中心 =============================
+   IA: pulse band (honest queue state) → decision desk. The queue on the
+   left orders what waits; the decision panel on the right holds exactly
+   one hash-bound request with its full evidence and two stable actions.
+   Cool slate palette shared with 安全与治理; hover-only transitions. */
+
+.shell-route-stage > main[data-route-id='approvals'] { width: 100%; }
+
+/* ------------------------------ pulse band ------------------------------ */
+main[data-route-id='approvals'] .approvals-pulse {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, #64748b 22%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #38bdf8 7%, transparent), transparent 55%),
+    color-mix(in srgb, #f8fafc 88%, #dbeafe 12%);
+}
+main[data-route-id='approvals'] .approvals-pulse[data-tone='attention'] {
+  border-color: color-mix(in srgb, var(--color-warning) 34%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 9%, transparent), transparent 55%),
+    color-mix(in srgb, #f8fafc 92%, #fde68a 8%);
+}
+main[data-route-id='approvals'] .approvals-pulse[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--color-danger) 32%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-danger) 8%, transparent), transparent 55%),
+    color-mix(in srgb, #f8fafc 93%, #fecaca 7%);
+}
+main[data-route-id='approvals'] .approvals-pulse__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  place-items: center;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--color-success) 13%, transparent);
+  color: var(--color-success);
+}
+main[data-route-id='approvals'] .approvals-pulse[data-tone='attention'] .approvals-pulse__icon {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+main[data-route-id='approvals'] .approvals-pulse[data-tone='danger'] .approvals-pulse__icon {
+  background: color-mix(in srgb, var(--color-danger) 13%, transparent);
+  color: var(--color-danger);
+}
+main[data-route-id='approvals'] .approvals-pulse__copy { display: grid; min-width: 0; gap: 2px; }
+main[data-route-id='approvals'] .approvals-pulse__copy strong {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+main[data-route-id='approvals'] .approvals-pulse__copy p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+main[data-route-id='approvals'] .approvals-pulse__done {
+  flex: none;
+  margin-left: auto;
+  padding: 5px 11px;
+  border: 1px solid color-mix(in srgb, #64748b 20%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #fff 72%, transparent);
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+/* ------------------------------ decision desk ------------------------------ */
+main[data-route-id='approvals'] .approvals-desk {
+  display: grid;
+  align-items: start;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+}
+
+/* ------------------------------ queue ------------------------------ */
+main[data-route-id='approvals'] .approvals-queue { display: grid; min-width: 0; gap: var(--space-3); }
+main[data-route-id='approvals'] .approvals-queue__filters {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+main[data-route-id='approvals'] .approvals-queue__count {
+  color: var(--color-text-tertiary);
+  font: 650 12px var(--font-mono);
+}
+main[data-route-id='approvals'] .approvals-queue__tools {
+  display: grid;
+  align-items: end;
+  gap: var(--space-3);
+  grid-template-columns: minmax(128px, .38fr) minmax(0, 1fr);
+}
+main[data-route-id='approvals'] .approvals-queue__list {
+  display: grid;
+  margin: 0;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+main[data-route-id='approvals'] .approvals-queue__list > li { min-width: 0; }
+main[data-route-id='approvals'] .approvals-queue__list > li > button {
+  display: grid;
+  width: 100%;
+  min-height: 58px;
+  align-items: center;
+  gap: 10px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, #64748b 20%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 84%, transparent);
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+  transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+}
+main[data-route-id='approvals'] .approvals-queue__list > li > button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+main[data-route-id='approvals'] .approvals-queue__list > li[data-active] > button {
+  border-color: color-mix(in srgb, var(--color-accent) 46%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 6%, #fff 84%);
+}
+main[data-route-id='approvals'] .approvals-queue__list > li[data-state='failed'] > button {
+  border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
+}
+main[data-route-id='approvals'] .approvals-queue__copy { display: grid; min-width: 0; gap: 2px; }
+main[data-route-id='approvals'] .approvals-queue__copy strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+main[data-route-id='approvals'] .approvals-queue__copy small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+main[data-route-id='approvals'] .approvals-queue__meta {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+}
+main[data-route-id='approvals'] .approvals-queue__meta time {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Risk chip shared by queue rows and the decision head. */
+main[data-route-id='approvals'] .approvals-risk {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, #64748b 12%, transparent);
+  color: #475569;
+  font: 750 12px var(--font-mono);
+}
+main[data-route-id='approvals'] :is(li, article)[data-risk='R2'] .approvals-risk {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+main[data-route-id='approvals'] :is(li, article)[data-risk='R3'] .approvals-risk {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* ------------------------------ decision panel ------------------------------ */
+main[data-route-id='approvals'] .approvals-decision { min-width: 0; }
+main[data-route-id='approvals'] .approvals-decision__card {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, #64748b 22%, transparent);
+  border-radius: 16px;
+  background: #fff;
+}
+main[data-route-id='approvals'] .approvals-decision__card[data-risk='R3'][data-state='pending'] {
+  border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
+}
+main[data-route-id='approvals'] .approvals-decision__head {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: 11px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+}
+main[data-route-id='approvals'] .approvals-decision__head .approvals-risk { width: 34px; height: 34px; }
+main[data-route-id='approvals'] .approvals-decision__title { min-width: 0; }
+main[data-route-id='approvals'] .approvals-decision__title h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+main[data-route-id='approvals'] .approvals-decision__title p {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+main[data-route-id='approvals'] .approvals-decision__context {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin: 0;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  list-style: none;
+}
+main[data-route-id='approvals'] .approvals-decision__context a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-accent);
+  font-weight: 650;
+}
+main[data-route-id='approvals'] .approvals-decision__facts { display: grid; margin: 0; }
+main[data-route-id='approvals'] .approvals-decision__facts > div {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  grid-template-columns: minmax(84px, auto) minmax(0, 1fr);
+  padding: 7px 0;
+  border-top: 1px solid var(--color-border-soft);
+  font-size: 12.5px;
+}
+main[data-route-id='approvals'] .approvals-decision__facts dt { color: var(--color-text-tertiary); }
+main[data-route-id='approvals'] .approvals-decision__facts dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------ full hash-bound preview ------------------------------ */
+main[data-route-id='approvals'] .approvals-preview { border-block: 1px solid var(--color-border-soft); }
 main[data-route-id='approvals'] .approvals-preview > summary {
   display: flex;
   min-height: 44px;
@@ -42,7 +282,7 @@ main[data-route-id='approvals'] .approvals-preview > summary > span::before {
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 main[data-route-id='approvals'] .approvals-preview[open] > summary > span::before { transform: rotate(90deg); }
-main[data-route-id='approvals'] .approvals-preview > summary small { color: var(--color-text-tertiary); font: 11px/1.45 var(--font-mono); }
+main[data-route-id='approvals'] .approvals-preview > summary small { color: var(--color-text-tertiary); font: 12px/1.45 var(--font-mono); }
 main[data-route-id='approvals'] .approvals-preview > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 main[data-route-id='approvals'] .approvals-preview__body { display: grid; gap: 8px; padding: 2px 0 11px; }
 main[data-route-id='approvals'] .approvals-preview__body > p {
@@ -54,8 +294,8 @@ main[data-route-id='approvals'] .approvals-preview__body > p {
   font-size: 12px;
   font-weight: 650;
 }
-main[data-route-id='approvals'] .approvals-preview__binding { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; color: var(--color-text-tertiary); font-size: 11px; }
-main[data-route-id='approvals'] .approvals-preview__binding code { color: var(--color-text-secondary); font: 11px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+main[data-route-id='approvals'] .approvals-preview__binding { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; color: var(--color-text-tertiary); font-size: 12px; }
+main[data-route-id='approvals'] .approvals-preview__binding code { color: var(--color-text-secondary); font: 12px/1.5 var(--font-mono); overflow-wrap: anywhere; }
 main[data-route-id='approvals'] .approvals-preview__body pre {
   max-height: 340px;
   margin: 0;
@@ -69,35 +309,79 @@ main[data-route-id='approvals'] .approvals-preview__body pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-main[data-route-id='approvals'] .approvals-list__confirm { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 7px; margin: 0 10px 8px; padding: 9px; border: 1px solid color-mix(in srgb, var(--color-danger) 45%, var(--color-border)); border-radius: var(--radius-1); background: var(--color-danger-soft); color: var(--color-danger); }
-main[data-route-id='approvals'] .approvals-list__confirm span { display: grid; gap: 2px; }
-main[data-route-id='approvals'] .approvals-list__confirm strong { font-size: 12px; }
-main[data-route-id='approvals'] .approvals-list__confirm small { color: var(--color-text-secondary); font-size: 11px; }
-main[data-route-id='approvals'] .approvals-list__error { margin: 0 10px 8px; padding: 8px; border: 1px solid color-mix(in srgb, var(--color-danger) 45%, var(--color-border)); border-radius: var(--radius-1); background: var(--color-danger-soft); color: var(--color-danger); font-size: 12px; }
-main[data-route-id='approvals'] .approvals-list > li > footer { display: flex; min-height: 46px; align-items: center; justify-content: flex-end; gap: 6px; padding: 7px 9px; border-top: 1px solid var(--color-border); background: var(--color-surface-subtle); }
 
+/* ------------------------------ confirm, error, actions ------------------------------ */
+main[data-route-id='approvals'] .approvals-decision__confirm {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+  border-radius: var(--radius-1);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+main[data-route-id='approvals'] .approvals-decision__confirm span { display: grid; gap: 2px; }
+main[data-route-id='approvals'] .approvals-decision__confirm strong { font-size: 12.5px; }
+main[data-route-id='approvals'] .approvals-decision__confirm small { color: var(--color-text-secondary); font-size: 12px; }
+main[data-route-id='approvals'] .approvals-decision__error {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+  border-radius: var(--radius-1);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 12.5px;
+}
+main[data-route-id='approvals'] .approvals-decision__actions {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-soft);
+}
+
+/* ------------------------------ interaction states ------------------------------ */
 @media (hover: hover) and (pointer: fine) {
+  main[data-route-id='approvals'] .approvals-queue__list > li:not([data-active]) > button:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 4%, #fff 84%);
+  }
   main[data-route-id='approvals'] .approvals-preview > summary:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  main[data-route-id='approvals'] .approvals-queue__list > li > button,
   main[data-route-id='approvals'] .approvals-preview > summary,
   main[data-route-id='approvals'] .approvals-preview > summary > span::before { transition: none; }
 }
 
-@media (max-width: 760px) {
-  main[data-route-id='approvals'] .approvals-toolbar { grid-template-columns: 1fr; }
-  main[data-route-id='approvals'] .approvals-toolbar > .ui-segmented-control { justify-self: stretch; }
-  main[data-route-id='approvals'] .approvals-list > li > header { grid-template-columns: 34px minmax(0, 1fr); }
-  main[data-route-id='approvals'] .approvals-list > li > header > .mgmt-status { grid-column: 2; justify-self: start; }
+/* ------------------------------ responsive: classic shell ------------------------------ */
+@media (max-width: 980px) {
+  main[data-route-id='approvals'] .approvals-desk { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  main[data-route-id='approvals'] .approvals-pulse { align-items: flex-start; flex-direction: column; }
+  main[data-route-id='approvals'] .approvals-pulse__done { margin-left: 0; }
+  main[data-route-id='approvals'] .approvals-queue__tools { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='approvals'] .approvals-queue__list > li > button { grid-template-columns: 30px minmax(0, 1fr); }
+  main[data-route-id='approvals'] .approvals-queue__meta { grid-column: 2; grid-auto-flow: column; justify-content: start; justify-items: start; gap: 10px; }
 }
 
+/* ------------------------------ responsive: PAWOS window ------------------------------ */
+@container paw-window (max-width: 900px) {
+  main[data-route-id='approvals'][data-paw-os-app] .approvals-desk { grid-template-columns: minmax(0, 1fr); }
+}
 @container paw-window (max-width: 620px) {
-  main[data-route-id='approvals'][data-paw-os-app] .approvals-toolbar { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='approvals'][data-paw-os-app] .approvals-toolbar > .ui-segmented-control { justify-self: stretch; }
-  main[data-route-id='approvals'][data-paw-os-app] .approvals-list > li > header { grid-template-columns: 34px minmax(0, 1fr); }
-  main[data-route-id='approvals'][data-paw-os-app] .approvals-list > li > header > .mgmt-status { grid-column: 2; justify-self: start; }
-  main[data-route-id='approvals'][data-paw-os-app] .approvals-list > li > footer { flex-wrap: wrap; }
+  main[data-route-id='approvals'][data-paw-os-app] .approvals-pulse { align-items: flex-start; flex-direction: column; }
+  main[data-route-id='approvals'][data-paw-os-app] .approvals-pulse__done { margin-left: 0; }
+  main[data-route-id='approvals'][data-paw-os-app] .approvals-queue__tools { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='approvals'][data-paw-os-app] .approvals-queue__list > li > button { grid-template-columns: 30px minmax(0, 1fr); }
+  main[data-route-id='approvals'][data-paw-os-app] .approvals-queue__meta { grid-column: 2; grid-auto-flow: column; justify-content: start; justify-items: start; gap: 10px; }
+  main[data-route-id='approvals'][data-paw-os-app] .approvals-decision__actions { flex-wrap: wrap; }
   main[data-route-id='approvals'][data-paw-os-app] .approvals-preview > summary { align-items: flex-start; flex-direction: column; gap: 2px; padding-block: 7px; }
   main[data-route-id='approvals'][data-paw-os-app] .approvals-preview__binding { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
