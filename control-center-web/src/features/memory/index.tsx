@@ -180,7 +180,7 @@ export function MemoryFeature() {
   // A newly selected record always starts reading at the top; the previous
   // record's scroll position must not leak into the next one.
   useEffect(() => {
-    detailRef.current?.scrollTo({ top: 0 });
+    if (detailRef.current) detailRef.current.scrollTop = 0;
   }, [selectedId]);
 
   return (
