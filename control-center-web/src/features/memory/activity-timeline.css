@@ -1259,3 +1259,89 @@
 :root[data-reduce-motion='true'] .activity-timeline__source-refs summary svg,
 :root[data-reduce-motion='true'] .activity-timeline__event .ui-disclosure__reveal,
 :root[data-reduce-motion='true'] .activity-timeline__source-refs .ui-disclosure__reveal { transition: none; }
+
+/* ============================== timeline frame ==============================
+   The outer frame of the timeline view: root rhythm, toolbar, date controls,
+   loading state, decision bar, and the review dialog. Moved here from
+   memory.css so the timeline has exactly one stylesheet owner. */
+
+.activity-timeline {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+  padding: var(--space-5) 0 var(--space-6);
+}
+
+.activity-timeline__eyebrow {
+  display: block;
+  color: var(--color-accent);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .06em;
+}
+
+.activity-timeline__toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.activity-timeline__toolbar > div:first-child { min-width: 0; }
+.activity-timeline__toolbar h2 { margin: 4px 0 0; font-size: 20px; letter-spacing: 0; }
+.activity-timeline__date-controls { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.activity-timeline__date-controls .ui-input { width: 150px; min-width: 0; }
+
+.activity-timeline__loading {
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.activity-timeline__loading svg { animation: daily-journal-spin 1.2s linear infinite; }
+
+.activity-timeline__decision-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 12px 2px;
+  border-top: 1px solid var(--color-border-strong);
+}
+
+.activity-timeline__decision-bar > div { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.activity-timeline__decision-bar > div:first-child { color: var(--color-text-secondary); font-size: 12px; }
+.activity-timeline__decision-bar > div:first-child svg { flex: 0 0 auto; color: var(--color-text-tertiary); }
+
+.activity-timeline__dialog { width: min(520px, calc(100vw - 32px)); }
+
+@media (max-width: 680px) {
+  .activity-timeline__decision-bar > div:last-child .ui-button { flex: 1; }
+  .activity-timeline__toolbar {
+    display: grid;
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .activity-timeline__date-controls {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 44px minmax(150px, 1fr) 44px;
+  }
+
+  .activity-timeline__date-controls .ui-input { width: 100%; }
+  .activity-timeline__date-controls .ui-button { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-timeline__loading svg { animation: none; }
+}
+
+:root[data-reduce-motion='true'] .activity-timeline__loading svg { animation: none; }
