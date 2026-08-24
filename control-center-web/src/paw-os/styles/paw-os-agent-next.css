@@ -363,3 +363,25 @@
   .paw-agent-next *::before,
   .paw-agent-next *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* 证据复制：核对后的原文可以直接带走，不必全选整段可滚动 pre。
+   同一按钮同时服务装配证据（an-assembly-evidence）与事件流载荷
+   （paw-agent-trace-v1__payload-body 内的 an-evidence-actions 行）。 */
+.an-evidence-tools { display: inline-flex; flex: none; align-items: center; gap: 8px; }
+.an-evidence-copy {
+  flex: none;
+  min-height: 22px;
+  padding: 1px 9px;
+  border: 1px solid var(--an-rule);
+  border-radius: 999px;
+  background: var(--an-paper-bright);
+  color: var(--an-ink-2);
+  font-family: var(--font-ui, inherit);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.an-evidence-copy:hover { border-color: var(--an-rule-strong); color: var(--an-ink); }
+.an-evidence-copy[data-copied] { border-color: var(--an-teal); background: rgba(18, 138, 82, .08); color: var(--an-teal); }
+.an-evidence-actions { display: flex; justify-content: flex-end; margin-bottom: 6px; }

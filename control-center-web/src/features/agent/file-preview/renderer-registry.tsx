@@ -5,8 +5,8 @@ import type { AgentFilePreviewV1 } from '@/contracts/generated/agent-file-previe
 import { managedAgentMediaContentPath } from '@/platform/transport';
 import { CodePreview } from './CodePreview';
 import { DiffPreview } from './DiffPreview';
+import { HtmlArtifactPreview } from './HtmlArtifactPreview';
 import { MarkdownPreview } from './MarkdownPreview';
-import { RichHtmlPreview } from './RichHtmlPreview';
 
 export type FilePreviewKind = AgentFilePreviewV1['descriptor']['previewKind'];
 export type FilePreviewRenderer = ComponentType<{ preview: AgentFilePreviewV1 }>;
@@ -25,7 +25,7 @@ export function FilePreviewRenderer({ preview }: { preview: AgentFilePreviewV1 }
 registerFilePreviewRenderer('markdown', ({ preview }) => <MarkdownPreview content={preview.content ?? ''} />);
 registerFilePreviewRenderer('code', ({ preview }) => <CodePreview content={preview.content ?? ''} fileName={preview.descriptor.fileName} language={preview.descriptor.language || 'text'} />);
 registerFilePreviewRenderer('diff', ({ preview }) => <DiffPreview content={preview.content ?? ''} />);
-registerFilePreviewRenderer('html', ({ preview }) => <RichHtmlPreview content={preview.content ?? ''} title={preview.descriptor.fileName} />);
+registerFilePreviewRenderer('html', HtmlArtifactPreview);
 registerFilePreviewRenderer('image', ManagedImagePreview);
 registerFilePreviewRenderer('unsupported', UnsupportedPreview);
 

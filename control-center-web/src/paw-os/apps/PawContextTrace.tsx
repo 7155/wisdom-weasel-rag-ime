@@ -29,6 +29,7 @@ import {
 } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Disclosure } from '@/components/primitives';
+import { writeClipboardText } from '@/platform/clipboard';
 import type {
   AgentActivityProjection,
   AgentMessageProjection,
@@ -549,7 +550,10 @@ function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
     <section className="an-assembly-evidence" aria-label={evidence.label}>
       <header>
         <strong>{evidence.label}</strong>
-        <span>{formatNumber(evidence.value.length)} 字符</span>
+        <span className="an-evidence-tools">
+          <span>{formatNumber(evidence.value.length)} 字符</span>
+          <EvidenceCopyButton label={evidence.label} value={evidence.value} />
+        </span>
       </header>
       <pre
         aria-label={`${evidence.label}，可滚动原文`}
@@ -560,6 +564,30 @@ function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
         {evidence.value}
       </pre>
     </section>
+  );
+}
+
+/* 核对后的原文经常要带走比对；全选一段可滚动 pre 不应是唯一途径。 */
+function EvidenceCopyButton({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  const resetRef = useRef(0);
+  useEffect(() => () => window.clearTimeout(resetRef.current), []);
+  return (
+    <button
+      aria-label={copied ? `已复制${label}` : `复制${label}`}
+      className="an-evidence-copy"
+      data-copied={copied || undefined}
+      onClick={() => {
+        void writeClipboardText(value).then(() => {
+          setCopied(true);
+          window.clearTimeout(resetRef.current);
+          resetRef.current = window.setTimeout(() => setCopied(false), 1_400);
+        }).catch(() => setCopied(false));
+      }}
+      type="button"
+    >
+      {copied ? '已复制' : '复制'}
+    </button>
   );
 }
 
@@ -850,6 +878,9 @@ function TraceEvidenceSection({ section }: { section: TraceEvidenceSectionValue 
         </>
       )}
     >
+      <div className="an-evidence-actions">
+        <EvidenceCopyButton label={section.label} value={section.value} />
+      </div>
       <pre
         aria-label={`${section.label}，可滚动原文`}
         role="region"
@@ -1108,10 +1139,6 @@ function text(value: unknown): string {
 }
 function estimateTokens(content: string): number {
   return content ? Math.ceil(content.length / 4) : 0;
-}
-function lastMessageCount(context: DebugContextRecord): number {
-  const last = context.modelCalls[context.modelCalls.length - 1];
-  return last ? last.contextMessages.length : 0;
 }
 function findCache(cache: DebugCacheEvidence[], call: DebugModelCall): DebugCacheEvidence | undefined {
   return cache.find((item) => item.requestIndex === call.index);

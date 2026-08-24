@@ -1131,7 +1131,7 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-composer { overflow: visible; }
 .agent-composer__controls { overflow: visible; overscroll-behavior-inline: contain; scrollbar-width: none; }
 .agent-composer__controls::-webkit-scrollbar { display: none; }
-.agent-composer__delivery { display: inline-flex; flex: none; overflow: hidden; margin-left: 3px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); }
+.agent-composer__delivery { display: inline-flex; flex: none; overflow: hidden; margin-left: 3px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); animation: agent-composer-control-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-composer__delivery button { min-width: 44px; height: 27px; border: 0; border-right: 1px solid var(--color-border); padding: 0 8px; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .agent-composer__delivery button:last-child { border-right: 0; }
 .agent-composer__delivery button[data-active='true'] { background: var(--color-surface); color: var(--color-text); font-weight: var(--font-weight-semibold); box-shadow: inset 0 -2px 0 var(--color-accent); }
@@ -1141,7 +1141,7 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-composer__picker .ui-button__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-composer__attachment { flex: 0 0 auto; border: 1px solid var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-secondary); }
 .agent-composer__attachment:disabled { opacity: .62; }
-.agent-composer__stop { width: 34px; height: 34px; border-radius: 50%; color: var(--color-warning); }
+.agent-composer__stop { width: 34px; height: 34px; border-radius: 50%; color: var(--color-warning); animation: agent-composer-control-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-composer__attachments { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-2) 0; overflow-x: auto; }
 .agent-composer__attachment-chip { display: inline-flex; min-height: var(--space-12); flex: 0 0 auto; align-items: center; gap: var(--space-2); padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface-subtle); font-size: 13px; animation: agent-attachment-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-composer__attachment-chip > img { width: var(--space-10); height: var(--space-10); border-radius: var(--radius-1); background: var(--color-surface); object-fit: cover; }
@@ -2327,6 +2327,22 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   from { opacity: 0; transform: translateY(3px) scale(.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* Stop and steer/follow-up only exist while a turn runs. Mounting them cold
+   made the dock pop each time busy toggled; easing them in reads as the same
+   surface changing state, while idle sessions still pay no reserved space. */
+@keyframes agent-composer-control-enter {
+  from { opacity: 0; transform: translateY(2px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer__delivery,
+  .agent-composer__stop { animation: none; }
+}
+
+:root[data-reduce-motion='true'] .agent-composer__delivery,
+:root[data-reduce-motion='true'] .agent-composer__stop { animation: none; }
 
 @keyframes agent-status-breathe {
   0%, 100% { opacity: 1; }
