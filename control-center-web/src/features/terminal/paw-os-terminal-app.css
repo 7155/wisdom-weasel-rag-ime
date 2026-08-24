@@ -148,6 +148,13 @@
 .paw-tab-close:active { transform: scale(.9); }
 .paw-tab-close:disabled { cursor: wait; opacity: .28; }
 
+.paw-terminal-new-group {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+}
+
 .paw-terminal-tab-new {
   width: 26px;
   height: 26px;
@@ -163,6 +170,8 @@
 }
 .paw-terminal-tab-new:active { transform: scale(.94); }
 .paw-terminal-tab-new:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.paw-terminal-tab-new--cwd { width: 17px; }
+.paw-terminal-tab-new--cwd[aria-expanded='true'] { background: rgb(255 255 255 / 8%); color: #d7dbe2; }
 
 .paw-terminal-error {
   display: flex;
@@ -214,6 +223,7 @@
 }
 
 .paw-terminal-console {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
@@ -221,6 +231,123 @@
   background: var(--paw-terminal-bg);
   outline: none;
 }
+
+/* Scrollback search and the new-terminal-with-cwd form float over the console
+   so they never displace the PTY grid rows or resize the live terminal. */
+.paw-terminal-search,
+.paw-terminal-create {
+  position: absolute;
+  z-index: 6;
+  top: 8px;
+  right: 14px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 9px;
+  background: var(--paw-terminal-elevated);
+  box-shadow: 0 10px 26px rgb(0 0 0 / 42%);
+  animation: paw-terminal-state-enter 160ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+}
+
+.paw-terminal-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 28px);
+  padding: 5px 6px 5px 10px;
+  color: var(--paw-terminal-muted);
+}
+.paw-terminal-search input {
+  width: clamp(120px, 32cqi, 220px);
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--paw-terminal-text);
+  font: inherit;
+  outline: none;
+}
+.paw-terminal-search input::placeholder { color: #6b727e; }
+.paw-terminal-search__count {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  color: #aab1bc;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.paw-terminal-search button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #aab1bc;
+  cursor: pointer;
+  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+.paw-terminal-search button:disabled { cursor: default; opacity: .35; }
+.paw-terminal-search button:focus-visible,
+.paw-terminal-search input:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+
+.paw-terminal-create {
+  display: grid;
+  width: min(340px, calc(100% - 28px));
+  gap: 8px;
+  padding: 11px 12px;
+  color: var(--paw-terminal-text);
+}
+.paw-terminal-create label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: #aab1bc;
+}
+.paw-terminal-create input {
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 7px;
+  background: var(--paw-terminal-bg);
+  color: var(--paw-terminal-text);
+  font: inherit;
+  outline: none;
+}
+.paw-terminal-create input::placeholder { color: #6b727e; }
+.paw-terminal-create input:focus-visible { border-color: #58a6ff; }
+.paw-terminal-create input[aria-invalid] { border-color: rgb(248 113 113 / 62%); }
+.paw-terminal-create__hint {
+  margin: 0;
+  color: #ff9d97;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.paw-terminal-create__actions {
+  display: flex;
+  justify-content: end;
+  gap: 7px;
+}
+.paw-terminal-create__actions button {
+  min-height: 26px;
+  padding: 0 11px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+  color: #d7dbe2;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+.paw-terminal-create__actions button[type='submit'] {
+  border-color: color-mix(in srgb, var(--paw-app-accent, #79c56e) 45%, transparent);
+  background: var(--paw-app-accent-strong, #39784b);
+  color: #fff;
+}
+.paw-terminal-create__actions button:disabled { cursor: not-allowed; opacity: .45; }
+.paw-terminal-create__actions button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 
 /* The JSX console is the terminal surface plus its status footer. Keep that
    contract in the feature stylesheet so a standalone mount does not depend
@@ -330,12 +457,28 @@
   color: #858c98;
 }
 
+.paw-terminal-statusbar__search {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-left: auto;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--paw-terminal-muted);
+  cursor: pointer;
+  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+.paw-terminal-statusbar__search[data-active] { background: rgb(255 255 255 / 8%); color: #d7dbe2; }
+.paw-terminal-statusbar__search:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+
 .paw-terminal-state-tag {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 .paw-terminal-running-badge {
   display: inline-flex;
@@ -434,6 +577,10 @@
   .paw-tab-close:hover:not(:disabled) { opacity: 1; background: rgb(255 255 255 / 15%); }
   .paw-terminal-tab-new:hover { background: rgb(255 255 255 / 6%); color: #d7dbe2; }
   .paw-terminal-error button:hover { background: rgb(255 69 58 / 16%); }
+  .paw-terminal-search button:hover:not(:disabled),
+  .paw-terminal-statusbar__search:hover { background: rgb(255 255 255 / 9%); color: #e8eaf0; }
+  .paw-terminal-create__actions button:hover:not(:disabled) { background: rgb(255 255 255 / 9%); }
+  .paw-terminal-create__actions button[type='submit']:hover:not(:disabled) { background: color-mix(in srgb, var(--paw-app-accent-strong, #39784b) 88%, #fff); }
   .paw-terminal-tab:hover,
   .paw-terminal-tab-new:hover,
   .paw-terminal-console__empty button:hover { transform: translate3d(0, -1px, 0); }
@@ -444,6 +591,8 @@
   .paw-terminal-ended,
   .paw-terminal-exited-badge,
   .paw-terminal-console__empty,
+  .paw-terminal-search,
+  .paw-terminal-create,
   .paw-terminal-tab,
   .paw-terminal-tab-main i[data-state="running"]::after { animation: none; transform: none; }
   .paw-terminal-tab,
@@ -460,6 +609,8 @@
 :root[data-reduce-motion='true'] .paw-terminal-ended,
 :root[data-reduce-motion='true'] .paw-terminal-exited-badge,
 :root[data-reduce-motion='true'] .paw-terminal-console__empty,
+:root[data-reduce-motion='true'] .paw-terminal-search,
+:root[data-reduce-motion='true'] .paw-terminal-create,
 :root[data-reduce-motion='true'] .paw-terminal-tab,
 :root[data-reduce-motion='true'] .paw-terminal-tab-main i[data-state="running"]::after { animation: none; transform: none; }
 :root[data-reduce-motion='true'] .paw-terminal-tab,

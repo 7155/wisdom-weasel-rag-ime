@@ -1,11 +1,13 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { Terminal as Xterm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Folder, LoaderCircle, Plus, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, Folder, LoaderCircle, Plus, Search, TriangleAlert, X } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '@/paw-os/shell/PawWindowChrome';
+import { writeClipboardText } from '@/platform/clipboard';
 import './paw-os-terminal-app.css';
 
 type TerminalState = 'running' | 'exited' | 'closed';
@@ -44,6 +46,25 @@ interface TerminalReadResponse {
 const terminalKeys = { root: ['system-terminal'] as const };
 const emptySessions: TerminalSession[] = [];
 
+// Highlight colours mirror the xterm theme below so search decorations stay
+// readable on the dark terminal surface. Backgrounds must be #RRGGBB.
+const searchDecorations = {
+  matchBackground: '#314036',
+  matchOverviewRuler: '#79c56e',
+  activeMatchBackground: '#79c56e',
+  activeMatchColorOverviewRuler: '#f4f4f5',
+};
+
+type ScrollbackSearchResult = { resultIndex: number; resultCount: number };
+
+function searchCountText(result: ScrollbackSearchResult | null): string {
+  if (!result) return '';
+  if (!result.resultCount) return '无匹配';
+  // resultIndex is -1 when matches exceed the highlight limit.
+  if (result.resultIndex < 0) return `${result.resultCount}+ 项`;
+  return `${result.resultIndex + 1}/${result.resultCount}`;
+}
+
 function terminalStateText(session: TerminalSession): string {
   if (session.status === 'running') return '运行中';
   if (session.status === 'closed') return '已关闭';
@@ -64,9 +85,17 @@ export function PawOsTerminalApp() {
   const [selectedId, setSelectedId] = useState('');
   const [cursor, setCursor] = useState(0);
   const [interactionError, setInteractionError] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchDraft, setSearchDraft] = useState('');
+  const [searchResult, setSearchResult] = useState<ScrollbackSearchResult | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [cwdDraft, setCwdDraft] = useState('');
   const terminalTabsId = useId();
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Xterm | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const cwdInputRef = useRef<HTMLInputElement | null>(null);
   const terminalTabRefs = useRef(new Map<string, HTMLButtonElement>());
   const emptyCreateRef = useRef<HTMLButtonElement | null>(null);
   const initialLoadHandled = useRef(false);
@@ -100,9 +129,9 @@ export function PawOsTerminalApp() {
   }, [sessions]);
 
   const create = useMutation({
-    mutationFn: () => transport.request<{ terminal: TerminalSession }>({
+    mutationFn: (options: { cwd?: string }) => transport.request<{ terminal: TerminalSession }>({
       pathId: 'terminal.session.create',
-      body: { title: 'Terminal', cols: 120, rows: 35 },
+      body: { title: 'Terminal', cols: 120, rows: 35, ...(options.cwd ? { cwd: options.cwd } : {}) },
     }),
     onSuccess: async (value) => {
       await invalidate();
@@ -124,7 +153,7 @@ export function PawOsTerminalApp() {
   useEffect(() => {
     if (initialLoadHandled.current || !sessionsQuery.data) return;
     initialLoadHandled.current = true;
-    if (!sessionsQuery.data.items.length) create.mutate();
+    if (!sessionsQuery.data.items.length) create.mutate({});
   }, [create, sessionsQuery.data]);
 
   useEffect(() => {
@@ -151,7 +180,18 @@ export function PawOsTerminalApp() {
   useEffect(() => {
     setCursor(0);
     setInteractionError('');
+    setShowSearch(false);
+    setSearchDraft('');
+    setSearchResult(null);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (showSearch) searchInputRef.current?.focus();
+  }, [showSearch]);
+
+  useEffect(() => {
+    if (showCreateForm) cwdInputRef.current?.focus();
+  }, [showCreateForm]);
 
   // The tab strip scrolls locally; keep the selected identity visible even when
   // selection changes through keyboard navigation or session-list updates.
@@ -182,6 +222,27 @@ export function PawOsTerminalApp() {
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
+    const search = new SearchAddon();
+    terminal.loadAddon(search);
+    const searchSubscription = search.onDidChangeResults(setSearchResult);
+    searchAddonRef.current = search;
+    // Ctrl/Cmd combos that must stay in PAWOS instead of reaching the PTY:
+    // copy the current selection, and open the scrollback search.
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true;
+      const withShell = (event.ctrlKey && event.shiftKey) || (event.metaKey && !event.ctrlKey && !event.altKey);
+      if (!withShell) return true;
+      if (event.code === 'KeyC' && terminal.hasSelection()) {
+        void writeClipboardText(terminal.getSelection()).catch(() => undefined);
+        return false;
+      }
+      if (event.code === 'KeyF') {
+        setShowCreateForm(false);
+        setShowSearch(true);
+        return false;
+      }
+      return true;
+    });
     terminal.open(host);
     terminalRef.current = terminal;
     let pendingInput = '';
@@ -226,7 +287,9 @@ export function PawOsTerminalApp() {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       dataSubscription.dispose();
+      searchSubscription.dispose();
       terminal.dispose();
+      if (searchAddonRef.current === search) searchAddonRef.current = null;
       if (terminalRef.current === terminal) terminalRef.current = null;
     };
   }, [selectedId, transport]);
@@ -272,6 +335,41 @@ export function PawOsTerminalApp() {
   const selectTerminalTab = (terminalId: string, focus = false) => {
     setSelectedId(terminalId);
     if (focus) terminalTabRefs.current.get(terminalId)?.focus();
+  };
+
+  const runScrollbackSearch = (term: string, direction: 'next' | 'previous', incremental = false) => {
+    const addon = searchAddonRef.current;
+    if (!addon) return;
+    if (!term) {
+      addon.clearDecorations();
+      setSearchResult(null);
+      return;
+    }
+    const options = { decorations: searchDecorations, ...(direction === 'next' && incremental ? { incremental: true } : {}) };
+    if (direction === 'next') addon.findNext(term, options);
+    else addon.findPrevious(term, options);
+  };
+
+  const closeSearch = () => {
+    searchAddonRef.current?.clearDecorations();
+    setShowSearch(false);
+    setSearchDraft('');
+    setSearchResult(null);
+    terminalRef.current?.focus();
+  };
+
+  const cwdInvalid = cwdDraft.trim() !== '' && !cwdDraft.trim().startsWith('/');
+
+  const closeCreateForm = () => {
+    setShowCreateForm(false);
+    setCwdDraft('');
+  };
+
+  const submitCreateWithCwd = () => {
+    const cwd = cwdDraft.trim();
+    if (cwdInvalid || create.isPending) return;
+    create.mutate(cwd ? { cwd } : {});
+    closeCreateForm();
   };
 
   const onTerminalTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -344,9 +442,25 @@ export function PawOsTerminalApp() {
         })}
       </div>
       {sessions.length ? (
-        <button aria-busy={create.isPending || undefined} aria-label="新建终端" className="paw-terminal-tab-new" disabled={create.isPending} onClick={() => create.mutate()} type="button">
-          {create.isPending ? <LoaderCircle className="ui-spin" size={13} /> : <Plus size={13} />}
-        </button>
+        <div className="paw-terminal-new-group">
+          <button aria-busy={create.isPending || undefined} aria-label="新建终端" className="paw-terminal-tab-new" disabled={create.isPending} onClick={() => create.mutate({})} type="button">
+            {create.isPending ? <LoaderCircle className="ui-spin" size={13} /> : <Plus size={13} />}
+          </button>
+          <button
+            aria-expanded={showCreateForm}
+            aria-label="在指定目录新建终端"
+            className="paw-terminal-tab-new paw-terminal-tab-new--cwd"
+            disabled={create.isPending}
+            onClick={() => {
+              setShowSearch(false);
+              setShowCreateForm((value) => !value);
+            }}
+            title="在指定目录新建终端"
+            type="button"
+          >
+            <ChevronDown size={12} />
+          </button>
+        </div>
       ) : null}
     </div>
   );
@@ -376,18 +490,73 @@ export function PawOsTerminalApp() {
             id={terminalPanelId}
             role={selected ? 'tabpanel' : undefined}
           >
+            {selected && showSearch ? (
+              <div className="paw-terminal-search" role="search">
+                <Search aria-hidden="true" size={13} />
+                <input
+                  aria-label="搜索终端输出"
+                  onChange={(event) => {
+                    setSearchDraft(event.target.value);
+                    runScrollbackSearch(event.target.value, 'next', true);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') runScrollbackSearch(searchDraft, event.shiftKey ? 'previous' : 'next');
+                    if (event.key === 'Escape') closeSearch();
+                  }}
+                  placeholder="搜索输出"
+                  ref={searchInputRef}
+                  spellCheck={false}
+                  value={searchDraft}
+                />
+                <span aria-live="polite" className="paw-terminal-search__count">{searchDraft ? searchCountText(searchResult) : ''}</span>
+                <button aria-label="上一个匹配" disabled={!searchDraft} onClick={() => runScrollbackSearch(searchDraft, 'previous')} type="button"><ArrowUp size={12} /></button>
+                <button aria-label="下一个匹配" disabled={!searchDraft} onClick={() => runScrollbackSearch(searchDraft, 'next')} type="button"><ArrowDown size={12} /></button>
+                <button aria-label="关闭搜索" onClick={closeSearch} type="button"><X size={12} /></button>
+              </div>
+            ) : null}
+            {showCreateForm ? (
+              <form
+                aria-label="在指定目录新建终端"
+                className="paw-terminal-create"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitCreateWithCwd();
+                }}
+              >
+                <label>
+                  <span>新终端工作目录</span>
+                  <input
+                    aria-invalid={cwdInvalid || undefined}
+                    aria-label="新终端工作目录"
+                    onChange={(event) => setCwdDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') closeCreateForm();
+                    }}
+                    placeholder={selected?.cwd || '/绝对路径，留空使用默认目录'}
+                    ref={cwdInputRef}
+                    spellCheck={false}
+                    value={cwdDraft}
+                  />
+                </label>
+                {cwdInvalid ? <p className="paw-terminal-create__hint" role="alert">请输入以 / 开头的绝对路径。</p> : null}
+                <div className="paw-terminal-create__actions">
+                  <button disabled={create.isPending || cwdInvalid} type="submit">{create.isPending ? '正在创建' : '新建终端'}</button>
+                  <button onClick={closeCreateForm} type="button">取消</button>
+                </div>
+              </form>
+            ) : null}
             {sessionsQuery.isPending ? (
               <div className="paw-terminal-console__empty" data-loading role="status"><LoaderCircle className="ui-spin" size={15} /><p>正在读取终端会话…</p></div>
             ) : selected ? (
               <div aria-label="终端输入输出" className="paw-terminal-xterm" onClick={() => terminalRef.current?.focus()} ref={terminalHostRef} />
             ) : (
-              <div className="paw-terminal-console__empty"><p>还没有终端会话</p><button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate()} ref={emptyCreateRef} type="button">{create.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Plus size={14} />}{create.isPending ? '正在创建' : '新建终端'}</button></div>
+              <div className="paw-terminal-console__empty"><p>还没有终端会话</p><button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate({})} ref={emptyCreateRef} type="button">{create.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Plus size={14} />}{create.isPending ? '正在创建' : '新建终端'}</button></div>
             )}
             {selected && selected.status !== 'running' ? (
               <div className="paw-terminal-ended" role="status">
                 <span className="paw-terminal-ended__text">这个终端会话{terminalStateText(selected)}。输出仍可回看，输入不会再发送。</span>
                 <span className="paw-terminal-ended__actions">
-                  <button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate()} type="button">新建终端</button>
+                  <button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate({})} type="button">新建终端</button>
                   <button
                     aria-busy={close.isPending && close.variables === selected.terminalId ? true : undefined}
                     disabled={close.isPending}
@@ -413,6 +582,19 @@ export function PawOsTerminalApp() {
                 <span>UTF-8</span>
                 <i aria-hidden="true" />
                 <span>{selected.cols}×{selected.rows}</span>
+                <button
+                  aria-label="搜索终端输出"
+                  className="paw-terminal-statusbar__search"
+                  data-active={showSearch || undefined}
+                  onClick={() => {
+                    setShowCreateForm(false);
+                    setShowSearch(true);
+                  }}
+                  title="搜索终端输出（Ctrl+Shift+F / ⌘F）"
+                  type="button"
+                >
+                  <Search size={12} />
+                </button>
                 <span className="paw-terminal-state-tag">
                   {selected.status === 'running'
                     ? <span className="paw-terminal-running-badge"><i aria-hidden="true" />运行中</span>
