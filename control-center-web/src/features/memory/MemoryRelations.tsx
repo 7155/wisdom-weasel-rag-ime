@@ -1,4 +1,4 @@
-import { BookOpen, Boxes, Eye, EyeOff, Network, RefreshCw, Search, Tags } from 'lucide-react';
+import { BookOpen, Boxes, Eye, EyeOff, Network, Search, Tags } from 'lucide-react';
 import {
   useDeferredValue,
   useMemo,
@@ -147,13 +147,6 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
               ]}
               value={source}
             />
-            <Button
-              aria-label="刷新记忆关系"
-              leadingIcon={<RefreshCw size={14} />}
-              loading={activeQuery.isFetching}
-              onClick={refresh}
-              size="small"
-            >刷新</Button>
           </div>
         </div>
 

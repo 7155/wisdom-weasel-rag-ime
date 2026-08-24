@@ -90,6 +90,7 @@ export function MemoryPipeline({
           index="01"
           label="来源记录"
           onClick={() => onOpenLayer('evidence')}
+          stage="evidence"
           state={summaryState}
         />
         <PipelineFlow
@@ -106,6 +107,7 @@ export function MemoryPipeline({
           index="02"
           label="分批审核"
           onClick={onOpenOrganize}
+          stage="organize"
           state={summaryState}
           unit="条"
         />
@@ -120,6 +122,7 @@ export function MemoryPipeline({
           index="03"
           label="已整理记忆"
           onClick={() => onOpenLayer('atoms')}
+          stage="atoms"
           state={summaryState}
         />
         <PipelineFlow label="按主题归类" tone="idle" />
@@ -133,6 +136,7 @@ export function MemoryPipeline({
           index="04"
           label="长期主题"
           onClick={() => onOpenLayer('books')}
+          stage="books"
           state={summaryState}
         />
       </ol>
@@ -176,6 +180,7 @@ function PipelineStage({
   index,
   label,
   onClick,
+  stage,
   state,
   unit = '项',
 }: {
@@ -188,11 +193,12 @@ function PipelineStage({
   index: string;
   label: string;
   onClick: () => void;
+  stage: 'evidence' | 'organize' | 'atoms' | 'books';
   state: MemoryPipelineState;
   unit?: string;
 }) {
   return (
-    <li className="memory-pipeline__stage" data-active={active || undefined}>
+    <li className="memory-pipeline__stage" data-active={active || undefined} data-stage={stage}>
       <button aria-current={active ? 'step' : undefined} aria-label={ariaLabel} onClick={onClick} type="button">
         <span aria-hidden="true" className="memory-pipeline__stage-index">{index}</span>
         <span aria-hidden="true" className="memory-pipeline__stage-icon"><Icon size={15} /></span>
