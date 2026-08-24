@@ -1,9 +1,22 @@
+/* Terminal deep rebuild: an obsidian instrument console. One dark work surface
+   owns the PTY; chrome stays hairline-thin; the App accent (terminal green)
+   marks the selected tab, the live-session signal, and every primary action.
+   Motion is short, purposeful, and fully silenced under reduced motion. */
 .paw-terminal-app {
   --paw-terminal-bg: #101216;
-  --paw-terminal-elevated: #171a20;
+  --paw-terminal-elevated: #161a21;
+  --paw-terminal-raised: #1d232d;
   --paw-terminal-line: rgb(255 255 255 / 8%);
+  --paw-terminal-line-strong: rgb(255 255 255 / 14%);
   --paw-terminal-text: #d7dbe2;
-  --paw-terminal-muted: #7e8591;
+  --paw-terminal-bright: #ecf0f6;
+  --paw-terminal-muted: #8b93a1;
+  --paw-terminal-faint: #6b7380;
+  --paw-terminal-accent: var(--paw-app-accent, #79c56e);
+  --paw-terminal-accent-strong: var(--paw-app-accent-strong, #39784b);
+  --paw-terminal-focus: #58a6ff;
+  --paw-terminal-danger: #ff7770;
+  --paw-terminal-ease: var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
   display: grid;
   width: 100%;
   height: 100%;
@@ -27,7 +40,7 @@
   gap: 8px;
   padding-right: 8px;
   border-bottom: 1px solid rgb(255 255 255 / 8%);
-  background: #171a20;
+  background: #161a21;
   box-shadow: 0 1px 0 rgb(255 255 255 / 3%) inset;
 }
 .paw-window-titlebar[data-window-chrome='terminal-tabs'] .paw-window-title { min-width: 0; color: #aeb4bf; }
@@ -38,7 +51,7 @@
   justify-content: space-between;
   gap: 7px;
   padding: 0 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
   background: var(--paw-terminal-elevated);
   user-select: none;
 }
@@ -79,13 +92,28 @@
   flex: 0 1 158px;
   align-items: center;
   height: 33px;
-  border-radius: 9px 9px 0 0;
+  border-radius: 10px 10px 0 0;
   border: 0;
   background: transparent;
   color: #8b929d;
   font-size: var(--paw-type-mono, 13px);
-  transition: color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 160ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), transform 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
-  animation: paw-terminal-tab-enter 170ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  transition: color 140ms var(--paw-terminal-ease), background-color 140ms var(--paw-terminal-ease), box-shadow 160ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
+  animation: paw-terminal-tab-enter 180ms var(--paw-terminal-ease) both;
+}
+/* The selected tab merges into the console surface and carries one accent
+   beam: the App identity marks exactly where the live PTY is. */
+.paw-terminal-tab::before {
+  position: absolute;
+  top: 0;
+  right: 12px;
+  left: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--paw-terminal-accent), transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--paw-terminal-accent) 55%, transparent);
+  opacity: 0;
+  content: '';
+  transition: opacity 180ms var(--paw-terminal-ease);
 }
 .paw-terminal-tab-main {
   min-width: 0;
@@ -102,23 +130,26 @@
   text-align: left;
 }
 .paw-terminal-tab-main > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.paw-terminal-tab-main:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; border-radius: 8px; }
+.paw-terminal-tab-main:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; border-radius: 8px; }
 .paw-terminal-tab-main i {
   position: relative;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #484f58;
+  border: 1.5px solid #484f58;
+  background: transparent;
 }
 .paw-terminal-tab[data-selected] {
   background: var(--paw-terminal-bg);
-  color: #e8eaf0;
-  box-shadow: none;
+  color: var(--paw-terminal-bright);
+  box-shadow: 0 -1px 0 rgb(255 255 255 / 5%), -1px 0 0 rgb(255 255 255 / 4%), 1px 0 0 rgb(255 255 255 / 4%);
 }
+.paw-terminal-tab[data-selected]::before { opacity: 1; }
 .paw-terminal-tab:active { transform: scale(.97); }
 .paw-terminal-tab-main i[data-state="running"] {
+  border: 0;
   background: #30d158;
-  box-shadow: 0 0 0 2px rgb(48 209 88 / 16%);
+  box-shadow: 0 0 0 2px rgb(48 209 88 / 16%), 0 0 8px rgb(48 209 88 / 45%);
 }
 .paw-terminal-tab-main i[data-state="running"]::after {
   position: absolute;
@@ -129,7 +160,8 @@
   animation: paw-terminal-running 1.8s linear infinite;
 }
 .paw-terminal-tab-main i[data-state="exited"][data-exit-failure] {
-  background: #f87171;
+  border: 0;
+  background: var(--paw-terminal-danger);
   box-shadow: 0 0 0 2px rgb(248 113 113 / 14%);
 }
 .paw-tab-close {
@@ -143,7 +175,7 @@
   border-radius: 6px;
   color: inherit;
   cursor: pointer;
-  transition: opacity 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), transform 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: opacity 120ms var(--paw-terminal-ease), background-color 120ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
 }
 .paw-tab-close:active { transform: scale(.9); }
 .paw-tab-close:disabled { cursor: wait; opacity: .28; }
@@ -161,17 +193,21 @@
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 7px;
   border: 1px solid transparent;
   background: transparent;
   color: #858c98;
   cursor: pointer;
-  transition: color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), transform 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: color 140ms var(--paw-terminal-ease), background-color 140ms var(--paw-terminal-ease), border-color 140ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
 }
 .paw-terminal-tab-new:active { transform: scale(.94); }
-.paw-terminal-tab-new:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.paw-terminal-tab-new:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 .paw-terminal-tab-new--cwd { width: 17px; }
-.paw-terminal-tab-new--cwd[aria-expanded='true'] { background: rgb(255 255 255 / 8%); color: #d7dbe2; }
+.paw-terminal-tab-new--cwd[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--paw-terminal-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--paw-terminal-accent) 14%, transparent);
+  color: var(--paw-terminal-bright);
+}
 
 .paw-terminal-error {
   display: flex;
@@ -180,10 +216,10 @@
   padding: 8px 14px;
   background: rgb(255 69 58 / 10%);
   border-bottom: 1px solid rgb(255 69 58 / 26%);
-  color: #ff7770;
+  color: var(--paw-terminal-danger);
   font-size: 14px;
   line-height: 1.45;
-  animation: paw-terminal-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  animation: paw-terminal-state-enter 180ms var(--paw-terminal-ease) both;
 }
 .paw-terminal-error > span {
   min-width: 0;
@@ -200,7 +236,7 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
-  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), transform 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: background-color 120ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
 }
 .paw-terminal-error button:active { transform: scale(.92); }
 .paw-terminal-error .paw-terminal-error__retry {
@@ -233,18 +269,20 @@
 }
 
 /* Scrollback search and the new-terminal-with-cwd form float over the console
-   so they never displace the PTY grid rows or resize the live terminal. */
+   as dark glass instruments; they never displace the PTY grid rows or resize
+   the live terminal. */
 .paw-terminal-search,
 .paw-terminal-create {
   position: absolute;
   z-index: 6;
-  top: 8px;
+  top: 10px;
   right: 14px;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 9px;
-  background: var(--paw-terminal-elevated);
-  box-shadow: 0 10px 26px rgb(0 0 0 / 42%);
-  animation: paw-terminal-state-enter 160ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--paw-terminal-elevated) 88%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 6%) inset, 0 16px 40px rgb(0 0 0 / 52%);
+  animation: paw-terminal-overlay-enter 200ms var(--paw-terminal-ease) both;
 }
 
 .paw-terminal-search {
@@ -285,11 +323,11 @@
   background: transparent;
   color: #aab1bc;
   cursor: pointer;
-  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: background-color 120ms var(--paw-terminal-ease), color 120ms var(--paw-terminal-ease);
 }
 .paw-terminal-search button:disabled { cursor: default; opacity: .35; }
 .paw-terminal-search button:focus-visible,
-.paw-terminal-search input:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.paw-terminal-search input:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 
 .paw-terminal-create {
   display: grid;
@@ -308,15 +346,19 @@
   min-width: 0;
   padding: 6px 9px;
   border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 7px;
-  background: var(--paw-terminal-bg);
+  border-radius: 8px;
+  background: rgb(0 0 0 / 28%);
   color: var(--paw-terminal-text);
   font: inherit;
   outline: none;
+  transition: border-color 140ms var(--paw-terminal-ease), box-shadow 140ms var(--paw-terminal-ease);
 }
 .paw-terminal-create input::placeholder { color: #6b727e; }
-.paw-terminal-create input:focus-visible { border-color: #58a6ff; }
-.paw-terminal-create input[aria-invalid] { border-color: rgb(248 113 113 / 62%); }
+.paw-terminal-create input:focus-visible {
+  border-color: color-mix(in srgb, var(--paw-terminal-accent) 70%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-terminal-accent) 16%, transparent);
+}
+.paw-terminal-create input[aria-invalid] { border-color: rgb(248 113 113 / 62%); box-shadow: 0 0 0 3px rgb(248 113 113 / 12%); }
 .paw-terminal-create__hint {
   margin: 0;
   color: #ff9d97;
@@ -332,22 +374,23 @@
   min-height: 26px;
   padding: 0 11px;
   border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 6px;
+  border-radius: 7px;
   background: rgb(255 255 255 / 4%);
-  color: #d7dbe2;
+  color: var(--paw-terminal-text);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
-  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: background-color 120ms var(--paw-terminal-ease), border-color 120ms var(--paw-terminal-ease);
 }
 .paw-terminal-create__actions button[type='submit'] {
-  border-color: color-mix(in srgb, var(--paw-app-accent, #79c56e) 45%, transparent);
-  background: var(--paw-app-accent-strong, #39784b);
+  border-color: color-mix(in srgb, var(--paw-terminal-accent) 45%, transparent);
+  background: var(--paw-terminal-accent-strong);
   color: #fff;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--paw-terminal-accent) 24%, transparent);
 }
 .paw-terminal-create__actions button:disabled { cursor: not-allowed; opacity: .45; }
-.paw-terminal-create__actions button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.paw-terminal-create__actions button:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: 1px; }
 
 /* The JSX console is the terminal surface plus its status footer. Keep that
    contract in the feature stylesheet so a standalone mount does not depend
@@ -370,11 +413,11 @@
   gap: 6px 14px;
   padding: 7px 13px;
   border-top: 1px solid var(--paw-terminal-line);
-  background: var(--paw-terminal-elevated);
+  background: linear-gradient(180deg, var(--paw-terminal-raised), var(--paw-terminal-elevated));
   color: #aab1bc;
   font-size: 13px;
   line-height: 1.5;
-  animation: paw-terminal-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  animation: paw-terminal-state-enter 180ms var(--paw-terminal-ease) both;
 }
 .paw-terminal-ended__text { min-width: 0; flex: 1 1 240px; }
 .paw-terminal-ended__actions {
@@ -387,26 +430,41 @@
   min-height: 25px;
   padding: 0 10px;
   border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 6px;
+  border-radius: 7px;
   background: rgb(255 255 255 / 4%);
-  color: #d7dbe2;
+  color: var(--paw-terminal-text);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
-  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), transform 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: background-color 120ms var(--paw-terminal-ease), border-color 120ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
 }
 .paw-terminal-ended__actions button:active { transform: scale(.96); }
 .paw-terminal-ended__actions button:disabled { cursor: wait; opacity: .45; }
-.paw-terminal-ended__actions button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.paw-terminal-ended__actions button:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: 1px; }
 
 .paw-terminal-xterm {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   padding: 13px 17px 8px;
   background: var(--paw-terminal-bg);
 }
+/* One quiet ambient layer: a faint accent glow along the top edge and a
+   bottom vignette give the console optical depth without touching contrast.
+   It never intercepts the pointer and never animates. */
+.paw-terminal-xterm::after {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background:
+    radial-gradient(130% 46% at 50% -6%, color-mix(in srgb, var(--paw-terminal-accent) 5%, transparent), transparent 58%),
+    radial-gradient(150% 52% at 50% 116%, rgb(0 0 0 / 22%), transparent 55%);
+  content: '';
+  pointer-events: none;
+}
+.paw-terminal-console[data-ended] .paw-terminal-xterm { filter: saturate(.82) brightness(.94); }
 .paw-terminal-xterm .xterm { height: 100%; }
 .paw-terminal-xterm .xterm-viewport {
   background: var(--paw-terminal-bg) !important;
@@ -420,9 +478,9 @@
   align-items: center;
   gap: 9px;
   overflow: hidden;
-  padding: 0 10px 0 13px;
+  padding: 0 10px 0 8px;
   border-top: 1px solid var(--paw-terminal-line);
-  background: var(--paw-terminal-elevated);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-terminal-elevated) 92%, #fff 0%), var(--paw-terminal-elevated));
   color: var(--paw-terminal-muted);
   font-size: 13px;
   line-height: 1.4;
@@ -449,13 +507,29 @@
   display: inline-flex;
   flex: 1 1 320px;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   max-width: min(36%, 340px);
+  height: 22px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #858c98;
+  cursor: copy;
+  font: inherit;
+  text-align: left;
+  transition: background-color 120ms var(--paw-terminal-ease), color 120ms var(--paw-terminal-ease);
+}
+.paw-terminal-cwd > svg { flex: 0 0 auto; }
+.paw-terminal-cwd > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #858c98;
 }
+.paw-terminal-cwd[data-copied] { color: color-mix(in srgb, var(--paw-terminal-accent) 82%, #fff); }
+.paw-terminal-cwd:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 
 .paw-terminal-statusbar__search {
   display: grid;
@@ -469,10 +543,10 @@
   background: transparent;
   color: var(--paw-terminal-muted);
   cursor: pointer;
-  transition: background-color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: background-color 120ms var(--paw-terminal-ease), color 120ms var(--paw-terminal-ease);
 }
-.paw-terminal-statusbar__search[data-active] { background: rgb(255 255 255 / 8%); color: #d7dbe2; }
-.paw-terminal-statusbar__search:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.paw-terminal-statusbar__search[data-active] { background: rgb(255 255 255 / 8%); color: var(--paw-terminal-text); }
+.paw-terminal-statusbar__search:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 
 .paw-terminal-state-tag {
   display: flex;
@@ -485,9 +559,10 @@
   align-items: center;
   gap: 6px;
   min-height: 22px;
-  padding: 0 7px;
-  border-radius: 6px;
+  padding: 0 8px;
+  border-radius: 999px;
   background: rgb(48 209 88 / 9%);
+  box-shadow: 0 0 0 1px rgb(48 209 88 / 18%) inset;
   color: #63d985;
   font-size: 13px;
   line-height: 1.4;
@@ -498,15 +573,18 @@
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+  box-shadow: 0 0 0 0 rgb(48 209 88 / 42%);
+  animation: paw-terminal-breathe 2.2s ease-in-out infinite;
 }
 .paw-terminal-exited-badge {
-  padding: 1px 6px;
-  border-radius: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
   background: rgb(255 255 255 / 6%);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 10%) inset;
   color: #aab1bc;
   font-size: 13px;
   line-height: 1.4;
-  animation: paw-terminal-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  animation: paw-terminal-state-enter 180ms var(--paw-terminal-ease) both;
 }
 
 .paw-terminal-console__empty {
@@ -515,34 +593,64 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
   color: #858c98;
   text-align: center;
-  animation: paw-terminal-empty-enter 220ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  animation: paw-terminal-empty-enter 220ms var(--paw-terminal-ease) both;
+}
+/* A ghost prompt: the App's own glyph, not a repeated logo. The caret block
+   blinks like a waiting shell and holds still under reduced motion. */
+.paw-terminal-empty-glyph {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  background: linear-gradient(118deg, #e8eaf0 8%, var(--paw-terminal-accent) 78%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: 42px;
+  line-height: 1;
+  font-weight: 700;
+  filter: drop-shadow(0 4px 18px color-mix(in srgb, var(--paw-terminal-accent) 30%, transparent));
+}
+.paw-terminal-empty-glyph > i {
+  width: .52em;
+  height: .96em;
+  align-self: center;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--paw-terminal-accent) 72%, #fff);
+  animation: paw-terminal-caret 1.15s steps(1) infinite;
 }
 .paw-terminal-console__empty p {
   margin: 0;
   font-size: 15px;
   line-height: var(--paw-leading-title, 24px);
-  color: #e8eaf0;
+  color: var(--paw-terminal-bright);
+}
+.paw-terminal-console__empty .paw-terminal-console__empty-hint {
+  max-width: 42ch;
+  color: #858c98;
+  font-size: 13px;
+  line-height: 1.55;
 }
 .paw-terminal-console__empty button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--paw-app-accent, #79c56e) 45%, transparent);
-  background: var(--paw-app-accent-strong, #39784b);
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--paw-terminal-accent) 45%, transparent);
+  background: var(--paw-terminal-accent-strong);
   color: #fff;
   font-size: var(--paw-type-mono, 13px);
   font-weight: 600;
   cursor: pointer;
   margin-top: 6px;
-  transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 160ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--paw-terminal-accent) 22%, transparent);
+  transition: transform 140ms var(--paw-terminal-ease), box-shadow 160ms var(--paw-terminal-ease);
 }
 .paw-terminal-console__empty button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--paw-app-accent, #79c56e) 72%, #fff);
+  outline: 2px solid color-mix(in srgb, var(--paw-terminal-accent) 72%, #fff);
   outline-offset: 2px;
 }
 .paw-terminal-console__empty[data-loading] p {
@@ -551,9 +659,15 @@
 .paw-terminal-console__empty button:active { transform: scale(.97); }
 
 @keyframes paw-terminal-state-enter { from { opacity: 0; transform: translate3d(0, -4px, 0); } }
+@keyframes paw-terminal-overlay-enter { from { opacity: 0; transform: translate3d(0, -6px, 0) scale(.98); } }
 @keyframes paw-terminal-empty-enter { from { opacity: 0; transform: translate3d(0, 8px, 0); } }
 @keyframes paw-terminal-running { from { opacity: .65; transform: scale(.55); } to { opacity: 0; transform: scale(1.75); } }
 @keyframes paw-terminal-tab-enter { from { opacity: .45; transform: translate3d(0, 4px, 0); } }
+@keyframes paw-terminal-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(48 209 88 / 42%); }
+  50% { box-shadow: 0 0 0 4px rgb(48 209 88 / 0%); }
+}
+@keyframes paw-terminal-caret { 50% { opacity: 0; } }
 
 @container paw-window (max-width: 480px) {
   .paw-window-titlebar[data-window-chrome='terminal-tabs'] { grid-template-columns: 76px 20px minmax(0, 1fr); gap: 6px; }
@@ -573,17 +687,19 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .paw-terminal-tab:hover { background: rgb(255 255 255 / 6%); color: #d7dbe2; }
+  .paw-terminal-tab:hover { background: rgb(255 255 255 / 6%); color: var(--paw-terminal-text); }
   .paw-tab-close:hover:not(:disabled) { opacity: 1; background: rgb(255 255 255 / 15%); }
-  .paw-terminal-tab-new:hover { background: rgb(255 255 255 / 6%); color: #d7dbe2; }
+  .paw-terminal-tab-new:hover { background: rgb(255 255 255 / 6%); color: var(--paw-terminal-text); }
   .paw-terminal-error button:hover { background: rgb(255 69 58 / 16%); }
   .paw-terminal-search button:hover:not(:disabled),
-  .paw-terminal-statusbar__search:hover { background: rgb(255 255 255 / 9%); color: #e8eaf0; }
+  .paw-terminal-statusbar__search:hover { background: rgb(255 255 255 / 9%); color: var(--paw-terminal-bright); }
+  .paw-terminal-cwd:hover { background: rgb(255 255 255 / 7%); color: var(--paw-terminal-text); }
   .paw-terminal-create__actions button:hover:not(:disabled) { background: rgb(255 255 255 / 9%); }
-  .paw-terminal-create__actions button[type='submit']:hover:not(:disabled) { background: color-mix(in srgb, var(--paw-app-accent-strong, #39784b) 88%, #fff); }
+  .paw-terminal-create__actions button[type='submit']:hover:not(:disabled) { background: color-mix(in srgb, var(--paw-terminal-accent-strong) 88%, #fff); }
   .paw-terminal-tab:hover,
   .paw-terminal-tab-new:hover,
   .paw-terminal-console__empty button:hover { transform: translate3d(0, -1px, 0); }
+  .paw-terminal-console__empty button:hover { box-shadow: 0 9px 28px color-mix(in srgb, var(--paw-terminal-accent) 30%, transparent); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -594,10 +710,13 @@
   .paw-terminal-search,
   .paw-terminal-create,
   .paw-terminal-tab,
+  .paw-terminal-empty-glyph > i,
+  .paw-terminal-running-badge > i,
   .paw-terminal-tab-main i[data-state="running"]::after { animation: none; transform: none; }
   .paw-terminal-tab,
   .paw-tab-close,
   .paw-terminal-tab-new,
+  .paw-terminal-cwd,
   .paw-terminal-error button,
   .paw-terminal-ended__actions button,
   .paw-terminal-console__empty button { transition-property: color, background-color, border-color, box-shadow, opacity; }
@@ -612,10 +731,29 @@
 :root[data-reduce-motion='true'] .paw-terminal-search,
 :root[data-reduce-motion='true'] .paw-terminal-create,
 :root[data-reduce-motion='true'] .paw-terminal-tab,
+:root[data-reduce-motion='true'] .paw-terminal-empty-glyph > i,
+:root[data-reduce-motion='true'] .paw-terminal-running-badge > i,
 :root[data-reduce-motion='true'] .paw-terminal-tab-main i[data-state="running"]::after { animation: none; transform: none; }
 :root[data-reduce-motion='true'] .paw-terminal-tab,
 :root[data-reduce-motion='true'] .paw-tab-close,
 :root[data-reduce-motion='true'] .paw-terminal-tab-new,
+:root[data-reduce-motion='true'] .paw-terminal-cwd,
 :root[data-reduce-motion='true'] .paw-terminal-error button,
 :root[data-reduce-motion='true'] .paw-terminal-ended__actions button,
 :root[data-reduce-motion='true'] .paw-terminal-console__empty button { transition-property: color, background-color, border-color, box-shadow, opacity; }
+
+@media (prefers-contrast: more) {
+  .paw-terminal-app {
+    --paw-terminal-line: rgb(255 255 255 / 18%);
+    --paw-terminal-line-strong: rgb(255 255 255 / 30%);
+    --paw-terminal-muted: #aab1bc;
+    --paw-terminal-faint: #98a0ad;
+  }
+}
+
+@media (forced-colors: active) {
+  .paw-terminal-tab-main i,
+  .paw-terminal-running-badge > i,
+  .paw-terminal-empty-glyph > i { background: currentColor; forced-color-adjust: none; }
+  .paw-terminal-tab[data-selected]::before { background: Highlight; }
+}

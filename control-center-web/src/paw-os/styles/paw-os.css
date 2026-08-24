@@ -759,17 +759,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-window-shell[data-app='files'] .paw-files-tree { background: var(--paw-app-nav); }
 
+/* Terminal window chrome shares the console's obsidian material; the feature
+   stylesheet owns tab, selection, and accent states so the identity beam and
+   ambient depth live beside the DOM they describe. */
 .paw-window-shell[data-app='terminal'] .paw-terminal-app {
   background: color-mix(in oklab, #0d1117 92%, var(--paw-app-accent));
 }
 .paw-window-shell[data-app='terminal'] .paw-window-titlebar,
-.paw-window-shell[data-app='terminal'] .paw-terminal-app__toolbar { background: color-mix(in oklab, #161b22 88%, var(--paw-app-support)); }
-.paw-window-shell[data-app='terminal'] .paw-terminal-tab[data-selected] {
-  border-color: color-mix(in srgb, var(--paw-app-accent) 38%, transparent);
-  background: color-mix(in oklab, #21262d 88%, var(--paw-app-accent));
-  color: var(--paw-app-accent);
-}
-.paw-window-shell[data-app='terminal'] .paw-terminal-meta strong { color: var(--paw-app-accent); }
+.paw-window-shell[data-app='terminal'] .paw-terminal-app__toolbar { background: color-mix(in oklab, #151a22 94%, var(--paw-app-accent)); }
 .paw-window-shell[data-app='terminal'] .paw-terminal-console__empty button {
   border-color: color-mix(in srgb, var(--paw-app-accent) 54%, transparent);
   background: var(--paw-app-accent-strong);
@@ -1030,9 +1027,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-desktop-root .paw-terminal-app :is(
   button,
   input,
-  .paw-terminal-console__subbar,
-  .paw-terminal-output,
-  .paw-terminal-connecting,
   .paw-terminal-console__empty
 ) {
   font-family: var(--font-mono);
