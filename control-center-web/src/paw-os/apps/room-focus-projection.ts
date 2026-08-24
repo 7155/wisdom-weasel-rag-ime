@@ -3,6 +3,7 @@ import type {
   RoomMessageProjection,
   RoomProjectionState,
 } from '@/contracts/room-reducer';
+import { roomActivityFlowKind, roomFlowRefs } from '@/features/rooms/room-flow-projection';
 import type { RoomSummary, RoomWorkItem, RoomWorkState } from '@/features/rooms/room-types';
 
 export type RoomFocusState =
@@ -71,6 +72,34 @@ export interface RoomFocusHandoff {
   createdAtMs: number;
 }
 
+export type RoomFocusPacketKind =
+  | 'request'
+  | 'question'
+  | 'answer'
+  | 'plan'
+  | 'document'
+  | 'context'
+  | 'result'
+  | 'dispatch'
+  | 'approval';
+
+/** One chronological "what moved between whom" entry: a real public message,
+ * an authoritative transfer activity, or a WorkItem revision. `root` denotes
+ * Sol / the shared main Room rather than a participant. */
+export interface RoomFocusPacket {
+  id: string;
+  sourceParticipantId: 'root' | string;
+  targetParticipantIds: ('root' | string)[];
+  kind: RoomFocusPacketKind;
+  summary: string;
+  status: string;
+  createdAtMs: number;
+  sequence: number;
+  dispatchId?: string;
+  workItemId?: string;
+  refs: string[];
+}
+
 export interface RoomFocusProjection {
   goal: {
     title: string;
@@ -82,6 +111,7 @@ export interface RoomFocusProjection {
   workItems: RoomFocusWorkItem[];
   partners: RoomFocusPartner[];
   handoffs: RoomFocusHandoff[];
+  flow: RoomFocusPacket[];
   rootEvidence: RoomFocusEvidence[];
   counts: {
     active: number;
@@ -149,6 +179,7 @@ export function buildRoomFocusProjection(
       } satisfies RoomFocusPartner;
     });
   const handoffs = focusHandoffs(room, activities);
+  const flow = focusFlowPackets(room, activities, messages, projection);
   const rootResult = [...messages].reverse().find((message) => (
     message.role === 'assistant'
     && message.status === 'completed'
@@ -185,6 +216,7 @@ export function buildRoomFocusProjection(
     workItems,
     partners,
     handoffs,
+    flow,
     rootEvidence,
     counts: {
       active: workItems.filter((item) => item.state === 'running' || item.state === 'waiting').length,
@@ -322,6 +354,117 @@ function focusHandoffs(room: RoomSummary, activities: RoomActivityProjection[]):
   return [...byIdentity.values()].sort((left, right) => left.createdAtMs - right.createdAtMs || left.id.localeCompare(right.id));
 }
 
+/** Chronological flow ledger. Only authoritative transfers become packets —
+ * a public message, an approval, a dispatch/route decision, an intercom
+ * request, or refs explicitly handed to a named target (UR-054/UR-057). Refs
+ * on a partner's own tool activity never fabricate a decorative packet. */
+function focusFlowPackets(
+  room: RoomSummary,
+  activities: RoomActivityProjection[],
+  messages: RoomMessageProjection[],
+  projection?: RoomProjectionState,
+): RoomFocusPacket[] {
+  const packets: RoomFocusPacket[] = [];
+  for (const activity of activities) {
+    const kind = roomActivityFlowKind(activity);
+    if (!kind) continue;
+    const isApproval = kind === 'approval';
+    const targetId = isApproval ? 'root' : stringValue(activity.payload.targetParticipantId) || activity.participantId || '';
+    if (!targetId) continue;
+    packets.push({
+      id: `activity:${activity.id}`,
+      sourceParticipantId: stringValue(activity.payload.sourceParticipantId)
+        || stringValue(activity.payload.actorParticipantId)
+        || stringValue(activity.payload.parentParticipantId)
+        || (isApproval ? activity.participantId ?? '' : '')
+        || 'root',
+      targetParticipantIds: [targetId],
+      kind,
+      summary: activity.summary.trim() || stringValue(activity.payload.reason) || '已确认本轮分工',
+      status: activity.status,
+      createdAtMs: activity.createdAtMs,
+      sequence: activity.sequence ?? activity.createdAtMs,
+      dispatchId: stringValue(activity.payload.dispatchId) || undefined,
+      workItemId: stringValue(activity.payload.workItemId) || stringValue(activity.payload.taskId) || undefined,
+      refs: roomFlowRefs(activity.payload),
+    });
+  }
+  for (const message of messages) {
+    if (message.projectionKind === 'execution' || !message.text.trim()) continue;
+    const packet = packetFromMessage(message, projection);
+    if (packet) packets.push(packet);
+  }
+  for (const workItem of room.workItems ?? []) packets.push(packetFromWorkItem(workItem));
+  return packets
+    .sort((left, right) => left.sequence - right.sequence || left.createdAtMs - right.createdAtMs)
+    .filter((packet, index, all) => all.findIndex((candidate) => candidate.id === packet.id) === index);
+}
+
+function packetFromMessage(
+  message: RoomMessageProjection,
+  projection?: RoomProjectionState,
+): RoomFocusPacket | undefined {
+  const sourceParticipantId = message.role === 'user' ? 'root' : message.participantId || 'root';
+  let targetParticipantIds: string[] = [...(message.mentionedParticipantIds ?? [])];
+  let kind: RoomFocusPacketKind = message.role === 'user' ? 'request' : 'result';
+  if (message.answerToPostId) {
+    const question = projection?.messagesById[message.answerToPostId];
+    targetParticipantIds = question?.participantId ? [question.participantId] : [];
+    kind = 'answer';
+  } else if (message.question) {
+    targetParticipantIds = ['root'];
+    kind = 'question';
+  } else if (message.role === 'assistant' && targetParticipantIds.length === 0) {
+    targetParticipantIds = ['root'];
+  }
+  const blockKinds = message.message?.blocks.map((block) => block.type) ?? [];
+  if (blockKinds.includes('task_plan') || message.postKind === 'plan') kind = 'plan';
+  else if (blockKinds.some((blockKind) => ['file', 'artifact', 'diff'].includes(blockKind))) kind = 'document';
+  if (sourceParticipantId === 'root' && targetParticipantIds.length === 0) return undefined;
+  return {
+    id: `message:${message.id}`,
+    sourceParticipantId,
+    targetParticipantIds,
+    kind,
+    summary: message.text,
+    status: message.status,
+    createdAtMs: message.createdAtMs,
+    sequence: message.sequence ?? message.createdAtMs,
+    dispatchId: message.dispatchId,
+    refs: messagePacketRefs(message),
+  };
+}
+
+function packetFromWorkItem(workItem: RoomWorkItem): RoomFocusPacket {
+  const targetId = workItem.currentOwnerParticipantId || workItem.offeredToParticipantId || workItem.accountableParticipantId;
+  return {
+    id: `work:${workItem.id}:${workItem.revision}`,
+    sourceParticipantId: workItem.createdByParticipantId || 'root',
+    targetParticipantIds: targetId ? [targetId] : [],
+    kind: workItem.artifactRefs.some((ref) => /(?:\.md|document|plan)/iu.test(ref)) ? 'document' : 'plan',
+    summary: workItem.objective,
+    status: workItem.state,
+    createdAtMs: workItem.updatedAtMs || workItem.createdAtMs,
+    sequence: (workItem.updatedAtMs || workItem.createdAtMs) + .5,
+    workItemId: workItem.id,
+    refs: [...workItem.artifactRefs, ...workItem.evidenceRefs],
+  };
+}
+
+function messagePacketRefs(message: RoomMessageProjection): string[] {
+  const refs = message.message?.blocks.flatMap((block) => {
+    const data = recordValue(block.data);
+    return [
+      stringValue(block.ref),
+      stringValue(data.ref),
+      stringValue(data.path),
+      stringValue(data.documentId),
+      stringValue(data.revision),
+    ].filter(Boolean);
+  }) ?? [];
+  return [...new Set(refs)];
+}
+
 function orderedWorkItems(items: RoomWorkItem[]): RoomWorkItem[] {
   const byParent = new Map<string, RoomWorkItem[]>();
   for (const item of items) {
@@ -404,6 +547,12 @@ function uniqueEvidence(items: RoomFocusEvidence[]): RoomFocusEvidence[] {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function stringArray(value: unknown): string[] {
