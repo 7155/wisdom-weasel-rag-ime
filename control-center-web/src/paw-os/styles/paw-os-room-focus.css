@@ -237,14 +237,42 @@
 .paw-desktop-root .paw-room-focus-overview__open:active { transform: scale(.985); }
 .paw-desktop-root .paw-room-focus-overview__empty { margin: 0; padding: 10px; color: #8a919c; font-size: 12px; line-height: 16px; }
 
+/* Living signals: Sol breathes, running work pulses, the newest packet slides
+ * in. Pure projection decoration — no data or order is implied by motion. */
+.paw-desktop-root .paw-room-focus-overview__sol > i { animation: paw-room-focus-sol-breathe 3.2s ease-in-out infinite; }
+.paw-desktop-root .paw-room-focus-overview [data-state='running'] .paw-room-focus-overview__state > i,
+.paw-desktop-root .paw-room-focus-overview__mission-state[data-state='running'] > i,
+.paw-desktop-root .paw-room-focus-overview__planet-list > li[data-state='running'] .paw-room-focus-overview__planet > i { animation: paw-room-focus-live 2.1s ease-in-out infinite; }
+.paw-desktop-root .paw-room-focus-overview__packets > li:last-child > button { animation: paw-room-focus-packet-enter 220ms cubic-bezier(.23, 1, .32, 1) both; }
+
 @keyframes paw-room-focus-inspector-enter {
   from { opacity: 0; transform: translateY(4px) scale(.992); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@keyframes paw-room-focus-sol-breathe {
+  0%, 100% { box-shadow: 0 0 0 4px rgb(245 166 35 / .12); }
+  50% { box-shadow: 0 0 0 8px rgb(245 166 35 / .045); }
+}
+
+@keyframes paw-room-focus-live {
+  0%, 100% { box-shadow: 0 0 0 3px rgb(39 131 222 / .12); }
+  50% { box-shadow: 0 0 0 6px rgb(39 131 222 / .035); }
+}
+
+@keyframes paw-room-focus-packet-enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-room-focus-overview__inspector { animation: none; }
   .paw-desktop-root .paw-room-focus-overview :is(button, .paw-room-focus-overview__tree-node) { transition: none; }
+  .paw-desktop-root .paw-room-focus-overview__sol > i,
+  .paw-desktop-root .paw-room-focus-overview [data-state='running'] .paw-room-focus-overview__state > i,
+  .paw-desktop-root .paw-room-focus-overview__mission-state[data-state='running'] > i,
+  .paw-desktop-root .paw-room-focus-overview__planet-list > li[data-state='running'] .paw-room-focus-overview__planet > i,
+  .paw-desktop-root .paw-room-focus-overview__packets > li:last-child > button { animation: none; }
 }
 
 @media (max-width: 700px) {
