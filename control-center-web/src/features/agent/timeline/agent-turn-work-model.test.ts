@@ -25,7 +25,7 @@ describe('Agent turn work projection', () => {
     });
   });
 
-  it.each(['queued', 'running', 'waiting', 'failed', 'aborted'] as const)(
+  it.each(['queued', 'running', 'waiting'] as const)(
     'fails open while a turn is %s',
     (status) => {
       const model = buildAgentTurnWorkModel(status, [
@@ -37,6 +37,43 @@ describe('Agent turn work projection', () => {
       expect(model.finalMessageId).toBe('');
     },
   );
+
+  it.each(['failed', 'aborted'] as const)(
+    'collapses %s process work while the last partial narrative stays visible',
+    (status) => {
+      const model = buildAgentTurnWorkModel(status, [
+        message('draft', '先检查项目。'),
+        activityGroup(activity('tool-read', 'tool_finished')),
+        message('answer', '暂时结果'),
+      ]);
+
+      expect(model.canCollapse).toBe(true);
+      expect(model.finalMessageId).toBe('answer');
+      expect(model.items.map((item) => item.role)).toEqual(['work', 'work', 'result']);
+    },
+  );
+
+  it.each(['failed', 'aborted'] as const)(
+    'collapses %s tool work even when no narrative result exists',
+    (status) => {
+      const model = buildAgentTurnWorkModel(status, [
+        activityGroup(activity('tool-read', 'tool_finished')),
+      ]);
+
+      expect(model.canCollapse).toBe(true);
+      expect(model.finalMessageId).toBe('');
+      expect(model.hiddenActivityCount).toBe(1);
+    },
+  );
+
+  it('fails open when a failed turn holds only its narrative', () => {
+    const model = buildAgentTurnWorkModel('failed', [message('answer', '暂时结果')]);
+
+    expect(model.canCollapse).toBe(false);
+    expect(model.finalMessageId).toBe('answer');
+    expect(model.items).toHaveLength(1);
+    expect(model.items[0]).toMatchObject({ role: 'result' });
+  });
 
   it('fails open when a completed turn has no narrative final response', () => {
     const model = buildAgentTurnWorkModel('completed', [

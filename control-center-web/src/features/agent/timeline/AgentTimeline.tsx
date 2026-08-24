@@ -794,6 +794,7 @@ export function AgentTurn({
                 renderEntry={renderTimelineEntry}
                 sessionId={sessionId}
                 turnId={turnId}
+                turnStatus={turn.status}
                 updatedAtMs={turn.updatedAtMs}
               />
             ) : (

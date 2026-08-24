@@ -1,4 +1,4 @@
-import { Check, ChevronRight } from 'lucide-react';
+import { Check, ChevronRight, CircleSlash, TriangleAlert } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import type { AgentTurnStatus } from '@/contracts/agent-reducer';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
@@ -34,6 +35,7 @@ export function AgentTurnWorkDisclosure({
   renderEntry,
   sessionId,
   turnId,
+  turnStatus,
   updatedAtMs,
 }: {
   createdAtMs: number;
@@ -41,6 +43,7 @@ export function AgentTurnWorkDisclosure({
   renderEntry: (entry: AgentTurnSequenceEntry) => ReactNode;
   sessionId: string;
   turnId: string;
+  turnStatus?: AgentTurnStatus;
   updatedAtMs: number;
 }) {
   const disclosureKey = `${sessionId}:${turnId}`;
@@ -86,13 +89,22 @@ export function AgentTurnWorkDisclosure({
   const segments = groupPresentationItems(model.items);
   const stepCount = model.hiddenActivityCount + model.hiddenMessageCount;
   const elapsed = formatElapsed(Math.max(0, updatedAtMs - createdAtMs));
+  const statusNote = turnStatus === 'failed' ? '未完成' : turnStatus === 'aborted' ? '已停止' : '';
+  const StateIcon = turnStatus === 'failed'
+    ? TriangleAlert
+    : turnStatus === 'aborted'
+      ? CircleSlash
+      : Check;
   const detail = [
     model.toolCount ? `${model.toolCount} 个工具` : '',
     elapsed,
+    statusNote,
   ].filter(Boolean).join(' · ');
+  // Each collapsed work segment keeps its position inside the full segment
+  // list, so aria-controls must use the same indexes as the rendered reveals.
   const workSegmentIds = segments
-    .filter((segment) => segment.role === 'work')
-    .map((_segment, index) => `${contentId}-${index}`)
+    .map((segment, index) => (segment.role === 'work' ? `${contentId}-${index}` : ''))
+    .filter(Boolean)
     .join(' ');
 
   return (
@@ -100,6 +112,7 @@ export function AgentTurnWorkDisclosure({
       className="agent-turn-sequence agent-turn-work"
       data-collapsible={model.canCollapse || undefined}
       data-expanded={shownExpanded || undefined}
+      data-status={turnStatus}
       onPointerDownCapture={() => { if (!model.canCollapse) userReadWorkRef.current = true; }}
       onWheelCapture={() => { if (!model.canCollapse) userReadWorkRef.current = true; }}
       ref={rootRef}
@@ -110,11 +123,12 @@ export function AgentTurnWorkDisclosure({
           aria-expanded={shownExpanded}
           aria-label={`${shownExpanded ? '收起' : '展开'} ${stepCount} 个步骤${detail ? `，${detail}` : ''}`}
           className="agent-turn-work__toggle"
+          data-status={turnStatus}
           onClick={(event) => toggleDisclosurePreservingAnchor(event, setExpandedPersisted)}
           onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setExpandedPersisted)}
           type="button"
         >
-          <span aria-hidden="true" className="agent-turn-work__state"><Check size={12} /></span>
+          <span aria-hidden="true" className="agent-turn-work__state"><StateIcon size={12} /></span>
           <span className="agent-turn-work__copy"><strong>{stepCount} 个步骤</strong>{detail ? <small>{detail}</small> : null}</span>
           <ChevronRight aria-hidden="true" className="agent-turn-work__chevron" size={15} />
         </button>
