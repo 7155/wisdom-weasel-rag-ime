@@ -2348,6 +2348,9 @@ _RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, object], ...]] = {
                         "pattern": r"^(?:sha256:[0-9a-fA-F]{64}|missing)$",
                     },
                     "content": {"type": "string", "maxLength": 2_097_152},
+                    "workDocument": copy.deepcopy(
+                        _RUNTIME_TOOL_ARGUMENT_SCHEMAS["workDocument"]
+                    ),
                 },
             },
         },
@@ -2757,6 +2760,53 @@ class ControlToolGateway:
                 manifests.append(dict(structured_manifest))
         return manifests
 
+    def _is_active_room_facilitator(self, session: Mapping[str, object]) -> bool:
+        if str(session.get("mode") or "") != "coordinator":
+            return False
+        rooms = getattr(self.collaboration, "rooms", None)
+        participant_for_session = getattr(rooms, "participant_for_session", None)
+        if not callable(participant_for_session):
+            return False
+        participant = participant_for_session(
+            str(session.get("id") or ""),
+            active_only=True,
+        )
+        return (
+            isinstance(participant, Mapping)
+            and str(participant.get("collaborationRole") or "") == "coordinator"
+        )
+
+    def _require_facilitator_root_work_document(
+        self,
+        session: Mapping[str, object],
+        operation: str,
+    ) -> None:
+        if operation not in {"delegate", "delegate_batch"} or not self._is_active_room_facilitator(session):
+            return
+        goal = self.sessions.agent_goal(str(session.get("id") or ""))
+        goal_id = str(goal.get("goalId") or "").strip()
+        if goal.get("configured") is not True or str(goal.get("status") or "") != "active" or not goal_id:
+            raise ValueError(
+                "Act Gate blocked workspace mutation (Room delegation requires an active session Goal)"
+            )
+        if self.work_documents is None:
+            raise ValueError(
+                "Act Gate blocked workspace mutation (Room delegation cannot verify the Root WorkDocument lifecycle)"
+            )
+        response = self.work_documents.list(limit=500)  # type: ignore[attr-defined,union-attr]
+        items = response.get("items") if isinstance(response, Mapping) else []
+        authority_key = f"session_goal:{goal_id}"
+        if not any(
+            isinstance(item, Mapping)
+            and str(item.get("authorityKey") or "") == authority_key
+            and str(item.get("state") or "") == "active"
+            for item in (items if isinstance(items, list) else [])
+        ):
+            raise ValueError(
+                "Act Gate blocked workspace mutation (Room delegation requires an active Root WorkDocument bound to "
+                f"{authority_key})"
+            )
+
     def _manifest_items(
         self,
         session: Mapping[str, object] | None,
@@ -2922,6 +2972,10 @@ class ControlToolGateway:
         if tool == "room_partner":
             if self.collaboration is None:
                 raise ValueError("managed room collaboration is unavailable")
+            self._require_facilitator_root_work_document(
+                session,
+                str(args.get("op") or ""),
+            )
             result = self.collaboration.execute_room_partner_tool(  # type: ignore[attr-defined]
                 session_id,
                 args,
@@ -6812,10 +6866,11 @@ class ControlToolGateway:
             authority_id = str(work_document.get("authorityId") or "")
             if (
                 authority_kind == "session_goal"
-                and authority_id != session_id
+                and authority_id
+                != str(self.sessions.agent_goal(session_id).get("goalId") or "")
             ):
                 raise ValueError(
-                    "session work document authority must match the approved workspace Session"
+                    "session work document authority must match the active Session Goal"
                 )
             target = Path(str(action_payload.get("path") or "")).resolve(strict=False)
             workspace_root: Path | None = None
