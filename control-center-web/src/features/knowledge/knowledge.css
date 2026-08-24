@@ -606,7 +606,30 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 
 .knowledge-settings-fields--chunking { grid-template-columns: repeat(3, minmax(110px, 1fr)) repeat(2, minmax(160px, 1.2fr)); }
 .knowledge-settings-fields--info { grid-template-columns: minmax(180px, .7fr) minmax(260px, 1.5fr); }
-.knowledge-settings__actions { display: flex; justify-content: flex-end; }
+.knowledge-settings__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+
+/* Unsaved-draft diff: one amber surface stating what will change and in which
+   direction (current value struck through, proposed value emphasized), plus
+   when the change takes effect. It never claims the change is applied. */
+.knowledge-settings__draft {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-surface));
+}
+.knowledge-settings__draft > header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.knowledge-settings__draft > header strong { font-size: 13px; }
+.knowledge-settings__draft-direction { color: var(--color-text-tertiary); font-size: 12px; white-space: nowrap; }
+.knowledge-settings__draft ul { display: grid; margin: 0; padding: 0; gap: 4px; list-style: none; }
+.knowledge-settings__draft li { display: flex; align-items: baseline; flex-wrap: wrap; font-size: 13px; gap: 4px 10px; }
+.knowledge-settings__draft li > span:first-child { min-width: 84px; color: var(--color-text-secondary); }
+.knowledge-settings__draft-values { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
+.knowledge-settings__draft-values s { color: var(--color-text-tertiary); text-decoration-color: color-mix(in srgb, var(--color-danger) 55%, transparent); overflow-wrap: anywhere; }
+.knowledge-settings__draft-values svg { flex: none; color: var(--color-text-tertiary); }
+.knowledge-settings__draft-values b { color: var(--color-text-primary); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.knowledge-settings__draft > p { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
 
 .knowledge-materials {
   display: grid;
@@ -819,7 +842,9 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 .knowledge-markdown-body h4,
 .knowledge-markdown-body h5,
 .knowledge-markdown-body h6 { color: var(--color-text-primary); font-size: 13px; }
-.knowledge-markdown-body pre { overflow: auto; padding: var(--space-3); border: 1px solid var(--color-border); background: var(--color-surface-subtle); font-size: 13px; white-space: pre; }
+/* Code blocks stay on the shared paired code tokens so raw code never lands
+   light-on-light (same contract as the Agent readers). */
+.knowledge-markdown-body pre { overflow: auto; padding: var(--space-3); border: 1px solid var(--color-code-border); border-radius: var(--radius-1); background: var(--color-code-bg); color: var(--color-code-text); font-size: 13px; white-space: pre; }
 .knowledge-markdown-body code { font-family: var(--font-mono, ui-monospace, monospace); }
 .knowledge-markdown-body :not(pre) > code { padding: 1px 3px; border-radius: 3px; background: var(--color-surface-subtle); }
 .knowledge-markdown-body table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; }
@@ -1746,9 +1771,11 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] ::selection { c
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] :focus-visible { outline-color: var(--knowledge-indigo); }
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] :where([role='tabpanel'], .knowledge-material-list__body, .knowledge-search__list) { scrollbar-color: rgb(83 103 216 / .28) transparent; scrollbar-width: thin; }
 
+/* Arrival stays a short opacity/translate step; the earlier blur read as a
+   flicker on text-heavy panels. */
 @keyframes knowledge-view-arrive {
-  from { opacity: .94; transform: translateY(5px); filter: blur(1.5px); }
-  to { opacity: 1; transform: none; filter: none; }
+  from { opacity: .94; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
 }
 
 @container knowledge-library (max-width: 900px) {

@@ -557,6 +557,42 @@ describe('document knowledge library', () => {
     expect(name).toHaveValue('没有被确认的名称');
   });
 
+  it('shows the chunking draft as current → proposed and discards it without saving', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport, '/knowledge?tab=settings');
+
+    const chunkSize = await screen.findByRole('spinbutton', { name: '大小' });
+    await user.clear(chunkSize);
+    await user.type(chunkSize, '1400');
+
+    const draft = screen.getByText('未保存的更改 · 1 项').closest('.knowledge-settings__draft');
+    if (!(draft instanceof HTMLElement)) throw new Error('切分草稿区块未找到');
+    expect(within(draft).getByText('当前 → 保存后')).toBeInTheDocument();
+    expect(within(draft).getByText('大小')).toBeInTheDocument();
+    expect(within(draft).getByText('1200')).toBeInTheDocument();
+    expect(within(draft).getByText('1400')).toBeInTheDocument();
+    expect(within(draft).getByText('保存后，新导入的材料按新切分处理；已有材料进入待重建，重建完成前检索仍使用现有段落。')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '放弃切分更改' }));
+    expect(screen.queryByText(/未保存的更改/)).not.toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: '大小' })).toHaveValue(1200);
+    expect(screen.getByRole('button', { name: '保存切分设置' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '放弃切分更改' })).not.toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'knowledgeBases.update')).toBe(false);
+  });
+
+  it('keeps materials stats on library-level truth and marks the selected file row', async () => {
+    renderKnowledge(createTransport());
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    expect(screen.getByText('已索引段落').nextElementSibling).toHaveTextContent('0');
+    expect(screen.queryByText('提取内容')).not.toBeInTheDocument();
+    const selectedRow = screen.getByRole('button', { current: true });
+    expect(selectedRow).toHaveClass('knowledge-material-row__select');
+    expect(selectedRow).toHaveTextContent('runtime.pdf');
+  });
+
 });
 
 function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowledge', pawOs = false) {

@@ -93,7 +93,7 @@ export function KnowledgeMaterialsPanel({
         <div><dt>可检索</dt><dd>{summary.ready}</dd></div>
         <div><dt>处理中</dt><dd>{summary.processing}</dd></div>
         <div><dt>需处理</dt><dd>{summary.attention}</dd></div>
-        <div><dt>提取内容</dt><dd>{detail ? detail.assets.length + detail.tables.length : 0}</dd></div>
+        <div><dt>已索引段落</dt><dd>{summary.chunks}</dd></div>
       </dl>
       <UploadQueue items={uploadItems} onClear={onClearUploads} onRetry={onRetryUpload} />
       {error ? <InlineNotice title="文件列表暂不可用" tone="warning">{publicErrorText(error, '刷新后重试。')}</InlineNotice> : null}
@@ -107,7 +107,7 @@ export function KnowledgeMaterialsPanel({
               data={documents}
               itemContent={(_index, document) => (
                 <div className="knowledge-material-row" data-selected={selected?.id === document.id || undefined}>
-                  <button className="knowledge-material-row__select" onClick={() => onSelect(document.id)} type="button">
+                  <button aria-current={selected?.id === document.id || undefined} className="knowledge-material-row__select" onClick={() => onSelect(document.id)} type="button">
                     <FileText aria-hidden="true" size={15} />
                     <span><strong>{document.name}</strong><small>{parserLabel(document.parser)} · {formatBytes(document.byteSize)}</small></span>
                   </button>
@@ -156,7 +156,7 @@ function UploadQueue({ items, onClear, onRetry }: { items: readonly KnowledgeUpl
 function DocumentSummary({ detail, document, error, loading, onReparse, reparsePending }: { detail: KnowledgeDocumentDetail | null; document: KnowledgeDocument | null; error: Error | null; loading: boolean; onReparse: (document: KnowledgeDocument, trigger: HTMLElement) => void; reparsePending: boolean }) {
   if (!document) return null;
   return (
-    <aside className="knowledge-document-summary" aria-label={`${document.name} 元数据`}>
+    <aside className="knowledge-document-summary" aria-label={`${document.name} 处理与详情`}>
       <header><FileText size={17} /><div><strong>{document.name}</strong><span>{fileFormatLabel(document.mimeType)}</span></div></header>
       <DocumentPipeline document={document} onReparse={onReparse} reparsePending={reparsePending} />
       {loading ? <p className="knowledge-detail-loading">正在读取材料详情…</p> : null}
@@ -571,10 +571,11 @@ function JobDetails({ job }: { job: KnowledgeIndexJob }) {
 function summarizeDocuments(documents: readonly KnowledgeDocument[]) {
   return documents.reduce((summary, item) => ({
     bytes: summary.bytes + item.byteSize,
+    chunks: summary.chunks + item.chunkCount,
     ready: summary.ready + (item.status === 'ready' ? 1 : 0),
     processing: summary.processing + (['queued', 'parsing', 'indexing'].includes(item.status) ? 1 : 0),
     attention: summary.attention + (['failed', 'stale'].includes(item.status) ? 1 : 0),
-  }), { bytes: 0, ready: 0, processing: 0, attention: 0 });
+  }), { bytes: 0, chunks: 0, ready: 0, processing: 0, attention: 0 });
 }
 
 function groupChunksByPage(detail: KnowledgeDocumentDetail) {
