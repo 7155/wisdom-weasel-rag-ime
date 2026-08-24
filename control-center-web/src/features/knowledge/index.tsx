@@ -783,7 +783,10 @@ function SettingsDraftDiff({ changes, effect }: { changes: readonly SettingsDraf
   if (!changes.length) return null;
   return (
     <div className="knowledge-settings__draft" role="status">
-      <strong>未保存的更改</strong>
+      <header>
+        <strong>未保存的更改 · {changes.length} 项</strong>
+        <span className="knowledge-settings__draft-direction">当前 → 保存后</span>
+      </header>
       <ul>
         {changes.map((change) => (
           <li key={change.label}>
@@ -926,8 +929,11 @@ function KnowledgeSettingsPanel({
           <Field htmlFor="knowledge-base-settings-name" label="名称"><Input id="knowledge-base-settings-name" maxLength={120} onChange={(event) => setName(event.target.value)} value={name} /></Field>
           <Field htmlFor="knowledge-base-settings-description" label="说明"><Input id="knowledge-base-settings-description" maxLength={1_000} onChange={(event) => setDescription(event.target.value)} value={description} /></Field>
         </div>
-        <SettingsDraftDiff changes={infoChanges} />
-        <div className="knowledge-settings__actions"><Button disabled={pending || !name.trim() || (name.trim() === base.name && description.trim() === base.description)} loading={pending} onClick={() => onSaveInfo(name.trim(), description.trim())} size="small" variant="primary">保存基本信息</Button></div>
+        <SettingsDraftDiff changes={infoChanges} effect="保存后立即生效，不影响已导入的材料与索引。" />
+        <div className="knowledge-settings__actions">
+          {name !== base.name || description !== base.description ? <Button aria-label="放弃基本信息更改" disabled={pending} onClick={() => { setName(base.name); setDescription(base.description); }} size="small" variant="quiet">放弃更改</Button> : null}
+          <Button disabled={pending || !name.trim() || (name.trim() === base.name && description.trim() === base.description)} loading={pending} onClick={() => onSaveInfo(name.trim(), description.trim())} size="small" variant="primary">保存基本信息</Button>
+        </div>
       </section>
       <div className="knowledge-settings-grid">
         <section>
@@ -946,7 +952,7 @@ function KnowledgeSettingsPanel({
       <section>
         <div className="knowledge-settings__heading"><Settings2 size={16} /><div><strong>切分</strong><span>修改后材料进入待重建状态</span></div></div>
         <div className="knowledge-settings-fields knowledge-settings-fields--chunking">
-          <Field htmlFor="knowledge-chunk-strategy" label="策略"><Select id="knowledge-chunk-strategy" onValueChange={(value) => setChunking({ ...chunking, strategy: asChunkingStrategy(value) })} options={[{ value: 'general', label: '通用段落' }, { value: 'markdown', label: 'Markdown 标题' }, { value: 'book', label: '书籍章节' }, { value: 'qa', label: '问答' }, { value: 'laws', label: '法律条款' }, { value: 'separator', label: '自定义分隔符' }, { value: 'fixed', label: '固定长度' }]} value={chunking.strategy} /></Field>
+          <Field htmlFor="knowledge-chunk-strategy" label="策略"><Select id="knowledge-chunk-strategy" onValueChange={(value) => setChunking({ ...chunking, strategy: asChunkingStrategy(value) })} options={[...chunkingStrategyOptions]} value={chunking.strategy} /></Field>
           <Field htmlFor="knowledge-chunk-size" label="大小"><Input id="knowledge-chunk-size" max={8_000} min={200} onChange={(event) => setChunking({ ...chunking, size: Number(event.target.value) })} step={100} type="number" value={chunking.size} /></Field>
           <Field htmlFor="knowledge-chunk-overlap" label="重叠"><Input id="knowledge-chunk-overlap" max={2_000} min={0} onChange={(event) => setChunking({ ...chunking, overlap: Number(event.target.value) })} step={20} type="number" value={chunking.overlap} /></Field>
           {chunking.strategy === 'separator' ? <Field htmlFor="knowledge-chunk-separator" label="分隔符"><Input id="knowledge-chunk-separator" maxLength={100} onChange={(event) => setChunking({ ...chunking, separator: event.target.value })} value={chunking.separator} /></Field> : null}
@@ -961,7 +967,10 @@ function KnowledgeSettingsPanel({
         {chunkPreviewError ? <InlineNotice title="切分预览失败" tone="warning">{publicErrorText(chunkPreviewError, '请确认材料已经完成解析。')}</InlineNotice> : null}
         {visibleChunkPreview ? <div className="knowledge-chunk-preview"><header><strong>{visibleChunkPreview.total} 个段落</strong><span>显示前 {visibleChunkPreview.chunks.length} 个</span></header><div>{visibleChunkPreview.chunks.map((chunk) => <article key={chunk.id}><b>#{chunk.ordinal + 1}{chunk.page ? ` · 第 ${chunk.page} 页` : ''}</b><p>{publicKnowledgeText(chunk.content)}</p></article>)}</div></div> : null}
         <SettingsDraftDiff changes={chunkingChanges} effect="保存后，新导入的材料按新切分处理；已有材料进入待重建，重建完成前检索仍使用现有段落。" />
-        <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(chunkingError) || equalConfig(chunking, base.chunkingConfig)} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button></div>
+        <div className="knowledge-settings__actions">
+          {!equalConfig(chunking, base.chunkingConfig) ? <Button aria-label="放弃切分更改" disabled={pending} onClick={() => setChunking(base.chunkingConfig)} size="small" variant="quiet">放弃更改</Button> : null}
+          <Button disabled={pending || Boolean(chunkingError) || equalConfig(chunking, base.chunkingConfig)} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button>
+        </div>
       </section>
       <section>
         <div className="knowledge-settings__heading"><Search size={16} /><div><strong>检索</strong><span>页面测试与伙伴检索</span></div></div>
@@ -986,7 +995,10 @@ function KnowledgeSettingsPanel({
         </Disclosure>
         {retrievalError ? <p className="knowledge-inline-error" role="alert">{retrievalError}</p> : null}
         <SettingsDraftDiff changes={retrievalChanges} effect="保存后从下一次检索开始生效，不需要重建索引。" />
-        <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button></div>
+        <div className="knowledge-settings__actions">
+          {!equalConfig(retrieval, base.retrievalConfig) ? <Button aria-label="放弃检索更改" disabled={pending} onClick={() => setRetrieval(base.retrievalConfig)} size="small" variant="quiet">放弃更改</Button> : null}
+          <Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button>
+        </div>
       </section>
       <KnowledgeEmbeddingSettings
         baseRevision={String(base.revision)}
@@ -1393,6 +1405,18 @@ function object(value: unknown): Record<string, unknown> {
 function asDetailTab(value: string): DetailTab { return ['viewer', 'search', 'graph', 'jobs', 'settings'].includes(value) ? value as DetailTab : 'materials'; }
 function asParserMode(value: string): KnowledgeParserMode { return value === 'builtin' ? value : value === 'mineru' || value === 'mineru_local_http' ? 'mineru' : 'auto'; }
 function asChunkingStrategy(value: string): KnowledgeChunkingConfig['strategy'] { return ['general', 'markdown', 'book', 'qa', 'laws', 'separator', 'fixed'].includes(value) ? value as KnowledgeChunkingConfig['strategy'] : 'markdown'; }
+const chunkingStrategyOptions: readonly { value: KnowledgeChunkingConfig['strategy']; label: string }[] = [
+  { value: 'general', label: '通用段落' },
+  { value: 'markdown', label: 'Markdown 标题' },
+  { value: 'book', label: '书籍章节' },
+  { value: 'qa', label: '问答' },
+  { value: 'laws', label: '法律条款' },
+  { value: 'separator', label: '自定义分隔符' },
+  { value: 'fixed', label: '固定长度' },
+];
+function chunkingStrategyLabel(value: KnowledgeChunkingConfig['strategy']): string {
+  return chunkingStrategyOptions.find((option) => option.value === value)?.label ?? value;
+}
 function asRetrievalMode(value: string): KnowledgeRetrievalConfig['mode'] { return value === 'dense' || value === 'lexical' ? value : 'hybrid'; }
 function retrievalModeLabel(value: KnowledgeRetrievalConfig['mode']): string { return value === 'dense' ? '向量检索' : value === 'lexical' ? '关键词检索' : '混合检索'; }
 function equalConfig(left: object, right: object): boolean { return JSON.stringify(left) === JSON.stringify(right); }
