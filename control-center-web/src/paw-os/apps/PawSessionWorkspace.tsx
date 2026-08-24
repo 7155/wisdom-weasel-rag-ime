@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   MessageSquare,
   Network,
+  Orbit,
   StopCircle,
   Wrench,
 } from 'lucide-react';
@@ -53,6 +54,7 @@ import { AgentTimeline } from '@/features/agent/timeline/AgentTimeline';
 import { toolIntentPrompt } from '@/features/agent/tool-presentation';
 import { AgentFilesPanel } from '@/features/agent/workspace/AgentFilesPanel';
 import { PawContextTrace } from './PawContextTrace';
+import { PawSessionStarfield } from './PawStarfield';
 import {
   commandItems,
   isModelCatalog,
@@ -76,7 +78,7 @@ import {
 import '@/features/agent/agent.css';
 
 type WorkbenchPanel = 'none' | 'files' | 'subagents' | 'status';
-type SessionWorkspaceView = 'conversation' | 'trace';
+type SessionWorkspaceView = 'conversation' | 'trace' | 'starfield';
 
 export function PawSessionWorkspace({
   persona,
@@ -850,6 +852,7 @@ export function PawSessionWorkspace({
         <nav aria-label="当前 Session 视图" className="paw-session-workspace__view-switch">
           <button aria-label="对话" aria-pressed={workspaceView === 'conversation'} onClick={() => { setWorkspaceView('conversation'); setPanel('none'); setToolMenuOpen(false); }} type="button"><MessageSquare size={15} /><span>对话</span></button>
           <button aria-label="Agent 轨迹" aria-pressed={workspaceView === 'trace'} onClick={() => { setWorkspaceView('trace'); setPanel('none'); setToolMenuOpen(false); }} type="button"><GitBranch size={15} /><span>Agent 轨迹</span></button>
+          <button aria-label="星空" aria-pressed={workspaceView === 'starfield'} onClick={() => { setWorkspaceView('starfield'); setPanel('none'); setToolMenuOpen(false); }} type="button"><Orbit size={15} /><span>星空</span></button>
         </nav>
         <div className="paw-session-workspace__runtime">
           <span data-context={contextSnapshotState}><i />{stopping
@@ -955,6 +958,33 @@ export function PawSessionWorkspace({
                 projection={projection}
                 sessionId={recordId}
               />
+            </main>
+
+            <main
+              aria-hidden={workspaceView !== 'starfield'}
+              className="paw-session-workspace__starfield"
+              data-active={workspaceView === 'starfield' || undefined}
+              inert={workspaceView !== 'starfield'}
+            >
+              {/* The sky mounts only while watched: no hidden polling, and the
+                  conversation/trace stacked views keep their own state. */}
+              {workspaceView === 'starfield' ? <PawSessionStarfield
+                active
+                busy={busy}
+                sessionId={recordId}
+                sessionTitle={title}
+                onOpenRun={(run) => desktop?.openWindow({
+                  appId: 'agent',
+                  target: {
+                    kind: 'subagent',
+                    id: run.id,
+                    sessionId: recordId,
+                    title: run.task || '子 Agent',
+                    subtitle: `Session · ${record?.title || recordId}`,
+                  },
+                })}
+                onOpenWorkbench={() => setPanel('subagents')}
+              /> : null}
             </main>
           </div>
 

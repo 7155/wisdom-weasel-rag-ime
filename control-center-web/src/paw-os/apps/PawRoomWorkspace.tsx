@@ -7,6 +7,7 @@ import {
   GitBranch,
   LoaderCircle,
   MessageCircle,
+  Orbit,
   Plus,
   Settings2,
   ShieldAlert,
@@ -55,6 +56,7 @@ import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWin
 import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-store';
 import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
+import { PawRoomStarfield } from './PawStarfield';
 import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
 import { roomAutoSatelliteRequests } from './room-satellite-auto-open';
 import '@/features/rooms/rooms.css';
@@ -98,6 +100,7 @@ export function PawRoomWorkspace({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(initialError ?? '');
   const [panel, setPanel] = useState<RoomToolPanel | 'none'>('focus');
+  const [view, setView] = useState<'conversation' | 'starfield'>('conversation');
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
   const [recoveryState, setRecoveryState] = useState<'recovering' | 'failed' | 'synced'>('recovering');
   const runtimeToolWindow = useMemo(() => createRuntimeToolWindowProjector(), [recordId]);
@@ -106,6 +109,10 @@ export function PawRoomWorkspace({
     if (initialDraft !== undefined) setDraft(initialDraft);
     if (initialError) setError(initialError);
   }, [initialDraft, initialError]);
+
+  useEffect(() => {
+    setView('conversation');
+  }, [recordId]);
 
   const projection = useRoomLiveStore((state) => state.projections[recordId]);
   const focusProjection = useMemo(
@@ -364,8 +371,9 @@ export function PawRoomWorkspace({
   const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
     <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span>
     <nav aria-label="Room 工作台视图">
-      <button aria-pressed={panel === 'none'} onClick={() => setPanel('none')} type="button"><MessageCircle size={14} /><span>公开对话</span></button>
-      <button aria-pressed={panel !== 'none'} onClick={() => setPanel((current) => current === 'none' ? 'focus' : current)} type="button"><Focus size={14} /><span>协作态势</span></button>
+      <button aria-pressed={panel === 'none' && view === 'conversation'} onClick={() => { setView('conversation'); setPanel('none'); }} type="button"><MessageCircle size={14} /><span>公开对话</span></button>
+      <button aria-pressed={panel !== 'none'} onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : current); }} type="button"><Focus size={14} /><span>协作态势</span></button>
+      <button aria-pressed={view === 'starfield'} onClick={() => { setView('starfield'); setPanel('none'); }} type="button"><Orbit size={14} /><span>星空</span></button>
     </nav>
     <div className="paw-room-workspace__runtime"><span><i />{abortingActiveTurn ? '正在停止' : sending && activeTurn ? '正在干预' : activeTurn ? '协作中' : recoveryState === 'synced' ? '已同步' : '连接中'}</span>{activeTurn ? <button aria-label="停止整轮协作" disabled={abortingActiveTurn} onClick={() => void abortTurn(activeRootId)} type="button"><StopCircle size={16} /></button> : null}</div>
   </div>;
@@ -374,6 +382,7 @@ export function PawRoomWorkspace({
       className="paw-room-workspace paw-room-workspace--migrated-v1"
       data-agent-mode="room"
       data-panel={panel}
+      data-view={view}
       data-window-chrome={windowChromeTarget ? 'portal' : 'fallback'}
       data-room-id={recordId}
       data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}
@@ -395,7 +404,13 @@ export function PawRoomWorkspace({
 
       <div className="paw-room-workspace__body">
         <main aria-label={`${title} 主 Room`} className="paw-room-workspace__main">
-          <div aria-label="Root 对话与公开协作事件" className="paw-room-timeline" ref={timelineRef} role="log">
+          {view === 'starfield' && focusProjection ? (
+            <PawRoomStarfield
+              focus={focusProjection}
+              roomId={recordId}
+              onOpenParticipant={openParticipantById}
+            />
+          ) : <div aria-label="Root 对话与公开协作事件" className="paw-room-timeline" ref={timelineRef} role="log">
               <div className="paw-room-timeline__canvas">
                 {loading && !turnOrder.length ? <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div> : null}
                 {!loading && !turnOrder.length ? <div className="paw-room-workspace__empty"><Users size={24} /><strong>Room 已准备好</strong><p>发送目标，伙伴会分工、执行并汇合结果。</p></div> : null}
@@ -408,7 +423,7 @@ export function PawRoomWorkspace({
                   room={record}
                 /> : null}
               </div>
-          </div>
+          </div>}
 
           <div className="paw-room-workspace__composer">
               {error ? <div className="paw-room-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); retrySnapshot(); }} type="button">重新同步</button></div> : null}
