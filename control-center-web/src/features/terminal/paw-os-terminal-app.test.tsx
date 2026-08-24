@@ -7,6 +7,9 @@ import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawOsTerminalApp } from './PawOsTerminalApp';
 import { PawWindowFrame } from '@/paw-os/shell/PawWindowLayer';
+import terminalCss from './paw-os-terminal-app.css?raw';
+
+const xtermConstructorOptions = vi.hoisted(() => [] as Record<string, unknown>[]);
 
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/xterm', () => ({
@@ -15,6 +18,10 @@ vi.mock('@xterm/xterm', () => ({
     rows = 30;
     private host?: HTMLElement;
     private onDataCallback: (data: string) => void = () => undefined;
+
+    constructor(options: Record<string, unknown>) {
+      xtermConstructorOptions.push(options);
+    }
 
     loadAddon() {}
     open(host: HTMLElement) {
@@ -44,6 +51,8 @@ vi.mock('@xterm/xterm', () => ({
 
 afterEach(() => {
   cleanup();
+  xtermConstructorOptions.length = 0;
+  delete document.documentElement.dataset.reduceMotion;
   delete (window as Window & { pawTerminalHost?: unknown }).pawTerminalHost;
 });
 
@@ -165,7 +174,10 @@ describe('PawOsTerminalApp', () => {
     expect(within(titlebar).getByRole('button', { name: '关闭窗口' })).toBeInTheDocument();
     expect(within(tablist).getByRole('button', { name: '结束终端会话 Terminal One' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关闭当前终端' })).not.toBeInTheDocument();
-    await user.click(within(tablist).getByRole('button', { name: '新建终端' }));
+    // The new-terminal action must not scroll away with an overflowing tab strip.
+    const newTerminalButton = within(titlebar).getByRole('button', { name: '新建终端' });
+    expect(tablist.contains(newTerminalButton)).toBe(false);
+    await user.click(newTerminalButton);
     await waitFor(() => expect(within(tablist).getAllByRole('tab')).toHaveLength(2));
     const secondTab = within(tablist).getByRole('tab', { name: /Terminal Two/ });
     expect(secondTab).toHaveAttribute('aria-selected', 'true');
@@ -239,6 +251,158 @@ describe('PawOsTerminalApp', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(true);
     expect(calls).toEqual([]);
     expect(screen.queryByText('外部终端')).not.toBeInTheDocument();
+  });
+
+  it('numbers repeated session titles so every tab keeps a distinct identity and scrolls the selection into view', async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => undefined);
+    const first = terminalSession('terminal-one', 'Terminal');
+    const second = terminalSession('terminal-two', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [first, second] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: second, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: second.terminalId },
+      },
+    });
+
+    try {
+      renderApp(transport, <PawOsTerminalApp />);
+
+      const firstTab = await screen.findByRole('tab', { name: 'Terminal 1' });
+      const secondTab = screen.getByRole('tab', { name: 'Terminal 2' });
+      expect(firstTab).toHaveAttribute('title', 'Terminal 1 · /bin/zsh · /workspace/paw');
+      expect(secondTab).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('button', { name: '结束终端会话 Terminal 1' })).toBeInTheDocument();
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+
+      scrollIntoView.mockClear();
+      await user.click(firstTab);
+      expect(firstTab).toHaveAttribute('aria-selected', 'true');
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    } finally {
+      scrollIntoView.mockRestore();
+    }
+  });
+
+  it('keeps an ended session readable, states the exit truthfully, and never reruns or forwards input', async () => {
+    const user = userEvent.setup();
+    const exited = { ...terminalSession('terminal-exited', 'Terminal'), status: 'exited' as const, exitCode: 1 };
+    let terminals = [exited];
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': () => ({ schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: terminals }),
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: exited, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: exited.terminalId },
+        'terminal.session.close': () => {
+          terminals = [];
+          return { schemaVersion: 'rag-ime.system-terminal.v1', ok: true };
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    // Viewing an existing exited session must not invent a new one.
+    const tab = await screen.findByRole('tab', { name: /Terminal.*已退出（退出码 1）/ });
+    expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(false);
+    expect(tab.querySelector('i[data-state="exited"][data-exit-failure]')).not.toBeNull();
+
+    const notice = screen.getByRole('status');
+    expect(notice).toHaveTextContent('这个终端会话已退出（退出码 1）。输出仍可回看，输入不会再发送。');
+    expect(within(notice).getByRole('button', { name: '新建终端' })).toBeInTheDocument();
+
+    // Typed input is refused locally with a dismissible explanation.
+    await user.type(await screen.findByRole('textbox', { name: '终端输入' }), 'x');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('这个终端已退出，输入没有发送。');
+    expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.write')).toBe(false);
+    await user.click(within(alert).getByRole('button', { name: '关闭错误提示' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // The notice can end the tab identity explicitly.
+    await user.click(within(notice).getByRole('button', { name: '关闭此标签页' }));
+    expect(await screen.findByText('还没有终端会话')).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'terminal.session.close')).toHaveLength(1);
+    expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(false);
+  });
+
+  it('lets a failed create be dismissed instead of leaving a stuck banner', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [] },
+        'terminal.session.create': () => {
+          throw new Error('后端拒绝了新终端');
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('新建终端失败：后端拒绝了新终端');
+    await user.click(within(alert).getByRole('button', { name: '关闭错误提示' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建终端' })).toBeInTheDocument();
+  });
+
+  it('offers an immediate retry when the session list cannot be read', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': () => {
+          throw new Error('系统终端服务未连接');
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('读取终端会话失败：系统终端服务未连接');
+    // A failed list read proves nothing about existing sessions; it must not
+    // fall through to the first-load auto-create.
+    expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(false);
+    const listCalls = () => transport.requests.filter((call) => call.request.pathId === 'terminal.sessions.list').length;
+    const before = listCalls();
+    await user.click(within(alert).getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(listCalls()).toBeGreaterThan(before));
+  });
+
+  it('disables the blinking cursor when PAWOS reduced motion is active', async () => {
+    document.documentElement.dataset.reduceMotion = 'true';
+    const terminal = terminalSession('terminal-calm', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [terminal] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: terminal.terminalId },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    expect(await screen.findByLabelText('终端输入输出')).toBeInTheDocument();
+    await waitFor(() => expect(xtermConstructorOptions.length).toBeGreaterThan(0));
+    expect(xtermConstructorOptions.at(-1)).toMatchObject({ cursorBlink: false });
+  });
+});
+
+describe('paw-os-terminal-app.css contracts', () => {
+  it('keeps the ended-session notice inside the console grid without displacing the status footer', () => {
+    expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) 30px;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\[data-ended\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) auto 30px;/s);
+  });
+
+  it('keeps the tab strip locally scrollable while the new-terminal action stays outside it', () => {
+    expect(terminalCss).toMatch(/\.paw-terminal-tabs\s*\{[^}]*overflow-x:\s*auto;[^}]*\}/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-tab-new\s*\{[^}]*flex:\s*0 0 auto;/s);
+  });
+
+  it('silences terminal motion for both the OS media query and the PAWOS preference', () => {
+    expect(terminalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-terminal-ended,[\s\S]*?animation:\s*none;/s);
+    expect(terminalCss).toMatch(/:root\[data-reduce-motion='true'\] \.paw-terminal-tab-main i\[data-state="running"\]::after\s*\{\s*animation:\s*none;/s);
   });
 });
 
