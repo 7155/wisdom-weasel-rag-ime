@@ -563,7 +563,12 @@ export function PawOsFilesApp() {
         <main className="paw-files-preview" onKeyDown={(event) => { if (event.key === 'Escape' && treeHidden()) goBackToTree(); }}>
           {!selectedFile ? (
             <div className="paw-files-preview__empty">
-              <FileCode2 size={30} />
+              <div aria-hidden="true" className="paw-files-preview__empty-stage">
+                <i />
+                <i />
+                <i />
+                <span><FileCode2 size={26} /></span>
+              </div>
               <strong>选择文件</strong>
               <span>从目录树选择一个文件，在这里阅读代码、Markdown、diff、SVG 或网页。</span>
             </div>
@@ -571,6 +576,14 @@ export function PawOsFilesApp() {
             <>
               <header key={`header:${selectedFile.path}`}>
                 <button aria-label="返回文件列表" className="paw-files-preview__back" onClick={goBackToTree} ref={backButtonRef} type="button"><ChevronLeft size={15} /></button>
+                <span
+                  aria-hidden="true"
+                  className="paw-files-preview__glyph"
+                  data-ext={fileExtension(selectedFile.name) || undefined}
+                  data-kind={selectedFile.kind === 'symlink' ? 'symlink' : undefined}
+                >
+                  {selectedFile.kind === 'symlink' ? <FileSymlink size={16} /> : fileIcon(selectedFile.name)}
+                </span>
                 <div>
                   <h2 title={pathName(selectedFile.path)}>{pathName(selectedFile.path)}</h2>
                   <small title={selectedFile.path}>{fileExtension(selectedFile.name).toUpperCase() || '文件'}{selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''} · {selectedFile.path}</small>
@@ -600,13 +613,25 @@ export function PawOsFilesApp() {
                 </div>
               </header>
               <div className="paw-files-preview__body" key={`body:${selectedFile.path}`}>
-                {previewLoading ? <div className="paw-files-preview__state" role="status"><LoaderCircle className="ui-spin" size={18} />正在读取文件…</div> : null}
+                {previewLoading ? (
+                  <div className="paw-files-preview__state paw-files-preview__state--loading" role="status">
+                    <span className="paw-files-preview__state-line"><LoaderCircle className="ui-spin" size={18} />正在读取文件…</span>
+                    <span aria-hidden="true" className="paw-files-preview__skeleton"><i /><i /><i /><i /><i /><i /></span>
+                  </div>
+                ) : null}
                 {previewError ? <div className="paw-files-preview__state" role="alert"><TriangleAlert size={18} /><span>{previewError}</span><button onClick={() => void loadPreview(selectedFile)} type="button">重试</button></div> : null}
                 {!previewLoading && !previewError && preview ? renderPreview(preview) : null}
               </div>
               {preview && !previewLoading && !previewError && preview.truncated && !previewIsBinary ? (
                 <footer className="paw-files-preview__more">
                   <span>已显示前 {formatBytes(preview.loadedBytes)} · 共 {formatBytes(preview.byteSize)}</span>
+                  <span
+                    aria-hidden="true"
+                    className="paw-files-preview__gauge"
+                    style={{ '--paw-files-gauge': `${loadedFraction(preview)}%` } as CSSProperties}
+                  >
+                    <i />
+                  </span>
                   {previewMoreError ? <em role="alert">{previewMoreError}</em> : null}
                   {previewCapped ? (
                     <em>已达 {formatBytes(PREVIEW_MAX_BYTES)} 预览上限，更长内容请用 Terminal 或 Agent 工具查看。</em>
@@ -626,7 +651,7 @@ export function PawOsFilesApp() {
           <span>已加载 {visibleEntryCount} 项</span>
           {filterActive ? <><i aria-hidden="true" /><span>匹配 {filterMatches.length} 项</span></> : null}
           {selectedFile ? <><i aria-hidden="true" /><span className="paw-files-statusbar__selection" title={`${selectedFile.path}${selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''}`}>已选 {selectedFile.name}{selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''}</span></> : null}
-          <span className="paw-files-statusbar__root" title={roots.join('\n') || undefined}>{roots.length ? `${roots.length} 个授权工作区` : '没有授权工作区'}</span>
+          <span className="paw-files-statusbar__root" data-live={roots.length ? true : undefined} title={roots.join('\n') || undefined}>{roots.length ? `${roots.length} 个授权工作区` : '没有授权工作区'}</span>
         </footer>
       </section>
     </>
@@ -634,7 +659,23 @@ export function PawOsFilesApp() {
 }
 
 function TreeState({ children, error, loading, onRetry }: { children?: ReactNode; error?: string; loading?: boolean; onRetry?: () => void }) {
-  return <div className="paw-files-tree__state" role={error ? 'alert' : loading ? 'status' : undefined}>{loading ? <LoaderCircle className="ui-spin" size={14} /> : error ? <TriangleAlert size={14} /> : null}<span>{error ?? children}</span>{onRetry ? <button onClick={onRetry} type="button">重试</button> : null}</div>;
+  return (
+    <div className="paw-files-tree__state" data-error={error ? true : undefined} data-loading={loading || undefined} role={error ? 'alert' : loading ? 'status' : undefined}>
+      <span className="paw-files-tree__state-line">
+        {loading ? <LoaderCircle className="ui-spin" size={14} /> : error ? <TriangleAlert size={14} /> : null}
+        <span>{error ?? children}</span>
+        {onRetry ? <button onClick={onRetry} type="button">重试</button> : null}
+      </span>
+      {loading ? <span aria-hidden="true" className="paw-files-tree__skeleton"><i /><i /><i /></span> : null}
+    </div>
+  );
+}
+
+/** Honest loaded share for the bounded-read gauge; floored so a partial file
+    never rounds up to a full bar. */
+function loadedFraction(preview: WorkspacePreview): number {
+  if (preview.byteSize <= 0) return 0;
+  return Math.max(2, Math.min(100, Math.floor((preview.loadedBytes / preview.byteSize) * 100)));
 }
 
 function renderPreview(file: WorkspacePreview): ReactNode {

@@ -1,17 +1,49 @@
+/*
+ * PAWOS Files — document atelier deep rebuild.
+ *
+ * One material story: machined porcelain chrome carrying a laminated
+ * accent→support "spine thread", a cool navigator panel where every file kind
+ * sits on its own tinted plate, and a frozen paper-white reading sheet. All
+ * ambience is bounded and honest: the reading gauge shows the real loaded
+ * fraction, the workspace LED only lights when a root is actually authorized,
+ * and every animation collapses under prefers-reduced-motion.
+ *
+ * Frozen cross-owner contracts kept verbatim:
+ *   - --color-canvas: #f4f6f8 literal on the App root.
+ *   - .paw-files-preview stays background: #fff (true paper sheet).
+ *   - @container paw-files (max-width: 860px) stacks the workspace and caps
+ *     the tree at max-height: 40%.
+ *   - Files never repaints the shared code-reader colour surface.
+ */
+
+/* --------------------------------------------------------------------------
+   1. App shell + design tokens
+   -------------------------------------------------------------------------- */
+
 .paw-files-app {
   --color-canvas: #f4f6f8;
   --color-paper: #fff;
   --color-surface: #fff;
   --color-chrome: #f4f6f8;
-  --color-text: #1d1d1f;
-  --color-text-secondary: #5d6470;
-  --color-text-tertiary: #858c97;
-  --color-border: rgb(29 29 31 / 10%);
-  --color-border-soft: rgb(29 29 31 / 7%);
-  --color-border-strong: rgb(29 29 31 / 18%);
+  --color-text: #17222d;
+  --color-text-secondary: #57626f;
+  --color-text-tertiary: #808a96;
+  --color-border: rgb(23 34 45 / 10%);
+  --color-border-soft: rgb(23 34 45 / 6%);
+  --color-border-strong: rgb(23 34 45 / 17%);
   --color-accent: var(--paw-app-accent, #2c6cb8);
   --color-danger: #d70015;
   --color-warning: #a86408;
+  --files-support: var(--paw-app-support, #c79427);
+  --files-ease: var(--paw-ease-out, cubic-bezier(.16, 1, .3, 1));
+  --files-ease-spring: cubic-bezier(.3, 1.36, .44, 1);
+  --files-thread: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-accent) 55%, transparent) 24%,
+    color-mix(in srgb, var(--files-support) 58%, transparent) 76%,
+    transparent
+  );
   display: grid;
   width: 100%;
   height: 100%;
@@ -47,18 +79,41 @@
   grid-template-rows: auto minmax(0, 1fr) 28px;
 }
 
+/* --------------------------------------------------------------------------
+   2. Window chrome + command deck
+   The toolbar may be projected into the window titlebar, outside the App
+   subtree, so the titlebar variant re-declares the token set it consumes.
+   -------------------------------------------------------------------------- */
+
 .paw-window-titlebar[data-window-chrome='files-tools'] {
   --color-surface: #fff;
-  --color-text: #1d1d1f;
-  --color-text-secondary: #5d6470;
-  --color-border: rgb(29 29 31 / 10%);
+  --color-paper: #fff;
+  --color-text: #17222d;
+  --color-text-secondary: #57626f;
+  --color-text-tertiary: #808a96;
+  --color-border: rgb(23 34 45 / 10%);
+  --color-border-soft: rgb(23 34 45 / 6%);
   --color-accent: var(--paw-app-accent, #2c6cb8);
+  --files-support: var(--paw-app-support, #c79427);
+  --files-ease: var(--paw-ease-out, cubic-bezier(.16, 1, .3, 1));
+  --files-thread: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-accent) 55%, transparent) 24%,
+    color-mix(in srgb, var(--files-support) 58%, transparent) 76%,
+    transparent
+  );
   grid-template-columns: 76px minmax(44px, 74px) minmax(0, 1fr);
   gap: 8px;
   padding-right: 8px;
-  border-bottom: 1px solid rgb(29 29 31 / 9%);
-  background: rgb(247 248 250 / 96%);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 80%) inset;
+  border-bottom: 1px solid rgb(23 34 45 / 8%);
+  background-image:
+    var(--files-thread),
+    linear-gradient(180deg, rgb(251 252 254 / 97%), rgb(243 246 249 / 97%));
+  background-position: left bottom, left top;
+  background-repeat: no-repeat;
+  background-size: 100% 2px, auto;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 84%) inset;
 }
 
 .paw-window-titlebar[data-window-chrome='files-tools'] .paw-window-title {
@@ -68,16 +123,22 @@
 .paw-files-app__toolbar {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 240px) minmax(110px, 260px) auto;
+  grid-template-columns: minmax(0, 250px) minmax(120px, 280px) auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-chrome);
+  background-image:
+    var(--files-thread),
+    linear-gradient(180deg, color-mix(in srgb, #fff 55%, var(--color-chrome)), var(--color-chrome));
+  background-position: left bottom, left top;
+  background-repeat: no-repeat;
+  background-size: 100% 2px, auto;
   user-select: none;
 }
 
+/* Inside the titlebar the satin and spine belong to the titlebar itself. */
 .paw-files-app__toolbar[data-window-chrome] {
   width: 100%;
   height: 100%;
@@ -95,23 +156,34 @@
 .paw-files-app__toolbar select {
   width: 100%;
   min-width: 0;
-  height: 30px;
+  height: 31px;
+  appearance: none;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 0 28px 0 9px;
-  background: var(--color-paper);
+  border-radius: 9px;
+  padding: 0 28px 0 10px;
+  background-color: var(--color-paper);
+  background-image:
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2357626f' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, #fff, color-mix(in srgb, var(--color-accent) 3%, #fff));
+  background-position: right 10px center, left top;
+  background-repeat: no-repeat;
+  background-size: 10px 6px, auto;
+  box-shadow: 0 1px 2px rgb(23 34 45 / 5%), inset 0 1px 0 #fff;
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
   line-height: 1.4;
+  font-weight: 560;
   text-overflow: ellipsis;
-  transition: border-color 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: border-color 150ms var(--files-ease), box-shadow 150ms var(--files-ease);
 }
 
 .paw-files-app__toolbar select:focus-visible {
   outline: none;
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent),
+    0 1px 2px rgb(23 34 45 / 5%);
 }
 
 /* The filter narrows what is already loaded from the authorized roots; it is
@@ -120,18 +192,23 @@
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 9px;
+  height: 31px;
+  padding: 0 10px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-paper);
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, #fff, color-mix(in srgb, var(--color-accent) 3%, #fff));
+  box-shadow: 0 1px 2px rgb(23 34 45 / 5%), inset 0 1px 0 #fff;
   color: var(--color-text-tertiary);
-  transition: border-color 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: border-color 150ms var(--files-ease), box-shadow 150ms var(--files-ease), color 150ms var(--files-ease);
 }
 
 .paw-files-app__toolbar .paw-files-filter:focus-within {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent),
+    0 1px 2px rgb(23 34 45 / 5%);
+  color: var(--color-accent);
 }
 
 .paw-files-filter input {
@@ -158,26 +235,32 @@
   appearance: none;
 }
 
+/* Shared quiet-button base for chrome, states, and error recovery. */
 .paw-files-app__toolbar > button,
 .paw-native-app__error button,
 .paw-files-tree__state button,
-.paw-files-preview__state button,
-.paw-files-preview__more > button {
+.paw-files-preview__state button {
   display: inline-flex;
-  min-height: 30px;
+  min-height: 31px;
   align-items: center;
   justify-content: center;
   gap: 5px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 0 10px;
-  background: var(--color-paper);
+  border-radius: 9px;
+  padding: 0 11px;
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--color-accent) 3%, #fff));
+  box-shadow: 0 1px 2px rgb(23 34 45 / 5%), inset 0 1px 0 #fff;
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
   line-height: 1.4;
-  transition: transform 130ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition:
+    transform 130ms var(--files-ease),
+    border-color 140ms var(--files-ease),
+    background-color 140ms var(--files-ease),
+    box-shadow 140ms var(--files-ease),
+    color 140ms var(--files-ease);
 }
 
 .paw-files-app__toolbar > button:disabled {
@@ -185,31 +268,48 @@
   opacity: .52;
 }
 
+/* A live refresh names itself: the button rings while directories reload. */
+.paw-files-app__toolbar > button[aria-busy] {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 11%, transparent);
+  color: var(--color-accent);
+  opacity: 1;
+}
+
 .paw-files-app__toolbar > button:active:not(:disabled),
 .paw-native-app__error button:active,
 .paw-files-tree__state button:active,
 .paw-files-preview__state button:active,
-.paw-files-preview__more > button:active:not(:disabled),
 .paw-files-preview__back:active {
-  transform: scale(.97);
+  transform: scale(.96);
 }
+
+/* --------------------------------------------------------------------------
+   3. Session error bar
+   -------------------------------------------------------------------------- */
 
 .paw-native-app__error {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   padding: 8px 14px;
-  border-bottom: 1px solid rgb(215 0 21 / 24%);
-  background: rgb(215 0 21 / 7%);
+  border-bottom: 1px solid rgb(215 0 21 / 22%);
+  background:
+    linear-gradient(90deg, rgb(215 0 21 / 10%), rgb(215 0 21 / 5%) 60%, transparent),
+    var(--color-paper);
   color: var(--color-danger);
   font-size: 14px;
   line-height: 1.45;
-  animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  animation: paw-files-state-enter 180ms var(--files-ease) both;
 }
 
 .paw-native-app__error button {
   margin-left: auto;
 }
+
+/* --------------------------------------------------------------------------
+   4. Workspace split
+   -------------------------------------------------------------------------- */
 
 .paw-files-app__workspace {
   display: grid;
@@ -220,7 +320,14 @@
   background: var(--color-paper);
 }
 
+/* --------------------------------------------------------------------------
+   5. Navigator tree
+   The window shell owns the panel wash (--paw-app-nav); this layer adds the
+   dot lattice, the machined edge, and every row identity above it.
+   -------------------------------------------------------------------------- */
+
 .paw-files-tree {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -228,14 +335,31 @@
   overflow: hidden;
   border-right: 1px solid var(--color-border);
   background: var(--color-chrome);
+  box-shadow: inset -1px 0 0 rgb(255 255 255 / 55%);
+}
+
+/* Quiet drafting lattice fading in from the panel top. */
+.paw-files-tree::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--color-accent) 28%, transparent) 1px, transparent 1.4px);
+  background-size: 17px 17px;
+  content: '';
+  opacity: .34;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 150px);
+  mask-image: linear-gradient(180deg, #000, transparent 150px);
 }
 
 .paw-files-tree__scroll {
+  position: relative;
+  z-index: 1;
   min-height: 0;
   flex: 1 1 auto;
-  padding: 8px 6px 18px;
+  padding: 9px 7px 18px;
   overflow: auto;
-  scrollbar-color: rgb(29 29 31 / 18%) transparent;
+  scrollbar-color: rgb(23 34 45 / 18%) transparent;
 }
 
 .paw-files-tree nav,
@@ -246,7 +370,7 @@
 }
 
 .paw-files-tree__root {
-  margin: 0 0 4px;
+  margin: 0 0 5px;
 }
 
 .paw-files-tree__root-button,
@@ -260,15 +384,28 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   text-align: left;
-  transition: color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), transform 120ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition:
+    color 140ms var(--files-ease),
+    background-color 140ms var(--files-ease),
+    box-shadow 140ms var(--files-ease),
+    transform 130ms var(--files-ease);
 }
 
+/* Workspace root as a document plate: duotone folder puck + mono path. */
 .paw-files-tree__root-button {
-  min-height: 42px;
-  grid-template-columns: 14px 18px minmax(0, 1fr);
-  gap: 7px;
-  padding: 5px 8px;
-  border-radius: 9px;
+  min-height: 46px;
+  grid-template-columns: 14px 26px minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 11px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-accent) 8%, transparent),
+    color-mix(in srgb, var(--files-support) 7%, transparent)
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 15%, transparent),
+    0 1px 2px rgb(23 34 45 / 4%);
   color: var(--color-text);
 }
 
@@ -289,37 +426,66 @@
   color: var(--color-text);
   font-size: 14px;
   line-height: 1.4;
-  font-weight: 680;
+  font-weight: 700;
+  letter-spacing: .005em;
 }
 
 .paw-files-tree__root-button small {
   color: var(--color-text-tertiary);
-  font: 13px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font: 12.5px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
+.paw-files-tree__root-button > svg:nth-child(2) {
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  border-radius: 8px;
+  background: linear-gradient(140deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 52%, var(--files-support)));
+  box-shadow:
+    0 3px 8px color-mix(in srgb, var(--color-accent) 32%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 38%);
+  color: #fff;
+}
+
+/* Depth rails: an accent thread that names the open branch. */
 .paw-files-tree ul[role='group'] {
   position: relative;
-  margin-left: 11px;
-  padding-left: 6px;
+  margin-left: 12px;
+  padding-left: 7px;
 }
 
 .paw-files-tree ul[role='group']::before {
   position: absolute;
-  inset: 2px auto 2px 0;
-  width: 1px;
-  border-radius: 1px;
-  background: var(--color-border);
+  inset: 3px auto 3px 0;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 34%, transparent),
+    color-mix(in srgb, var(--color-accent) 12%, transparent) 62%,
+    transparent
+  );
   content: '';
+  transition: background 160ms var(--files-ease);
+}
+
+.paw-files-tree ul[role='group']:hover::before {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 58%, transparent),
+    color-mix(in srgb, var(--color-accent) 22%, transparent) 70%,
+    transparent
+  );
 }
 
 .paw-files-tree__row {
   position: relative;
-  min-height: 30px;
-  grid-template-columns: 14px 16px minmax(0, 1fr) auto;
+  min-height: 31px;
+  grid-template-columns: 14px 21px minmax(0, 1fr) auto;
   gap: 7px;
-  padding: 3px 8px 3px calc(7px + var(--paw-files-depth, 1) * 12px);
-  border-radius: 8px;
-  font-size: 14px;
+  padding: 3px 8px 3px calc(6px + var(--paw-files-depth, 1) * 13px);
+  border-radius: 9px;
+  font-size: 13.5px;
   line-height: 1.45;
 }
 
@@ -329,31 +495,51 @@
   white-space: nowrap;
 }
 
+/* Byte sizes ride as quiet mono chips at the row edge. */
 .paw-files-tree__row small {
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
   color: var(--color-text-tertiary);
-  font: 13px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font: 11.5px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  transition: background-color 140ms var(--files-ease), color 140ms var(--files-ease);
 }
 
 .paw-files-tree__root-button:focus-visible,
 .paw-files-tree__row:focus-visible {
   outline: none;
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 48%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 
+/* Selection: ink-wash gradient, laminated beam, and a lit type plate. */
 .paw-files-tree__row[data-selected] {
-  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 17%, transparent),
+    color-mix(in srgb, var(--color-accent) 8%, transparent) 72%,
+    transparent
+  );
   color: var(--color-text);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent),
+    0 1px 6px color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 
 .paw-files-tree__row[data-selected]::before {
   position: absolute;
-  inset: 4px auto 4px 2px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--color-accent);
+  inset: 4px auto 4px 1px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 45%, var(--files-support)));
+  box-shadow: 0 0 7px color-mix(in srgb, var(--color-accent) 45%, transparent);
   content: '';
+}
+
+.paw-files-tree__row[data-selected] small {
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 78%, var(--color-text));
 }
 
 .paw-files-tree__root-button:active,
@@ -363,62 +549,202 @@
 
 .paw-files-tree__root-button > svg:first-child,
 .paw-files-tree__row > svg:first-child {
-  transition: transform 180ms var(--paw-ease-in-out, cubic-bezier(.77, 0, .175, 1));
+  color: var(--color-text-tertiary);
+  transition: transform 200ms var(--files-ease-spring), color 140ms var(--files-ease);
 }
 
 .paw-files-tree__root-button > svg:first-child[data-open],
 .paw-files-tree__row > svg:first-child[data-open] {
   transform: rotate(90deg);
+  color: var(--color-accent);
 }
 
-.paw-files-tree__row > svg:nth-child(2),
-.paw-files-tree__root-button > svg:nth-child(2) {
-  color: #697483;
+/* File-kind plates: every extension family owns one tint, shared with the
+   preview masthead glyph so the same file reads as the same material. */
+.paw-files-tree__row,
+.paw-files-preview__glyph {
+  --paw-file-tint: #64748b;
 }
 
-.paw-files-tree__row[data-ext='py'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='ts'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='tsx'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='js'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='sh'] > svg:nth-child(2) { color: #14a9bb; }
+.paw-files-tree__row[aria-expanded] { --paw-file-tint: var(--color-accent); }
 
-.paw-files-tree__row[data-ext='md'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='mdx'] > svg:nth-child(2) { color: #7656bd; }
+.paw-files-tree__row[data-ext='c'],
+.paw-files-tree__row[data-ext='go'],
+.paw-files-tree__row[data-ext='js'],
+.paw-files-tree__row[data-ext='jsx'],
+.paw-files-tree__row[data-ext='py'],
+.paw-files-tree__row[data-ext='rs'],
+.paw-files-tree__row[data-ext='sh'],
+.paw-files-tree__row[data-ext='swift'],
+.paw-files-tree__row[data-ext='ts'],
+.paw-files-tree__row[data-ext='tsx'],
+.paw-files-preview__glyph[data-ext='c'],
+.paw-files-preview__glyph[data-ext='go'],
+.paw-files-preview__glyph[data-ext='js'],
+.paw-files-preview__glyph[data-ext='jsx'],
+.paw-files-preview__glyph[data-ext='py'],
+.paw-files-preview__glyph[data-ext='rs'],
+.paw-files-preview__glyph[data-ext='sh'],
+.paw-files-preview__glyph[data-ext='swift'],
+.paw-files-preview__glyph[data-ext='ts'],
+.paw-files-preview__glyph[data-ext='tsx'] { --paw-file-tint: #0d8fa2; }
 
-.paw-files-tree__row[data-ext='csv'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='json'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='yaml'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='yml'] > svg:nth-child(2) { color: #d38b18; }
+.paw-files-tree__row[data-ext='css'],
+.paw-files-tree__row[data-ext='less'],
+.paw-files-tree__row[data-ext='scss'],
+.paw-files-preview__glyph[data-ext='css'],
+.paw-files-preview__glyph[data-ext='less'],
+.paw-files-preview__glyph[data-ext='scss'] { --paw-file-tint: #4262c9; }
 
-.paw-files-tree__row[data-ext='svg'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='png'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='jpg'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='jpeg'] > svg:nth-child(2),
-.paw-files-tree__row[data-ext='webp'] > svg:nth-child(2) { color: #c04a68; }
+.paw-files-tree__row[data-ext='markdown'],
+.paw-files-tree__row[data-ext='md'],
+.paw-files-tree__row[data-ext='mdx'],
+.paw-files-preview__glyph[data-ext='markdown'],
+.paw-files-preview__glyph[data-ext='md'],
+.paw-files-preview__glyph[data-ext='mdx'] { --paw-file-tint: #7a58c4; }
 
-.paw-files-tree__row[data-kind='symlink'] > svg:nth-child(2) { color: var(--color-accent); }
+.paw-files-tree__row[data-ext='csv'],
+.paw-files-tree__row[data-ext='json'],
+.paw-files-tree__row[data-ext='toml'],
+.paw-files-tree__row[data-ext='yaml'],
+.paw-files-tree__row[data-ext='yml'],
+.paw-files-preview__glyph[data-ext='csv'],
+.paw-files-preview__glyph[data-ext='json'],
+.paw-files-preview__glyph[data-ext='toml'],
+.paw-files-preview__glyph[data-ext='yaml'],
+.paw-files-preview__glyph[data-ext='yml'] { --paw-file-tint: #b8821b; }
 
-.paw-files-tree__limit {
-  margin: 2px 8px 4px calc(7px + var(--paw-files-depth, 1) * 12px);
-  padding: 4px 9px;
-  border: 1px dashed var(--color-border-strong);
+.paw-files-tree__row[data-ext='gif'],
+.paw-files-tree__row[data-ext='ico'],
+.paw-files-tree__row[data-ext='jpeg'],
+.paw-files-tree__row[data-ext='jpg'],
+.paw-files-tree__row[data-ext='png'],
+.paw-files-tree__row[data-ext='svg'],
+.paw-files-tree__row[data-ext='webp'],
+.paw-files-preview__glyph[data-ext='gif'],
+.paw-files-preview__glyph[data-ext='ico'],
+.paw-files-preview__glyph[data-ext='jpeg'],
+.paw-files-preview__glyph[data-ext='jpg'],
+.paw-files-preview__glyph[data-ext='png'],
+.paw-files-preview__glyph[data-ext='svg'],
+.paw-files-preview__glyph[data-ext='webp'] { --paw-file-tint: #c04a68; }
+
+.paw-files-tree__row[data-ext='htm'],
+.paw-files-tree__row[data-ext='html'],
+.paw-files-tree__row[data-ext='xml'],
+.paw-files-preview__glyph[data-ext='htm'],
+.paw-files-preview__glyph[data-ext='html'],
+.paw-files-preview__glyph[data-ext='xml'] { --paw-file-tint: #ce5f36; }
+
+.paw-files-tree__row[data-kind='symlink'],
+.paw-files-preview__glyph[data-kind='symlink'] { --paw-file-tint: var(--color-accent); }
+
+.paw-files-tree__row > svg:nth-child(2) {
+  width: 21px;
+  height: 21px;
+  padding: 3px;
   border-radius: 7px;
-  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--paw-file-tint) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-file-tint) 20%, transparent);
+  color: var(--paw-file-tint);
+  transition: background-color 140ms var(--files-ease), box-shadow 140ms var(--files-ease);
+}
+
+.paw-files-tree__row[data-selected] > svg:nth-child(2) {
+  background: color-mix(in srgb, var(--paw-file-tint) 18%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--paw-file-tint) 34%, transparent),
+    0 0 8px color-mix(in srgb, var(--paw-file-tint) 22%, transparent);
+}
+
+/* Honest display-limit ledger chip. */
+.paw-files-tree__limit {
+  margin: 3px 8px 5px calc(6px + var(--paw-files-depth, 1) * 13px);
+  padding: 4px 10px;
+  border: 1px dashed color-mix(in srgb, var(--files-support) 52%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--files-support) 7%, transparent);
+  color: color-mix(in srgb, var(--files-support) 60%, var(--color-text));
   font-size: 12.5px;
   line-height: 1.45;
 }
 
+/* Tree states carry a shimmer skeleton while directories stream in. */
 .paw-files-tree__state {
-  display: flex;
+  display: grid;
   min-height: 40px;
-  align-items: center;
-  gap: 6px;
+  align-content: center;
+  gap: 7px;
   padding: 8px 12px;
   color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.4;
-  animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  animation: paw-files-state-enter 180ms var(--files-ease) both;
 }
+
+.paw-files-tree__state-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.paw-files-tree__state[data-error] {
+  color: var(--color-danger);
+}
+
+.paw-files-tree__state-line button {
+  margin-left: auto;
+}
+
+.paw-files-tree__skeleton {
+  display: grid;
+  gap: 7px;
+  padding: 2px 2px 4px;
+}
+
+.paw-files-tree__skeleton > i,
+.paw-files-preview__skeleton > i {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 7%, transparent) 25%,
+    color-mix(in srgb, var(--color-accent) 16%, transparent) 50%,
+    color-mix(in srgb, var(--color-accent) 7%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: paw-files-shimmer 1.5s linear infinite;
+}
+
+.paw-files-tree__skeleton > i:nth-child(1) { width: 82%; }
+.paw-files-tree__skeleton > i:nth-child(2) { width: 58%; animation-delay: 120ms; }
+.paw-files-tree__skeleton > i:nth-child(3) { width: 71%; animation-delay: 240ms; }
+
+/* Branch arrival: the group unfolds and the first rows cascade in. */
+.paw-files-tree li > ul {
+  animation: paw-files-branch-enter 200ms var(--files-ease) both;
+  transform-origin: top;
+}
+
+.paw-files-tree ul[role='group'] > li {
+  animation: paw-files-row-enter 240ms var(--files-ease) both;
+}
+
+.paw-files-tree ul[role='group'] > li:nth-child(2) { animation-delay: 20ms; }
+.paw-files-tree ul[role='group'] > li:nth-child(3) { animation-delay: 40ms; }
+.paw-files-tree ul[role='group'] > li:nth-child(4) { animation-delay: 60ms; }
+.paw-files-tree ul[role='group'] > li:nth-child(5) { animation-delay: 80ms; }
+.paw-files-tree ul[role='group'] > li:nth-child(6) { animation-delay: 100ms; }
+.paw-files-tree ul[role='group'] > li:nth-child(7) { animation-delay: 120ms; }
+.paw-files-tree ul[role='group'] > li:nth-child(8) { animation-delay: 140ms; }
+
+/* Long listings arrive as one sheet; only the visible crest cascades. */
+.paw-files-tree ul[role='group'] > li:nth-child(n+9) { animation: none; }
+
+/* --------------------------------------------------------------------------
+   6. Filter results deck
+   -------------------------------------------------------------------------- */
 
 .paw-files-filter-results {
   display: grid;
@@ -428,11 +754,21 @@
 }
 
 .paw-files-filter-results__meta {
-  margin: 0;
-  padding: 6px 10px 4px;
-  color: var(--color-text-tertiary);
+  display: flow-root;
+  margin: 0 2px 4px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 9%, transparent),
+    color-mix(in srgb, var(--color-accent) 3%, transparent) 78%,
+    transparent
+  );
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-accent) 55%, transparent);
+  color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.45;
+  font-variant-numeric: tabular-nums;
 }
 
 .paw-files-filter-results ul {
@@ -442,24 +778,34 @@
 
 .paw-files-filter-results .paw-files-tree__row {
   min-height: 34px;
+  padding-left: 8px;
 }
 
 .paw-files-filter-results .paw-files-tree__row small {
   max-width: 45%;
   overflow: hidden;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .paw-files-filter-results .paw-files-tree__row mark {
-  border-radius: 3px;
-  padding: 0 1px;
+  border-radius: 4px;
+  padding: 0 2px;
   background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent);
   color: inherit;
+  font-weight: 680;
 }
 
-/* The reading pane stays a true paper-white sheet even when the shell tints
-   the surrounding chrome; that literal is a frozen cross-owner contract. */
+/* --------------------------------------------------------------------------
+   7. Reading pane
+   The reading pane stays a true paper-white sheet even when the shell tints
+   the surrounding chrome; that literal is a frozen cross-owner contract.
+   -------------------------------------------------------------------------- */
+
 .paw-files-preview {
   display: grid;
   min-width: 0;
@@ -469,17 +815,23 @@
   background: #fff;
 }
 
+/* Masthead: glyph plate, filename, mono path, laminated spine underline. */
 .paw-files-preview > header {
   display: flex;
   min-width: 0;
-  min-height: 56px;
+  min-height: 58px;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 9px 18px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-paper);
-  animation: paw-files-preview-enter 190ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  gap: 11px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--color-border-soft);
+  background-image:
+    var(--files-thread),
+    linear-gradient(180deg, #fff, color-mix(in srgb, var(--color-accent) 2.5%, #fff));
+  background-position: left bottom, left top;
+  background-repeat: no-repeat;
+  background-size: 100% 2px, auto;
+  animation: paw-files-preview-enter 190ms var(--files-ease) both;
 }
 
 .paw-files-preview__back {
@@ -489,11 +841,25 @@
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 50%;
   background: var(--color-paper);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: transform 140ms var(--files-ease), border-color 140ms var(--files-ease), color 140ms var(--files-ease);
+}
+
+.paw-files-preview__glyph {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--paw-file-tint) 12%, #fff);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--paw-file-tint) 26%, transparent),
+    0 2px 6px color-mix(in srgb, var(--paw-file-tint) 14%, transparent);
+  color: var(--paw-file-tint);
 }
 
 .paw-files-preview > header > div {
@@ -515,50 +881,57 @@
   color: var(--color-text);
   font-size: 15px;
   line-height: 1.4;
-  font-weight: 700;
+  font-weight: 720;
+  letter-spacing: .004em;
 }
 
 .paw-files-preview > header small {
   display: block;
-  max-width: min(70ch, 100%);
+  max-width: min(72ch, 100%);
   color: var(--color-text-tertiary);
-  font: 13px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font: 12.5px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
+/* Copy actions as one machined segmented capsule. */
 .paw-files-preview__actions {
-  display: flex;
+  display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-paper);
+  box-shadow: 0 1px 2px rgb(23 34 45 / 5%), inset 0 1px 0 #fff;
 }
 
 .paw-files-preview__action {
   display: grid;
-  width: 30px;
+  width: 33px;
   height: 30px;
-  flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-paper);
+  border: 0;
+  background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: background-color 140ms var(--files-ease), color 140ms var(--files-ease);
 }
 
-.paw-files-preview__action:active:not(:disabled) {
-  transform: scale(.94);
+.paw-files-preview__action + .paw-files-preview__action {
+  border-left: 1px solid var(--color-border-soft);
 }
 
 .paw-files-preview__action:disabled {
   cursor: not-allowed;
-  opacity: .45;
+  opacity: .42;
 }
 
 .paw-files-preview__action[data-copied] {
-  border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
-  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   color: var(--color-accent);
+}
+
+.paw-files-preview__action[data-copied] svg {
+  animation: paw-files-copy-pop 260ms var(--files-ease-spring) both;
 }
 
 .paw-files-preview__body {
@@ -566,7 +939,7 @@
   min-height: 0;
   overflow: auto;
   background: #fff;
-  scrollbar-color: rgb(29 29 31 / 18%) transparent;
+  scrollbar-color: rgb(23 34 45 / 18%) transparent;
 }
 
 .paw-files-preview__body:has(> .agent-file-code),
@@ -595,8 +968,8 @@
    Repainting only the background here once left the light plain-text fallback
    unreadable on a light surface; Files must not recolour the code surface. */
 
-/* The Files header already names the open file and owns the copy actions, so
-   the shared reader's duplicate filename strip stays out of this App. */
+/* The Files masthead already names the open file and owns the copy actions,
+   so the shared reader's duplicate filename strip stays out of this App. */
 .paw-files-preview__body > .agent-file-code figcaption,
 .paw-files-svg .agent-file-code figcaption {
   display: none;
@@ -615,9 +988,10 @@
 .paw-files-preview__body .agent-file-markdown {
   max-width: 860px;
   margin: 0 auto;
-  padding: 24px 30px 70px;
+  padding: 26px 30px 70px;
 }
 
+/* SVG stage: drafting checkerboard under a quiet accent aura. */
 .paw-files-svg {
   display: grid;
   width: 100%;
@@ -633,8 +1007,8 @@
   justify-content: flex-end;
   gap: 4px;
   padding: 7px 14px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-paper);
+  border-bottom: 1px solid var(--color-border-soft);
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--color-accent) 2%, #fff));
 }
 
 .paw-files-svg__bar button {
@@ -643,15 +1017,15 @@
   align-items: center;
   gap: 5px;
   border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 0 9px;
+  border-radius: 8px;
+  padding: 0 10px;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 12.5px;
   line-height: 1.4;
-  transition: border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+  transition: border-color 140ms var(--files-ease), background-color 140ms var(--files-ease), color 140ms var(--files-ease);
 }
 
 .paw-files-svg__bar button[aria-pressed='true'] {
@@ -674,57 +1048,190 @@
   padding: 26px;
   overflow: auto;
   background:
-    repeating-conic-gradient(rgb(29 29 31 / 5%) 0% 25%, transparent 0% 50%) 0 0 / 18px 18px,
+    repeating-conic-gradient(rgb(23 34 45 / 4.5%) 0% 25%, transparent 0% 50%) 0 0 / 18px 18px,
+    radial-gradient(620px 380px at 50% 28%, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent 72%),
     var(--color-canvas);
-  scrollbar-color: rgb(29 29 31 / 18%) transparent;
+  scrollbar-color: rgb(23 34 45 / 18%) transparent;
 }
 
 .paw-files-svg__stage img {
   max-width: 100%;
   max-height: 100%;
-  filter: drop-shadow(0 2px 8px rgb(15 23 42 / 12%));
+  filter: drop-shadow(0 3px 10px rgb(23 34 45 / 14%));
+  animation: paw-files-stage-in 240ms var(--files-ease) both;
 }
 
+/* --------------------------------------------------------------------------
+   8. Reading-pane states: observatory empty state, shimmer loading, honest
+      binary/empty receipts.
+   -------------------------------------------------------------------------- */
+
 .paw-files-preview__empty {
+  position: relative;
   display: grid;
   grid-row: 1 / -1;
   place-content: center;
   justify-items: center;
-  gap: 8px;
+  gap: 9px;
+  isolation: isolate;
+  overflow: hidden;
   padding: 24px;
   color: var(--color-text-tertiary);
   text-align: center;
 }
 
-.paw-files-preview__empty svg {
-  color: var(--color-accent);
+/* Quiet horizon: two auras and a masked dot lattice behind the desk. */
+.paw-files-preview__empty::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    radial-gradient(460px 300px at 50% 30%, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 70%),
+    radial-gradient(520px 340px at 78% 88%, color-mix(in srgb, var(--files-support) 6%, transparent), transparent 64%),
+    radial-gradient(circle, color-mix(in srgb, var(--color-accent) 22%, transparent) 1px, transparent 1.4px) 0 0 / 20px 20px;
+  content: '';
+  opacity: .8;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 72%);
+}
+
+/* The document desk: three fanned sheets and a duotone glyph puck. */
+.paw-files-preview__empty-stage {
+  position: relative;
+  width: 138px;
+  height: 106px;
+  margin-bottom: 10px;
+}
+
+.paw-files-preview__empty-stage > i {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 66px;
+  height: 88px;
+  margin-left: -33px;
+  border: 1px solid rgb(23 34 45 / 9%);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fff, #f5f8fb);
+  box-shadow: 0 10px 24px rgb(23 34 45 / 10%), inset 0 1px 0 #fff;
+  transform: var(--paw-files-sheet-rest);
+  animation: paw-files-sheet-drift 5.6s ease-in-out infinite;
+}
+
+.paw-files-preview__empty-stage > i::before {
+  position: absolute;
+  inset: 26px 11px auto;
+  height: 40px;
+  background: repeating-linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 26%, transparent) 0 3px,
+    transparent 3px 10px
+  );
+  border-radius: 2px;
+  content: '';
+  opacity: .55;
+}
+
+.paw-files-preview__empty-stage > i::after {
+  position: absolute;
+  inset: 12px auto auto 11px;
+  width: 26px;
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--files-support) 55%, transparent);
+  content: '';
+}
+
+.paw-files-preview__empty-stage > i:nth-child(1) {
+  --paw-files-sheet-rest: rotate(-10deg) translate3d(-30px, 4px, 0);
+  animation-delay: 0s;
+}
+
+.paw-files-preview__empty-stage > i:nth-child(2) {
+  --paw-files-sheet-rest: rotate(9deg) translate3d(30px, 4px, 0);
+  animation-delay: .7s;
+}
+
+.paw-files-preview__empty-stage > i:nth-child(3) {
+  --paw-files-sheet-rest: rotate(-1deg) translate3d(0, 0, 0);
+  animation-delay: .35s;
+  box-shadow: 0 14px 30px rgb(23 34 45 / 13%), inset 0 1px 0 #fff;
+}
+
+.paw-files-preview__empty-stage > span {
+  position: absolute;
+  right: 2px;
+  bottom: -8px;
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 15px;
+  background: linear-gradient(140deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 52%, var(--files-support)));
+  box-shadow:
+    0 12px 26px color-mix(in srgb, var(--color-accent) 34%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 42%);
+  color: #fff;
+  animation: paw-files-puck-bob 5.6s ease-in-out infinite;
 }
 
 .paw-files-preview__empty strong {
-  color: var(--color-text);
-  font-size: 15px;
+  background: linear-gradient(90deg, var(--color-text), color-mix(in srgb, var(--color-accent) 72%, var(--color-text)));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-size: 17px;
   line-height: 1.4;
+  font-weight: 760;
+  letter-spacing: .01em;
 }
 
-.paw-files-preview__empty span {
-  max-width: 34ch;
+.paw-files-preview__empty > span {
+  max-width: 36ch;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 .paw-files-preview__state {
-  min-height: 140px;
+  min-height: 150px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 7px;
-  padding: 18px;
+  gap: 8px;
+  padding: 20px;
   color: var(--color-text-tertiary);
   font-size: 14px;
   line-height: 1.45;
-  animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
+  animation: paw-files-state-enter 180ms var(--files-ease) both;
 }
+
+/* Loading reads as the document taking shape: a page of shimmer lines. */
+.paw-files-preview__state--loading {
+  flex-direction: column;
+  align-content: center;
+}
+
+.paw-files-preview__state-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.paw-files-preview__skeleton {
+  display: grid;
+  width: min(430px, 86%);
+  gap: 9px;
+  margin-top: 6px;
+}
+
+.paw-files-preview__skeleton > i:nth-child(1) { width: 96%; }
+.paw-files-preview__skeleton > i:nth-child(2) { width: 84%; animation-delay: 90ms; }
+.paw-files-preview__skeleton > i:nth-child(3) { width: 91%; animation-delay: 180ms; }
+.paw-files-preview__skeleton > i:nth-child(4) { width: 68%; animation-delay: 270ms; }
+.paw-files-preview__skeleton > i:nth-child(5) { width: 88%; animation-delay: 360ms; }
+.paw-files-preview__skeleton > i:nth-child(6) { width: 47%; animation-delay: 450ms; }
 
 .paw-files-preview__state--binary,
 .paw-files-preview__state--empty {
@@ -733,26 +1240,61 @@
   text-align: center;
 }
 
+.paw-files-preview__state--binary svg,
+.paw-files-preview__state--empty svg {
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  border-radius: 13px;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 16%, transparent);
+}
+
 .paw-files-preview__state--binary svg {
   color: #c04a68;
 }
 
-/* The bounded reader: an honest range receipt plus the one real continuation
-   the read route supports. It never pretends the whole file is loaded. */
+/* --------------------------------------------------------------------------
+   9. Reading ledger
+   The bounded reader: an honest range receipt, a real loaded-fraction gauge,
+   and the one continuation the read route supports. It never pretends the
+   whole file is loaded.
+   -------------------------------------------------------------------------- */
+
 .paw-files-preview__more {
   display: flex;
   min-width: 0;
-  min-height: 40px;
+  min-height: 42px;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 5px 18px;
+  gap: 12px;
+  padding: 6px 18px;
   border-top: 1px solid var(--color-border);
-  background: var(--color-chrome);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 4%, var(--color-chrome)), var(--color-chrome));
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
+}
+
+.paw-files-preview__gauge {
+  flex: 1 1 90px;
+  min-width: 70px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  box-shadow: inset 0 1px 1px rgb(23 34 45 / 8%);
+}
+
+.paw-files-preview__gauge > i {
+  display: block;
+  width: var(--paw-files-gauge, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 46%, var(--files-support)));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 45%, transparent);
+  transition: width 320ms var(--files-ease);
 }
 
 .paw-files-preview__more > em {
@@ -764,9 +1306,36 @@
   color: var(--color-danger);
 }
 
+/* The continuation is the ledger's one filled action. */
 .paw-files-preview__more > button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   margin-left: auto;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 58%, transparent);
+  border-radius: 9px;
+  padding: 0 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 88%, #fff), var(--color-accent));
+  box-shadow:
+    0 5px 14px color-mix(in srgb, var(--color-accent) 26%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 32%);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 640;
   white-space: nowrap;
+  transition:
+    transform 130ms var(--files-ease),
+    box-shadow 140ms var(--files-ease),
+    filter 140ms var(--files-ease);
+}
+
+.paw-files-preview__more > button:active:not(:disabled) {
+  transform: scale(.97);
 }
 
 .paw-files-preview__more > button:disabled {
@@ -774,48 +1343,85 @@
   opacity: .62;
 }
 
-.paw-files-tree li > ul {
-  animation: paw-files-branch-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
-  transform-origin: top;
+.paw-files-preview__more > button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent),
+    0 5px 14px color-mix(in srgb, var(--color-accent) 26%, transparent);
 }
+
+/* --------------------------------------------------------------------------
+   10. Status micro-rail
+   -------------------------------------------------------------------------- */
 
 .paw-files-statusbar {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   overflow: hidden;
   padding: 0 12px;
   border-top: 1px solid var(--color-border);
-  background: var(--color-chrome);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 3%, var(--color-chrome)), var(--color-chrome));
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
 
 .paw-files-statusbar > i {
-  width: 2px;
-  height: 2px;
+  width: 3px;
+  height: 3px;
   flex: 0 0 auto;
-  border-radius: 50%;
+  border-radius: 1px;
   background: currentColor;
+  opacity: .55;
+  transform: rotate(45deg);
 }
 
 .paw-files-statusbar__selection {
   min-width: 0;
   max-width: min(52%, 440px);
   overflow: hidden;
+  color: var(--color-text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The authority chip only lights its LED for a real granted workspace. */
 .paw-files-statusbar__root {
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
-  color: #16845b;
-  font-weight: 650;
+  color: var(--color-text-tertiary);
+  font-weight: 640;
 }
+
+.paw-files-statusbar__root::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #9aa4b0;
+  box-shadow: inset 0 0 0 1px rgb(23 34 45 / 12%);
+  content: '';
+}
+
+.paw-files-statusbar__root[data-live] {
+  color: #157a52;
+}
+
+.paw-files-statusbar__root[data-live]::before {
+  background: #17a06b;
+  box-shadow: 0 0 7px rgb(23 160 107 / 55%);
+  animation: paw-files-led 3.2s ease-in-out infinite;
+}
+
+/* --------------------------------------------------------------------------
+   11. Keyframes
+   -------------------------------------------------------------------------- */
 
 @keyframes paw-files-preview-enter {
   from { opacity: 0; transform: translate3d(8px, 0, 0); }
@@ -825,9 +1431,47 @@
   from { opacity: 0; transform: translate3d(0, -4px, 0); }
 }
 
+@keyframes paw-files-row-enter {
+  from { opacity: 0; transform: translate3d(-6px, -2px, 0); }
+}
+
 @keyframes paw-files-state-enter {
   from { opacity: 0; transform: translate3d(0, -4px, 0); }
 }
+
+@keyframes paw-files-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes paw-files-sheet-drift {
+  0%, 100% { transform: var(--paw-files-sheet-rest); }
+  50% { transform: var(--paw-files-sheet-rest) translate3d(0, -4px, 0); }
+}
+
+@keyframes paw-files-puck-bob {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -3px, 0); }
+}
+
+@keyframes paw-files-copy-pop {
+  from { transform: scale(.4); }
+  60% { transform: scale(1.18); }
+  to { transform: scale(1); }
+}
+
+@keyframes paw-files-stage-in {
+  from { opacity: 0; transform: scale(.97); }
+}
+
+@keyframes paw-files-led {
+  0%, 100% { box-shadow: 0 0 7px rgb(23 160 107 / 55%); }
+  50% { box-shadow: 0 0 3px rgb(23 160 107 / 25%); }
+}
+
+/* --------------------------------------------------------------------------
+   12. Responsive plans
+   -------------------------------------------------------------------------- */
 
 @container paw-files (max-width: 860px) {
   .paw-files-app__workspace {
@@ -839,6 +1483,7 @@
     max-height: 40%;
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
+    box-shadow: none;
   }
 }
 
@@ -879,6 +1524,10 @@
     display: grid;
   }
 
+  .paw-files-preview__glyph {
+    display: none;
+  }
+
   .paw-files-preview__more {
     padding-inline: 12px;
   }
@@ -894,7 +1543,7 @@
   }
 
   .paw-files-app__toolbar > button {
-    width: 32px;
+    width: 33px;
     padding: 0;
   }
 
@@ -903,25 +1552,45 @@
   }
 
   .paw-files-tree__root-button {
-    min-height: 42px;
+    min-height: 44px;
   }
 }
+
+/* --------------------------------------------------------------------------
+   13. Hover polish
+   -------------------------------------------------------------------------- */
 
 @media (hover: hover) and (pointer: fine) {
   .paw-files-app__toolbar > button:hover:not(:disabled),
   .paw-native-app__error button:hover,
   .paw-files-tree__state button:hover,
-  .paw-files-preview__state button:hover,
-  .paw-files-preview__more > button:hover:not(:disabled),
+  .paw-files-preview__state button:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 36%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 7%, #fff);
+    color: var(--color-text);
+  }
+
   .paw-files-preview__action:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
-    background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 8%, transparent);
     color: var(--color-text);
   }
 
   .paw-files-preview__action[data-copied]:hover {
-    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
     color: var(--color-accent);
+  }
+
+  .paw-files-preview__back:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 36%, transparent);
+    color: var(--color-accent);
+  }
+
+  .paw-files-preview__more > button:hover:not(:disabled) {
+    box-shadow:
+      0 7px 18px color-mix(in srgb, var(--color-accent) 32%, transparent),
+      inset 0 1px 0 rgb(255 255 255 / 32%);
+    filter: brightness(1.05);
+    transform: translate3d(0, -1px, 0);
   }
 
   .paw-files-svg__bar button:hover {
@@ -939,16 +1608,58 @@
     color: var(--color-text);
     transform: translate3d(2px, 0, 0);
   }
+
+  .paw-files-tree__root-button:hover {
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-accent) 12%, transparent),
+      color-mix(in srgb, var(--files-support) 10%, transparent)
+    );
+  }
+
+  .paw-files-tree__row:hover small {
+    background: color-mix(in srgb, var(--color-text) 8%, transparent);
+    color: var(--color-text-secondary);
+  }
+
+  .paw-files-filter-results .paw-files-tree__row:hover small {
+    background: transparent;
+  }
 }
+
+/* --------------------------------------------------------------------------
+   14. Reduced motion: every ambient and entrance animation collapses; state
+       is still communicated by static colour, rotation, and fill.
+   -------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
   .paw-native-app__error,
   .paw-files-tree__state,
   .paw-files-preview__state,
   .paw-files-preview > header,
-  .paw-files-tree li > ul {
+  .paw-files-tree li > ul,
+  .paw-files-tree ul[role='group'] > li,
+  .paw-files-tree__skeleton > i,
+  .paw-files-preview__skeleton > i,
+  .paw-files-preview__empty-stage > i,
+  .paw-files-preview__empty-stage > span,
+  .paw-files-preview__action[data-copied] svg,
+  .paw-files-svg__stage img,
+  .paw-files-statusbar__root[data-live]::before {
     animation: none;
+  }
+
+  .paw-native-app__error,
+  .paw-files-tree__state,
+  .paw-files-preview__state,
+  .paw-files-preview > header,
+  .paw-files-svg__stage img {
     transform: none;
+  }
+
+  /* Fanned sheets keep their resting pose without the drift. */
+  .paw-files-preview__empty-stage > i {
+    transform: var(--paw-files-sheet-rest);
   }
 
   .paw-files-tree__root-button,
@@ -963,6 +1674,10 @@
   .paw-files-svg__bar button,
   .paw-files-filter {
     transition-property: color, background-color, border-color, box-shadow;
+  }
+
+  .paw-files-preview__gauge > i {
+    transition: none;
   }
 
   /* The chevron still communicates open/closed state; it just stops travelling. */
@@ -980,6 +1695,7 @@
   .paw-files-tree__state button:active,
   .paw-files-preview__state button:active,
   .paw-files-preview__more > button:active:not(:disabled),
+  .paw-files-preview__more > button:hover:not(:disabled),
   .paw-files-preview__back:active,
   .paw-files-preview__action:active:not(:disabled) {
     transform: none;
