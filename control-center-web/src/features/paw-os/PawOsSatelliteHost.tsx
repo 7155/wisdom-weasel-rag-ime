@@ -14,8 +14,8 @@ import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { openPawOsRoute, usePawOsDesktop } from './surface-context';
 import { routePath } from './model/app-registry';
 import type { PawOsWindowTarget } from './model/desktop';
-import { PawRoomFlow } from '@/paw-os/apps/PawRoomFlow';
-import { PawRoomExecution } from '@/paw-os/apps/PawRoomExecution';
+import { roomCollaborationRoleLabel } from '@/features/rooms/room-copy';
+import { PawRoomFocusOverview } from '@/paw-os/apps/PawRoomFocusOverview';
 import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
@@ -341,18 +341,38 @@ function AgentSessionSatellite({ target }: { target: Extract<PawOsWindowTarget, 
 }
 
 function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'room' }> & { panel: NonNullable<Extract<PawOsWindowTarget, { kind: 'room' }>['panel']> } }) {
+  const desktop = usePawOsDesktop();
   const transport = useControlTransport();
   const roomQuery = useRoomDetail(target.id);
   const room = roomFromResponse(roomQuery.data, target.id);
   const projection = useRoomLiveStore((state) => state.projections[target.id]);
+  const focus = useMemo(
+    () => room && target.panel === 'focus' ? buildRoomFocusProjection(room, projection) : undefined,
+    [projection, room, target.panel],
+  );
   const rolesQuery = useQuery({
     queryKey: ['agent', 'roles', 'room-panel'],
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.roles.list', signal }),
     staleTime: 30_000,
+    enabled: target.panel === 'governance',
   });
   const personas = useMemo(() => roleItems(rolesQuery.data), [rolesQuery.data]);
   const [error, setError] = useState('');
   const refresh = async () => { await roomQuery.refetch(); };
+  const openParticipant = (participantId: string) => {
+    const participant = room?.participants.find((candidate) => candidate.id === participantId);
+    if (!participant) return;
+    desktop?.openWindow({
+      appId: 'agent',
+      target: {
+        kind: 'participant',
+        id: participant.id,
+        roomId: target.id,
+        title: focus?.partners.find((partner) => partner.participantId === participantId)?.celestialName || participant.displayName,
+        subtitle: `${participant.displayName} · ${roomCollaborationRoleLabel(participant.collaborationRole)} · ${participant.sessionId}`,
+      },
+    });
+  };
   return (
     <section className="paw-os-satellite paw-os-satellite--room-panel" data-panel={target.panel}>
       {roomQuery.isPending ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /></div> : null}
@@ -361,8 +381,7 @@ function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { k
       {!roomQuery.isPending && !roomQuery.error && !room ? <SatelliteMissing actionLabel="回到 Room" copy="这个 Room 已不在当前 Room 清单中，可能已归档或删除。" icon={Network} route="rooms" title="找不到这个 Room" /> : null}
       {room ? (
         <div className="paw-os-satellite__room-panel-body">
-          {target.panel === 'flow' ? <PawRoomFlow projection={projection} room={room} /> : null}
-          {target.panel === 'execution' ? <PawRoomExecution projection={projection} room={room} /> : null}
+          {target.panel === 'focus' && focus ? <PawRoomFocusOverview focus={focus} onOpenParticipant={openParticipant} /> : null}
           {target.panel === 'progress' ? <RoomStatusPanel room={room} roomId={target.id} projection={projection} open /> : null}
           {target.panel === 'governance' ? <PawRoomGovernance personas={personas} room={room} onError={setError} onRefresh={refresh} onRoomUpdated={() => { void roomQuery.refetch(); }} /> : null}
         </div>

@@ -87,7 +87,7 @@ describe('PawRoomConversation', () => {
       room={room}
     />);
 
-    const fold = screen.getByText('运行与流转 1 项').closest('details') as HTMLDetailsElement;
+    const fold = screen.getByText('过程 1 步').closest('details') as HTMLDetailsElement;
     const summary = fold.querySelector('summary')!;
     expect(fold).toHaveAttribute('open');
     expect(summary).toHaveAttribute('aria-expanded', 'true');
@@ -120,7 +120,7 @@ describe('PawRoomConversation', () => {
       room={room}
     />);
 
-    const fold = screen.getByText('运行与流转 1 项').closest('details') as HTMLDetailsElement;
+    const fold = screen.getByText('过程 1 步').closest('details') as HTMLDetailsElement;
     const summary = fold.querySelector('summary')!;
     await user.click(summary);
     await waitFor(() => expect(fold).not.toHaveAttribute('open'));

@@ -2099,13 +2099,22 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
     grid-template-columns: minmax(0, 1fr);
     overflow-x: hidden;
     overflow-y: auto;
+    /* The desktop two-column layout stretches the tree to the full column; in
+       this stacked scroll layout stretch squeezes the tree below its own row
+       minimums and the overflow:hidden box clips the session list entirely. */
+    align-items: start;
   }
   main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-tree {
     width: 100%;
     height: auto;
-    max-height: 390px;
-    grid-template-rows: minmax(160px, 1fr) auto minmax(110px, 1fr) auto;
+    max-height: none;
+    grid-template-rows: auto auto auto auto;
   }
+  /* Bound the two internal lists directly instead of clipping the panel:
+     grid tracks size against an indefinite height first, so a max-height on
+     the panel only cuts rows off after the fact. */
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-turns > ol { max-height: 200px; }
+  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-tree > ol { max-height: 260px; }
   main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-content { height: auto; overflow: visible; padding-inline: 22px; }
   main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__layers { grid-template-columns: repeat(2, minmax(0, 1fr)); }

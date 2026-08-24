@@ -408,12 +408,14 @@
   grid-template-columns: minmax(320px, .78fr) minmax(0, 1.35fr);
 }
 
+/* No `overscroll-behavior: contain` here: when the list fits (no overflow of
+   its own) a contained scroll container swallows wheel events entirely, so the
+   surrounding tab panel's overflow could never be reached. */
 .memory-layer-list {
   min-width: 0;
   max-height: 720px;
   border-right: 1px solid var(--color-border);
   overflow: auto;
-  overscroll-behavior: contain;
 }
 
 .memory-layer-list .mgmt-list__row {
