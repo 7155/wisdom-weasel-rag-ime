@@ -1433,8 +1433,17 @@ function FxActivityDisclosure({
   const failed = activity.status === 'failed';
   const waiting = activity.status === 'waiting';
   const running = activity.status === 'running';
-  const [manuallyOpen, setManuallyOpen] = useActivityDisclosure(`fx:${activity.id}`, false);
-  const open = manuallyOpen || running || failed || waiting;
+  /* Live states stay force-open so progress and approvals cannot be hidden.
+   * A failure opens by default (initially or on a live transition) but stays
+   * a real disclosure: a human can fold historical failures back down. */
+  const [manuallyOpen, setManuallyOpen] = useActivityDisclosure(`fx:${activity.id}`, failed);
+  const open = manuallyOpen || running || waiting;
+  const previousStatusRef = useRef(activity.status);
+  useEffect(() => {
+    const previous = previousStatusRef.current;
+    previousStatusRef.current = activity.status;
+    if (activity.status === 'failed' && previous !== 'failed') setManuallyOpen(true);
+  }, [activity.status, setManuallyOpen]);
   const detailId = `paw-activity-detail-${useId().replace(/:/gu, '')}`;
   const label = fxActivityLabel(activity);
   const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : 'ok';
