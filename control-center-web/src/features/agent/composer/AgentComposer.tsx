@@ -245,6 +245,22 @@ export function AgentComposer({
     && !sending
     && !modelChanging,
   );
+  // A silently disabled send button hides the one fact the user needs; the
+  // label carries the same condition that gates `canSend`/`stopping`.
+  const sendBlockedReason = stopping
+    ? '正在停止本轮'
+    : !session
+      ? '先选择或创建对话'
+      : sending
+        ? '正在发送上一条消息'
+        : modelChanging
+          ? '正在切换模型'
+          : !(composerDraft.trim() || attachments.length)
+            ? '先输入内容或添加图片'
+            : '';
+  const sendActionLabel = busy
+    ? (busyDelivery === 'steer' ? '干预当前执行' : '当前执行完成后接续')
+    : '发送';
   function publishDraft(value: string): void {
     // The textarea owns keystroke latency; the parent only needs a deferred
     // projection for navigation and recovery. Send receives the local snapshot.
@@ -560,7 +576,7 @@ export function AgentComposer({
             ) : null}
             <IconButton
               className="agent-composer__send"
-              label={busy ? (busyDelivery === 'steer' ? '干预当前执行' : '当前执行完成后接续') : '发送'}
+              label={sendBlockedReason ? `${sendActionLabel}（${sendBlockedReason}）` : sendActionLabel}
               icon={<Send size={18} />}
               onClick={() => submit(busy ? busyDelivery : 'prompt')}
               disabled={stopping || !canSend}
