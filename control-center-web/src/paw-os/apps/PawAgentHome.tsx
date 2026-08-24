@@ -25,7 +25,7 @@ import {
   LoaderCircle,
   Users,
 } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   useAgentPreferencesRead,
@@ -122,6 +122,7 @@ export function PawAgentHome({
   const preferenceHydratedRef = useRef(false);
   const preferenceEditedRef = useRef({ executionMode: false, modelReference: false, thinking: false });
   const modeBriefId = useId();
+  const startHintId = useId();
 
   useEffect(() => {
     if (!modelReference && (preferences.modelReference || defaultModel)) {
@@ -149,6 +150,14 @@ export function PawAgentHome({
     return [...groups.entries()];
   }, [models]);
   const permission = PERMISSION_PRESETS.find((item) => item.executionMode === executionMode) ?? PERMISSION_PRESETS[0]!;
+  // 与 `disabled` 逐项对应的真实阻塞原因；名字不变，原因作为可访问描述。
+  const startBlockedReason = submitting
+    ? '正在创建'
+    : !prompt.trim()
+      ? '先描述要完成的工作'
+      : mode === 'room' && !roomReady
+        ? `Room 需要至少 2 位可用伙伴，当前只有 ${roomPersonas.length} 位`
+        : '';
 
   // 继续工作按真实更新时间取最近四条，而不是按目录返回顺序截断。
   const recents = useMemo(() => [
@@ -176,6 +185,45 @@ export function PawAgentHome({
     };
   }, [optionsPanel]);
 
+  /* Menu-button 语汇：菜单打开即入焦到当前选中项，方向键在可用项间循环；
+     选定后焦点回到所属芯片。Esc 关闭由上面的文档级监听负责。 */
+  useEffect(() => {
+    if (!optionsPanel) return;
+    const menu = composerRef.current?.querySelector<HTMLElement>('.an-menu');
+    const target = menu?.querySelector<HTMLButtonElement>(".an-menu-item[aria-checked='true']:not(:disabled)")
+      ?? menu?.querySelector<HTMLButtonElement>('.an-menu-item:not(:disabled)');
+    target?.focus();
+  }, [optionsPanel]);
+
+  function closeOptionsPanel(panel: Exclude<OptionsPanel, null>): void {
+    setOptionsPanel(null);
+    chipRefs.current[panel]?.focus();
+  }
+
+  function menuKeyNav(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return;
+    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.an-menu-item:not(:disabled)')];
+    if (!items.length) return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowDown'
+          ? (current + 1) % items.length
+          : current <= 0 ? items.length - 1 : current - 1;
+    items[next]?.focus();
+  }
+
+  function chipKeyOpen(panel: Exclude<OptionsPanel, null>) {
+    return (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      setOptionsPanel(panel);
+    };
+  }
+
   async function pickWorkspace(): Promise<void> {
     if (!transport.pickFiles && !electronHost?.pickWorkspaceDirectory) {
       setError('当前运行环境不能选择本地目录。');
@@ -187,7 +235,7 @@ export function PawAgentHome({
         : (await electronHost?.pickWorkspaceDirectory?.())?.path?.trim();
       if (path) {
         setWorkspaceRoot(path);
-        setOptionsPanel(null);
+        closeOptionsPanel('project');
       }
     } catch (pickError) {
       setError(errorText(pickError));
@@ -360,15 +408,17 @@ export function PawAgentHome({
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'permission'}
+                  aria-haspopup="menu"
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'permission' ? null : 'permission')}
+                  onKeyDown={chipKeyOpen('permission')}
                   ref={(node) => { chipRefs.current.permission = node; }}
                   type="button"
                 >
                   <span className="mini-dot" data-execution-mode={executionMode} />{permission.label}<ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'permission' ? (
-                  <div className="an-menu" role="menu">
+                  <div aria-label="权限模式" className="an-menu" onKeyDown={menuKeyNav} role="menu">
                     <div className="an-menu-title">权限模式</div>
                     {PERMISSION_PRESETS.map((item) => (
                       <button
@@ -379,7 +429,7 @@ export function PawAgentHome({
                         onClick={() => {
                           preferenceEditedRef.current.executionMode = true;
                           setExecutionMode(item.executionMode);
-                          setOptionsPanel(null);
+                          closeOptionsPanel('permission');
                         }}
                         role="menuitemradio"
                         type="button"
@@ -397,15 +447,17 @@ export function PawAgentHome({
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'model'}
+                  aria-haspopup="menu"
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
+                  onKeyDown={chipKeyOpen('model')}
                   ref={(node) => { chipRefs.current.model = node; }}
                   type="button"
                 >
                   {selectedModel?.name ?? '自动模型'} · {thinkingLabel(thinking)}<ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'model' ? (
-                  <div className="an-menu" role="menu">
+                  <div aria-label="模型与推理强度" className="an-menu" onKeyDown={menuKeyNav} role="menu">
                     {modelGroups.map(([provider, group]) => (
                       <div key={provider}>
                         <div className="an-menu-group">{provider}</div>
@@ -438,7 +490,7 @@ export function PawAgentHome({
                         onClick={() => {
                           preferenceEditedRef.current.thinking = true;
                           setThinking(level);
-                          setOptionsPanel(null);
+                          closeOptionsPanel('model');
                         }}
                         role="menuitemradio"
                         type="button"
@@ -453,22 +505,24 @@ export function PawAgentHome({
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'project'}
+                  aria-haspopup="menu"
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'project' ? null : 'project')}
+                  onKeyDown={chipKeyOpen('project')}
                   ref={(node) => { chipRefs.current.project = node; }}
                   type="button"
                 >
                   <Folder size={12} />{workspaceRoot ? projectName([workspaceRoot]) : '选择工作目录'}<ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'project' ? (
-                  <div className="an-menu" role="menu">
+                  <div aria-label="工作目录" className="an-menu" onKeyDown={menuKeyNav} role="menu">
                     <div className="an-menu-title">工作目录</div>
                     {projectRoots.map((root) => (
                       <button
                         aria-checked={root === workspaceRoot}
                         className="an-menu-item"
                         key={root}
-                        onClick={() => { setWorkspaceRoot(root); setOptionsPanel(null); }}
+                        onClick={() => { setWorkspaceRoot(root); closeOptionsPanel('project'); }}
                         role="menuitemradio"
                         type="button"
                       >
@@ -490,8 +544,12 @@ export function PawAgentHome({
                 ) : null}
               </span>
 
+              {/* 可访问名恒定为动作（开始 Session/Room），阻塞原因走
+                  aria-describedby——与 Session composer 的发送按钮同一合同。 */}
               <button
-                aria-label={submitting ? '正在创建' : `开始 ${mode === 'session' ? 'Session' : 'Room'}`}
+                aria-busy={submitting || undefined}
+                aria-describedby={startBlockedReason ? startHintId : undefined}
+                aria-label={`开始 ${mode === 'session' ? 'Session' : 'Room'}`}
                 className="an-send"
                 disabled={!prompt.trim() || submitting || (mode === 'room' && !roomReady)}
                 onClick={() => void startWork()}
@@ -499,6 +557,9 @@ export function PawAgentHome({
               >
                 {submitting ? <LoaderCircle className="ui-spin" size={14} /> : <ArrowUp size={14} />}
               </button>
+              {startBlockedReason ? (
+                <span hidden id={startHintId}>{startBlockedReason}</span>
+              ) : null}
             </div>
           </div>
           {!prompt.trim() ? (

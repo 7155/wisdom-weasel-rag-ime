@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type KeyboardEvent,
   type SetStateAction,
 } from 'react';
 import { useControlTransport } from '@/app/control-transport';
@@ -283,9 +284,25 @@ export function PawContextTrace({
               {description ? `${description.label} · ${shortId(selectedTurnId)}` : loading ? '读取中…' : '无数据'}
             </div>
           </div>
-          <span className="an-seg" role="tablist" aria-label="轨迹模式">
-            <button aria-selected={mode === 'assembly'} onClick={() => setMode('assembly')} role="tab" type="button">上下文装配</button>
-            <button aria-selected={mode === 'events'} onClick={() => setMode('events')} role="tab" type="button">事件流</button>
+          {/* 双 Tab 走标准 roving tabindex：方向键即切换并跟随焦点。 */}
+          <span
+            aria-label="轨迹模式"
+            className="an-seg"
+            onKeyDown={(event: KeyboardEvent<HTMLSpanElement>) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
+              event.preventDefault();
+              const next: TraceMode = event.key === 'Home'
+                ? 'assembly'
+                : event.key === 'End'
+                  ? 'events'
+                  : mode === 'assembly' ? 'events' : 'assembly';
+              setMode(next);
+              event.currentTarget.querySelector<HTMLButtonElement>(`[data-mode='${next}']`)?.focus();
+            }}
+            role="tablist"
+          >
+            <button aria-selected={mode === 'assembly'} data-mode="assembly" onClick={() => setMode('assembly')} role="tab" tabIndex={mode === 'assembly' ? 0 : -1} type="button">上下文装配</button>
+            <button aria-selected={mode === 'events'} data-mode="events" onClick={() => setMode('events')} role="tab" tabIndex={mode === 'events' ? 0 : -1} type="button">事件流</button>
           </span>
         </div>
 

@@ -428,6 +428,22 @@ describe('PAWOS semantic type roles', () => {
     expect(agentFxCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.paw-activity\[data-state='running'\] \.paw-activity__label\s*\{[^}]*animation:\s*none/s,
     );
+    // Trace assembly nodes and model-call cards disclose through the shared
+    // Disclosure primitive; scoped inside the Agent surface they answer with
+    // the same 220ms spring, and reduced motion silences them on both the
+    // media query and the explicit user setting.
+    expect(agentNextCss).toMatch(
+      /\.paw-agent-next \.ui-disclosure__reveal\s*\{[^}]*grid-template-rows 220ms var\(--paw-chat-spring, cubic-bezier\(\.34, 1\.4, \.64, 1\)\)/s,
+    );
+    expect(agentNextCss).toMatch(
+      /\.an-disclosure-caret\s*\{[^}]*transform 220ms var\(--paw-chat-spring/s,
+    );
+    expect(agentNextCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-agent-next \.ui-disclosure__reveal\s*\{\s*transition:\s*none/s,
+    );
+    expect(agentNextCss).toMatch(
+      /:root\[data-reduce-motion='true'\] \.paw-agent-next \.ui-disclosure__reveal\s*\{[^}]*transition:\s*none/s,
+    );
   });
 
   it('scopes the virtualized turn entrance to the newest item and keeps streaming bands un-blurred', () => {

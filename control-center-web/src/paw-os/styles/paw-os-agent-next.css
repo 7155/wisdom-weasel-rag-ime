@@ -58,7 +58,9 @@
    贴着边框亮起（Home 不执行任务，光不转动）。 */
 .an-composer::before { content: ''; position: absolute; inset: -1px; z-index: 2; border-radius: 15px; padding: 1.5px; background: conic-gradient(from 210deg, rgb(47 107 255 / 0%) 0%, rgb(47 107 255 / 45%) 12%, rgb(122 77 178 / 32%) 22%, rgb(47 107 255 / 0%) 34%); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
 .an-composer:focus-within::before { opacity: .5; }
-.an-composer textarea { display: block; width: 100%; min-height: 92px; padding: 17px 17px 10px; resize: none; border: 0; outline: 0; background: transparent; color: var(--an-ink); font-size: 15px; line-height: 1.65; }
+/* field-sizing 是渐进增强：支持它的引擎让输入框随稿件长高（封顶后内滚），
+   其余引擎保持原有的固定最小高度 + 内部滚动，不影响发送语义。 */
+.an-composer textarea { display: block; width: 100%; min-height: 92px; max-height: min(38vh, 320px); padding: 17px 17px 10px; resize: none; border: 0; outline: 0; background: transparent; color: var(--an-ink); font-size: 15px; line-height: 1.65; field-sizing: content; }
 .an-composer textarea::placeholder { color: var(--an-ink-3); opacity: 1; }
 .an-composer-foot { display: flex; align-items: center; gap: 8px; min-height: 49px; padding: 8px 10px; border-top: 1px solid var(--an-hairline); }
 .an-mode-seg,
@@ -73,7 +75,8 @@
 .an-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 190px; height: 30px; padding: 0 10px; overflow: hidden; border: 1px solid var(--an-hairline); border-radius: 7px; background: var(--an-paper); color: var(--an-ink-2); font-size: 12.5px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; transition: border-color 140ms ease, background 140ms ease; }
 .an-chip:hover,
 .an-chip[aria-expanded="true"] { border-color: var(--an-rule-strong); background: var(--an-paper-soft); }
-.an-chip .caret { flex: none; opacity: .58; }
+.an-chip .caret { flex: none; opacity: .58; transition: transform 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)); }
+.an-chip[aria-expanded="true"] .caret { opacity: .82; transform: rotate(-180deg); }
 .an-chip .mini-dot { width: 7px; height: 7px; flex: none; border-radius: 2px; background: var(--an-teal); }
 /* 权限圆点跟随实际执行模式：只读最安全，逐项确认中性，托管有界，全自动需要注意。 */
 .an-chip .mini-dot[data-execution-mode='read_only'] { background: var(--an-teal); }
@@ -84,14 +87,22 @@
 .an-send:hover:not(:disabled) { background: var(--an-cobalt); transform: translateY(-2px); }
 .an-send:active:not(:disabled) { transform: translateY(0) scale(.96); }
 .an-send:disabled { opacity: .34; }
-/* 锚定菜单向下展开：Home 的 Composer 靠近页面顶部，向上展开会撞到窗顶。 */
-.an-menu { position: absolute; z-index: 40; top: calc(100% + 8px); left: 0; width: min(330px, calc(100cqw - 32px)); max-height: 330px; overflow: auto; padding: 7px; border: 1px solid var(--an-rule); border-radius: 10px; background: var(--an-paper-bright); box-shadow: 0 18px 42px rgba(24, 32, 43, .15); animation: an-menu-in 180ms var(--an-ease-out) both; }
-.an-anchor:nth-last-of-type(-n + 2) .an-menu { right: 0; left: auto; }
+/* 锚定菜单向下展开：Home 的 Composer 靠近页面顶部，向上展开会撞到窗顶。
+   入场从锚点角起笔（transform-origin 跟随左右锚定），落点即触发芯片。 */
+.an-menu { position: absolute; z-index: 40; top: calc(100% + 8px); left: 0; width: min(330px, calc(100cqw - 32px)); max-height: 330px; overflow: auto; padding: 7px; border: 1px solid var(--an-rule); border-radius: 10px; background: var(--an-paper-bright); box-shadow: 0 18px 42px rgba(24, 32, 43, .15); transform-origin: top left; animation: an-menu-in 180ms var(--an-ease-out) both; }
+.an-anchor:nth-last-of-type(-n + 2) .an-menu { right: 0; left: auto; transform-origin: top right; }
 .an-menu-title,
 .an-menu-group { padding: 6px 9px 5px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .07em; }
 .an-menu-item { display: flex; width: 100%; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; transition: background 120ms ease; }
-.an-menu-item:hover:not(:disabled) { background: var(--an-paper-soft); }
+.an-menu-item:hover:not(:disabled),
+.an-menu-item:focus-visible { background: var(--an-paper-soft); }
+.an-menu-item:focus-visible { outline-offset: -2px; }
+.an-menu-item:active:not(:disabled) { background: var(--an-paper-sink); }
 .an-menu-item:disabled { opacity: .46; }
+.an-menu-item[aria-checked='true'] { background: color-mix(in srgb, var(--an-cobalt) 7%, transparent); }
+.an-menu-item[aria-checked='true'] .mi-tt { color: var(--an-cobalt); }
+/* 选中勾以对话弹簧落位：与披露同一 220ms 声部，只演一次。 */
+.an-menu-item .mi-tt > svg { animation: an-check-in 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)) both; }
 .an-menu-item .mi-tt { display: block; color: var(--an-ink); font-size: 12.5px; font-weight: 650; }
 .an-menu-item .mi-sub { display: block; margin-top: 2px; overflow: hidden; color: var(--an-ink-3); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .an-menu-sep { height: 1px; margin: 6px 2px; background: var(--an-hairline); }
@@ -228,8 +239,17 @@
 .an-node .n-bar i { display: block; height: 100%; background: var(--an-cobalt); }
 .an-node .n-tok { min-width: 72px; color: var(--an-ink); font-family: var(--an-mono); font-size: 12px; font-weight: 720; text-align: right; white-space: nowrap; }
 .an-node .n-tok small { color: var(--an-ink-3); font-weight: 400; }
-.an-disclosure-caret { width: 16px; flex: none; color: var(--an-ink-3); font-size: 20px; line-height: 1; text-align: center; transform: rotate(0deg); transition: transform 160ms ease, color 160ms ease; }
+.an-disclosure-caret { width: 16px; flex: none; color: var(--an-ink-3); font-size: 20px; line-height: 1; text-align: center; transform: rotate(0deg); transition: transform 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)), color 160ms ease; }
 .an-node[data-expanded='true'] > summary .an-disclosure-caret { color: var(--an-ink); transform: rotate(90deg); }
+/* 轨迹披露与对话时间线共用一个 220ms 弹簧声部（DISCLOSURE_MOTION /
+   --paw-chat-spring）：装配节点与模型调用卡展开时，高度与位移走同一条弹簧，
+   透明度保持 170ms 直线淡入，与 .agent-smooth-reveal 完全同调。 */
+.paw-agent-next .ui-disclosure__reveal {
+  transition:
+    grid-template-rows 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)),
+    opacity 170ms ease,
+    transform 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1));
+}
 .an-node-body { padding: 10px 14px 12px; border-top: 1px dashed var(--an-hairline); }
 .an-node-body .nb-row { display: flex; flex-wrap: wrap; gap: 7px 15px; color: var(--an-ink-2); font-size: 12px; }
 .an-node-body .nb-row + .nb-row { margin-top: 7px; }
@@ -274,6 +294,7 @@
 .paw-agent-next *::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 9px; background: var(--an-rule-strong); background-clip: padding-box; }
 
 @keyframes an-menu-in { from { opacity: 0; transform: translateY(-5px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes an-check-in { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
 @keyframes an-pulse { 50% { opacity: .34; transform: scale(.82); } }
 @keyframes an-spin { to { transform: rotate(360deg); } }
 @keyframes an-rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
@@ -337,6 +358,7 @@
   .paw-agent-next *,
   .paw-agent-next *::before,
   .paw-agent-next *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  .paw-agent-next .ui-disclosure__reveal { transition: none; }
 }
 
 :root[data-reduce-motion='true'] .paw-agent-next :is(
@@ -347,8 +369,12 @@
   .an-mode-brief,
   .an-home-section,
   .an-home-foot,
-  .an-home-geo .an-geo-orbit
+  .an-home-geo .an-geo-orbit,
+  .an-menu,
+  .an-menu-item .mi-tt > svg
 ) { animation: none; }
+:root[data-reduce-motion='true'] .paw-agent-next .ui-disclosure__reveal { transition: none; }
+:root[data-reduce-motion='true'] .paw-agent-next :is(.an-disclosure-caret, .an-chip .caret) { transition: none; }
 
 /* 证据复制：核对后的原文可以直接带走，不必全选整段可滚动 pre。
    同一按钮同时服务装配证据（an-assembly-evidence）与事件流载荷
