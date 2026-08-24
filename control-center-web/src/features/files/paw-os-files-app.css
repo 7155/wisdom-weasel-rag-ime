@@ -231,12 +231,12 @@
 }
 
 .paw-files-filter__count {
-  min-width: 20px;
-  padding: 1px 5px;
+  min-width: 21px;
+  padding: 1px 6px;
   border-radius: 999px;
   background: var(--paw-files-tint-strong);
   color: var(--color-accent);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -322,10 +322,50 @@
   background: var(--color-chrome);
 }
 
+/* Rail readout: what the instrument has actually scanned so far. It reports
+   listed directories and loaded entries, never a whole-disk claim. */
+.paw-files-tree__head {
+  display: flex;
+  min-width: 0;
+  min-height: 31px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 12px 3px 15px;
+  border-bottom: 1px solid var(--paw-files-hairline-soft);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.paw-files-tree__head > strong {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .1em;
+}
+
+.paw-files-tree__head-count,
+.paw-files-tree__head-scan {
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-files-tree__head-scan {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-accent);
+}
+
 .paw-files-tree__scroll {
   min-height: 0;
   flex: 1 1 auto;
-  padding: 8px 7px 18px;
+  padding: 0 7px 18px;
   overflow: auto;
   scrollbar-color: color-mix(in srgb, var(--paw-files-ink) 18%, transparent) transparent;
   scrollbar-width: thin;
@@ -338,8 +378,10 @@
   list-style: none;
 }
 
-/* Workspace root: the authority card. The amber support hue marks "this is
-   a granted root", distinct from the accent used for ordinary selection. */
+/* Workspace root: the authority plate. The amber support hue marks "this is
+   a granted root", distinct from the accent used for ordinary selection. It
+   stays stuck to the top of the scroll so deep positions never lose their
+   granted origin — a spine, not a card. */
 .paw-files-tree__root {
   margin: 0 0 6px;
 }
@@ -359,29 +401,51 @@
 }
 
 .paw-files-tree__root-button {
-  min-height: 44px;
-  grid-template-columns: 14px 24px minmax(0, 1fr) auto;
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  width: calc(100% + 14px);
+  min-height: 46px;
+  grid-template-columns: 14px 26px minmax(0, 1fr) auto;
   gap: 7px;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  margin: 0 -7px;
+  padding: 6px 15px 6px 12px;
+  border-bottom: 1px solid transparent;
+  background: var(--paw-app-nav, var(--color-chrome));
   color: var(--color-text);
 }
 
+/* The authority spine: visible while its subtree is open, opaque enough for
+   the plate to cover rows scrolling beneath it. */
+.paw-files-tree__root-button::before {
+  position: absolute;
+  inset: 8px auto 8px 1px;
+  width: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--paw-files-support) 58%, transparent);
+  content: '';
+  opacity: 0;
+  transition: opacity 160ms var(--paw-files-ease);
+}
+
 .paw-files-tree__root-button[aria-expanded='true'] {
-  border-color: var(--paw-files-hairline-soft);
-  background: color-mix(in srgb, var(--color-paper) 62%, transparent);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--paw-files-ink) 5%, transparent);
+  border-bottom-color: var(--paw-files-hairline-soft);
+  background: color-mix(in srgb, var(--paw-files-support) 5%, var(--paw-app-nav, var(--color-chrome)));
+}
+
+.paw-files-tree__root-button[aria-expanded='true']::before {
+  opacity: 1;
 }
 
 .paw-files-tree__root-glyph {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   place-items: center;
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--paw-files-support-tint);
   color: color-mix(in srgb, var(--paw-files-support) 78%, var(--paw-files-ink));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-files-support) 22%, transparent);
 }
 
 .paw-files-tree__root-id {
@@ -413,11 +477,11 @@
 .paw-files-tree__root-count {
   align-self: start;
   margin-top: 3px;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--paw-files-ink) 6%, transparent);
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -472,22 +536,29 @@ i.paw-files-tree__disclosure {
 /* Recognition chips: each family keeps one hue for its glyph so a directory
    scan reads by colour before it reads by name. */
 .paw-files-tree__row,
-.paw-files-preview__badge {
+.paw-files-preview__badge,
+.paw-files-renderer {
   --paw-files-family: var(--paw-files-hue-plain);
 }
 
 .paw-files-tree__row[data-family='code'],
-.paw-files-preview__badge[data-family='code'] { --paw-files-family: var(--paw-files-hue-code); }
+.paw-files-preview__badge[data-family='code'],
+.paw-files-renderer[data-family='code'] { --paw-files-family: var(--paw-files-hue-code); }
 .paw-files-tree__row[data-family='doc'],
-.paw-files-preview__badge[data-family='doc'] { --paw-files-family: var(--paw-files-hue-doc); }
+.paw-files-preview__badge[data-family='doc'],
+.paw-files-renderer[data-family='doc'] { --paw-files-family: var(--paw-files-hue-doc); }
 .paw-files-tree__row[data-family='data'],
-.paw-files-preview__badge[data-family='data'] { --paw-files-family: var(--paw-files-hue-data); }
+.paw-files-preview__badge[data-family='data'],
+.paw-files-renderer[data-family='data'] { --paw-files-family: var(--paw-files-hue-data); }
 .paw-files-tree__row[data-family='media'],
-.paw-files-preview__badge[data-family='media'] { --paw-files-family: var(--paw-files-hue-media); }
+.paw-files-preview__badge[data-family='media'],
+.paw-files-renderer[data-family='media'] { --paw-files-family: var(--paw-files-hue-media); }
 .paw-files-tree__row[data-family='diff'],
-.paw-files-preview__badge[data-family='diff'] { --paw-files-family: var(--paw-files-hue-diff); }
+.paw-files-preview__badge[data-family='diff'],
+.paw-files-renderer[data-family='diff'] { --paw-files-family: var(--paw-files-hue-diff); }
 .paw-files-tree__row[data-family='symlink'],
-.paw-files-preview__badge[data-family='symlink'] { --paw-files-family: var(--color-accent); }
+.paw-files-preview__badge[data-family='symlink'],
+.paw-files-renderer[data-family='symlink'] { --paw-files-family: var(--color-accent); }
 .paw-files-tree__row[data-kind='directory'] { --paw-files-family: var(--color-accent); }
 
 .paw-files-tree__glyph {
@@ -512,9 +583,16 @@ i.paw-files-tree__disclosure {
   white-space: nowrap;
 }
 
+/* Extensions keep their own quieter ink so a column of names scans by stem;
+   the full name still selects, copies, and ellipsizes as one string. */
+.paw-files-tree__label i {
+  color: var(--color-text-tertiary);
+  font-style: normal;
+}
+
 .paw-files-tree__row small {
   color: var(--color-text-tertiary);
-  font: 11.5px/1.4 var(--paw-files-mono);
+  font: 12px/1.4 var(--paw-files-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -524,6 +602,11 @@ i.paw-files-tree__disclosure {
   outline: none;
   background: var(--paw-files-tint);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 48%, transparent);
+}
+
+/* Focus keeps the sticky plate opaque for the same bleed-through reason. */
+.paw-files-tree__root-button:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--paw-app-nav, var(--color-chrome)));
 }
 
 .paw-files-tree__row[data-selected] {
@@ -547,10 +630,9 @@ i.paw-files-tree__disclosure {
 }
 
 .paw-files-tree__limit {
-  margin: 3px 8px 5px calc(6px + var(--paw-files-depth, 1) * 11px);
-  padding: 4px 9px;
-  border: 1px dashed var(--paw-files-hairline-strong);
-  border-radius: 7px;
+  margin: 3px 8px 6px calc(6px + var(--paw-files-depth, 1) * 11px);
+  padding: 3px 4px 3px 9px;
+  border-left: 2px dashed var(--paw-files-hairline-strong);
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.45;
@@ -689,32 +771,40 @@ i.paw-files-tree__disclosure {
   animation: paw-files-preview-enter 190ms var(--paw-files-ease) both;
 }
 
+/* Narrow-layout return path: a labelled pill, not a bare icon, so the way
+   back to the tree is always legible on a phone-width window. */
 .paw-files-preview__back {
   display: none;
-  width: 30px;
   height: 30px;
   flex: 0 0 auto;
-  place-items: center;
+  align-items: center;
+  gap: 2px;
   border: 1px solid var(--paw-files-hairline);
   border-radius: 8px;
+  padding: 0 10px 0 5px;
   background: var(--color-paper);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: transform 140ms var(--paw-files-ease), border-color 140ms var(--paw-files-ease);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: transform 140ms var(--paw-files-ease), border-color 140ms var(--paw-files-ease), background-color 140ms var(--paw-files-ease), color 140ms var(--paw-files-ease);
 }
 
 /* The identity badge answers "what am I reading" before the name does. */
 .paw-files-preview__badge {
   display: grid;
-  min-width: 34px;
+  min-width: 36px;
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  padding: 0 5px;
+  padding: 0 6px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--paw-files-family) 12%, transparent);
   color: color-mix(in srgb, var(--paw-files-family) 82%, var(--paw-files-ink));
-  font-size: 10.5px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-files-family) 20%, transparent);
+  font-size: 11px;
   line-height: 1;
   font-weight: 750;
   letter-spacing: .05em;
@@ -794,11 +884,35 @@ i.paw-files-tree__disclosure {
 }
 
 .paw-files-crumbs__meta {
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
   margin-left: 4px;
   padding-left: 8px;
   border-left: 1px solid var(--paw-files-hairline);
   font-variant-numeric: tabular-nums;
+}
+
+.paw-files-crumbs__meta > * + *::before {
+  margin: 0 5px;
+  color: color-mix(in srgb, var(--color-text-tertiary) 62%, transparent);
+  content: '·';
+}
+
+/* The reader names its own lens: which renderer is actually on screen. */
+.paw-files-renderer {
+  display: inline-flex;
+  height: 17px;
+  align-items: center;
+  border-radius: 5px;
+  padding: 0 6px;
+  background: color-mix(in srgb, var(--paw-files-family) 11%, transparent);
+  color: color-mix(in srgb, var(--paw-files-family) 80%, var(--paw-files-ink));
+  font-family: var(--font-sans, ui-sans-serif, sans-serif);
+  font-size: 11px;
+  font-weight: 700;
+  font-style: normal;
+  letter-spacing: .04em;
 }
 
 .paw-files-preview__actions {
@@ -982,41 +1096,74 @@ i.paw-files-tree__disclosure {
   text-align: center;
 }
 
-/* A quiet paper stack drawn from the palette itself — identity without a
-   stock illustration. */
+/* The inspection desk, drawn from the palette itself: two quiet sheets and a
+   reading lens with a slow dashed orbit — identity without a stock
+   illustration and without a card. */
 .paw-files-preview__empty-art {
   position: relative;
-  width: 74px;
-  height: 62px;
-  margin-bottom: 8px;
+  width: 96px;
+  height: 78px;
+  margin-bottom: 10px;
 }
 
-.paw-files-preview__empty-art > i,
-.paw-files-preview__empty-art > span {
+.paw-files-preview__empty-art > i {
   position: absolute;
-  inset: 0 auto auto 50%;
-  width: 46px;
-  height: 56px;
   border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
+  border-radius: 9px;
   background: linear-gradient(180deg, var(--color-paper), color-mix(in srgb, var(--color-canvas) 72%, var(--color-paper)));
   box-shadow: 0 6px 16px color-mix(in srgb, var(--paw-files-ink) 7%, transparent);
 }
 
 .paw-files-preview__empty-art > i:nth-child(1) {
-  transform: translateX(-50%) rotate(-9deg) translateX(-11px);
+  inset: 6px auto auto 6px;
+  width: 48px;
+  height: 62px;
+  transform: rotate(-8deg);
 }
 
 .paw-files-preview__empty-art > i:nth-child(2) {
-  transform: translateX(-50%) rotate(8deg) translateX(11px);
+  inset: 0 auto auto 32px;
+  width: 52px;
+  height: 68px;
+  border-color: color-mix(in srgb, var(--color-accent) 26%, var(--paw-files-hairline));
+  transform: rotate(3deg);
+}
+
+/* Sketched content lines: the sheet holds text without faking a filename. */
+.paw-files-preview__empty-art > i:nth-child(2)::before {
+  position: absolute;
+  inset: 11px 9px auto 10px;
+  height: 39px;
+  background:
+    linear-gradient(90deg, var(--color-paper) 0, var(--color-paper)) no-repeat 55% 7px / 45% 3px,
+    linear-gradient(90deg, var(--color-paper) 0, var(--color-paper)) no-repeat 100% 21px / 30% 3px,
+    repeating-linear-gradient(180deg, color-mix(in srgb, var(--paw-files-ink) 16%, transparent) 0 3px, transparent 3px 10px);
+  border-radius: 2px;
+  content: '';
 }
 
 .paw-files-preview__empty-art > span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
   display: grid;
+  width: 42px;
+  height: 42px;
   place-items: center;
-  border-color: color-mix(in srgb, var(--color-accent) 32%, var(--paw-files-hairline));
+  border: 1.5px solid color-mix(in srgb, var(--color-accent) 42%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-paper));
   color: var(--color-accent);
-  transform: translateX(-50%);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+.paw-files-preview__empty-art > span::after {
+  position: absolute;
+  inset: -7px;
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 36%, transparent);
+  border-radius: 50%;
+  content: '';
+  animation: paw-files-lens-orbit 26s linear infinite;
 }
 
 .paw-files-preview__empty strong {
@@ -1029,6 +1176,41 @@ i.paw-files-tree__disclosure {
   max-width: 34ch;
   font-size: 13px;
   line-height: 1.55;
+}
+
+/* Truthful keyboard affordances: exactly the keys the tree answers to. */
+.paw-files-preview__empty-keys {
+  display: flex;
+  max-width: none;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.paw-files-preview__empty-keys > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.paw-files-preview__empty-keys kbd {
+  display: inline-grid;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 5px;
+  place-items: center;
+  border: 1px solid var(--paw-files-hairline-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--color-paper);
+  color: var(--color-text-secondary);
+  font-family: var(--paw-files-mono);
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 650;
 }
 
 .paw-files-preview__state {
@@ -1054,6 +1236,13 @@ i.paw-files-tree__disclosure {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+}
+
+.paw-files-preview__state > small {
+  max-width: 44ch;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 
 .paw-files-preview__state-mark {
@@ -1095,25 +1284,105 @@ i.paw-files-tree__disclosure {
 .paw-files-preview__range {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  flex: 1 1 220px;
+  gap: 5px;
 }
 
-.paw-files-preview__meter {
-  display: block;
-  width: min(180px, 100%);
-  height: 3px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--paw-files-ink) 10%, transparent);
+.paw-files-preview__range-readout {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.paw-files-preview__range-readout > span {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-files-preview__range-readout > em {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  padding: 0 5px;
+  background: var(--paw-files-tint);
+  color: var(--color-accent);
+  font-family: var(--paw-files-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 650;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The bounded-read gauge is a real instrument scale: one tick per 64 KB read
+   request, the loaded window as the filled band with a bright reading edge,
+   and an amber marker where the 512 KB in-App cap sits on this file's scale. */
+.paw-files-preview__meter {
+  position: relative;
+  display: block;
+  width: min(340px, 100%);
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--paw-files-ink) 8%, transparent);
+  box-shadow: inset 0 0 0 1px var(--paw-files-hairline-soft);
+}
+
+.paw-files-preview__meter::before {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-radius: inherit;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(var(--paw-files-tick, 200%) - 1px),
+    color-mix(in srgb, var(--paw-files-ink) 22%, transparent) calc(var(--paw-files-tick, 200%) - 1px) var(--paw-files-tick, 200%)
+  );
+  content: '';
+  pointer-events: none;
 }
 
 .paw-files-preview__meter > i {
+  position: absolute;
+  inset: 0 auto 0 0;
   display: block;
   width: var(--paw-files-loaded, 0%);
-  height: 100%;
   border-radius: inherit;
-  background: var(--color-accent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 72%, var(--color-paper)), var(--color-accent));
   transition: width 300ms var(--paw-files-ease);
+}
+
+/* The reading edge: where the next continue request will pick up. */
+.paw-files-preview__meter > i::after {
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  width: 2px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 55%, transparent);
+  content: '';
+  transform: translateY(-50%);
+}
+
+.paw-files-preview__meter[data-busy] > i {
+  background:
+    repeating-linear-gradient(-55deg, rgb(255 255 255 / 32%) 0 5px, transparent 5px 10px),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 72%, var(--color-paper)), var(--color-accent));
+  animation: paw-files-gauge-busy 800ms linear infinite;
+}
+
+.paw-files-preview__meter > b {
+  position: absolute;
+  z-index: 3;
+  top: -3px;
+  bottom: -3px;
+  left: var(--paw-files-cap, 100%);
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-warning);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--color-warning) 18%, transparent);
 }
 
 .paw-files-preview__more > em {
@@ -1217,6 +1486,14 @@ i.paw-files-tree__disclosure {
   to { background-position: -200% 0, 0 0; }
 }
 
+@keyframes paw-files-gauge-busy {
+  to { background-position: 14px 0, 0 0; }
+}
+
+@keyframes paw-files-lens-orbit {
+  to { transform: rotate(360deg); }
+}
+
 /* -------------------------------------------------------------------------
    Reflow. Files reflows with its window (container queries), never the
    viewport: 860 stacks the rail above the reader, 560 swaps list for reader
@@ -1269,7 +1546,7 @@ i.paw-files-tree__disclosure {
   }
 
   .paw-files-preview__back {
-    display: grid;
+    display: inline-flex;
   }
 
   .paw-files-preview__badge {
@@ -1344,11 +1621,17 @@ i.paw-files-tree__disclosure {
     color: color-mix(in srgb, var(--paw-files-support) 62%, var(--paw-files-ink));
   }
 
-  .paw-files-tree__root-button:hover,
   .paw-files-tree__row:hover {
     background: var(--paw-files-tint);
     color: var(--color-text);
     transform: translate3d(2px, 0, 0);
+  }
+
+  /* The sticky authority plate stays opaque and still under the pointer so
+     rows can scroll beneath it without bleeding through. */
+  .paw-files-tree__root-button:hover {
+    background: color-mix(in srgb, var(--color-accent) 7%, var(--paw-app-nav, var(--color-chrome)));
+    color: var(--color-text);
   }
 
   .paw-files-tree__row[data-selected]:hover {
@@ -1375,6 +1658,13 @@ i.paw-files-tree__disclosure {
 
   .paw-files-preview__meter > i {
     transition: none;
+  }
+
+  /* The gauge still reports its busy state through the button; the lens
+     keeps its dashed ring without travelling. */
+  .paw-files-preview__meter[data-busy] > i,
+  .paw-files-preview__empty-art > span::after {
+    animation: none;
   }
 
   .paw-files-tree__root-button,
