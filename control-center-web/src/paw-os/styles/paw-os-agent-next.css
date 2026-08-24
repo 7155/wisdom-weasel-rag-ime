@@ -46,7 +46,7 @@
 .an-home-geo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .an-home-wrap { position: relative; width: min(780px, 100%); margin: 0 auto; padding: clamp(46px, 8vh, 82px) 32px 42px; }
 .an-home-greet { display: flex; align-items: center; gap: 10px; color: var(--an-ink-3); font-size: 12px; font-weight: 650; letter-spacing: .065em; }
-.an-home-greet::before { width: 22px; height: 2px; background: var(--an-red); content: ""; }
+.an-home-greet::before { width: 22px; height: 2px; background: var(--an-cobalt); content: ""; }
 .an-home-title { margin: 9px 0 27px; font-size: clamp(30px, 4vw, 40px); font-weight: 720; letter-spacing: -.035em; line-height: 1.16; }
 .an-composer { position: relative; z-index: 4; background: var(--an-paper-bright); border: 1px solid var(--an-rule); border-radius: 12px; box-shadow: 0 12px 30px rgba(24, 32, 43, .07); transition: border-color 160ms ease, box-shadow 180ms ease, transform 220ms var(--an-ease-out); }
 .an-composer:focus-within { border-color: var(--an-rule-strong); box-shadow: inset 3px 0 var(--an-violet), 0 16px 36px rgba(24, 32, 43, .09); transform: translateY(-1px); }
@@ -81,7 +81,16 @@
 .an-menu-item .mi-tt { display: block; color: var(--an-ink); font-size: 12.5px; font-weight: 650; }
 .an-menu-item .mi-sub { display: block; margin-top: 2px; overflow: hidden; color: var(--an-ink-3); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .an-menu-sep { height: 1px; margin: 6px 2px; background: var(--an-hairline); }
+/* 入口目的（PF-CM-003）：Composer 下方一行安静事实——Session 由谁完成、
+   Room 将由哪些真实伙伴加入；伙伴不足时给出可行动的禁用原因。 */
+.an-mode-brief { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin: 9px 2px 0; color: var(--an-ink-3); font-size: 12.5px; line-height: 1.55; }
+.an-mode-brief.is-blocked { color: var(--an-yellow); }
+.an-room-plan { align-items: center; }
+.an-room-plan__label { flex: none; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .05em; }
+.an-room-plan__chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px; border: 1px solid var(--an-hairline); border-radius: 999px; background: var(--an-paper-bright); color: var(--an-ink-2); font-size: 12px; font-weight: 620; }
+.an-room-plan__chip i { color: var(--an-violet); font-size: 12px; font-style: normal; font-weight: 650; }
 .an-home-error { display: flex; align-items: center; gap: 7px; margin: 9px 2px 0; color: var(--an-red); font-size: 12.5px; }
+.an-home-error button { flex: none; padding: 2px 8px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font-size: 12px; font-weight: 650; }
 .an-home-section { margin-top: 35px; }
 .an-home-section h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
 .an-home-section h2::after { height: 1px; flex: 1; background: var(--an-hairline); content: ""; }
@@ -99,8 +108,12 @@
 .an-dot.is-run { background: var(--an-cobalt); animation: an-pulse 1.15s ease-in-out infinite; }
 .an-dot.is-fail { background: var(--an-red); }
 .an-dot.is-wait { background: var(--an-yellow); }
+/* 页脚只投影真实目录状态（PF-CM-018/021）：读取中、失败可重试、模型事实。 */
 .an-home-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 29px; color: var(--an-ink-3); font-size: 12px; }
 .an-home-foot span { display: inline-flex; align-items: center; gap: 6px; }
+.an-home-foot .is-warn { color: var(--an-yellow); }
+.an-home-foot button { padding: 1px 7px; border: 1px solid var(--an-rule); border-radius: 6px; background: var(--an-paper-bright); color: var(--an-cobalt); font-size: 12px; font-weight: 650; }
+.an-home-foot button:hover { border-color: var(--an-rule-strong); background: var(--an-paper-soft); }
 
 /* Conversation uses the same single paper surface as New Work and Agent trace.
    These bounded overrides remove the older Composition 8 wallpaper effects
@@ -249,8 +262,8 @@
 .an-node--evidence .an-assembly-evidence { margin-top: 0; }
 .an-assembly-evidence > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
 .an-assembly-evidence > header strong { color: var(--an-ink); font-size: 12px; font-weight: 680; }
-.an-assembly-evidence > header span { color: var(--an-ink-3); font-family: var(--an-mono); font-size: 11px; white-space: nowrap; }
-.an-assembly-evidence > pre { max-height: min(42vh, 420px); margin: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 12px 13px; border: 1px solid var(--an-hairline); border-radius: 7px; background: var(--an-paper); color: var(--an-ink); font-family: var(--an-mono); font-size: 11.5px; line-height: 1.65; overflow-wrap: anywhere; tab-size: 2; white-space: pre-wrap; }
+.an-assembly-evidence > header span { color: var(--an-ink-3); font-family: var(--an-mono); font-size: 12px; white-space: nowrap; }
+.an-assembly-evidence > pre { max-height: min(42vh, 420px); margin: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 12px 13px; border: 1px solid var(--an-hairline); border-radius: 7px; background: var(--an-paper); color: var(--an-ink); font-family: var(--an-mono); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; tab-size: 2; white-space: pre-wrap; }
 .an-assembly-evidence > pre:focus-visible { outline: 2px solid var(--an-cobalt); outline-offset: -3px; }
 .an-side-h { margin: 18px 0 8px; }
 .an-side-h:first-child { margin-top: 0; }
