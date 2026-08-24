@@ -458,6 +458,8 @@ function NowBand({
   const blockedCount = laneCount('blocked');
   const reviewCount = laneCount('review');
   const activeCount = laneCount('active');
+  const doneCount = laneCount('done');
+  const donePercent = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
   const latestDocumentMs = documents.reduce((latest, document) => Math.max(latest, number(document.updatedAtMs)), 0);
   const evidenceValue = documentsSettled ? (latestDocumentMs ? updatedLabel(latestDocumentMs) : '暂无文档') : '读取中';
   return (
@@ -484,6 +486,17 @@ function NowBand({
           {onNavigate ? <button className="paw-wb-now__secondary" onClick={() => onNavigate('planning')} type="button">任务编排</button> : null}
         </div>
       </div>
+      {tasks.length ? (
+        <div
+          aria-label={`整体完成 ${donePercent}%：${doneCount} / ${tasks.length} 项任务已完成`}
+          className="paw-wb-now__gauge"
+          role="img"
+          style={{ '--paw-wb-gauge-angle': `${(doneCount / tasks.length) * 360}deg` } as CSSProperties}
+        >
+          <strong>{donePercent}<i aria-hidden>%</i></strong>
+          <small>{doneCount} / {tasks.length} 已完成</small>
+        </div>
+      ) : null}
       <dl aria-label="未完成工作脉搏" className="paw-wb-now__pulse">
         <div data-tone={blockedCount ? 'blocked' : undefined}><dt>受阻</dt><dd>{blockedCount}</dd></div>
         <div data-tone={reviewCount ? 'review' : undefined}><dt>待验收</dt><dd>{reviewCount}</dd></div>

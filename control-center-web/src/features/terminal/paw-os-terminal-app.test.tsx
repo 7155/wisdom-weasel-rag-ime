@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -10,9 +10,14 @@ import { PawWindowFrame } from '@/paw-os/shell/PawWindowLayer';
 import terminalCss from './paw-os-terminal-app.css?raw';
 
 const xtermConstructorOptions = vi.hoisted(() => [] as Record<string, unknown>[]);
+const clipboardWrites = vi.hoisted(() => [] as string[]);
 const searchAddonState = vi.hoisted(() => ({
   calls: [] as { kind: 'next' | 'previous' | 'clear'; term?: string; options?: Record<string, unknown> }[],
   listeners: [] as ((event: { resultIndex: number; resultCount: number }) => void)[],
+}));
+
+vi.mock('@/platform/clipboard', () => ({
+  writeClipboardText: async (value: string) => { clipboardWrites.push(value); },
 }));
 
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
@@ -41,13 +46,14 @@ vi.mock('@xterm/xterm', () => ({
     rows = 30;
     private host?: HTMLElement;
     private onDataCallback: (data: string) => void = () => undefined;
+    private customKeyHandler: (event: KeyboardEvent) => boolean = () => true;
 
     constructor(options: Record<string, unknown>) {
       xtermConstructorOptions.push(options);
     }
 
     loadAddon() {}
-    attachCustomKeyEventHandler() {}
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) { this.customKeyHandler = handler; }
     hasSelection() { return false; }
     getSelection() { return ''; }
     open(host: HTMLElement) {
@@ -55,6 +61,8 @@ vi.mock('@xterm/xterm', () => ({
       const input = document.createElement('textarea');
       input.setAttribute('aria-label', '终端输入');
       input.addEventListener('keydown', (event) => {
+        // Real xterm consults the custom handler before treating a key as PTY input.
+        if (!this.customKeyHandler(event)) return;
         if (event.key === 'Enter') this.onDataCallback('\r');
         else if (event.key.length === 1) this.onDataCallback(event.key);
       });
@@ -78,6 +86,7 @@ vi.mock('@xterm/xterm', () => ({
 afterEach(() => {
   cleanup();
   xtermConstructorOptions.length = 0;
+  clipboardWrites.length = 0;
   searchAddonState.calls.length = 0;
   searchAddonState.listeners.length = 0;
   delete document.documentElement.dataset.reduceMotion;
@@ -440,6 +449,61 @@ describe('PawOsTerminalApp', () => {
     expect(searchAddonState.calls.at(-1)).toMatchObject({ kind: 'clear' });
   });
 
+  it('keeps PAWOS keyboard chords out of the PTY: search opens and a sibling terminal is created', async () => {
+    const created = terminalSession('terminal-two', 'Terminal Two');
+    const first = terminalSession('terminal-one', 'Terminal One');
+    let terminals = [first];
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': () => ({ schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: terminals }),
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: first, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: first.terminalId },
+        'terminal.session.write': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: first.terminalId, bytesWritten: 0 },
+        'terminal.session.create': () => {
+          terminals = [...terminals, created];
+          return { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: created };
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    const ptyInput = await screen.findByRole('textbox', { name: '终端输入' });
+    fireEvent.keyDown(ptyInput, { code: 'KeyF', key: 'F', ctrlKey: true, shiftKey: true });
+    expect(await screen.findByRole('textbox', { name: '搜索终端输出' })).toBeInTheDocument();
+
+    fireEvent.keyDown(ptyInput, { code: 'KeyT', key: 'T', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(true));
+    expect(await screen.findByRole('tab', { name: /Terminal Two/ })).toHaveAttribute('aria-selected', 'true');
+
+    // Neither chord may leak into the shell as typed input.
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.write')).toBe(false));
+  });
+
+  it('copies the working directory from the status bar with a temporary truthful receipt', async () => {
+    const user = userEvent.setup();
+    const terminal = terminalSession('terminal-one', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [terminal] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: terminal.terminalId },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    const copyButton = await screen.findByRole('button', { name: '复制工作目录 /workspace/paw' });
+    expect(copyButton).toHaveTextContent('/workspace/paw');
+    await user.click(copyButton);
+    await waitFor(() => expect(clipboardWrites).toEqual(['/workspace/paw']));
+    expect(copyButton).toHaveTextContent('已复制路径');
+    expect(copyButton).toHaveAttribute('data-copied');
+    // The receipt is temporary; the truthful path returns on its own.
+    await waitFor(() => expect(copyButton).toHaveTextContent('/workspace/paw'), { timeout: 3_000 });
+    expect(copyButton).not.toHaveAttribute('data-copied');
+  });
+
   it('lets a failed create be dismissed instead of leaving a stuck banner', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
@@ -516,6 +580,13 @@ describe('paw-os-terminal-app.css contracts', () => {
   it('silences terminal motion for both the OS media query and the PAWOS preference', () => {
     expect(terminalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-terminal-ended,[\s\S]*?animation:\s*none;/s);
     expect(terminalCss).toMatch(/:root\[data-reduce-motion='true'\] \.paw-terminal-tab-main i\[data-state="running"\]::after\s*\{\s*animation:\s*none;/s);
+  });
+
+  it('keeps the ghost-prompt caret and the cwd copy affordance in the feature owner, with motion silenced', () => {
+    expect(terminalCss).toMatch(/\.paw-terminal-empty-glyph > i\s*\{[^}]*animation:\s*paw-terminal-caret/s);
+    expect(terminalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-terminal-empty-glyph > i,[\s\S]*?animation:\s*none;/s);
+    expect(terminalCss).toMatch(/:root\[data-reduce-motion='true'\] \.paw-terminal-empty-glyph > i,[\s\S]*?animation:\s*none;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-cwd\s*\{[^}]*cursor:\s*copy;/s);
   });
 });
 
