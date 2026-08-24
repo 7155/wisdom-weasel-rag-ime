@@ -63,12 +63,18 @@ describe('PAWOS Room collaboration tools', () => {
     await user.click(screen.getByRole('button', { name: '星空' }));
 
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'starfield');
+    // The sky is an immersive fullscreen overlay portaled to <body>.
     const sky = screen.getByRole('region', { name: 'Room 星空' });
+    expect(sky).toHaveAttribute('data-immersive');
     expect(within(sky).getByText('Sol')).toBeInTheDocument();
-    // The composer stays live: the starfield is a view, not a modal detour.
+    // The workspace behind the overlay keeps its state for the way back.
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
 
+    // Picking a planet opens its detail card; opening the partner window is
+    // an explicit second action, so a stray click never steals the stage.
     await user.click(within(sky).getByRole('button', { name: /^Mars，/ }));
+    const card = within(sky).getByRole('complementary', { name: '天体详情' });
+    await user.click(within(card).getByRole('button', { name: '打开伙伴窗口' }));
 
     const foregroundCalls = openWindow.mock.calls.filter(([request]) => request.background === false);
     expect(foregroundCalls).toHaveLength(1);
@@ -79,6 +85,11 @@ describe('PAWOS Room collaboration tools', () => {
         title: 'Mars',
       }),
     });
+
+    // The exit control returns to the conversation view.
+    await user.click(within(sky).getByRole('button', { name: /返回 Room/ }));
+    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'conversation');
   });
 
   it('fronts a partner satellite only when the user explicitly clicks that planet', async () => {

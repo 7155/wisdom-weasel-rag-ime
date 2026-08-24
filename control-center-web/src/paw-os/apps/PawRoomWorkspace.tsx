@@ -408,6 +408,7 @@ export function PawRoomWorkspace({
             <PawRoomStarfield
               focus={focusProjection}
               roomId={recordId}
+              onExit={() => setView('conversation')}
               onOpenParticipant={openParticipantById}
             />
           ) : <div aria-label="Root 对话与公开协作事件" className="paw-room-timeline" ref={timelineRef} role="log">

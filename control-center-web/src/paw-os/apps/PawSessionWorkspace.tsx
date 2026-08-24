@@ -967,12 +967,15 @@ export function PawSessionWorkspace({
               inert={workspaceView !== 'starfield'}
             >
               {/* The sky mounts only while watched: no hidden polling, and the
-                  conversation/trace stacked views keep their own state. */}
+                  conversation/trace stacked views keep their own state. The
+                  component renders an immersive fullscreen overlay; Esc or
+                  its exit control returns to the conversation. */}
               {workspaceView === 'starfield' ? <PawSessionStarfield
                 active
                 busy={busy}
                 sessionId={recordId}
                 sessionTitle={title}
+                onExit={() => setWorkspaceView('conversation')}
                 onOpenRun={(run) => desktop?.openWindow({
                   appId: 'agent',
                   target: {
