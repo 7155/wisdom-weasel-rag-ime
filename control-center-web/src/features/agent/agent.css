@@ -1798,6 +1798,13 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-context-node-metadata span { display: inline-flex; gap: 5px; padding: 4px 7px; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text-secondary); font-size: 13px; }
 .agent-context-node-metadata b { color: var(--color-text); font-weight: var(--font-weight-semibold); }
 .agent-context-node-detail > p { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--color-danger); font-size: 13px; }
+.agent-context-node-detail > .agent-context-node-evidence__note { color: var(--color-text-tertiary); }
+.agent-context-node-evidence { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--color-border); border-radius: 5px; }
+.agent-context-node-evidence > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.agent-context-node-evidence > header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-context-node-evidence > header span { color: var(--color-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.agent-context-node-evidence > pre { max-height: min(40dvh, 320px); min-width: 0; margin: 0; padding: 10px 12px; overflow: auto; overscroll-behavior: contain; color: var(--color-text); font: 12px/1.6 var(--font-mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.agent-context-node-evidence > pre:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .agent-status-turn { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 7px; padding: 5px 0; color: var(--color-text-secondary); }
 .agent-status-turn > svg { color: var(--color-success); }
 .agent-status-turn[data-state='queued'] > svg,
