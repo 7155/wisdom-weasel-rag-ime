@@ -1,14 +1,19 @@
 /*
- * THESIS: PAWOS is a bright working desktop whose real windows and App identities
- * carry attention; it refuses both the dark "ink bar" shell and dashboard chrome.
- * OWN-WORLD: cold-white mist, clear graphite type, disciplined identity colour,
- * opaque white working surfaces and soft offset depth.
+ * THESIS: PAWOS is one machined bright desktop. A cold glacial field carries
+ * thin translucent chrome; work happens on opaque white windows; the only
+ * saturation on screen is App identity and one cobalt focus.
+ * OWN-WORLD: cool white mist, graphite ink, hairline edges, soft offset depth.
  * OWNERSHIP: this file is the shell's visual owner (colour, material, blur,
  * shadow). Structure, geometry and state semantics live in paw-os.css; timing
- * lives in paw-os-motion.css. Backdrop blur is reserved for true chrome (menu
- * bar, Dock, Launchpad); windows are opaque so drag/resize never flickers.
- * STORY: orient in PAW, recognize the active App, continue work from a spatially
- * stable window, then move through Dock, Overview or the complete 11-App archive.
+ * lives in paw-os-motion.css; the shared control language (select, menu,
+ * button, panel) in paw-os-controls.css.
+ * MATERIAL CONTRACT: exactly three surfaces may blur — the menu bar, the Dock
+ * and the Launchpad veil (modal, never underneath a drag). They all derive
+ * from one --paw-chrome-* recipe. Windows, menus, tooltips and every text
+ * surface are opaque, so ink never sits on an unknown backdrop and drag or
+ * resize never re-rasterizes a filter stack.
+ * STORY: orient in the menu bar, launch from Dock or Launchpad, recognize the
+ * active App by its accent, continue work on a spatially stable white window.
  */
 
 .paw-desktop-root {
@@ -24,6 +29,13 @@
   --paw-accent: #2f6bff;
   --paw-accent-strong: #1e57e7;
   --paw-accent-soft: rgb(47 107 255 / .1);
+  /* One chrome recipe. Menu bar, Dock and Launchpad veil are the same
+     machined material: a cool translucent veil, one graphite hairline and a
+     1px inner light along the top edge. */
+  --paw-chrome-veil: rgb(251 252 254 / .8);
+  --paw-chrome-hairline: rgb(23 26 33 / .1);
+  --paw-chrome-highlight: inset 0 1px 0 rgb(255 255 255 / .85);
+  --paw-chrome-blur: blur(18px) saturate(150%);
   --paw-chrome: rgb(255 255 255 / .76);
   --paw-chrome-soft: rgb(255 255 255 / .94);
   --paw-chrome-ink: #171a21;
@@ -35,6 +47,9 @@
   --paw-warning: #d98806;
   --paw-danger: #d92d20;
   --paw-radius: 12px;
+  /* Two depth tiers only: resting and lifted. Focus reads through border ink
+     and shadow travel, never through transparency. */
+  --paw-shadow-rest: 0 16px 40px -22px rgb(23 32 52 / .24), 0 2px 8px rgb(23 26 33 / .05);
   --paw-shadow: 0 28px 72px -24px rgb(23 32 52 / .3), 0 5px 18px rgb(23 26 33 / .07);
   --paw-ease-out: cubic-bezier(.16, 1, .3, 1);
   color: var(--paw-ink);
@@ -62,20 +77,24 @@
   outline-offset: 2px;
 }
 
-/* One quiet orientation row: brand wordmark, current App identity, real status. */
+/* ------------------------------------------------------------------ Menu bar
+ * One quiet orientation row: brand wordmark, current App identity, real
+ * status. Both interactive segments share the same pill hover so the whole
+ * bar reads as one instrument. */
 .paw-desktop-root .paw-menu-bar {
-  border-bottom: 1px solid rgb(23 26 33 / .08);
-  color: #171a21;
-  background: rgb(255 255 255 / .72);
-  box-shadow: 0 1px 0 rgb(255 255 255 / .76);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
-  backdrop-filter: blur(18px) saturate(145%);
+  border-bottom: 1px solid var(--paw-chrome-hairline);
+  color: var(--paw-chrome-ink);
+  background: var(--paw-chrome-veil);
+  box-shadow: var(--paw-chrome-highlight);
+  -webkit-backdrop-filter: var(--paw-chrome-blur);
+  backdrop-filter: var(--paw-chrome-blur);
 }
 
 .paw-desktop-root .paw-system-mark {
+  min-width: 40px;
   border: 0;
-  border-radius: 5px;
-  color: #171a21;
+  border-radius: 7px;
+  color: var(--paw-chrome-ink);
   background: transparent;
   box-shadow: none;
 }
@@ -87,29 +106,33 @@
   line-height: 1;
 }
 
-.paw-desktop-root .paw-system-mark:hover { color: #2f6bff; }
+.paw-desktop-root .paw-system-mark:hover {
+  color: #1e57e7;
+  background: rgb(23 26 33 / .05);
+}
+.paw-desktop-root .paw-system-mark:active { background: rgb(23 26 33 / .08); }
 
 .paw-desktop-root .paw-menu-app {
-  min-height: 28px;
-  padding: 0 8px;
-  margin-left: -8px;
-  border-radius: 6px;
-  color: #171a21;
+  min-height: 26px;
+  padding: 0 9px;
+  margin-left: -9px;
+  border-radius: 7px;
+  color: var(--paw-chrome-ink);
   font-size: 13px;
   line-height: 1.4;
   font-weight: 650;
   cursor: pointer;
 }
-.paw-desktop-root .paw-menu-app:hover {
-  background: rgb(23 26 33 / .05);
-}
+.paw-desktop-root .paw-menu-app:hover { background: rgb(23 26 33 / .05); }
+.paw-desktop-root .paw-menu-app:active,
+.paw-desktop-root .paw-menu-app[aria-expanded='true'] { background: rgb(23 26 33 / .08); }
 .paw-desktop-root .paw-menu-app[data-idle] {
-  color: #5d6675;
+  color: var(--paw-chrome-muted);
   font-weight: 550;
 }
 
 .paw-desktop-root .paw-menu-status {
-  color: #5d6675;
+  color: var(--paw-chrome-muted);
   font-size: 13px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
@@ -157,7 +180,6 @@
 .paw-desktop-root .paw-field__ridge--far { opacity: .92; }
 .paw-desktop-root .paw-field__ridge--mid { opacity: .94; }
 .paw-desktop-root .paw-field__ridge--close { opacity: .96; }
-.paw-desktop-root .paw-field__ridge--near { opacity: .98; }
 /* Daylight catches the ridge crests from the beacon side; pulses briefly lift
    this whole group, so the terrain visibly answers real Runtime activity. */
 .paw-desktop-root .paw-field__crest-lights { opacity: .55; }
@@ -186,7 +208,9 @@
   to { opacity: 1; }
 }
 
-/* Full-colour identities remain unframed at every real placement. */
+/* ---------------------------------------------------- Desktop shortcuts
+ * Full-colour identities remain unframed at every real placement. Labels sit
+ * on their own opaque pill so wallpaper contrast can never wash them out. */
 .paw-desktop-root .paw-desktop-shortcuts {
   left: 22px;
   top: 22px;
@@ -198,9 +222,12 @@
   padding: 7px 5px;
   border-radius: 12px;
 }
-.paw-desktop-root .paw-desktop-shortcuts button:hover,
+.paw-desktop-root .paw-desktop-shortcuts button:hover {
+  background: rgb(255 255 255 / .5);
+}
 .paw-desktop-root .paw-desktop-shortcuts button[aria-selected='true'] {
-  background: rgb(255 255 255 / .58);
+  background: rgb(255 255 255 / .66);
+  box-shadow: 0 0 0 1.5px rgb(47 107 255 / .55), 0 6px 18px -8px rgb(31 43 66 / .3);
 }
 .paw-desktop-root .paw-desktop-shortcuts button > span {
   width: 56px;
@@ -212,10 +239,10 @@
 }
 .paw-desktop-root .paw-desktop-shortcuts button strong {
   max-width: 80px;
-  padding: 2px 5px;
-  border-radius: 5px;
+  padding: 2px 6px;
+  border-radius: 6px;
   color: #273142;
-  background: rgb(255 255 255 / .7);
+  background: rgb(255 255 255 / .78);
   font-size: 13px;
   line-height: 1.4;
   font-weight: 620;
@@ -228,29 +255,51 @@
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / .46);
 }
 
-/* Bright shelf: identity colour belongs to Apps, not the system background. */
+/* ---------------------------------------------------------------------- Dock
+ * A floating machined shelf. Identity colour belongs to the Apps; the shelf
+ * itself is the shared chrome veil. Running state is a pill (long = visible,
+ * short + soft = minimized) and the name surfaces as an opaque hover label,
+ * so no state depends on colour alone. */
 .paw-desktop-root .paw-dock {
-  border: 1px solid rgb(255 255 255 / .9);
-  background: rgb(255 255 255 / .92);
-  box-shadow: 0 22px 52px -18px rgb(61 74 96 / .28), 0 7px 18px rgb(35 49 73 / .1), inset 0 1px 0 #fff;
-  -webkit-backdrop-filter: blur(26px) saturate(145%);
-  backdrop-filter: blur(26px) saturate(145%);
+  border: 1px solid var(--paw-chrome-hairline);
+  background: var(--paw-chrome-veil);
+  box-shadow:
+    var(--paw-chrome-highlight),
+    0 24px 48px -20px rgb(33 44 66 / .32),
+    0 6px 16px rgb(23 26 33 / .08);
+  -webkit-backdrop-filter: var(--paw-chrome-blur);
+  backdrop-filter: var(--paw-chrome-blur);
 }
 .paw-desktop-root .paw-dock button { color: #556171; }
 .paw-desktop-root .paw-dock > i { background: rgb(23 26 33 / .12); }
 .paw-desktop-root .paw-dock button::before { content: none; }
 .paw-desktop-root .paw-dock button[aria-current='page'] {
   background: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 12%, #fff);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 22%, transparent);
 }
 .paw-desktop-root .paw-dock button[data-open]::after {
   background: var(--paw-app-accent, #2f6bff);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 18%, transparent);
 }
 .paw-desktop-root .paw-dock button[data-minimized]::after {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--paw-app-accent, #2f6bff);
+  background: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 46%, #fff);
 }
 .paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview) { color: #4c5868; }
+.paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview):is([aria-pressed='true'], :active) {
+  color: #1e57e7;
+  background: rgb(47 107 255 / .1);
+}
+
+/* The hover label is a real opaque surface: graphite on white, hairline and
+   the shared menu shadow — never text over glass. */
+.paw-desktop-root .paw-dock-tip {
+  border: 1px solid var(--paw-chrome-hairline);
+  color: var(--paw-chrome-ink);
+  background: #fff;
+  box-shadow: 0 10px 26px -14px rgb(23 32 52 / .35), 0 2px 8px rgb(23 26 33 / .08);
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 620;
+}
 
 @media (hover: hover) and (pointer: fine) {
   .paw-desktop-root .paw-dock button:hover {
@@ -259,84 +308,93 @@
   }
 }
 
-/* Launchpad is the real 11-App archive, not a simulated twelfth Room App. */
+/* ----------------------------------------------------------------- Launchpad
+ * The complete 11-App archive as an immersive plane: one blurred veil owns
+ * the depth, content sits directly on it, and every text block keeps an
+ * opaque or near-white ground. There is no second glass layer. */
 .paw-desktop-root .paw-launchpad {
-  padding: 34px;
-  background: rgb(238 241 246 / .62);
-  -webkit-backdrop-filter: blur(24px) saturate(120%);
-  backdrop-filter: blur(24px) saturate(120%);
+  padding: clamp(20px, 6vh, 56px) 24px;
+  background: rgb(240 243 248 / .86);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
+  backdrop-filter: blur(26px) saturate(135%);
   animation: paw-shell-launchpad-backdrop 180ms ease-out both;
 }
 .paw-desktop-root .paw-launchpad > section {
-  width: min(900px, calc(100% - 32px));
-  max-height: min(700px, calc(100% - 32px));
+  width: min(960px, 100%);
+  max-height: 100%;
   overflow: auto;
-  border: 1px solid rgb(23 26 33 / .1);
-  border-radius: 16px;
-  background: rgb(255 255 255 / .94);
-  box-shadow: 0 32px 86px -28px rgb(28 39 61 / .34), 0 5px 18px rgb(23 26 33 / .08);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   animation: paw-shell-launchpad-arrive 280ms cubic-bezier(.16, 1, .3, 1) both;
 }
 .paw-desktop-root .paw-launchpad section > header {
-  display: grid;
-  grid-template-columns: max-content minmax(140px, 1fr) auto;
-  gap: 12px;
+  gap: 14px;
   min-height: 56px;
-  padding: 0 20px;
-  border-bottom: 1px solid rgb(23 26 33 / .075);
+  padding: 4px 6px 18px;
+  border-bottom: 0;
 }
 .paw-desktop-root .paw-launchpad-title { display: inline-flex; align-items: baseline; gap: 10px; }
-.paw-desktop-root .paw-launchpad-title > span { color: #687180; font-size: 13px; line-height: 1.4; font-weight: 550; }
+.paw-desktop-root .paw-launchpad-title > span { color: #525b6a; font-size: 13px; line-height: 1.4; font-weight: 600; }
 .paw-desktop-root .paw-launchpad section > header input[type='search'] {
   min-width: 0;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid rgb(23 26 33 / .1);
-  border-radius: 8px;
-  color: #171a21;
-  background: #f6f8fb;
-  font-size: 13px;
+  height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--paw-chrome-hairline);
+  border-radius: 999px;
+  color: var(--paw-ink);
+  background: #fff;
+  box-shadow: 0 10px 28px -18px rgb(31 43 66 / .35), 0 1px 4px rgb(23 26 33 / .05);
+  font-size: 14px;
   line-height: 1.4;
 }
+.paw-desktop-root .paw-launchpad section > header input[type='search']::placeholder { color: #6b7484; }
 .paw-desktop-root .paw-launchpad section > header input[type='search']:focus {
-  border-color: rgb(47 107 255 / .45);
-  background: #fff;
+  border-color: rgb(47 107 255 / .5);
   outline: 0;
-  box-shadow: 0 0 0 3px rgb(47 107 255 / .12);
+  box-shadow: 0 0 0 3px rgb(47 107 255 / .14), 0 10px 28px -18px rgb(31 43 66 / .35);
 }
 .paw-desktop-root .paw-launchpad section > header button {
   min-height: 32px;
-  padding: 0 10px;
-  border-radius: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--paw-chrome-hairline);
+  border-radius: 999px;
   color: #1e57e7;
+  background: #fff;
   font-size: 13px;
   line-height: 1.4;
   font-weight: 620;
 }
-.paw-desktop-root .paw-launchpad section > header button:hover { background: rgb(47 107 255 / .08); }
+.paw-desktop-root .paw-launchpad section > header button:hover {
+  border-color: rgb(47 107 255 / .4);
+  background: #f4f7ff;
+}
 .paw-desktop-root .paw-launchpad section > div {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  padding: 20px;
+  gap: 14px;
+  padding: 12px 4px 20px;
 }
 .paw-desktop-root .paw-launchpad section > div > button {
-  min-height: 138px;
+  min-height: 146px;
   align-content: center;
-  gap: 7px;
-  padding: 16px 12px;
+  gap: 8px;
+  padding: 18px 12px 14px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: 16px;
   background: transparent;
 }
 .paw-desktop-root .paw-launchpad section > div > button:hover,
 .paw-desktop-root .paw-launchpad section > div > button:focus-visible {
-  border-color: rgb(23 26 33 / .09);
-  background: #f6f8fb;
-  box-shadow: 0 8px 24px -16px rgb(31 43 66 / .24);
+  border-color: var(--paw-chrome-hairline);
+  background: #fff;
+  box-shadow: 0 14px 34px -20px rgb(31 43 66 / .35), 0 2px 8px rgb(23 26 33 / .05);
+  transform: translateY(-2px);
 }
+.paw-desktop-root .paw-launchpad section > div > button:active { transform: translateY(0) scale(.985); }
 .paw-desktop-root .paw-launchpad section > div > button > span {
-  width: 52px;
-  height: 52px;
+  width: 54px;
+  height: 54px;
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -349,7 +407,7 @@
   display: -webkit-box;
   min-height: 30px;
   overflow: hidden;
-  color: #687180;
+  color: #5d6675;
   font-size: 14px;
   line-height: 1.45;
   text-overflow: ellipsis;
@@ -359,16 +417,16 @@
 }
 .paw-desktop-root .paw-launchpad-group {
   grid-column: 1 / -1;
-  margin: 4px 2px 0;
-  color: #5d6675;
+  margin: 10px 6px 0;
+  color: #525b6a;
   font-size: 13px;
   line-height: 1.4;
-  font-weight: 650;
-  letter-spacing: .04em;
+  font-weight: 680;
+  letter-spacing: .05em;
 }
 .paw-desktop-root .paw-launchpad-empty {
   grid-column: 1 / -1;
-  margin: 28px 8px;
+  margin: 36px 8px;
   color: #5d6675;
   font-size: 14px;
   line-height: 1.5;
@@ -377,13 +435,15 @@
 
 @keyframes paw-shell-launchpad-backdrop { from { opacity: 0; } to { opacity: 1; } }
 @keyframes paw-shell-launchpad-arrive {
-  from { opacity: .72; transform: translateY(18px) scale(.97); }
+  from { opacity: .6; transform: translateY(14px) scale(.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* Window material: opaque white working surfaces. Focus reads through border,
-   shadow and chrome ink — never through transparency or a blur stack, so the
-   content below a window can never bleed through or flicker during drag. */
+/* ------------------------------------------------------------------- Windows
+ * Opaque white working surfaces. Focus reads through border ink, an accent
+ * hairline under the titlebar and shadow travel — never through transparency
+ * or a blur stack, so content below a window can never bleed through or
+ * flicker during drag. */
 .paw-desktop-root .paw-window-shell .paw-window {
   border-color: rgb(23 26 33 / .13);
   background: #fff;
@@ -391,7 +451,7 @@
 }
 .paw-desktop-root .paw-window-shell:not([data-active]):not([data-overview]):not([data-collaboration-role]) .paw-window {
   border-color: rgb(23 26 33 / .1);
-  box-shadow: 0 18px 44px -22px rgb(23 32 52 / .22), 0 3px 10px rgb(23 26 33 / .05);
+  box-shadow: var(--paw-shadow-rest);
 }
 .paw-desktop-root .paw-window-shell[data-active] .paw-window {
   border-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 38%, rgb(23 26 33 / .16));
@@ -405,9 +465,17 @@
   border-bottom-color: var(--paw-app-line, rgb(23 26 33 / .1));
   background: var(--paw-app-nav, #fff);
 }
+/* The active window signs itself: its titlebar hairline leans into the App
+   accent, which is enough identity without a painted strip. */
+.paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar {
+  border-bottom-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 34%, rgb(23 26 33 / .08));
+}
 .paw-desktop-root .paw-window-title { gap: 8px; color: #171a21; font-size: 13px; line-height: 1.4; font-weight: 650; }
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-title { color: var(--paw-app-accent-strong, #171a21); }
 .paw-desktop-root .paw-window-shell:not([data-active]) .paw-window-title { color: #5d6675; }
+/* Terminal chrome is dark; its title ink must be re-paired, not inherited. */
+.paw-desktop-root .paw-window-shell[data-app='terminal'] .paw-window-title { color: #8fd08a; }
+.paw-desktop-root .paw-window-shell[data-app='terminal']:not([data-active]) .paw-window-title { color: #93a0ae; }
 .paw-desktop-root .paw-traffic-lights button {
   border: 1.5px solid rgb(23 26 33 / .28);
   border-radius: 50%;
@@ -430,23 +498,28 @@
 }
 
 @media (max-width: 600px) {
-  .paw-desktop-root .paw-launchpad { padding: 12px; }
-  .paw-desktop-root .paw-launchpad > section { width: 100%; max-height: calc(100% - 12px); }
+  .paw-desktop-root .paw-launchpad { padding: 14px; }
+  .paw-desktop-root .paw-launchpad > section { width: 100%; max-height: 100%; }
   .paw-desktop-root .paw-launchpad section > header {
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .paw-desktop-root .paw-launchpad-title { grid-column: 1 / -1; }
-  .paw-desktop-root .paw-launchpad section > div { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; }
-  .paw-desktop-root .paw-launchpad section > div > button { min-height: 126px; }
+  .paw-desktop-root .paw-launchpad section > div { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 10px 0 16px; }
+  .paw-desktop-root .paw-launchpad section > div > button { min-height: 130px; }
   .paw-desktop-root .paw-dock { max-width: calc(100% - 16px); overflow-x: auto; }
   .paw-desktop-root .paw-menu-app .paw-app-icon { display: none; }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .paw-desktop-root :is(.paw-menu-bar, .paw-dock, .paw-launchpad, .paw-launchpad > section) {
+  .paw-desktop-root :is(.paw-menu-bar, .paw-dock) {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background: #fff;
+  }
+  .paw-desktop-root .paw-launchpad {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: #f0f3f8;
   }
 }
 
@@ -457,7 +530,9 @@
   .paw-desktop-root .paw-field__beacon-halo,
   .paw-desktop-root .paw-launchpad,
   .paw-desktop-root .paw-launchpad > section,
+  .paw-desktop-root .paw-launchpad section > div > button,
   .paw-desktop-root .paw-dock button,
+  .paw-desktop-root .paw-dock-tip,
   .paw-desktop-root .paw-app-icon {
     animation: none !important;
     transition-duration: .01ms !important;
@@ -469,7 +544,8 @@
 @media (forced-colors: active) {
   .paw-desktop-root .paw-menu-bar,
   .paw-desktop-root .paw-dock,
-  .paw-desktop-root .paw-launchpad > section,
+  .paw-desktop-root .paw-dock-tip,
+  .paw-desktop-root .paw-launchpad,
   .paw-desktop-root .paw-window-shell .paw-window { border: 1px solid CanvasText; }
   .paw-desktop-root .paw-app-icon { forced-color-adjust: auto; }
 }
