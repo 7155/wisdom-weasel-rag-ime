@@ -192,6 +192,9 @@ class AgentServiceRoomPartnerWakeTest(unittest.TestCase):
             schedule["latestRun"]["result"]["causeCode"],
             "GOAL_PAUSED",
         )
+        deferred_at = int(schedule["latestRun"]["finishedAtMs"] or 0)
+        next_wake = int(schedule["nextWakeAtMs"] or 0)
+        self.assertGreaterEqual(next_wake - deferred_at, 60_000)
         self.assertEqual(
             self.service.sessions.agent_goal(facilitator_session_id)["status"],
             "paused",

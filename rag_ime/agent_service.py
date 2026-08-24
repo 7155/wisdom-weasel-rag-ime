@@ -3483,7 +3483,9 @@ class AgentService:
                             else "Facilitator 刚刚开始其他回合，伙伴交付稍后重试"
                         ),
                         cause_code=cause_code,
-                        delay_ms=5_000,
+                        # Busy conflicts retry quickly; a paused Goal waits for
+                        # an explicit user Room message, so avoid a 5s storm.
+                        delay_ms=60_000 if cause_code == "GOAL_PAUSED" else 5_000,
                     )
                     return False
                 if str(self.sessions.get(session_id).get("status") or "") == "busy":
