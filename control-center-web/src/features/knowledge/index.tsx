@@ -1393,6 +1393,7 @@ function object(value: unknown): Record<string, unknown> {
 function asDetailTab(value: string): DetailTab { return ['viewer', 'search', 'graph', 'jobs', 'settings'].includes(value) ? value as DetailTab : 'materials'; }
 function asParserMode(value: string): KnowledgeParserMode { return value === 'builtin' ? value : value === 'mineru' || value === 'mineru_local_http' ? 'mineru' : 'auto'; }
 function asChunkingStrategy(value: string): KnowledgeChunkingConfig['strategy'] { return ['general', 'markdown', 'book', 'qa', 'laws', 'separator', 'fixed'].includes(value) ? value as KnowledgeChunkingConfig['strategy'] : 'markdown'; }
+function chunkingStrategyLabel(value: KnowledgeChunkingConfig['strategy']): string { return ({ general: '通用段落', markdown: 'Markdown 标题', book: '书籍章节', qa: '问答', laws: '法律条款', separator: '自定义分隔符', fixed: '固定长度' } satisfies Record<KnowledgeChunkingConfig['strategy'], string>)[value]; }
 function asRetrievalMode(value: string): KnowledgeRetrievalConfig['mode'] { return value === 'dense' || value === 'lexical' ? value : 'hybrid'; }
 function retrievalModeLabel(value: KnowledgeRetrievalConfig['mode']): string { return value === 'dense' ? '向量检索' : value === 'lexical' ? '关键词检索' : '混合检索'; }
 function equalConfig(left: object, right: object): boolean { return JSON.stringify(left) === JSON.stringify(right); }

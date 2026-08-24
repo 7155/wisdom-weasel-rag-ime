@@ -86,7 +86,7 @@ export function pageFailureText(failure: BrowserPageFailure): { title: string; d
   if (failure.code <= -200 && failure.code >= -299) {
     return { title: '网站证书无效或连接不安全', detail: description || `错误代码 ${failure.code}` };
   }
-  const title = knownFailLoadCodes[String(failure.code)];
+  const title = knownFailLoadCodes[failure.code];
   if (title) return { title, detail: description || `错误代码 ${failure.code}` };
   return { title: '页面没有打开', detail: description || `错误代码 ${failure.code}` };
 }
