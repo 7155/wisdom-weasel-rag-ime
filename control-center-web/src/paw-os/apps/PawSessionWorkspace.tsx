@@ -49,13 +49,17 @@ import {
 } from '@/features/agent/sessions/ConversationForkDialog';
 import { agentProjection, useAgentLiveStore } from '@/features/agent/state/live-store';
 import { AgentStatusPanel } from '@/features/agent/status/AgentStatusPanel';
-import { AgentTimeline } from '@/features/agent/timeline/AgentTimeline';
+import {
+  AgentTimeline,
+  type AgentTimelineContextChip,
+} from '@/features/agent/timeline/AgentTimeline';
 import { toolIntentPrompt } from '@/features/agent/tool-presentation';
 import { AgentFilesPanel } from '@/features/agent/workspace/AgentFilesPanel';
 import { PawContextTrace } from './PawContextTrace';
 import {
   commandItems,
   isModelCatalog,
+  sessionPermissionLabel,
   toolItems,
   type AgentCommand,
   type AgentPermissionSelection,
@@ -159,6 +163,21 @@ export function PawSessionWorkspace({
     (activity) => activity.kind === 'approval_required' && approvalNeedsHumanDecision(activity.payload),
   );
   const imageSupport = selectedModelImageSupport(catalog);
+  /* Session context above the transcript: real workspace binding and the real
+     permission mode, not decorative metadata. Both values change through the
+     permission flow, so they project from the authoritative record. */
+  const timelineContextChips = useMemo<AgentTimelineContextChip[]>(() => (
+    record
+      ? [
+          {
+            id: 'project',
+            label: projectName(record.workspaceRoots),
+            ...(record.workspaceRoots?.[0] ? { hint: record.workspaceRoots[0] } : {}),
+          },
+          { id: 'permission', label: sessionPermissionLabel(record) },
+        ]
+      : []
+  ), [record]);
 
   const loadSnapshot = useCallback(async (quiet = false): Promise<boolean> => {
     if (!quiet) setLoading(true);
@@ -903,6 +922,7 @@ export function PawSessionWorkspace({
               {loading && !projection?.turnOrder.length ? <div className="paw-session-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复完整 Session</div> : null}
               <AgentTimeline
                 activityPresentation="grouped"
+                contextChips={timelineContextChips}
                 presentation="fx"
                 showConversationNavigation={false}
                 sessionId={recordId}

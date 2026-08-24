@@ -21,6 +21,39 @@
   gap: 20px;
 }
 
+/* Session context above the first turn scrolls away with history instead of
+   pinning another toolbar. The fixed clearance from paw-apps.css yields to
+   content height only when chips are actually present. */
+.paw-desktop-root .paw-chatfx .agent-timeline__header-space:has(.agent-context-chips) {
+  height: auto;
+  min-height: 18px;
+  display: flex;
+  align-items: flex-end;
+  padding: 6px 2px 12px;
+}
+
+.paw-desktop-root .paw-chatfx .agent-context-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.paw-desktop-root .paw-chatfx .agent-context-chip {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  padding: 2px 10px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 999px;
+  color: var(--paw-chat-text-tertiary);
+  background: var(--paw-chat-surface);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .paw-desktop-root .paw-chatfx .paw-user-step {
   position: relative;
   display: flex;
@@ -115,6 +148,16 @@
   border-radius: 50%;
   color: var(--paw-chat-ok);
   background: color-mix(in srgb, var(--paw-chat-ok) 10%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .agent-turn-work__toggle[data-status='failed'] .agent-turn-work__state {
+  color: var(--paw-chat-danger);
+  background: color-mix(in srgb, var(--paw-chat-danger) 10%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .agent-turn-work__toggle[data-status='aborted'] .agent-turn-work__state {
+  color: var(--paw-chat-text-tertiary);
+  background: color-mix(in srgb, var(--paw-chat-text-tertiary) 12%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work__copy {

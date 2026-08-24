@@ -191,6 +191,16 @@ function fxClock(atMs: number): string {
   return atMs ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(atMs)) : '';
 }
 
+export type AgentTimelineContextChip = {
+  id: string;
+  label: string;
+  hint?: string;
+};
+
+type AgentTimelineListContext = {
+  contextChips: AgentTimelineContextChip[];
+};
+
 export function AgentTimeline({
   sessionId,
   persona,
@@ -211,6 +221,7 @@ export function AgentTimeline({
   onForkFromMessage,
   onEditMessage,
   activityPresentation = 'grouped',
+  contextChips = emptyContextChips,
   presentation = 'default',
   showConversationNavigation = true,
 }: {
@@ -237,6 +248,7 @@ export function AgentTimeline({
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
   activityPresentation?: 'grouped' | 'atomic';
+  contextChips?: AgentTimelineContextChip[];
   presentation?: 'default' | 'fx';
   showConversationNavigation?: boolean;
 }) {
@@ -303,6 +315,10 @@ export function AgentTimeline({
     Header: AgentTimelineScrollHeader,
     Footer: AgentTimelineScrollFooter,
   }), []);
+  const timelineContext = useMemo<AgentTimelineListContext>(
+    () => ({ contextChips }),
+    [contextChips],
+  );
   useEffect(() => {
     liveFollowIntentRef.current = true;
     const lastIndex = Math.max(0, turnOrder.length - 1);
@@ -454,6 +470,7 @@ export function AgentTimeline({
       <Virtuoso
         ref={virtuosoRef}
         key={sessionId}
+        context={timelineContext}
         data={turnOrder}
         computeItemKey={(_index, turnId) => turnId}
         // Open the latest turn below the workspace header, not against the
@@ -579,8 +596,23 @@ function AgentTimelineScrollFooter() {
   return <div className="agent-timeline__footer-space" aria-hidden="true" />;
 }
 
-function AgentTimelineScrollHeader() {
-  return <div className="agent-timeline__header-space" aria-hidden="true" />;
+/** Session context (project binding, permission mode) scrolls with the
+ * transcript above the first turn, mirroring the conversation baseline: it
+ * orients a reader at the top of history without pinning another toolbar. */
+function AgentTimelineScrollHeader({ context }: { context?: AgentTimelineListContext }) {
+  const chips = context?.contextChips ?? [];
+  if (chips.length === 0) return <div className="agent-timeline__header-space" aria-hidden="true" />;
+  return (
+    <div className="agent-timeline__header-space">
+      <div aria-label="会话上下文" className="agent-context-chips" role="list">
+        {chips.map((chip) => (
+          <span className="agent-context-chip" key={chip.id} role="listitem" title={chip.hint || undefined}>
+            {chip.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function AgentTurnTombstone({
@@ -793,6 +825,7 @@ export function AgentTurn({
                 model={turnWorkModel}
                 renderEntry={renderTimelineEntry}
                 sessionId={sessionId}
+                status={turn.status}
                 turnId={turnId}
                 updatedAtMs={turn.updatedAtMs}
               />
@@ -1385,6 +1418,8 @@ function messagePreview(message?: AgentMessageProjection): string {
 }
 
 const emptyIds: string[] = [];
+
+const emptyContextChips: AgentTimelineContextChip[] = [];
 
 function scrollerIsAtBottom(scroller: HTMLElement): boolean {
   return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 120;

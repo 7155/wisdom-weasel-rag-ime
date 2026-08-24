@@ -25,8 +25,8 @@ describe('Agent turn work projection', () => {
     });
   });
 
-  it.each(['queued', 'running', 'waiting', 'failed', 'aborted'] as const)(
-    'fails open while a turn is %s',
+  it.each(['queued', 'running', 'waiting'] as const)(
+    'fails open while a turn is still %s',
     (status) => {
       const model = buildAgentTurnWorkModel(status, [
         activityGroup(activity('tool-read', 'tool_finished')),
@@ -38,14 +38,41 @@ describe('Agent turn work projection', () => {
     },
   );
 
-  it('fails open when a completed turn has no narrative final response', () => {
+  it.each(['failed', 'aborted'] as const)(
+    'collapses %s process work while keeping the last narrative visible',
+    (status) => {
+      const model = buildAgentTurnWorkModel(status, [
+        activityGroup(activity('tool-read', 'tool_finished')),
+        message('partial', '中断前的部分结果'),
+      ]);
+
+      expect(model.canCollapse).toBe(true);
+      expect(model.finalMessageId).toBe('partial');
+      expect(model.items.map((item) => item.role)).toEqual(['work', 'result']);
+      expect(model.hiddenActivityCount).toBe(1);
+    },
+  );
+
+  it('collapses evidence-free settled work behind the compact summary', () => {
+    const model = buildAgentTurnWorkModel('failed', [
+      activityGroup(activity('tool-read', 'tool_finished')),
+      activityGroup(activity('turn-failed', 'turn_failed')),
+    ]);
+
+    expect(model.canCollapse).toBe(true);
+    expect(model.finalMessageId).toBe('');
+    expect(model.hiddenActivityCount).toBe(2);
+  });
+
+  it('collapses completed tool work behind a response-tail result without narrative text', () => {
     const model = buildAgentTurnWorkModel('completed', [
       activityGroup(activity('tool-read', 'tool_finished')),
       structuredMessage('artifact-only', 'artifact'),
     ]);
 
-    expect(model.canCollapse).toBe(false);
+    expect(model.canCollapse).toBe(true);
     expect(model.finalMessageId).toBe('');
+    expect(model.items[0]).toMatchObject({ role: 'work' });
     expect(model.items[1]).toMatchObject({ role: 'result' });
   });
 

@@ -63,6 +63,31 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(window.querySelector('.agent-conversation-nav')).toBeNull();
   });
 
+  it('orients the transcript with real workspace and permission context chips', async () => {
+    render(
+      <ControlTransportProvider transport={createPreviewTransport()}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={liveSession()}
+            recordId="session-live"
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    await screen.findByRole('textbox', { name: '消息' });
+    const chips = await screen.findByRole('list', { name: '会话上下文' });
+    const labels = within(chips).getAllByRole('listitem').map((chip) => chip.textContent);
+    expect(labels).toEqual(['personal-agent-workbench', '写入与命令确认']);
+    expect(within(chips).getByText('personal-agent-workbench')).toHaveAttribute(
+      'title',
+      '/Volumes/undo 4t/git/personal-agent-workbench',
+    );
+  });
+
   it('keeps one real composer mounted while switching between conversation and trace', async () => {
     const transport = createPreviewTransport();
     const user = userEvent.setup();
