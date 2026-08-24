@@ -1079,6 +1079,78 @@ class AgentServiceTests(unittest.TestCase):
                 self.service.prompt(session_id, {"message": "不要继续执行"})
             provider.assert_not_called()
 
+    def test_paused_goal_prompt_receipt_exposes_goal_paused_cause_code(self) -> None:
+        session_id = str(
+            self.service.create_session({"title": "goal paused cause"})["session"]["id"]
+        )
+        goal = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "在预算内完成实现",
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )
+        with patch.object(self.service, "_prompt_with_checkpoint") as provider:
+            with self.assertRaises(AgentCommandReceiptFailed) as failed:
+                self.service.prompt(
+                    session_id,
+                    {
+                        "message": "继续执行",
+                        "clientMessageId": "goal-paused-cause-1",
+                    },
+                )
+            provider.assert_not_called()
+        self.assertEqual(
+            failed.exception.response_payload(),
+            {
+                "code": "AGENT_COMMAND_FAILED",
+                "commandReceipt": {
+                    "state": "failed",
+                    "clientMessageId": "goal-paused-cause-1",
+                    "causeCode": "goal_paused",
+                },
+            },
+        )
+
+    def test_paused_goal_blocks_conversation_rewrite_before_runtime(self) -> None:
+        session_id = str(
+            self.service.create_session({"title": "goal gated rewrite"})["session"]["id"]
+        )
+        goal = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "在预算内完成实现",
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )
+        with (
+            patch.object(self.service.runtime, "rewind_session") as rewind,
+            patch.object(self.service, "_prompt_with_checkpoint") as provider,
+        ):
+            with self.assertRaisesRegex(ValueError, "goal_paused"):
+                self.service.rewrite_session(
+                    session_id,
+                    {
+                        "entryId": "entry-user-1",
+                        "message": "修改后的问题",
+                        "clientMessageId": "rewrite-while-paused",
+                    },
+                )
+            rewind.assert_not_called()
+            provider.assert_not_called()
+
     def test_goal_settle_continuation_is_deterministic_for_one_active_revision(
         self,
     ) -> None:
