@@ -350,6 +350,10 @@ describe('Agent chat rendering', () => {
       <AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
     );
 
+    // Message side is the fx identity (UR-075): the repeated "Agent/状态"
+    // caption row must not exist in the DOM, not merely be hidden by CSS.
+    expect(document.querySelector('.agent-assistant-turn__body > header')).toBeNull();
+
     const toggle = screen.getByRole('button', { name: /展开 2 个步骤/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(toggle).toHaveTextContent('2 个步骤');

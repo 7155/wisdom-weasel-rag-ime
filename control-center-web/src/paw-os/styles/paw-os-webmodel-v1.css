@@ -140,33 +140,8 @@
   border-left: 0;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body > header {
-  min-height: 20px;
-  margin: 0 0 6px;
-  gap: 7px;
-  color: var(--an-ink-3);
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body > header::before {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--an-cobalt);
-  box-shadow: 0 0 0 3px rgb(47 107 255 / .085);
-  content: '';
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body > header strong {
-  color: var(--an-ink-2);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body > header span {
-  color: var(--an-ink-3);
-  font-size: 11.5px;
-}
+/* The retired blue-dot "Agent/状态" caption row is no longer rendered by the
+   fx timeline (UR-075): message side alone carries identity. */
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn-sequence {
   gap: 0;

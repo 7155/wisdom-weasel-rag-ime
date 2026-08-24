@@ -1141,7 +1141,14 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-composer__picker .ui-button__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-composer__attachment { flex: 0 0 auto; border: 1px solid var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-secondary); }
 .agent-composer__attachment:disabled { opacity: .62; }
-.agent-composer__stop { width: 34px; height: 34px; border-radius: 50%; color: var(--color-warning); animation: agent-composer-control-enter var(--duration-enter) var(--ease-standard) both; }
+/* Stop joins the actions row to the left of Send, which stays anchored to the
+   toolbar's right edge — Send never moves. A short fade keeps the arrival from
+   reading as a flicker while a turn starts (PF-CM-009/011). */
+.agent-composer__stop { width: 34px; height: 34px; border-radius: 50%; color: var(--color-warning); animation: agent-stop-enter var(--duration-fast) var(--ease-standard) both; }
+@keyframes agent-stop-enter { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer__stop { animation: none; }
+}
 .agent-composer__attachments { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-2) 0; overflow-x: auto; }
 .agent-composer__attachment-chip { display: inline-flex; min-height: var(--space-12); flex: 0 0 auto; align-items: center; gap: var(--space-2); padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface-subtle); font-size: 13px; animation: agent-attachment-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-composer__attachment-chip > img { width: var(--space-10); height: var(--space-10); border-radius: var(--radius-1); background: var(--color-surface); object-fit: cover; }
@@ -2554,6 +2561,10 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
     transition: none;
   }
 
+  .agent-composer__stop {
+    animation: none;
+  }
+
   .agent-streaming-cursor,
   .agent-context-snapshot-state[data-state='restoring']::before,
   .agent-assistant-pending > svg,
@@ -2813,6 +2824,10 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 :root[data-reduce-motion='true'] .agent-session-row-shell,
 :root[data-reduce-motion='true'] .agent-composer__send {
   transition: none;
+}
+
+:root[data-reduce-motion='true'] .agent-composer__stop {
+  animation: none;
 }
 
 :root[data-reduce-motion='true'] .agent-persona-avatar[data-presence='thinking']::after {

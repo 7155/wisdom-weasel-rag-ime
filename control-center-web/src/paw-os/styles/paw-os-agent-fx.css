@@ -21,6 +21,43 @@
   gap: 20px;
 }
 
+/* Session 上下文 chips：对话首屏一次性陈述工作区绑定与权限模式，
+   与用户消息同侧，随记录滚动，不占用固定视口（UR-011 / PF-CM-007）。 */
+.paw-desktop-root .paw-chatfx .fx-context-chips {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 4px 14px 0;
+}
+
+.paw-desktop-root .paw-chatfx .fx-context-chip {
+  display: inline-flex;
+  overflow: hidden;
+  max-width: 55%;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 12px;
+  color: var(--paw-chat-text-secondary);
+  background: var(--paw-chat-surface-subtle);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.paw-desktop-root .paw-chatfx .fx-context-chip i {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--paw-chat-text-tertiary);
+}
+
+.paw-desktop-root .paw-chatfx .fx-context-chip[data-tone='bound'] i { background: var(--paw-chat-ok); }
+.paw-desktop-root .paw-chatfx .fx-context-chip[data-tone='permission'] i { background: var(--paw-chat-warn); }
+
 .paw-desktop-root .paw-chatfx .paw-user-step {
   position: relative;
   display: flex;
@@ -440,6 +477,14 @@
 }
 
 .paw-desktop-root .paw-chatfx .fx-pill.danger i { background: var(--paw-chat-danger); }
+
+/* 子 Agent 回执：紫调区分「另一个 Agent 在后台替你完成」与父级自身工具调用。 */
+.paw-desktop-root .paw-chatfx .fx-pill.vio {
+  color: var(--paw-chat-violet);
+  background: color-mix(in srgb, var(--paw-chat-violet) 10%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .fx-pill.vio i { background: var(--paw-chat-violet); }
 
 @keyframes paw-agent-fx-pulse {
   0%, 100% { opacity: 1; }
