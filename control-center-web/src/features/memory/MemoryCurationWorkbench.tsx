@@ -125,7 +125,6 @@ export function MemoryCurationWorkbench({
         </div>
         <div className="memory-curation__actions">
           <Button leadingIcon={<Sparkles size={15} />} onClick={handoffToAgent} size="small" variant="quiet">补充整理要求</Button>
-          <Button aria-label="刷新记忆整理草案" leadingIcon={<RefreshCw size={15} />} loading={queries.status.isFetching || queries.run.isFetching} onClick={refresh} size="small" variant="quiet">刷新</Button>
         </div>
       </div>
 
