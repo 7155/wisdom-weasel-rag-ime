@@ -207,6 +207,8 @@ class AgentPromptAuditTests(unittest.TestCase):
         self.assertIn("真实路径能否跑通、结果是否满足当前精确需求", prompt)
         self.assertIn("不要把仍在进行的 Room Goal 暂停", prompt)
         self.assertIn("审查报告 unverified", prompt)
+        self.assertIn("failed 或未解决", prompt)
+        self.assertIn("HIGH/MEDIUM", prompt)
         self.assertNotIn("room_state", prompt)
         self.assertNotIn("room_commit", prompt)
 

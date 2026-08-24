@@ -312,7 +312,10 @@ def room_participant_prompt(
                         "只有所有验收条件满足且负责的 WorkDocument 已完成收尾同步后，才调用一次 "
                         "room_partner post(kind=work_result)；该结构化交付只会把 WorkItem 提交到 review"
                         "并通过持久 wake 通知 Facilitator，不会自动验收。不要把进度或尚未满足的条件"
-                        "伪装成 work_result。",
+                        "伪装成 work_result。"
+                        "网页验收只用 product browser（PAW Browser）；禁止 desktop_semantic "
+                        "去操作独立 Chrome/Edge。bound write 使用当前文档索引上的 live "
+                        "authorityRevision，不要沿用更早记住的旧值。",
                     ]
                 )
             )

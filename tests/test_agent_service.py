@@ -1255,6 +1255,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertIn("不要把仍在进行的 Room Goal 暂停", str(first["message"]))
         self.assertIn("暂停只用于用户明确要求停止", str(first["message"]))
         self.assertNotIn("完成、暂停或取消", str(first["message"]))
+        self.assertNotIn("Todo 中有正在执行的任务", str(first["message"]))
         self.assertEqual(stalled["state"], "stalled")
         self.assertEqual(stalled["reason"], "no_progress")
         self.assertEqual(stalled["followUpKey"], "")

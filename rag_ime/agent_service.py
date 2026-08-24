@@ -1534,10 +1534,10 @@ class AgentService:
             )
             result["message"] = (
                 '<managed-goal-follow-up origin="goal-supervisor">'
-                "当前 Goal 仍处于 active，Todo 中有正在执行的任务，且预算允许继续。"
-                "一次回答结束不代表 Goal 完成；立即完成 Todo 中当前正在执行、"
+                "当前 Goal 仍处于 active，且预算允许继续。"
+                "一次回答结束不代表 Goal 完成；先同步更新 Todo 状态，再推进"
                 "能够产生新验收证据的下一步。不要只汇报进度或复述 Todo。"
-                "先同步更新 Todo 状态。没有可继续的下一步时：已有完整验收证据则完成 Goal；"
+                "没有可继续的下一步时：已有完整验收证据则完成 Goal；"
                 "Room 受阻则发出 blocked/partial 终态，保持 Goal active。"
                 "不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息；"
                 "暂停只用于用户明确要求停止，不是等待继续的手段。"

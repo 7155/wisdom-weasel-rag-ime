@@ -167,6 +167,8 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
 
         self.assertIn("只会把 WorkItem 提交到 review", prompt)
         self.assertIn("不会自动验收", prompt)
+        self.assertIn("网页验收只用 product browser", prompt)
+        self.assertIn("live authorityRevision", prompt)
         self.assertNotIn("当前尚未形成结构化 WorkItem", prompt)
         self.assertTrue(prompt.endswith("</room-context>"))
 
