@@ -114,7 +114,7 @@ export function HistoryFeature() {
               <Select id="history-source-filter" onValueChange={setFilter} options={[
                 { value: '', label: '全部来源' },
                 { value: 'rime_commit', label: '输入法' },
-                { value: 'assistant_candidate', label: '模型候选' },
+                { value: 'assistant_candidate', label: '联想候选' },
                 { value: 'voice', label: '语音' },
                 { value: 'import', label: '导入' },
               ]} value={filter} />
@@ -353,7 +353,7 @@ function HistoryDetailDialog({
             <section aria-labelledby="history-detail-context" className="history-detail__context">
               <div className="history-detail__section-heading">
                 <div>
-                  <h3 id="history-detail-context">辅助上下文</h3>
+                  <h3 id="history-detail-context">上下文获取</h3>
                   <small>{auxiliaryContext.available === true
                     ? `${numberValue(auxiliaryContext.textChars)} 字 · ${auxiliaryContext.hasAdditionalText === true ? '包含附近文本' : '仅当前输入'}`
                     : '这条记录没有保存附近文本'}</small>
@@ -368,7 +368,7 @@ function HistoryDetailDialog({
                 <DetailFact label="附近文本" value={auxiliaryContext.hasAdditionalText === true ? '已保存' : '未保存'} />
                 <DetailFact label="是否参与记忆" value={captureEvidenceLabel(captureReceipt)} />
               </dl>
-              {auxiliaryText ? <pre tabIndex={0}>{auxiliaryText}</pre> : <p className="history-detail__empty">没有可查看的辅助上下文。</p>}
+              {auxiliaryText ? <pre tabIndex={0}>{auxiliaryText}</pre> : <p className="history-detail__empty">这条记录没有可查看的上下文。</p>}
               {auxiliaryContext.truncated === true ? <p className="history-detail__empty">内容较长，当前显示前 8000 字。</p> : null}
               <Disclosure
                 className="history-detail__advanced-context"
@@ -420,14 +420,14 @@ function historyWorkflowText(value: string): string {
 function sourceLabel(source: string, category = ''): string {
   if (category === 'rime_commit') return '输入法';
   if (category === 'voice') return '语音';
-  if (category === 'assistant_candidate') return '模型候选';
+  if (category === 'assistant_candidate') return '联想候选';
   if (category === 'import') return '导入';
   const normalized = source.toLocaleLowerCase('en-US');
   if (normalized.includes('rime')) return '输入法';
   if (normalized.includes('voice')) return '语音';
-  if (normalized.includes('rag')) return '知识检索';
+  if (normalized.includes('rag')) return '知识召回';
   if (normalized.includes('memory')) return '个人记忆';
-  if (normalized.includes('assistant') || normalized.includes('model')) return '模型候选';
+  if (normalized.includes('assistant') || normalized.includes('model')) return '联想候选';
   return source ? '其他来源' : '未知来源';
 }
 
