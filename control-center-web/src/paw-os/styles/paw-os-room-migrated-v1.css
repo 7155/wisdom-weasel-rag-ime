@@ -515,7 +515,7 @@
 .paw-desktop-root .paw-room-chronology__message[data-role='user'] > header time { margin-left: 0; }
 .paw-desktop-root .paw-room-chronology__message[data-role='user'] > div { font-size: 14.5px; line-height: 1.6; }
 .paw-desktop-root .paw-room-chronology__live { color: var(--room-blue); font-size: 12px; }
-/* 运行与流转折叠条：摘要 chip 常驻；展开只改投影，不动事件顺序（UR-085） */
+/* 过程折叠条：摘要 chip 常驻；展开只改投影，不动事件顺序（UR-085） */
 .paw-desktop-root .paw-room-chronology__fold { margin: 4px 0 2px; border-top: 1px dashed rgb(29 36 48 / .12); }
 .paw-desktop-root .paw-room-chronology__fold > summary { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 6px 2px; cursor: pointer; list-style: none; }
 .paw-desktop-root .paw-room-chronology__fold > summary::-webkit-details-marker { display: none; }

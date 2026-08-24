@@ -363,7 +363,7 @@ export function PawRoomWorkspace({
         kind: 'room',
         id: recordId,
         title: `${record.title} · 协作态势`,
-        subtitle: 'Sol 协作态势 · WorkItem、伙伴与流转的实时投影',
+        subtitle: 'Sol 协作全景 · 目标、伙伴与交接实时同步',
         panel: 'focus',
       },
     });
@@ -407,7 +407,7 @@ export function PawRoomWorkspace({
       <section aria-label="Room 当前协作" className="paw-room-workspace__signal">
         <div className="paw-room-workspace__objective">
           <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
-          <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 个 WorkItem</span>
+          <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 项任务</span>
         </div>
         {focusProjection ? <div aria-label="Sol 当前状态" className="paw-room-workspace__signal-status">
           <span data-tone="active"><i />{focusProjection.counts.active} 进行</span>
@@ -426,7 +426,7 @@ export function PawRoomWorkspace({
               onExit={() => setView('conversation')}
               onOpenParticipant={openParticipantById}
             />
-          ) : <div aria-label="Root 对话与公开协作事件" className="paw-room-timeline" ref={timelineRef} role="log">
+          ) : <div aria-label="公开对话时间线" className="paw-room-timeline" ref={timelineRef} role="log">
               <div className="paw-room-timeline__canvas">
                 {loading && !turnOrder.length ? <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div> : null}
                 {!loading && !turnOrder.length ? <div className="paw-room-workspace__empty"><Users size={24} /><strong>Room 已准备好</strong><p>发送目标，伙伴会分工、执行并汇合结果。</p></div> : null}
@@ -662,7 +662,7 @@ function PawRoomActivityFold({
       }}
     >
       <ChevronRight aria-hidden="true" size={13} />
-      <strong>运行与流转 {activities.length} 项</strong>
+      <strong>过程 {activities.length} 步</strong>
       <small>{pawRoomActivitySummary(latest, latestEventType)}</small>
     </summary>
     <SmoothDisclosureReveal

@@ -100,11 +100,11 @@ export function PawRoomFocusOverview({
 
       <section aria-labelledby="paw-room-focus-work-title" className="paw-room-focus-overview__section paw-room-focus-overview__work">
         <header>
-          <span><GitCommitHorizontal aria-hidden="true" size={14} /><strong id="paw-room-focus-work-title">WorkItem 任务流</strong></span>
+          <span><GitCommitHorizontal aria-hidden="true" size={14} /><strong id="paw-room-focus-work-title">任务树</strong></span>
           <small>{focus.workItems.length} 项</small>
         </header>
         {focus.workItems.length ? (
-          <ol aria-label="WorkItem 任务流" className="paw-room-focus-overview__tree" role="tree">
+          <ol aria-label="任务树" className="paw-room-focus-overview__tree" role="tree">
             {focus.workItems.map((item) => {
               const partner = focus.partners.find((candidate) => candidate.participantId === item.ownerParticipantId);
               const level = item.parentId ? 2 : 1;
@@ -123,7 +123,7 @@ export function PawRoomFocusOverview({
               );
             })}
           </ol>
-        ) : <p className="paw-room-focus-overview__empty">还没有可投影的 WorkItem。</p>}
+        ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，任务会从这里生长。</p>}
       </section>
 
       <section aria-labelledby="paw-room-focus-partners-title" className="paw-room-focus-overview__section paw-room-focus-overview__partners">
@@ -157,9 +157,9 @@ export function PawRoomFocusOverview({
         </ul>
       </section>
 
-      <section aria-label="交接流" className="paw-room-focus-overview__section paw-room-focus-overview__handoffs">
+      <section aria-label="任务交接" className="paw-room-focus-overview__section paw-room-focus-overview__handoffs">
         <header>
-          <span><ArrowRight aria-hidden="true" size={14} /><strong>交接流</strong></span>
+          <span><ArrowRight aria-hidden="true" size={14} /><strong>任务交接</strong></span>
           <small>{focus.handoffs.length} 次</small>
         </header>
         {focus.handoffs.length ? (
@@ -214,16 +214,16 @@ function FocusFlowLedger({
     : partners.find((partner) => partner.participantId === actorId)?.celestialName ?? actorId;
 
   return (
-    <section aria-label="消息与上下文流" className="paw-room-focus-overview__section paw-room-focus-overview__flow">
+    <section aria-label="往来记录" className="paw-room-focus-overview__section paw-room-focus-overview__flow">
       <header>
-        <span><GitBranch aria-hidden="true" size={14} /><strong>消息与上下文流</strong></span>
+        <span><GitBranch aria-hidden="true" size={14} /><strong>往来记录</strong></span>
         <span className="paw-room-focus-overview__flow-window">
           <small>最近 {visiblePackets.length} / 共 {flow.length} 条</small>
           {flow.length > visiblePackets.length ? <button onClick={() => setShowAllPackets(true)} type="button">显示全部</button> : null}
         </span>
       </header>
       {flow.length ? (
-        <ol aria-label="流转事件" className="paw-room-focus-overview__packets">
+        <ol aria-label="往来事件" className="paw-room-focus-overview__packets">
           {visiblePackets.map((packet, index) => (
             <li data-kind={packet.kind} data-status={packet.status} key={packet.id}>
               <button
@@ -245,7 +245,7 @@ function FocusFlowLedger({
             </li>
           ))}
         </ol>
-      ) : <p className="paw-room-focus-overview__empty">还没有可投影的公开消息、分派或上下文流转。</p>}
+      ) : <p className="paw-room-focus-overview__empty">还没有公开往来。第一条消息发出后，这里会记下谁把什么交给了谁。</p>}
       {selectedPacket ? (
         <div className="paw-room-focus-overview__packet-detail">
           <header>
@@ -255,8 +255,8 @@ function FocusFlowLedger({
           <p>{selectedPacket.summary}</p>
           {selectedPacket.dispatchId || selectedPacket.workItemId || selectedPacket.refs.length ? (
             <dl>
-              {selectedPacket.dispatchId ? <><dt>Dispatch</dt><dd>{selectedPacket.dispatchId}</dd></> : null}
-              {selectedPacket.workItemId ? <><dt>WorkItem</dt><dd>{selectedPacket.workItemId}</dd></> : null}
+              {selectedPacket.dispatchId ? <><dt>分派</dt><dd>{selectedPacket.dispatchId}</dd></> : null}
+              {selectedPacket.workItemId ? <><dt>任务</dt><dd>{selectedPacket.workItemId}</dd></> : null}
               {selectedPacket.refs.length ? <><dt>上下文 / 文档</dt><dd>{selectedPacket.refs.join('\n')}</dd></> : null}
             </dl>
           ) : null}
@@ -279,13 +279,13 @@ function FocusInspector({
   const action = workAction(work) || partner?.currentAction || '等待新的工作项';
   const evidence = work?.evidence ?? [];
   return (
-    <section aria-label="协作检查器" className="paw-room-focus-overview__inspector" data-state={state} key={`${work?.id ?? ''}:${partner?.participantId ?? ''}`} role="region">
+    <section aria-label="焦点详情" className="paw-room-focus-overview__inspector" data-state={state} key={`${work?.id ?? ''}:${partner?.participantId ?? ''}`} role="region">
       <header>
-        <span><FileCheck2 aria-hidden="true" size={14} /><strong>协作检查器</strong></span>
+        <span><FileCheck2 aria-hidden="true" size={14} /><strong>焦点详情</strong></span>
         <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(state)}</span>
       </header>
       <div className="paw-room-focus-overview__inspector-copy">
-        <small>{work ? '当前 WorkItem' : '当前伙伴'}</small>
+        <small>{work ? '当前任务' : '当前伙伴'}</small>
         <strong>{work?.objective || partner?.celestialName || 'Sol'}</strong>
         <p>{action}</p>
       </div>
@@ -342,7 +342,7 @@ function packetKindLabel(kind: RoomFocusPacketKind): string {
     request: '需求',
     question: '问题',
     answer: '答复',
-    plan: 'Plan / WorkItem',
+    plan: '计划',
     document: '文档',
     context: '上下文',
     result: '公开结果',

@@ -143,10 +143,10 @@ describe('PawRoomFocusOverview', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
     expect(screen.getByRole('region', { name: 'Sol 协作态势' })).toHaveTextContent('任务图依赖验证');
-    expect(screen.getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现依赖数据投影');
+    expect(screen.getByRole('tree', { name: '任务树' })).toHaveTextContent('实现依赖数据投影');
     expect(screen.getByRole('list', { name: '行星伙伴' })).toHaveTextContent('Earth');
-    expect(screen.getByLabelText('交接流')).toHaveTextContent('Earth → Mars');
-    expect(screen.getByRole('region', { name: '协作检查器' })).toHaveTextContent('等待独立复核');
+    expect(screen.getByLabelText('任务交接')).toHaveTextContent('Earth → Mars');
+    expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
   });
 
   it('selects a planet with pointer or keyboard and opens only its real participant target', () => {
@@ -156,7 +156,7 @@ describe('PawRoomFocusOverview', () => {
     const mars = within(planets).getByRole('button', { name: /Mars/ });
 
     fireEvent.click(mars);
-    expect(screen.getByRole('region', { name: '协作检查器' })).toHaveTextContent('正在核对依赖投影');
+    expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('正在核对依赖投影');
     fireEvent.keyDown(within(planets).getByRole('button', { name: /Earth/ }), { key: 'Enter' });
     fireEvent.click(screen.getByRole('button', { name: '打开 Earth 伙伴窗口' }));
 
@@ -166,9 +166,9 @@ describe('PawRoomFocusOverview', () => {
   it('keeps the chronological flow ledger inside the console with celestial actor names and packet detail', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
-    const ledger = screen.getByRole('region', { name: '消息与上下文流' });
+    const ledger = screen.getByRole('region', { name: '往来记录' });
     expect(within(ledger).getByText('最近 3 / 共 3 条')).toBeInTheDocument();
-    const packets = within(ledger).getByRole('list', { name: '流转事件' });
+    const packets = within(ledger).getByRole('list', { name: '往来事件' });
     expect(packets).toHaveTextContent('Sol → Earth');
     expect(packets).toHaveTextContent('Earth → Mars');
 
@@ -216,6 +216,6 @@ describe('PawRoomFocusOverview', () => {
     fireEvent.click(summary);
     expect(summary).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('验收项 18')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: '协作检查器' })).toHaveTextContent('可复查的整合版本');
+    expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('可复查的整合版本');
   });
 });

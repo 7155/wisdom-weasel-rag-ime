@@ -436,10 +436,10 @@ describe('PawOsSatelliteHost', () => {
     }, { openWindow });
 
     const console = await screen.findByRole('region', { name: 'Sol 协作态势' });
-    expect(within(console).getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现 Room 任务图交互');
-    expect(within(console).getByLabelText('流转事件')).toHaveTextContent('实现 Room 任务图交互');
+    expect(within(console).getByRole('tree', { name: '任务树' })).toHaveTextContent('实现 Room 任务图交互');
+    expect(within(console).getByLabelText('往来事件')).toHaveTextContent('实现 Room 任务图交互');
     expect(within(console).getByText('验收条件 · 1')).toBeInTheDocument();
-    expect(within(console).getByRole('region', { name: '协作检查器' })).toHaveTextContent('等待独立复核');
+    expect(within(console).getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
     expect(container.querySelector('.room-cockpit')).not.toBeInTheDocument();
     expect(container.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
 
