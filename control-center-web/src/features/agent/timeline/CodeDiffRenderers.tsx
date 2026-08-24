@@ -1,10 +1,16 @@
 import { Check, ChevronRight, Clipboard, Code2, FileDiff } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Disclosure, IconButton } from '@/components/primitives';
 import { writeClipboardText } from '@/platform/clipboard';
 import { DiffPreview } from '../file-preview/DiffPreview';
+import { highlightCode } from '../file-preview/syntax-highlighter';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import { text } from './renderer-values';
+
+/** Highlighting is a settled-read affordance: it never runs on the streaming
+ * tail (which re-renders per token) and never on pathological payloads whose
+ * grammar pass would cost more than the tokens communicate. */
+const HIGHLIGHT_CHAR_LIMIT = 60_000;
 
 export function CodeBlockRenderer({ block }: AgentBlockRenderProps) {
   const data = block.data;
@@ -55,8 +61,22 @@ export function CodeContentBlock({
   streamingTail?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [highlighted, setHighlighted] = useState('');
   const lineCount = code ? code.split('\n').length : 0;
   const collapsed = !streamingTail && (lineCount > 32 || code.length > 4_000);
+  const highlightable = !streamingTail && Boolean(code) && code.length <= HIGHLIGHT_CHAR_LIMIT;
+
+  useEffect(() => {
+    if (!highlightable) {
+      setHighlighted('');
+      return undefined;
+    }
+    let current = true;
+    void highlightCode(code, language, { inheritSurface: true })
+      .then((html) => { if (current) setHighlighted(html); })
+      .catch(() => { if (current) setHighlighted(''); });
+    return () => { current = false; };
+  }, [code, highlightable, language]);
 
   async function copy(): Promise<void> {
     await writeClipboardText(code);
@@ -83,20 +103,34 @@ export function CodeContentBlock({
           tooltip
         />
       </figcaption>
-      <pre
-        aria-label={fileName ? `${fileName} 代码内容` : `${language} 代码内容`}
-        data-language={language}
-        role="region"
-        tabIndex={0}
-      >
-        <code
-          className="agent-code-block__content"
-          data-stream-tail={streamingTail || undefined}
+      {highlightable && highlighted ? (
+        // Shiki emits escaped token spans from the settled text receipt; the
+        // original code never reaches this path as executable HTML. The copy
+        // action above keeps operating on the exact text value.
+        <div
+          aria-label={fileName ? `${fileName} 代码内容` : `${language} 代码内容`}
+          className="agent-code-block__highlight"
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+          data-language={language}
+          role="region"
+          tabIndex={0}
+        />
+      ) : (
+        <pre
+          aria-label={fileName ? `${fileName} 代码内容` : `${language} 代码内容`}
+          data-language={language}
+          role="region"
+          tabIndex={0}
         >
-          {code}
-          <StreamingCursor active={streamingTail} />
-        </code>
-      </pre>
+          <code
+            className="agent-code-block__content"
+            data-stream-tail={streamingTail || undefined}
+          >
+            {code}
+            <StreamingCursor active={streamingTail} />
+          </code>
+        </pre>
+      )}
     </figure>
   );
   if (collapsed) {

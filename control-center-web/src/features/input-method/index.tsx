@@ -68,6 +68,9 @@ const inputModes = [
   { value: '调试模式', label: '调试' },
 ] as const;
 
+/* 标准 与 记忆增强 曾经共用同一份变更（选“记忆增强”保存后仍推断为标准模式），
+ * 是一个说谎的死选项。两个模式现在通过真实的 memory.recall 键区分：
+ * 标准保持紧凑召回，记忆增强启用详尽召回与按需时间线。 */
 const inputModeChanges: Record<InputMode, Record<string, DraftValue>> = {
   安全模式: {
     'interaction.postCommit.enabled': false,
@@ -79,12 +82,15 @@ const inputModeChanges: Record<InputMode, Record<string, DraftValue>> = {
     'memory.enabled': true,
     'rag.lanes.tagMemo': true,
     'rag.lanes.timeDailyBook': true,
+    'memory.recall.detailLevel': 'compact',
   },
   记忆增强: {
     'interaction.postCommit.enabled': true,
     'memory.enabled': true,
     'rag.lanes.tagMemo': true,
     'rag.lanes.timeDailyBook': true,
+    'memory.recall.detailLevel': 'detailed',
+    'memory.recall.timelineEnabled': true,
   },
   调试模式: {
     'interaction.postCommit.enabled': true,

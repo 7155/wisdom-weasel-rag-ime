@@ -1,4 +1,4 @@
-import type { HighlighterCore, LanguageInput } from 'shiki/core';
+import type { HighlighterCore, LanguageInput, ShikiTransformer } from 'shiki/core';
 
 type LanguageLoader = () => Promise<{ default: LanguageInput }>;
 
@@ -32,7 +32,11 @@ const LANGUAGE_LOADERS: Record<string, { id: string; load: LanguageLoader }> = {
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 const languageLoads = new Map<string, Promise<void>>();
 
-export async function highlightCode(content: string, language: string): Promise<string> {
+export async function highlightCode(
+  content: string,
+  language: string,
+  options: { inheritSurface?: boolean } = {},
+): Promise<string> {
   const selection = LANGUAGE_LOADERS[normalizeLanguage(language)];
   if (!selection) return '';
   const highlighter = await highlighterInstance();
@@ -46,8 +50,19 @@ export async function highlightCode(content: string, language: string): Promise<
   return highlighter.codeToHtml(content, {
     lang: selection.id,
     theme: 'github-dark-default',
+    transformers: options.inheritSurface ? [surfaceInheritTransformer] : [],
   });
 }
+
+/** Conversation code readers own their surface through the paired
+ * `--color-code-bg`/`--color-code-text` tokens. Stripping shiki's inline root
+ * colours keeps that single owner in charge while token spans keep their
+ * escaped palette. */
+const surfaceInheritTransformer: ShikiTransformer = {
+  pre(node) {
+    delete node.properties.style;
+  },
+};
 
 async function highlighterInstance(): Promise<HighlighterCore> {
   if (!highlighterPromise) {

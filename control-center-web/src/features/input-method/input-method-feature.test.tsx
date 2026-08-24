@@ -7,7 +7,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { InputLexiconFeature, InputMethodFeature } from './index';
-import { modeSettingLabel } from './input-method-presentation';
+import { inferInputMode, modeSettingLabel } from './input-method-presentation';
 import inputMethodCss from './input-method.css?raw';
 
 const settings = {
@@ -403,6 +403,64 @@ describe('InputMethodFeature', () => {
       payloadSha256,
       confirmText: 'rollback',
     });
+  });
+
+  it('separates 记忆增强 from 标准模式 through the real recall settings and shows a readable delta', async () => {
+    const user = userEvent.setup();
+    const payloadSha256 = 'd'.repeat(64);
+    const transport = new MockControlTransport({
+      capabilities: {
+        features: {
+          managementWorkContract: true,
+          configurationSettingsWorkContract: true,
+        },
+      },
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 12,
+          settings: {
+            interaction: { postCommit: { enabled: true } },
+            memory: { enabled: true, recall: { detailLevel: 'compact', timelineEnabled: false } },
+            rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+          },
+        },
+        'configuration.schema': { ok: true, sections: [] },
+        'configuration.settings.preview': {
+          ok: true,
+          pathId: 'configuration.settings.apply',
+          previewToken: 'preview-memory-mode',
+          payloadSha256,
+          requiredConfirm: 'apply',
+          expiresAtMs: Date.now() + 60_000,
+          expectedRevision: { runtimeRevision: 12 },
+          summary: { title: '应用控制中心设置', items: ['更新运行模式'], risk: 'R3' },
+        },
+        'input.lexicon.review': emptyReview,
+      },
+    });
+    renderFeature(transport);
+
+    // 曾经 记忆增强 与 标准模式 共用同一份变更，从标准设置出发时选它是零变化的死选项。
+    await user.click(await screen.findByRole('radio', { name: '记忆增强' }));
+    expect(screen.getByText('2 项设置将发生变化')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '保存使用方式' }));
+
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(true));
+    const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
+    expect(previewRequest?.body).toEqual({
+      changes: {
+        'memory.recall.detailLevel': 'detailed',
+        'memory.recall.timelineEnabled': true,
+      },
+      expectedRuntimeRevision: 12,
+    });
+
+    expect(await screen.findByText('召回详细程度：紧凑 → 详尽')).toBeInTheDocument();
+    expect(screen.getByText('按需召回时间线：已关闭 → 已启用')).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('memory.recall.detailLevel');
   });
 
   it('previews, explicitly approves, applies, and rolls back common input settings through the real settings routes', async () => {
@@ -1007,6 +1065,38 @@ describe('InputMethodFeature', () => {
 
     expect(await screen.findByText('词库审阅已变化，请刷新后重新选择。')).toBeInTheDocument();
     expect(screen.queryByText('已加入 · 等待重载')).not.toBeInTheDocument();
+  });
+});
+
+describe('inferInputMode', () => {
+  function settingsWithRecall(recall: Record<string, unknown>): Record<string, unknown> {
+    return {
+      interaction: { postCommit: { enabled: true } },
+      memory: { enabled: true, recall },
+      rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+    };
+  }
+
+  it('separates the two memory presets by recall depth and timeline, honestly falling back to custom', () => {
+    expect(inferInputMode(settingsWithRecall({ detailLevel: 'compact', timelineEnabled: false }))).toBe('标准模式');
+    expect(inferInputMode(settingsWithRecall({ detailLevel: 'detailed', timelineEnabled: true }))).toBe('记忆增强');
+    // 详尽召回但关掉时间线不属于任何预设；均衡档是手动中间档。
+    expect(inferInputMode(settingsWithRecall({ detailLevel: 'detailed', timelineEnabled: false }))).toBe('');
+    expect(inferInputMode(settingsWithRecall({ detailLevel: 'balanced', timelineEnabled: true }))).toBe('');
+    // 老的设置负载没有召回键时仍按基础预设读作标准模式。
+    expect(inferInputMode(settingsWithRecall({}))).toBe('标准模式');
+  });
+
+  it('keeps the debug and safe presets ahead of the memory split', () => {
+    expect(inferInputMode({
+      interaction: { postCommit: { enabled: false } },
+      memory: { enabled: false },
+      activeRag: { allowRemoteModel: false },
+    })).toBe('安全模式');
+    expect(inferInputMode({
+      diagnostics: { liveTrace: true, candidateExplain: true },
+      display: { showDiagnosticsInline: true },
+    })).toBe('调试模式');
   });
 });
 
