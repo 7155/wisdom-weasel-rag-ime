@@ -69,7 +69,7 @@ export function omniboxIconKind(address: string, currentUrl: string): PawOmnibox
   return 'search';
 }
 
-const knownFailLoadCodes: Record<number, string> = {
+const knownFailLoadCodes: Record<string, string> = {
   '-7': '连接超时',
   '-100': '连接已关闭',
   '-101': '连接已重置',
