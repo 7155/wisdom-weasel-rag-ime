@@ -110,6 +110,43 @@ describe('PAWOS desktop', () => {
     expect(within(launcher).getByRole('heading', { name: '工具' })).toBeInTheDocument();
   });
 
+  it('gives every Launchpad group header its own cascade beat ahead of its tiles', () => {
+    renderDesktop();
+    fireEvent.click(screen.getByRole('button', { name: '全部 App' }));
+    const launcher = screen.getByRole('dialog', { name: '全部 App' });
+
+    const beats = Array.from(launcher.querySelectorAll<HTMLElement>('[style*="--paw-tile-i"]'))
+      .map((element) => ({
+        header: element.classList.contains('paw-launchpad-group'),
+        beat: Number.parseInt(element.style.getPropertyValue('--paw-tile-i'), 10),
+      }));
+    expect(beats.length).toBeGreaterThan(pawApps.length);
+    // One shared clock in document order: header, then its tiles, then the
+    // next header — every element knows exactly one beat.
+    beats.forEach(({ beat }, index) => expect(beat).toBe(index));
+    expect(beats[0]?.header).toBe(true);
+    expect(beats.filter(({ header }) => header).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('walks desktop shortcuts with roving arrow keys instead of tabbing out', () => {
+    renderDesktop();
+    const shortcuts = screen.getByLabelText('桌面 App');
+    const buttons = within(shortcuts).getAllByRole('button');
+    expect(buttons.length).toBeGreaterThanOrEqual(5);
+
+    buttons[0]!.focus();
+    fireEvent.keyDown(shortcuts, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(buttons[1]);
+    fireEvent.keyDown(shortcuts, { key: 'End' });
+    expect(document.activeElement).toBe(buttons.at(-1));
+    fireEvent.keyDown(shortcuts, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(buttons.at(-1));
+    fireEvent.keyDown(shortcuts, { key: 'Home' });
+    expect(document.activeElement).toBe(buttons[0]);
+    fireEvent.keyDown(shortcuts, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(buttons[0]);
+  });
+
   it('opens System Settings from the advertised keyboard shortcut', () => {
     renderDesktop();
     fireEvent.keyDown(window, { key: ',', metaKey: true });
