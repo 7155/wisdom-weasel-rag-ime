@@ -49,6 +49,7 @@ export function PawWindowLayer() {
   const focusedRoomMain = focusedRoomNodes.find((node) => !isCollaborationSatellite(node));
   const focusedRoomProjection = focusedRoomId ? projections[focusedRoomId] : undefined;
   const focusedRoomStatus = roomFocusStatus(focusedRoomProjection);
+  const focusedRoomPlanetCount = focusedRoomNodes.filter((node) => node.target?.kind === 'participant').length;
   const flowWindows = useMemo(() => Object.fromEntries(Object.entries(windows).map(([id, node]) => [
     id,
     focusFrames.has(id) ? { ...node, bounds: focusFrames.get(id)! } : node,
@@ -129,8 +130,8 @@ export function PawWindowLayer() {
         {focusedRoomId ? <>
           <div aria-hidden="true" className="paw-room-focus-plane" />
           <header aria-label={`${focusedRoomMain?.title || focusedRoomId} Sol 协作聚焦`} className="paw-room-focus-modebar">
-            <span><strong>SOL</strong><b>协作聚焦</b></span>
-            <span><i data-status={focusedRoomStatus.key} />{focusedRoomStatus.label} · {focusedRoomNodes.filter((node) => node.target?.kind === 'participant').length} 个伙伴窗口</span>
+            <span><strong>SOL</strong><b>{focusedRoomMain?.title || '协作聚焦'}</b></span>
+            <span><i data-status={focusedRoomStatus.key} />{focusedRoomStatus.label}{focusedRoomPlanetCount ? ` · ${focusedRoomPlanetCount} 颗行星` : ''}</span>
           </header>
         </> : null}
         {keptRoomIds.map((roomId) => <PawRoomProjectionKeeper key={roomId} roomId={roomId} />)}
@@ -247,12 +248,13 @@ function roomFocusStatus(projection?: RoomProjectionState): { key: string; label
     .map((turnId) => projection.turnsById[turnId])
     .filter(Boolean)
     .at(-1);
-  if (!projection) return { key: 'recovering', label: '正在恢复 Sol' };
+  /* status overlay 克制：Room 名已在左侧，状态只说一个人话短语，不再重复 Sol。 */
+  if (!projection) return { key: 'recovering', label: '正在恢复' };
   if (projection.needsSnapshot) return { key: 'recovering', label: '正在重新同步' };
-  if (turn?.status === 'queued' || turn?.status === 'running') return { key: 'running', label: 'Sol 协作中' };
+  if (turn?.status === 'queued' || turn?.status === 'running') return { key: 'running', label: '协作进行中' };
   if (turn?.status === 'failed') return { key: 'failed', label: '最近一轮失败' };
   if (turn?.status === 'aborted') return { key: 'aborted', label: '最近一轮已停止' };
-  return { key: 'synced', label: 'Sol 已同步' };
+  return { key: 'synced', label: '已同步' };
 }
 
 /** UR-057：拖动/resize 期间路径跟随窗口 transform 的实时几何，

@@ -631,6 +631,9 @@
 
 .paw-desktop-root .paw-desktop:has(.paw-window-layer[data-room-focus]) .paw-collaboration-focus-exit:active { transform: scale(.97); }
 
+/* status overlay 克制：模式条只是一条安静的场地标线——左边 Room 名，
+   右边一句状态；分隔靠细边线，不再另加投影抢窗口的注意力。
+   46px 高度是 layoutCollaborationFocus 的布局常量，保持不动。 */
 .paw-desktop-root .paw-room-focus-modebar {
   position: absolute;
   z-index: 50;
@@ -643,18 +646,19 @@
   justify-content: space-between;
   gap: 16px;
   padding: 0 132px 0 14px;
-  border-bottom: 1px solid rgb(29 36 48 / .09);
+  border-bottom: 1px solid rgb(29 36 48 / .08);
   color: #5f6978;
   /* The focus plane behind the modebar is itself a backdrop-filter layer;
      stacking a second blur on a 90%+ opaque bar doubles the rasterize cost. */
   background: rgb(255 255 255 / .96);
-  box-shadow: 0 8px 24px rgb(35 47 66 / .06);
+  box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 .paw-desktop-root .paw-room-focus-modebar > span { min-width: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-modebar > span:last-child { flex-shrink: 0; color: #74808f; font-size: 12px; }
 .paw-desktop-root .paw-room-focus-modebar strong { color: #6845d8; font: 760 12px/18px var(--font-mono); letter-spacing: .08em; }
-.paw-desktop-root .paw-room-focus-modebar b { overflow: hidden; color: #28313e; font-size: 14px; text-overflow: ellipsis; }
+.paw-desktop-root .paw-room-focus-modebar b { overflow: hidden; color: #28313e; font-size: 14px; font-weight: 640; text-overflow: ellipsis; }
 .paw-desktop-root .paw-room-focus-modebar i { width: 7px; height: 7px; border-radius: 50%; background: #168c58; }
 .paw-desktop-root .paw-room-focus-modebar i[data-status='running'] { background: #1677d2; animation: paw-room-focus-status 1.45s ease-in-out infinite; }
 .paw-desktop-root .paw-room-focus-modebar i[data-status='recovering'] { background: #b56808; }

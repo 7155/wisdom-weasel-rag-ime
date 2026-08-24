@@ -14,7 +14,7 @@ import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { openPawOsRoute, usePawOsDesktop } from './surface-context';
 import { routePath } from './model/app-registry';
 import type { PawOsWindowTarget } from './model/desktop';
-import { roomCollaborationRoleLabel } from '@/features/rooms/room-copy';
+import { roomPlanetWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
 import { PawRoomFocusOverview } from '@/paw-os/apps/PawRoomFocusOverview';
 import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
@@ -384,16 +384,7 @@ function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { k
   const openParticipant = (participantId: string) => {
     const participant = room?.participants.find((candidate) => candidate.id === participantId);
     if (!participant) return;
-    desktop?.openWindow({
-      appId: 'agent',
-      target: {
-        kind: 'participant',
-        id: participant.id,
-        roomId: target.id,
-        title: focus?.partners.find((partner) => partner.participantId === participantId)?.celestialName || participant.displayName,
-        subtitle: `${participant.displayName} · ${roomCollaborationRoleLabel(participant.collaborationRole)} · ${participant.sessionId}`,
-      },
-    });
+    desktop?.openWindow(roomPlanetWindowRequest(participant, target.id));
   };
   return (
     <section className="paw-os-satellite paw-os-satellite--room-panel" data-panel={target.panel}>

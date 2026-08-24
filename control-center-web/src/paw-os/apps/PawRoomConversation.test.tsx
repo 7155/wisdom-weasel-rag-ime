@@ -47,7 +47,13 @@ describe('PawRoomConversation', () => {
     />);
 
     expect(screen.getByRole('region', { name: 'Room 公开对话' })).toHaveTextContent('请完成主线迁移');
-    expect(screen.getByRole('region', { name: 'Room 公开对话' })).toHaveTextContent('实现伙伴');
+    // Messages and activities share one planet identity; the real display
+    // name stays reachable as the hover title instead of a second label.
+    expect(screen.getByRole('region', { name: 'Room 公开对话' })).toHaveTextContent('Mars');
+    expect(screen.getByRole('region', { name: 'Room 公开对话' })).not.toHaveTextContent('Root');
+    const activityActor = container.querySelector('.paw-room-chronology__activity[data-kind="tool_started"] strong');
+    expect(activityActor).toHaveTextContent('Mars');
+    expect(activityActor).toHaveAttribute('title', '实现伙伴');
     expect(container.querySelector('.paw-room-chronology__activity[data-kind="tool_started"]'))
       .toHaveTextContent('read 正在执行');
     expect(container.querySelector('.room-turn, .room-agent-lane')).toBeNull();
