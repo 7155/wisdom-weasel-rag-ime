@@ -159,7 +159,7 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
       </g>
       <g className="paw-field__survey" fill="none" strokeLinecap="round">
         <path className="paw-field__mark paw-field__mark--cross" d="M 392 478 v 16 M 384 486 h 16" />
-        <path className="paw-field__mark paw-field__mark--station" d="m 1266 509 8 14 h -16 Z" />
+        <path className="paw-field__mark paw-field__mark--station" d="m 1218 509 8 14 h -16 Z" />
         <path className="paw-field__mark paw-field__mark--ticks" d="M 168 590 v 8 M 196 590 v 8 M 224 590 v 8" />
       </g>
       <g className="paw-field__terrain">
