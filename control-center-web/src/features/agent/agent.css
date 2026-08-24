@@ -3664,3 +3664,40 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* ============================== Agent 轨迹证据 ==============================
+   Evidence layout for PawContextTrace: every summary row opens to concrete
+   captured content with a line/character count and a safe copy of exactly the
+   redacted text on screen (PF-CM-010). Visual identity stays with the an-* /
+   paw-agent-trace-v1 owners; this section only styles the evidence additions. */
+
+.agent-trace-evidence-actions {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-trace-evidence-actions > small,
+.agent-trace-evidence-tools > small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-trace-evidence-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px 0 4px;
+}
+
+.agent-trace-evidence-note {
+  margin: 6px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}

@@ -46,6 +46,7 @@ import {
   type DebugTurnSummary,
 } from '@/features/context-debug/model';
 import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
+import { CopyTextButton } from '@/features/agent/file-preview/CopyTextButton';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
@@ -374,7 +375,23 @@ export function PawContextTrace({
                           <span>处置 <b>{node.disposition}</b></span>
                         </div>
                         {node.reason ? <div className="nb-row"><span>原因 <b>{node.reason}</b></span></div> : null}
-                        {evidence ? <AssemblyEvidence evidence={evidence} /> : null}
+                        {evidence ? (
+                          <AssemblyEvidence evidence={evidence} />
+                        ) : (
+                          /* PF-CM-010: a summary row is never a dead end. When
+                             contextTrace carries no captured body for this
+                             stage, open to the node's complete real capture
+                             record and say so — do not stay silent and do not
+                             invent content. */
+                          <AssemblyEvidence
+                            evidence={{
+                              label: '节点捕获记录',
+                              value: traceNodeCaptureRecord(node),
+                              kind: 'json',
+                            }}
+                            note="contextTrace 未附带该阶段的原文捕获；以上为该节点记录的全部真实字段。"
+                          />
+                        )}
                     </Disclosure>
                     );
                   })
@@ -544,12 +561,15 @@ type AssemblyEvidenceValue = {
   kind: 'json' | 'text';
 };
 
-function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
+function AssemblyEvidence({ evidence, note }: { evidence: AssemblyEvidenceValue; note?: string }) {
   return (
     <section className="an-assembly-evidence" aria-label={evidence.label}>
       <header>
         <strong>{evidence.label}</strong>
-        <span>{formatNumber(evidence.value.length)} 字符</span>
+        <span className="agent-trace-evidence-actions">
+          <small>{formatNumber(countLines(evidence.value))} 行 · {formatNumber(evidence.value.length)} 字符</small>
+          <CopyTextButton label={evidence.label} value={evidence.value} />
+        </span>
       </header>
       <pre
         aria-label={`${evidence.label}，可滚动原文`}
@@ -559,8 +579,26 @@ function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
       >
         {evidence.value}
       </pre>
+      {note ? <p className="agent-trace-evidence-note">{note}</p> : null}
     </section>
   );
+}
+
+function traceNodeCaptureRecord(node: AgentContextTraceV1['nodes'][number]): string {
+  return formatEvidence(safeTraceEvidence({
+    stage: node.stage,
+    label: node.label || undefined,
+    sourceKind: node.sourceKind,
+    disposition: node.disposition,
+    summary: node.summary || undefined,
+    reason: node.reason || undefined,
+    tokenEstimate: node.tokenEstimate,
+    charCount: node.charCount,
+    durationMs: node.durationMs,
+    fingerprint: node.fingerprint,
+    metadata: node.metadata,
+    createdAtMs: node.createdAtMs,
+  }));
 }
 
 function traceNodeEvidence(stage: string, context: DebugContextRecord): AssemblyEvidenceValue | undefined {
@@ -850,6 +888,10 @@ function TraceEvidenceSection({ section }: { section: TraceEvidenceSectionValue 
         </>
       )}
     >
+      <div className="agent-trace-evidence-tools">
+        <small>{formatNumber(countLines(section.value))} 行 · {formatNumber(section.value.length)} 字符</small>
+        <CopyTextButton label={section.label} value={section.value} />
+      </div>
       <pre
         aria-label={`${section.label}，可滚动原文`}
         role="region"
@@ -1108,6 +1150,9 @@ function text(value: unknown): string {
 }
 function estimateTokens(content: string): number {
   return content ? Math.ceil(content.length / 4) : 0;
+}
+function countLines(content: string): number {
+  return content ? content.split('\n').length : 0;
 }
 function lastMessageCount(context: DebugContextRecord): number {
   const last = context.modelCalls[context.modelCalls.length - 1];
