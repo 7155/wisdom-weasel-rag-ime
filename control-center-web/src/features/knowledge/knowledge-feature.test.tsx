@@ -582,6 +582,17 @@ describe('document knowledge library', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'knowledgeBases.update')).toBe(false);
   });
 
+  it('keeps materials stats on library-level truth and marks the selected file row', async () => {
+    renderKnowledge(createTransport());
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    expect(screen.getByText('已索引段落').nextElementSibling).toHaveTextContent('0');
+    expect(screen.queryByText('提取内容')).not.toBeInTheDocument();
+    const selectedRow = screen.getByRole('button', { current: true });
+    expect(selectedRow).toHaveClass('knowledge-material-row__select');
+    expect(selectedRow).toHaveTextContent('runtime.pdf');
+  });
+
 });
 
 function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowledge', pawOs = false) {
