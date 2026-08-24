@@ -53,7 +53,17 @@ export function inferInputMode(settings: Record<string, unknown>): InputMode | '
     && valueAt(settings, 'memory.enabled') === true
     && valueAt(settings, 'rag.lanes.tagMemo') === true
     && valueAt(settings, 'rag.lanes.timeDailyBook') === true
-  ) return '标准模式';
+  ) {
+    // 记忆增强与标准模式共享基础键；真实区分是详尽召回加按需时间线。
+    // 只开详尽召回而关掉时间线不属于任何预设，如实返回自定义。
+    const recallDetail = valueAt(settings, 'memory.recall.detailLevel');
+    if (recallDetail === 'detailed') {
+      return valueAt(settings, 'memory.recall.timelineEnabled') === true ? '记忆增强' : '';
+    }
+    // balanced 是手动调出的中间档，不冒充任何预设。
+    if (recallDetail === 'balanced') return '';
+    return '标准模式';
+  }
   return '';
 }
 
@@ -64,6 +74,8 @@ export function modeSettingLabel(key: string): string {
     'activeRag.allowRemoteModel': '远程生成',
     'rag.lanes.tagMemo': '标签记忆',
     'rag.lanes.timeDailyBook': '时间与日记联想',
+    'memory.recall.detailLevel': '召回详细程度',
+    'memory.recall.timelineEnabled': '按需召回时间线',
     'diagnostics.liveTrace': '实时诊断',
     'diagnostics.candidateExplain': '候选解释',
     'display.showDiagnosticsInline': '候选行内诊断',
@@ -151,6 +163,8 @@ export function inputOptionLabel(value: string): string {
     rime_default: '保持输入法默认行为',
     disabled: '关闭',
     compact: '紧凑',
+    balanced: '均衡',
+    detailed: '详尽',
     expanded: '展开',
     replace_selection: '替换选中内容',
     insert_after_selection: '插入到选中内容后',
