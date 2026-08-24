@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -10,8 +10,31 @@ import { PawWindowFrame } from '@/paw-os/shell/PawWindowLayer';
 import terminalCss from './paw-os-terminal-app.css?raw';
 
 const xtermConstructorOptions = vi.hoisted(() => [] as Record<string, unknown>[]);
+const searchAddonState = vi.hoisted(() => ({
+  calls: [] as { kind: 'next' | 'previous' | 'clear'; term?: string; options?: Record<string, unknown> }[],
+  listeners: [] as ((event: { resultIndex: number; resultCount: number }) => void)[],
+}));
 
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
+vi.mock('@xterm/addon-search', () => ({
+  SearchAddon: class {
+    activate() {}
+    dispose() {}
+    clearDecorations() { searchAddonState.calls.push({ kind: 'clear' }); }
+    findNext(term: string, options?: Record<string, unknown>) {
+      searchAddonState.calls.push({ kind: 'next', term, options });
+      return true;
+    }
+    findPrevious(term: string, options?: Record<string, unknown>) {
+      searchAddonState.calls.push({ kind: 'previous', term, options });
+      return true;
+    }
+    onDidChangeResults(listener: (event: { resultIndex: number; resultCount: number }) => void) {
+      searchAddonState.listeners.push(listener);
+      return { dispose() {} };
+    }
+  },
+}));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 104;
@@ -24,6 +47,9 @@ vi.mock('@xterm/xterm', () => ({
     }
 
     loadAddon() {}
+    attachCustomKeyEventHandler() {}
+    hasSelection() { return false; }
+    getSelection() { return ''; }
     open(host: HTMLElement) {
       this.host = host;
       const input = document.createElement('textarea');
@@ -52,6 +78,8 @@ vi.mock('@xterm/xterm', () => ({
 afterEach(() => {
   cleanup();
   xtermConstructorOptions.length = 0;
+  searchAddonState.calls.length = 0;
+  searchAddonState.listeners.length = 0;
   delete document.documentElement.dataset.reduceMotion;
   delete (window as Window & { pawTerminalHost?: unknown }).pawTerminalHost;
 });
@@ -325,6 +353,91 @@ describe('PawOsTerminalApp', () => {
     expect(await screen.findByText('还没有终端会话')).toBeInTheDocument();
     expect(transport.requests.filter((call) => call.request.pathId === 'terminal.session.close')).toHaveLength(1);
     expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(false);
+  });
+
+  it('creates a terminal in a chosen working directory and refuses relative paths locally', async () => {
+    const user = userEvent.setup();
+    const terminal = terminalSession('terminal-one', 'Terminal');
+    let terminals = [terminal];
+    const createBodies: Record<string, unknown>[] = [];
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': () => ({ schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: terminals }),
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: terminal.terminalId },
+        'terminal.session.create': (request: ControlRequest) => {
+          const body = asRecord(request.body);
+          createBodies.push(body);
+          const created = { ...terminalSession(`terminal-${createBodies.length + 1}`, 'Terminal'), cwd: String(body.cwd ?? '/workspace/paw') };
+          terminals = [...terminals, created];
+          return { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: created };
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    await user.click(await screen.findByRole('button', { name: '在指定目录新建终端' }));
+    const form = screen.getByRole('form', { name: '在指定目录新建终端' });
+    const cwdInput = within(form).getByRole('textbox', { name: '新终端工作目录' });
+    expect(cwdInput).toHaveFocus();
+
+    // A relative path is refused locally with a truthful hint; nothing is sent.
+    await user.type(cwdInput, 'relative/path');
+    expect(within(form).getByRole('alert')).toHaveTextContent('请输入以 / 开头的绝对路径。');
+    expect(within(form).getByRole('button', { name: '新建终端' })).toBeDisabled();
+    expect(createBodies).toHaveLength(0);
+
+    await user.clear(cwdInput);
+    await user.type(cwdInput, '/workspace/other');
+    await user.click(within(form).getByRole('button', { name: '新建终端' }));
+    await waitFor(() => expect(createBodies).toHaveLength(1));
+    expect(createBodies[0].cwd).toBe('/workspace/other');
+    expect(screen.queryByRole('form', { name: '在指定目录新建终端' })).not.toBeInTheDocument();
+
+    // The plain new-terminal action keeps the backend default directory.
+    await user.click(screen.getByRole('button', { name: '新建终端' }));
+    await waitFor(() => expect(createBodies).toHaveLength(2));
+    expect('cwd' in createBodies[1]).toBe(false);
+  });
+
+  it('searches the scrollback with a live match position and clears decorations on close', async () => {
+    const user = userEvent.setup();
+    const terminal = terminalSession('terminal-one', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [terminal] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: terminal.terminalId },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    expect(await screen.findByLabelText('终端输入输出')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '搜索终端输出' }));
+    const searchInput = screen.getByRole('textbox', { name: '搜索终端输出' });
+    expect(searchInput).toHaveFocus();
+
+    await user.type(searchInput, 'PAW');
+    const nextCalls = () => searchAddonState.calls.filter((call) => call.kind === 'next');
+    await waitFor(() => expect(nextCalls().length).toBeGreaterThan(0));
+    expect(nextCalls().at(-1)?.term).toBe('PAW');
+    // Decorations are requested so the reported match position is real.
+    expect(nextCalls().at(-1)?.options).toMatchObject({ decorations: expect.any(Object) });
+
+    act(() => { for (const listener of searchAddonState.listeners) listener({ resultIndex: 1, resultCount: 5 }); });
+    expect(screen.getByText('2/5')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '上一个匹配' }));
+    expect(searchAddonState.calls.at(-1)).toMatchObject({ kind: 'previous', term: 'PAW' });
+
+    act(() => { for (const listener of searchAddonState.listeners) listener({ resultIndex: -1, resultCount: 0 }); });
+    expect(screen.getByText('无匹配')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '关闭搜索' }));
+    expect(screen.queryByRole('textbox', { name: '搜索终端输出' })).not.toBeInTheDocument();
+    expect(searchAddonState.calls.at(-1)).toMatchObject({ kind: 'clear' });
   });
 
   it('lets a failed create be dismissed instead of leaving a stuck banner', async () => {
