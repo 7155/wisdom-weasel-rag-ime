@@ -241,18 +241,23 @@ describe('AgentComposer macOS input methods', () => {
       );
     }
 
+    // The accessible name must stay the stable action while the gate reason
+    // rides on the accessible description; a name that churns per state breaks
+    // AT muscle memory and every `name: '发送'` query in the feature suite.
     const { container, rerender } = render(harness());
     const view = within(container);
-    expect(view.getByRole('button', { name: '发送（先输入内容或添加图片）' })).toBeDisabled();
+    expect(view.getByRole('button', { name: '发送', description: '先输入内容或添加图片' })).toBeDisabled();
 
     rerender(harness({ draft: '已有内容', modelChanging: true }));
-    expect(view.getByRole('button', { name: '发送（正在切换模型）' })).toBeDisabled();
+    expect(view.getByRole('button', { name: '发送', description: '正在切换模型' })).toBeDisabled();
 
     rerender(harness({ draft: '已有内容', session: undefined }));
-    expect(view.getByRole('button', { name: '发送（先选择或创建对话）' })).toBeDisabled();
+    expect(view.getByRole('button', { name: '发送', description: '先选择或创建对话' })).toBeDisabled();
 
     rerender(harness({ draft: '已有内容' }));
-    expect(view.getByRole('button', { name: '发送' })).toBeEnabled();
+    const send = view.getByRole('button', { name: '发送' });
+    expect(send).toBeEnabled();
+    expect(send).not.toHaveAccessibleDescription();
   });
 
   it('uses double Escape to request an in-place edit without disturbing IME input', () => {

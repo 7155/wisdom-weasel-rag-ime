@@ -29,6 +29,7 @@ import {
 import {
   startTransition,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -245,8 +246,10 @@ export function AgentComposer({
     && !sending
     && !modelChanging,
   );
-  // A silently disabled send button hides the one fact the user needs; the
-  // label carries the same condition that gates `canSend`/`stopping`.
+  // A silently disabled send button hides the one fact the user needs. The
+  // accessible *name* stays the stable action («发送»/busy variants) so the
+  // button remains findable; the gate condition rides along as the accessible
+  // *description* (aria-describedby), mirroring exactly `stopping || !canSend`.
   const sendBlockedReason = stopping
     ? '正在停止本轮'
     : !session
@@ -261,6 +264,7 @@ export function AgentComposer({
   const sendActionLabel = busy
     ? (busyDelivery === 'steer' ? '干预当前执行' : '当前执行完成后接续')
     : '发送';
+  const sendBlockedHintId = useId();
   function publishDraft(value: string): void {
     // The textarea owns keystroke latency; the parent only needs a deferred
     // projection for navigation and recovery. Send receives the local snapshot.
@@ -576,12 +580,19 @@ export function AgentComposer({
             ) : null}
             <IconButton
               className="agent-composer__send"
-              label={sendBlockedReason ? `${sendActionLabel}（${sendBlockedReason}）` : sendActionLabel}
+              label={sendActionLabel}
               icon={<Send size={18} />}
               onClick={() => submit(busy ? busyDelivery : 'prompt')}
               disabled={stopping || !canSend}
+              aria-describedby={sendBlockedReason ? sendBlockedHintId : undefined}
               tooltip
             />
+            {sendBlockedReason ? (
+              /* Referenced hidden text still enters the accessible description
+                 computation, so assistive tech hears the gate without the
+                 button's name churning under queries or muscle memory. */
+              <span id={sendBlockedHintId} hidden>{sendBlockedReason}</span>
+            ) : null}
           </div>
         </div>
       </div>
