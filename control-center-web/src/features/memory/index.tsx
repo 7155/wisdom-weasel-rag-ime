@@ -182,7 +182,8 @@ export function MemoryFeature() {
       title="我的记忆"
     >
       <div className="memory-second-brain" data-layer={layer} data-view={view}>
-        <QueryState error={error} isPending={pending} onRetry={refresh}>
+        {/* The pipeline is the persistent spine: it stays mounted while a
+            layer's page query loads so navigation never disappears mid-switch. */}
         <MemoryPipeline
           activeLayer={view === 'catalog' ? layer : ''}
           onOpenLayer={openCatalogLayer}
@@ -192,7 +193,7 @@ export function MemoryFeature() {
           summary={summaryPayload}
           summaryState={summaryState}
         />
-
+        <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ViewTabs
           className="memory-view-tabs"
           onValueChange={(next) => openView(normalizeMemoryView(next))}
