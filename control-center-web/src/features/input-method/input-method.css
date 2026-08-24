@@ -81,7 +81,7 @@ main[data-route-id='input'] .input-suggest-preview__tag {
   display: inline-flex;
   align-items: center;
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: 5px;
   background: var(--color-accent);
   color: var(--color-accent-text);
   font-size: 12px;
@@ -164,20 +164,25 @@ main[data-route-id='input'] .input-suggest-preview__hints > span {
   align-items: center;
   padding: 2px 8px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: 5px;
   background: var(--color-surface-subtle);
   color: var(--color-text-secondary);
   font-size: 12px;
   white-space: nowrap;
 }
 
+/* 三步生成管线：一块表面、内部分隔线加流向箭头，而不是三张漂浮卡片。 */
 main[data-route-id='input'] .input-gen-lanes {
   display: grid;
   min-width: 0;
   margin: var(--space-3) 0 0;
   padding: 0;
-  gap: var(--space-3);
+  gap: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: clip;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-surface);
   counter-reset: input-gen-lane;
   list-style: none;
 }
@@ -190,10 +195,10 @@ main[data-route-id='input'] .input-gen-lane {
   align-content: start;
   gap: 7px;
   padding: 13px 15px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-3);
-  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
 }
+
+main[data-route-id='input'] .input-gen-lane:last-child { border-right: 0; }
 
 main[data-route-id='input'] .input-gen-lane[data-dimmed] {
   background: var(--color-surface-subtle);
@@ -204,17 +209,19 @@ main[data-route-id='input'] .input-gen-lane[data-dimmed] .input-gen-lane__head s
   color: var(--color-text-secondary);
 }
 
-/* 车道之间的流向箭头：只在横排时出现，窄窗纵排时隐藏。 */
+/* 分隔线上的流向箭头：底色填充盖住分隔线，读作穿墙的流向。 */
 main[data-route-id='input'] .input-gen-lane:not(:last-child)::after {
   content: '';
   position: absolute;
-  top: 50%;
-  right: calc(-1 * var(--space-3) / 2 - 4px);
-  width: 8px;
-  height: 8px;
-  border-top: 1.5px solid var(--color-text-tertiary);
-  border-right: 1.5px solid var(--color-text-tertiary);
-  transform: translateY(-50%) rotate(45deg);
+  z-index: 1;
+  top: 19px;
+  right: -5px;
+  width: 9px;
+  height: 9px;
+  border-top: 1.5px solid var(--color-border-strong);
+  border-right: 1.5px solid var(--color-border-strong);
+  background: var(--color-surface);
+  transform: rotate(45deg);
 }
 
 main[data-route-id='input'] .input-gen-lane__head {
@@ -232,11 +239,17 @@ main[data-route-id='input'] .input-gen-lane__head::before {
   height: 18px;
   place-items: center;
   border-radius: 999px;
-  background: var(--color-surface-subtle);
-  color: var(--color-text-secondary);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
   font-size: 12px;
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='input'] .input-gen-lane[data-dimmed] .input-gen-lane__head::before {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
 }
 
 main[data-route-id='input'] .input-gen-lane__icon {
@@ -293,8 +306,8 @@ main[data-route-id='input'] .input-gen-lane__facts > li {
   align-items: center;
   padding: 2px 8px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-surface-subtle);
+  border-radius: 5px;
+  background: var(--color-surface);
   color: var(--color-text-secondary);
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -410,16 +423,13 @@ main[data-route-id='input'] .input-mode-choice {
   padding-block: var(--space-2);
 }
 
-main[data-route-id='input'] .input-mode-choice > strong { font-size: 14px; }
-
-main[data-route-id='input'] .input-mode-choice > span {
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-/* 四种使用方式是并列的真实预设：每张卡片写清它会改动什么，
-   选择状态用边框与圆点表达，不再挤进一条分段控件。 */
+/* ---------------------------------------------------------------------------
+ * 使用方式卡片
+ *
+ * 四种预设是并列的真实写入集合。每张卡片：图形 + 名称 +（当前）+ 一句
+ * 说明 + 从真实写入逐键派生的事实签名。勾选态 = 草稿目标，data-current =
+ * 设置推断出的现役模式，两个真相各有标记、互不冒充。
+ * ------------------------------------------------------------------------- */
 main[data-route-id='input'] .input-mode-cards {
   display: grid;
   min-width: 0;
@@ -428,14 +438,13 @@ main[data-route-id='input'] .input-mode-cards {
 }
 
 main[data-route-id='input'] .input-mode-card {
+  position: relative;
   display: grid;
   min-width: 0;
-  min-height: 72px;
+  min-height: 104px;
   align-content: start;
-  align-items: start;
-  gap: 10px;
-  grid-template-columns: 16px minmax(0, 1fr);
-  padding: 11px 12px;
+  gap: 7px;
+  padding: 11px 13px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-3);
   background: var(--color-surface);
@@ -456,9 +465,9 @@ main[data-route-id='input'] .input-mode-card:focus-visible {
 }
 
 main[data-route-id='input'] .input-mode-card[data-state='checked'] {
-  border-color: var(--color-accent-border);
-  background: var(--color-accent-subtle);
-  box-shadow: inset 0 0 0 1px var(--color-accent-border);
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+  background: linear-gradient(180deg, var(--color-accent-subtle) 0%, var(--color-surface) 88%);
 }
 
 main[data-route-id='input'] .input-mode-card:disabled {
@@ -466,39 +475,111 @@ main[data-route-id='input'] .input-mode-card:disabled {
   opacity: .6;
 }
 
-main[data-route-id='input'] .input-mode-card__dot {
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
-  border: 1.5px solid var(--color-border-strong);
-  border-radius: 50%;
-  background: var(--color-surface);
-  transition:
-    border-color var(--duration-fast) var(--ease-standard),
-    box-shadow var(--duration-fast) var(--ease-standard);
-}
-
-main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__dot {
-  border-color: var(--color-accent);
-  box-shadow: inset 0 0 0 3.5px var(--color-accent);
-}
-
-main[data-route-id='input'] .input-mode-card__copy {
-  display: grid;
+main[data-route-id='input'] .input-mode-card__head {
+  display: flex;
   min-width: 0;
-  gap: 3px;
+  align-items: center;
+  gap: 8px;
 }
 
-main[data-route-id='input'] .input-mode-card__copy strong {
+main[data-route-id='input'] .input-mode-card__glyph {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__glyph {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+main[data-route-id='input'] .input-mode-card__head strong {
+  overflow: hidden;
   font-size: 14px;
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-mode-card__copy small {
+/* “当前”标记来自设置推断，不随草稿点击移动。 */
+main[data-route-id='input'] .input-mode-card__current {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__current {
+  border-color: var(--color-accent-border);
+  color: var(--color-accent);
+}
+
+main[data-route-id='input'] .input-mode-card__check {
+  display: inline-grid;
+  margin-inline-start: auto;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+main[data-route-id='input'] .input-mode-card__note {
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+/* 事实签名：一键一枚，标准/记忆增强 的真实分界键高亮。 */
+main[data-route-id='input'] .input-mode-card__facts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+}
+
+main[data-route-id='input'] .input-mode-card__facts > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-mode-card__facts > span[data-off] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='input'] .input-mode-card__facts > span[data-highlight] {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -509,7 +590,42 @@ main[data-route-id='input'] .input-mode-card__copy small {
 }
 
 :root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card,
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card__dot { transition: none; }
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card__glyph { transition: none; }
+
+/* 差异台账：左侧细规线，逐行“设置：当前 → 目标”。 */
+main[data-route-id='input'] .input-mode-delta {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 4px 0 4px 12px;
+  border-left: 2px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+main[data-route-id='input'] .input-mode-delta:has(> strong) {
+  border-left-color: var(--color-accent);
+}
+
+main[data-route-id='input'] .input-mode-delta > strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='input'] .input-mode-delta ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='input'] .input-mode-delta li {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
 
 main[data-route-id='input'] .input-settings-layout {
   display: grid;
@@ -937,6 +1053,13 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  main[data-route-id='input'] .input-gen-lane {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  main[data-route-id='input'] .input-gen-lane:last-child { border-bottom: 0; }
+
   main[data-route-id='input'] .input-gen-lane:not(:last-child)::after { content: none; }
 }
 
@@ -1008,6 +1131,13 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'][data-paw-os-app] .input-settings-layout,
   main[data-route-id='input'][data-paw-os-app] .input-settings-grid,
   main[data-route-id='input'][data-paw-os-app] .input-gen-lanes { grid-template-columns: minmax(0, 1fr); }
+
+  main[data-route-id='input'][data-paw-os-app] .input-gen-lane {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  main[data-route-id='input'][data-paw-os-app] .input-gen-lane:last-child { border-bottom: 0; }
   main[data-route-id='input'][data-paw-os-app] .input-gen-lane:not(:last-child)::after { content: none; }
 }
 
@@ -1020,6 +1150,7 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 @container paw-window (max-width: 560px) {
   main[data-route-id='input'][data-paw-os-app] .input-status-grid,
   main[data-route-id='input'][data-paw-os-app] .input-inline-action,
+  main[data-route-id='input'][data-paw-os-app] .input-mode-cards,
   main[data-route-id='input'][data-paw-os-app] .input-setting-row,
   main[data-route-id='input'][data-paw-os-app] .input-setting-editor-row .ui-field { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='input'][data-paw-os-app] .input-status-item { border-right: 0; border-bottom: 1px solid var(--color-border); }
