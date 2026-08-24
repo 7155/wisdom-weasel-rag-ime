@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -407,6 +407,61 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('button', { name: '重试上传 本机文件导入' }));
     expect(await screen.findByText('retry.pdf')).toBeInTheDocument();
     expect(screen.getByText('已进入解析')).toBeInTheDocument();
+  });
+
+  it('imports dropped files directly when the transport carries raw uploads', async () => {
+    const transport = createTransport();
+    Object.defineProperty(transport, 'kind', { value: 'http' });
+    renderKnowledge(transport);
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    const dropped = new File(['# note'], 'dropped.md', { type: 'text/markdown' });
+    fireEvent.drop(screen.getByRole('button', { name: '导入文件' }), { dataTransfer: { files: [dropped] } });
+
+    await waitFor(() => expect(transport.knowledgeImportCalls).toHaveLength(1));
+    expect(transport.knowledgeImportCalls[0]).toMatchObject({ kbId: 'kb-runtime', parserProvider: 'auto', maxFiles: 1 });
+    expect(transport.knowledgeImportCalls[0]?.files?.map((file) => file.name)).toEqual(['dropped.md']);
+    expect(await screen.findByRole('region', { name: '上传队列' })).toHaveTextContent('dropped.md');
+  });
+
+  it('explains dropped files need the web transport instead of failing silently', async () => {
+    const transport = createTransport();
+    renderKnowledge(transport);
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    fireEvent.drop(screen.getByRole('button', { name: '导入文件' }), { dataTransfer: { files: [new File(['x'], 'x.md', { type: 'text/markdown' })] } });
+
+    expect(await screen.findByText('当前运行环境不支持拖放导入；请点击导入区改用系统文件选择。')).toBeInTheDocument();
+    expect(transport.knowledgeImportCalls).toHaveLength(0);
+  });
+
+  it('filters the material list by name and recovers from empty matches', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    const filter = screen.getByRole('textbox', { name: '筛选文件' });
+    await user.type(filter, '不存在的名字');
+    expect(await screen.findByText('没有匹配的文件')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '显示全部文件' }));
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    await user.type(filter, 'RUNTIME');
+    expect(await screen.findByText(/1 \/ /)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '清除筛选' }));
+    expect(filter).toHaveValue('');
+  });
+
+  it('returns from the viewer to the materials workspace in one step', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: '查看 runtime.pdf' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: '查看材料' })).toHaveAttribute('data-state', 'active'));
+    await user.click(screen.getByRole('button', { name: '返回资料' }));
+    expect(screen.getByRole('tab', { name: '资料' })).toHaveAttribute('data-state', 'active');
   });
 
   it('manages an independent document graph with source navigation and rebuild state', async () => {

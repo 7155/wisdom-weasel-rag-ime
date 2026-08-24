@@ -194,7 +194,7 @@ export function KnowledgeFeature() {
     },
   });
   const importMutation = useMutation({
-    mutationFn: async ({ retryItem }: { retryItem?: KnowledgeUploadItem }) => {
+    mutationFn: async ({ retryItem, droppedFiles }: { retryItem?: KnowledgeUploadItem; droppedFiles?: File[] }) => {
       if (!selectedBase) return [];
       const parser = retryItem?.parser ?? selectedBase.parser;
       if (queries.transport.kind !== 'http') {
@@ -211,7 +211,11 @@ export function KnowledgeFeature() {
           throw error;
         }
       }
-      const files = retryItem?.file ? [retryItem.file] : await chooseKnowledgeFiles(20);
+      const files = retryItem?.file
+        ? [retryItem.file]
+        : droppedFiles?.length
+          ? droppedFiles.slice(0, 20)
+          : await chooseKnowledgeFiles(20);
       if (!files.length) return [];
       const queue = retryItem ? [retryItem] : files.map((file, index) => ({
         id: uploadItemId(file, index), fileName: file.name, byteSize: file.size, file, parser, status: 'queued' as const, documentId: '', error: '',
@@ -365,16 +369,19 @@ export function KnowledgeFeature() {
                   </TabsList>
                   <TabsContent value="materials">
                     <KnowledgeMaterialsPanel
+                      key={selectedBase.id}
                       detail={detailQuery.data ?? null}
                       detailError={detailQuery.error as Error | null}
                       detailLoading={detailQuery.isPending && Boolean(selectedDocumentId)}
                       documents={documents}
+                      dropSupported={queries.transport.kind === 'http'}
                       error={queries.documents.error as Error | null}
                       importError={importMutation.error as Error | null}
                       importing={importMutation.isPending}
                       onDelete={(document, trigger) => { rememberDialogTrigger(trigger); setDocumentToDelete(document); }}
                       onClearUploads={() => { importMutation.reset(); setUploadItems([]); }}
                       onImport={() => importMutation.mutate({})}
+                      onImportFiles={(files) => importMutation.mutate({ droppedFiles: files })}
                       onOpen={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); selectTab('viewer'); }}
                       onReparse={(document, trigger) => { rememberDialogTrigger(trigger); setReparseDocument(document); }}
                       onRetryUpload={(item) => importMutation.mutate({ retryItem: item })}
@@ -391,6 +398,7 @@ export function KnowledgeFeature() {
                       error={detailQuery.error as Error | null}
                       loading={detailQuery.isPending && Boolean(selectedDocumentId)}
                       focusHit={focusedHit}
+                      onBackToMaterials={() => selectTab('materials')}
                       hasMoreChunks={Boolean(detailQuery.hasNextPage)}
                       hasMoreContent={Boolean(detailQuery.hasNextContentPage)}
                       loadingMoreChunks={detailQuery.isFetchingNextPage}

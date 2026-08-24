@@ -1,7 +1,6 @@
-import { MessagesSquare } from 'lucide-react';
+import { BookOpen, MessagesSquare } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import { EmptyState } from '../../src/components/primitives';
-import { KnowledgeEvidenceExplorer } from '../../src/features/memory/KnowledgeVisualization';
 import '../../src/design/tokens.css';
 import '../../src/design/typography.css';
 import '../../src/components/primitives/primitives.css';
@@ -12,12 +11,15 @@ createRoot(document.getElementById('root')!).render(<>
     <EmptyState icon={MessagesSquare} title="还没有公开 Post" description="发一条消息开始协作。" />
   </section>
   <section className="functional-empty-fixture" aria-label="记忆空态槽位">
-    <KnowledgeEvidenceExplorer items={[]} />
+    <EmptyState icon={BookOpen} title="还没有记忆" description="对话、整理和来源会写进这里。" />
   </section>
   <section className="functional-empty-demo" aria-label="记忆正常数据槽位">
-    <KnowledgeEvidenceExplorer items={[{
-      id: 'evidence:demo', title: 'Room 路由审计', excerpt: '完整循环路径、取消传播与深度预算。',
-      sourceType: 'local', source: 'memory', score: 0.94, url: '',
-    }]} />
+    <article className="mgmt-list__row" data-selected>
+      <div className="mgmt-list__copy">
+        <strong>Room 路由审计</strong>
+        <span>完整循环路径、取消传播与深度预算。</span>
+      </div>
+      <span className="mgmt-list__meta">来源 · 记忆库</span>
+    </article>
   </section>
 </>);

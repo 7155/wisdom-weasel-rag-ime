@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   ChevronDown,
   CircleStop,
   Download,
@@ -11,15 +12,17 @@ import {
   PanelRightOpen,
   RotateCcw,
   Rows3,
+  Search,
   Table2,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Virtuoso } from 'react-virtuoso';
 import remarkGfm from 'remark-gfm';
-import { Button, Disclosure, EmptyState, IconButton, Select, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
+import { Button, Disclosure, EmptyState, IconButton, Input, Select, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
 import type { ControlTransport } from '@/platform/transport';
 import type {
@@ -49,11 +52,13 @@ export function KnowledgeMaterialsPanel({
   detailError,
   detailLoading,
   documents,
+  dropSupported,
   error,
   importError,
   importing,
   onDelete,
   onImport,
+  onImportFiles,
   onOpen,
   onReparse,
   onRetryUpload,
@@ -67,11 +72,13 @@ export function KnowledgeMaterialsPanel({
   detailError: Error | null;
   detailLoading: boolean;
   documents: readonly KnowledgeDocument[];
+  dropSupported: boolean;
   error: Error | null;
   importError: Error | null;
   importing: boolean;
   onDelete: (document: KnowledgeDocument, trigger: HTMLElement) => void;
   onImport: () => void;
+  onImportFiles: (files: File[]) => void;
   onOpen: (documentId: string) => void;
   onReparse: (document: KnowledgeDocument, trigger: HTMLElement) => void;
   onRetryUpload: (item: KnowledgeUploadItem) => void;
@@ -82,12 +89,18 @@ export function KnowledgeMaterialsPanel({
   uploadItems: readonly KnowledgeUploadItem[];
 }) {
   const summary = useMemo(() => summarizeDocuments(documents), [documents]);
+  const [filter, setFilter] = useState('');
+  const normalizedFilter = filter.trim().toLowerCase();
+  const visibleDocuments = useMemo(() => (
+    normalizedFilter
+      ? documents.filter((document) => document.name.toLowerCase().includes(normalizedFilter))
+      : documents
+  ), [documents, normalizedFilter]);
   const selected = documents.find((item) => item.id === selectedDocumentId) ?? documents[0] ?? null;
   return (
     <div className="knowledge-panel knowledge-materials">
       <div className="knowledge-panel__toolbar">
         <div><strong>资料</strong><span>{documents.length} 个文件 · {formatBytes(summary.bytes)} · {summary.ready} 个可检索</span></div>
-        <Button leadingIcon={<Upload size={15} />} loading={importing} onClick={onImport} size="small" variant="primary">导入文件</Button>
       </div>
       <dl className="knowledge-material-stats">
         <div><dt>可检索</dt><dd>{summary.ready}</dd></div>
@@ -95,39 +108,111 @@ export function KnowledgeMaterialsPanel({
         <div><dt>需处理</dt><dd>{summary.attention}</dd></div>
         <div><dt>已索引段落</dt><dd>{summary.chunks}</dd></div>
       </dl>
+      <MaterialsDropzone dropSupported={dropSupported} importing={importing} onImport={onImport} onImportFiles={onImportFiles} />
       <UploadQueue items={uploadItems} onClear={onClearUploads} onRetry={onRetryUpload} />
       {error ? <InlineNotice title="文件列表暂不可用" tone="warning">{publicErrorText(error, '刷新后重试。')}</InlineNotice> : null}
       {importError ? <InlineNotice title="导入未完成" tone="warning">{publicErrorText(importError, '请查看上传队列后重试。')}</InlineNotice> : null}
       {documents.length ? (
         <div className="knowledge-material-workspace">
           <div className="knowledge-material-list" aria-label="知识库文件">
+            <div className="knowledge-material-filter">
+              <Search aria-hidden="true" size={13} />
+              <Input aria-label="筛选文件" onChange={(event) => setFilter(event.target.value)} placeholder="按文件名筛选" value={filter} />
+              <span>{normalizedFilter ? `${visibleDocuments.length} / ${documents.length}` : `${documents.length} 个文件`}</span>
+              {normalizedFilter ? <IconButton icon={<X size={13} />} label="清除筛选" onClick={() => setFilter('')} size="small" tooltip /> : null}
+            </div>
             <div className="knowledge-material-list__head"><span>文件</span><span>状态</span><span>段落</span><span>操作</span></div>
-            <Virtuoso
-              className="knowledge-material-list__body"
-              data={documents}
-              itemContent={(_index, document) => (
-                <div className="knowledge-material-row" data-selected={selected?.id === document.id || undefined}>
-                  <button aria-current={selected?.id === document.id || undefined} className="knowledge-material-row__select" onClick={() => onSelect(document.id)} type="button">
-                    <FileText aria-hidden="true" size={15} />
-                    <span><strong>{document.name}</strong><small>{parserLabel(document.parser)} · {formatBytes(document.byteSize)}</small></span>
-                  </button>
-                  <StatusBadge label={documentStatusLabel(document.status)} tone={documentTone(document.status)} />
-                  <span className="knowledge-material-row__chunks">{document.chunkCount || '—'}</span>
-                  <span className="knowledge-material-row__actions">
-                    <IconButton disabled={pendingDocumentId === document.id || ['queued', 'parsing', 'indexing'].includes(document.status)} icon={<RotateCcw size={13} />} label={`重新解析 ${document.name}`} onClick={(event) => onReparse(document, event.currentTarget)} size="small" tooltip />
-                    <IconButton icon={<PanelRightOpen size={13} />} label={`查看 ${document.name}`} onClick={() => onOpen(document.id)} size="small" tooltip />
-                    <IconButton icon={<Trash2 size={13} />} label={`删除 ${document.name}`} onClick={(event) => onDelete(document, event.currentTarget)} size="small" tooltip />
-                  </span>
-                  {['queued', 'parsing', 'indexing'].includes(document.status) ? <i className="knowledge-material-row__progress" style={{ '--document-progress': document.progress } as React.CSSProperties} /> : null}
-                </div>
-              )}
-            />
+            {visibleDocuments.length ? (
+              <Virtuoso
+                className="knowledge-material-list__body"
+                data={visibleDocuments}
+                itemContent={(_index, document) => (
+                  <div className="knowledge-material-row" data-selected={selected?.id === document.id || undefined}>
+                    <button aria-current={selected?.id === document.id || undefined} className="knowledge-material-row__select" onClick={() => onSelect(document.id)} type="button">
+                      <FileText aria-hidden="true" size={15} />
+                      <span><strong>{document.name}</strong><small>{parserLabel(document.parser)} · {formatBytes(document.byteSize)}</small></span>
+                    </button>
+                    <StatusBadge label={documentStatusLabel(document.status)} tone={documentTone(document.status)} />
+                    <span className="knowledge-material-row__chunks">{document.chunkCount || '—'}</span>
+                    <span className="knowledge-material-row__actions">
+                      <IconButton disabled={pendingDocumentId === document.id || ['queued', 'parsing', 'indexing'].includes(document.status)} icon={<RotateCcw size={13} />} label={`重新解析 ${document.name}`} onClick={(event) => onReparse(document, event.currentTarget)} size="small" tooltip />
+                      <IconButton icon={<PanelRightOpen size={13} />} label={`查看 ${document.name}`} onClick={() => onOpen(document.id)} size="small" tooltip />
+                      <IconButton icon={<Trash2 size={13} />} label={`删除 ${document.name}`} onClick={(event) => onDelete(document, event.currentTarget)} size="small" tooltip />
+                    </span>
+                    {['queued', 'parsing', 'indexing'].includes(document.status) ? <i className="knowledge-material-row__progress" style={{ '--document-progress': document.progress } as React.CSSProperties} /> : null}
+                  </div>
+                )}
+              />
+            ) : (
+              <EmptyState
+                action={<Button onClick={() => setFilter('')} size="small">显示全部文件</Button>}
+                description={`没有名称包含“${filter.trim()}”的文件；清除筛选可查看全部 ${documents.length} 个文件。`}
+                icon={FileSearch}
+                title="没有匹配的文件"
+              />
+            )}
           </div>
           <DocumentSummary detail={detail} document={selected} error={detailError} loading={detailLoading} onReparse={onReparse} reparsePending={Boolean(selected && pendingDocumentId === selected.id)} />
         </div>
       ) : (
-        <EmptyState action={<Button leadingIcon={<Upload size={15} />} loading={importing} onClick={onImport}>导入文件</Button>} description="导入后，文件会在这里排队解析并进入可检索目录。" icon={FileText} title="还没有资料" />
+        <EmptyState description="通过上方导入区选择或拖入文件；文件会在这里排队解析并进入可检索目录。" icon={FileText} title="还没有资料" />
       )}
+    </div>
+  );
+}
+
+function MaterialsDropzone({
+  dropSupported,
+  importing,
+  onImport,
+  onImportFiles,
+}: {
+  dropSupported: boolean;
+  importing: boolean;
+  onImport: () => void;
+  onImportFiles: (files: File[]) => void;
+}) {
+  const [dragActive, setDragActive] = useState(false);
+  const [dropNotice, setDropNotice] = useState('');
+  const dragDepth = useRef(0);
+  const resetDragState = () => {
+    dragDepth.current = 0;
+    setDragActive(false);
+  };
+  const handleDrop = (event: ReactDragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    resetDragState();
+    if (importing) return;
+    const files = [...(event.dataTransfer?.files ?? [])].slice(0, 20);
+    if (!files.length) return;
+    if (!dropSupported) {
+      setDropNotice('当前运行环境不支持拖放导入；请点击导入区改用系统文件选择。');
+      return;
+    }
+    setDropNotice('');
+    onImportFiles(files);
+  };
+  return (
+    <div className="knowledge-dropzone-region" aria-label="导入资料">
+      <button
+        aria-busy={importing || undefined}
+        aria-label="导入文件"
+        className="knowledge-dropzone"
+        data-active={dragActive || undefined}
+        onClick={() => { if (!importing) { setDropNotice(''); onImport(); } }}
+        onDragEnter={(event) => { event.preventDefault(); dragDepth.current += 1; setDragActive(true); }}
+        onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragActive(false); }}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+        type="button"
+      >
+        <Upload aria-hidden="true" size={17} />
+        <span>
+          <strong>{importing ? '正在导入文件…' : dropSupported ? '拖放文件到这里，或点击选择' : '点击选择本机文件导入'}</strong>
+          <small>支持 PDF、Word、PPT、Excel、Markdown、文本与图片 · 单次最多 20 个</small>
+        </span>
+      </button>
+      {dropNotice ? <InlineNotice title="拖放导入不可用" tone="info">{dropNotice}</InlineNotice> : null}
     </div>
   );
 }
@@ -292,6 +377,7 @@ export function KnowledgeDocumentViewer({
   detail,
   error,
   loading,
+  onBackToMaterials,
   onSelectDocument,
   selectedDocumentId,
   documents,
@@ -307,6 +393,7 @@ export function KnowledgeDocumentViewer({
   detail: KnowledgeDocumentDetail | null;
   error: Error | null;
   loading: boolean;
+  onBackToMaterials: () => void;
   onSelectDocument: (documentId: string) => void;
   selectedDocumentId: string;
   documents: readonly KnowledgeDocument[];
@@ -323,10 +410,20 @@ export function KnowledgeDocumentViewer({
   const pageCount = detail ? detail.pages.length || detail.document.pageCount : 0;
   useEffect(() => setView('markdown'), [selectedDocumentId]);
   useEffect(() => { if (focusHit?.documentId === selectedDocumentId) setView('chunks'); }, [focusHit, selectedDocumentId]);
-  if (!documents.length) return <EmptyState description="先在“资料”页导入文件，再回来查看解析结果。" icon={FileText} title="先导入资料" />;
+  if (!documents.length) {
+    return (
+      <EmptyState
+        action={<Button onClick={onBackToMaterials} size="small">去导入资料</Button>}
+        description="先在“资料”页导入文件，再回来查看解析结果。"
+        icon={FileText}
+        title="先导入资料"
+      />
+    );
+  }
   return (
     <div className="knowledge-panel knowledge-viewer">
       <div className="knowledge-viewer__bar">
+        <Button className="knowledge-viewer__back" leadingIcon={<ArrowLeft size={14} />} onClick={onBackToMaterials} size="small" variant="quiet">返回资料</Button>
         <label><span>材料</span><Select aria-label="材料" onValueChange={onSelectDocument} options={documents.map((item) => ({ value: item.id, label: item.name }))} value={selectedDocumentId || documents[0]?.id} /></label>
         {detail ? <span>{detail.chunkTotal} 个段落 · {pageCount ? `${pageCount} 页` : '页码未提供'} · {detail.assets.length} 个产物</span> : null}
       </div>

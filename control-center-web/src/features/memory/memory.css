@@ -2988,8 +2988,9 @@ main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
 }
 
 .memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__row[data-selected] {
-  border-color: rgb(217 79 139 / .55);
-  background: rgb(255 248 252);
+  border-color: rgb(83 103 216 / .42);
+  background: #f4f6fd;
+  box-shadow: inset 3px 0 #5367d8;
 }
 
 .memory-second-brain[data-view='catalog'] .memory-layer-list .mgmt-list__copy { grid-column: 1 / -1; }

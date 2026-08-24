@@ -5,14 +5,10 @@ import type { ControlTransport, JsonValue } from '@/platform/transport';
 
 export const knowledgeQueryKeys = {
   root: ['knowledge'] as const,
-  route: () => [...knowledgeQueryKeys.root, 'route-status'] as const,
-  session: (sessionId: string) => [...knowledgeQueryKeys.root, 'session', sessionId] as const,
   capabilities: () => [...knowledgeQueryKeys.root, 'capabilities'] as const,
 };
 
 export const knowledgeMutationPathIds = {
-  start: 'knowledge.start',
-  cancel: 'knowledge.cancel',
   databaseDraftEdit: 'knowledge.database.draft.edit',
   databaseApplyPreview: 'knowledge.database.apply.preview',
   databaseApply: 'knowledge.database.apply',
@@ -26,29 +22,6 @@ export type KnowledgeMutationRequest = {
   body: Record<string, JsonValue>;
 };
 
-export function useKnowledgeQueries(sessionId: string) {
-  const transport = useControlTransport();
-  const route = useQuery({
-    queryKey: knowledgeQueryKeys.route(),
-    queryFn: ({ signal }) => transport.request({ pathId: 'knowledge.routeStatus', signal }),
-    staleTime: 20_000,
-  });
-  const session = useQuery({
-    queryKey: knowledgeQueryKeys.session(sessionId),
-    enabled: Boolean(sessionId),
-    queryFn: ({ signal }) => transport.request({
-      pathId: 'knowledge.status',
-      query: sessionId ? { sessionId } : {},
-      signal,
-    }),
-    refetchInterval: (query) => {
-      const status = (query.state.data as { status?: unknown } | undefined)?.status;
-      return ['queued', 'retrieving', 'generating', 'organizing'].includes(String(status)) ? 500 : false;
-    },
-  });
-  return { route, session, transportKind: transport.kind };
-}
-
 export function useKnowledgeMutationBoundary() {
   const transport = useControlTransport();
   const capabilities = useQuery({
@@ -57,39 +30,29 @@ export function useKnowledgeMutationBoundary() {
     staleTime: 30_000,
   });
 
-  const routeAvailability = (
-    pathIds: readonly KnowledgeMutationPathId[],
-    blockedReason = '',
-  ): MutationAvailability => {
+  const databaseAvailability = (blockedReason = ''): MutationAvailability => {
     if (capabilities.isPending) return { state: 'checking' };
     if (capabilities.error) return { state: 'unsupported', reason: '无法确认当前操作是否可用，请刷新后重试。' };
     const routeIds = new Set((capabilities.data?.routeIds ?? []) as readonly string[]);
-    if (pathIds.some((pathId) => !routeIds.has(pathId))) {
-      return { state: 'unsupported', reason: '当前版本还不能启动或取消知识任务；没有请求被发送。' };
-    }
-    if (blockedReason) return { state: 'blocked', reason: blockedReason };
-    return { state: 'available' };
-  };
-
-  const databaseAvailability = (blockedReason = ''): MutationAvailability => {
-    const routeState = routeAvailability([
+    const required: readonly KnowledgeMutationPathId[] = [
       knowledgeMutationPathIds.databaseDraftEdit,
       knowledgeMutationPathIds.databaseApplyPreview,
       knowledgeMutationPathIds.databaseApply,
       knowledgeMutationPathIds.databaseRollback,
-    ]);
-    if (routeState.state !== 'available') return routeState;
+    ];
+    if (required.some((pathId) => !routeIds.has(pathId))) {
+      return { state: 'unsupported', reason: '当前版本还不能安全应用知识库整理草案；没有请求被发送。' };
+    }
     const flags = capabilities.data?.features ?? {};
     if (!flags.managementWorkContract || !flags.knowledgeDatabaseWorkContract) {
       return { state: 'unsupported', reason: '当前版本还不能安全应用知识库整理草案；没有请求被发送。' };
     }
-    return blockedReason ? { state: 'blocked', reason: blockedReason } : routeState;
+    return blockedReason ? { state: 'blocked', reason: blockedReason } : { state: 'available' };
   };
 
   return {
     capabilities,
     databaseAvailability,
-    routeAvailability,
     request: <Response,>(request: KnowledgeMutationRequest) => requestKnowledgeMutation<Response>(transport, request),
   };
 }
