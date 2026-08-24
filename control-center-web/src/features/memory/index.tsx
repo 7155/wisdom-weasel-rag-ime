@@ -52,7 +52,11 @@ import {
   MemoryReferenceDialog,
   type MemoryReferenceSelection,
 } from './MemoryReferenceDialog';
-import { publicMemoryOwnerLabel, publicMemoryText } from './public-copy';
+import {
+  publicMemoryOwnerLabel,
+  publicMemorySourceLabel,
+  publicMemoryText,
+} from './public-copy';
 import {
   InlineNotice,
   ManagementPage,
@@ -148,8 +152,11 @@ export function MemoryFeature() {
   };
   const archiveAvailability = archiveBoundary.availability(archiveBlockedReason());
   const runtimeRevision = numberValue(summaryPayload.runtimeRevision);
-  const error = ((view === 'catalog' ? pages.error : null) ?? summary.error) as Error | null;
-  const pending = summary.isPending || (view === 'catalog' && pages.isPending);
+  // Only the catalog needs the shared summary and page data. The other views
+  // own their queries, so a failed or slow summary must not block them.
+  const error = view === 'catalog' ? ((pages.error ?? summary.error) as Error | null) : null;
+  const pending = view === 'catalog' && (summary.isPending || pages.isPending);
+  const summaryState = summary.error ? 'error' : summary.isPending ? 'pending' : 'ready';
   const refresh = () => queryClient.refetchQueries({
     queryKey: memoryQueryKeys.root,
     type: 'active',
@@ -172,7 +179,7 @@ export function MemoryFeature() {
       actions={<>
         <span className="memory-second-brain__mode" data-view={view}>
           <i aria-hidden="true" />
-          <span><strong>{memoryViewLabel(view)}</strong><small>{memoryViewStatus(view, rows.length, summaryPayload)}</small></span>
+          <span><strong>{memoryViewLabel(view)}</strong><small>{memoryViewStatus(view, rows.length, summaryPayload, summaryState)}</small></span>
         </span>
         <Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>
       </>}
@@ -183,16 +190,19 @@ export function MemoryFeature() {
     >
       <div className="memory-second-brain" data-layer={layer} data-view={view}>
         <QueryState error={error} isPending={pending} onRetry={refresh}>
-        <Disclosure className="memory-system-summary" summary="查看记忆整理状态">
-          <MemorySystemOverview
-            activeLayer={layer}
-            onOpenLayer={openCatalogLayer}
-            onOpenOrganize={() => openView('organize')}
-            onOpenRelations={() => openView('relations')}
-            onOpenTimeline={() => openView('timeline')}
-            summary={summaryPayload}
-          />
-        </Disclosure>
+        {view === 'catalog' ? (
+          <Disclosure className="memory-system-summary" summary="查看记忆整理状态">
+            <MemorySystemOverview
+              activeLayer={layer}
+              onOpenLayer={openCatalogLayer}
+              onOpenOrganize={() => openView('organize')}
+              onOpenPreferences={() => openView('preferences')}
+              onOpenRelations={() => openView('relations')}
+              onOpenTimeline={() => openView('timeline')}
+              summary={summaryPayload}
+            />
+          </Disclosure>
+        ) : null}
 
         <ViewTabs
           className="memory-view-tabs"
@@ -576,13 +586,22 @@ function memoryViewLabel(view: MemoryView): string {
   } as const)[view];
 }
 
-function memoryViewStatus(view: MemoryView, visibleRows: number, summary: Record<string, unknown>): string {
+function memoryViewStatus(
+  view: MemoryView,
+  visibleRows: number,
+  summary: Record<string, unknown>,
+  summaryState: 'ready' | 'pending' | 'error',
+): string {
+  // Preferences never claims a persistence state here; the panel itself
+  // reports read-only, pending, and synced from the real write contract.
+  if (view === 'preferences') return '影响整理与联想';
+  if (summaryState === 'pending') return '正在读取记忆状态';
+  if (summaryState === 'error') return '记忆状态暂不可用';
   if (view === 'catalog') return `${visibleRows} 条当前结果`;
   if (view === 'roleBooks') return `${numberValue(summary.roleBookCount, numberValue(summary.roleBookRevisionCount))} 个伙伴记忆`;
   if (view === 'timeline') return `${numberValue(summary.activityTimelineCount, numberValue(summary.timelineCount))} 条活动记录`;
-  if (view === 'relations') return `${numberValue(summary.memoryAtomCount)} 条记忆参与关联`;
-  if (view === 'organize') return `${numberValue(summary.ownerCurationPendingSourceCount, numberValue(asRecord(summary.ownerCuration).pendingSourceCount))} 条待整理`;
-  return '本机设置持久化';
+  if (view === 'relations') return `${numberValue(summary.memoryTagCount)} 个关系标签`;
+  return `${numberValue(summary.ownerCurationPendingSourceCount, numberValue(asRecord(summary.ownerCuration).pendingSourceCount))} 条待整理`;
 }
 
 function normalizeMemoryRow(item: Record<string, unknown>): Record<string, unknown> {
@@ -1405,23 +1424,8 @@ function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' |
   return 'neutral';
 }
 
-function sourceLabel(source: string, assistantName: string): string {
-  const normalized = source.toLocaleLowerCase('en-US');
-  if (!normalized) return '本地记忆';
-  if (normalized.includes('input_app')) return '应用上下文';
-  if (normalized.includes('dsv4') || normalized.includes('deepseek')) return '智能整理';
-  if (normalized.includes('user')) return '用户编辑';
-  if (normalized.includes('import')) return '导入';
-  if (normalized.includes('notion')) return 'Notion';
-  if (normalized.includes('rime') || normalized.includes('input')) return '输入记录';
-  if (normalized.includes('agent') || normalized.includes('pi')) return `${assistantName}整理`;
-  if (normalized.includes('manual')) return '手动整理';
-  if (normalized.includes('sqlite') || normalized.includes('memory_')) return '本地记忆';
-  return '其他来源';
-}
-
 function catalogSourceLabel(kind: MemoryKind, row: Record<string, unknown>, assistantName: string): string {
-  if (kind !== 'evidence') return sourceLabel(stringValue(row.source), assistantName);
+  if (kind !== 'evidence') return publicMemorySourceLabel(stringValue(row.source), assistantName);
   const channel = stringValue(row.sourceChannel);
   if (channel === 'input_method') return '输入法';
   if (channel === 'voice') return '语音';
