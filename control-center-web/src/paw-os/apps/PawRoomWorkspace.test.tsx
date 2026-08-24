@@ -33,10 +33,11 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
     expect(within(tools).getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现 Room 依赖数据投影');
-    const userMessage = screen.getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
+    const timeline = screen.getByRole('log', { name: 'Root 对话与公开协作事件' });
+    const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
     expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();
-    const earthMessage = screen.getByText('我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。').closest('article');
+    const earthMessage = within(timeline).getByText('我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。').closest('article');
     expect(within(earthMessage!).getByText('Earth')).toBeInTheDocument();
     /* UR-054：进入 Room 只自动展开后台伙伴卫星窗，主 Room 保持焦点，
        不会有任何前台窗口调用。 */

@@ -439,7 +439,7 @@ describe('PawOsSatelliteHost', () => {
     expect(within(console).getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现 Room 任务图交互');
     expect(within(console).getByLabelText('流转事件')).toHaveTextContent('实现 Room 任务图交互');
     expect(within(console).getByText('验收条件 · 1')).toBeInTheDocument();
-    expect(within(console).getByText('等待独立复核')).toBeVisible();
+    expect(within(console).getByRole('region', { name: '协作检查器' })).toHaveTextContent('等待独立复核');
     expect(container.querySelector('.room-cockpit')).not.toBeInTheDocument();
     expect(container.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
 
