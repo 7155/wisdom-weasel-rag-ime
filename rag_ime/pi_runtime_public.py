@@ -27,7 +27,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 from .agent_blocks import (
@@ -288,9 +288,11 @@ def canonical_grouped_answers(
         selected = [item.strip() for item in raw_selected]
         if any(not item for item in selected) or len(set(selected)) != len(selected):
             raise ValueError("grouped answer selections must be non-empty and unique")
+        # _canonical_grouped_question always emits an options list.
+        canonical_options = cast("list[object]", question["options"])
         option_labels = {
             str(option["label"])
-            for option in question["options"]
+            for option in canonical_options
             if isinstance(option, Mapping)
         }
         if any(item not in option_labels for item in selected):
@@ -1066,7 +1068,7 @@ def _public_tool_output_allowed(tool_name: str, raw_path: str) -> bool:
     )
 
 
-def _public_tool_evidence_envelope(raw_result: object) -> dict[str, object]:
+def _public_tool_evidence_envelope(raw_result: object) -> Mapping[str, object]:
     """Recover a managed coding-tool receipt before generic truncation.
 
     The runtime bridge deliberately returns a small JSON evidence envelope
