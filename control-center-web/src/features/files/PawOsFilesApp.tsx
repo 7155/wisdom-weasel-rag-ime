@@ -201,7 +201,7 @@ export function PawOsFilesApp() {
 
   function treeHidden(): boolean {
     const tree = treeRef.current;
-    return Boolean(tree) && window.getComputedStyle(tree).display === 'none';
+    return tree !== null && window.getComputedStyle(tree).display === 'none';
   }
 
   function goBackToTree(): void {
@@ -351,7 +351,8 @@ export function PawOsFilesApp() {
         <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined}>
         <aside className="paw-files-tree" aria-label="Session 授权工作区" ref={treeRef}>
           {sessionsLoading ? <TreeState loading>正在读取 Session…</TreeState> : null}
-          {!sessionsLoading && !roots.length ? <TreeState>这个 Session 还没有绑定工作区。</TreeState> : null}
+          {!sessionsLoading && !sessionError && !sessions.length ? <TreeState>还没有可浏览的 Session。</TreeState> : null}
+          {!sessionsLoading && sessions.length > 0 && !roots.length ? <TreeState>这个 Session 还没有绑定工作区。</TreeState> : null}
           {roots.length ? (
             <nav aria-label="项目文件"><ul aria-label="项目文件" role="tree">
               {roots.map((root) => (
@@ -420,7 +421,7 @@ export function PawOsFilesApp() {
         </main>
         </div>
         <footer className="paw-files-statusbar" aria-live="polite">
-          <span>{visibleEntryCount} 项</span>
+          <span>已加载 {visibleEntryCount} 项</span>
           {selectedFile ? <><i aria-hidden="true" /><span className="paw-files-statusbar__selection" title={`${selectedFile.path}${selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''}`}>已选 {selectedFile.name}{selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''}</span></> : null}
           <span className="paw-files-statusbar__root" title={roots.join('\n') || undefined}>{roots.length ? `${roots.length} 个授权工作区` : '没有授权工作区'}</span>
         </footer>
@@ -436,6 +437,7 @@ function TreeState({ children, error, loading, onRetry }: { children?: ReactNode
 function renderPreview(file: WorkspaceFile): ReactNode {
   const name = pathName(file.path);
   const extension = fileExtension(name);
+  if (!file.content && !file.truncated) return <div className="paw-files-preview__state paw-files-preview__state--empty" role="status"><File size={18} /><span>这个文件是空的。</span></div>;
   if (isProbablyBinary(file.content)) return <div className="paw-files-preview__state paw-files-preview__state--binary" role="status"><File size={18} /><span>二进制文件不能作为文本预览。</span></div>;
   if (['md', 'mdx', 'markdown'].includes(extension)) return <MarkdownPreview content={file.content} />;
   if (['html', 'htm'].includes(extension)) return <RichHtmlPreview content={file.content} title={name} />;
