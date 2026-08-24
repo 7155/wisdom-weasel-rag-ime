@@ -19,7 +19,7 @@
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) 28px;
   overflow: hidden;
-  background: #fff;
+  background: var(--color-paper);
   color: var(--color-text);
   font-family: var(--font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
   container: paw-files / inline-size;
@@ -74,7 +74,7 @@
   gap: 8px;
   padding: 5px 12px;
   border-bottom: 1px solid var(--color-border);
-  background: #f7f8fa;
+  background: var(--color-chrome);
   user-select: none;
 }
 
@@ -99,7 +99,7 @@
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 0 28px 0 9px;
-  background: #fff;
+  background: var(--color-paper);
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
@@ -117,7 +117,8 @@
 .paw-files-app__toolbar > button,
 .paw-native-app__error button,
 .paw-files-tree__state button,
-.paw-files-preview__state button {
+.paw-files-preview__state button,
+.paw-files-preview__more > button {
   display: inline-flex;
   min-height: 30px;
   align-items: center;
@@ -126,7 +127,7 @@
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 0 10px;
-  background: #fff;
+  background: var(--color-paper);
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
@@ -144,6 +145,7 @@
 .paw-native-app__error button:active,
 .paw-files-tree__state button:active,
 .paw-files-preview__state button:active,
+.paw-files-preview__more > button:active:not(:disabled),
 .paw-files-preview__back:active {
   transform: scale(.97);
 }
@@ -171,17 +173,88 @@
   min-height: 0;
   grid-template-columns: minmax(220px, 31%) minmax(0, 1fr);
   overflow: hidden;
-  background: #fff;
+  background: var(--color-paper);
 }
 
 .paw-files-tree {
+  display: flex;
   min-width: 0;
   min-height: 0;
-  padding: 8px 6px 18px;
-  overflow: auto;
+  flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--color-border);
   background: var(--color-chrome);
+}
+
+.paw-files-tree__scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 6px 6px 18px;
+  overflow: auto;
   scrollbar-color: rgb(29 29 31 / 18%) transparent;
+}
+
+/* The filter narrows what is already loaded from the authorized roots; it is
+   a projection of local state, never a workspace-wide server search. */
+.paw-files-tree__filter {
+  display: grid;
+  min-height: 30px;
+  flex: 0 0 auto;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 8px 2px;
+  padding: 0 5px 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-paper);
+  color: var(--color-text-tertiary);
+  transition: border-color 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-tree__filter:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.paw-files-tree__filter input {
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.paw-files-tree__filter input:focus-visible {
+  outline: none;
+}
+
+.paw-files-tree__filter input::-webkit-search-cancel-button,
+.paw-files-tree__filter input::-webkit-search-decoration {
+  appearance: none;
+}
+
+.paw-files-tree__filter > button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-tree__filter > button:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-text);
 }
 
 .paw-files-tree nav,
@@ -260,7 +333,7 @@
 
 .paw-files-tree__row {
   position: relative;
-  min-height: 32px;
+  min-height: 30px;
   grid-template-columns: 14px 16px minmax(0, 1fr) auto;
   gap: 7px;
   padding: 3px 8px 3px calc(7px + var(--paw-files-depth, 1) * 12px);
@@ -344,6 +417,16 @@
 
 .paw-files-tree__row[data-kind='symlink'] > svg:nth-child(2) { color: var(--color-accent); }
 
+.paw-files-tree__limit {
+  margin: 2px 8px 4px calc(7px + var(--paw-files-depth, 1) * 12px);
+  padding: 4px 9px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 7px;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .paw-files-tree__state {
   display: flex;
   min-height: 40px;
@@ -356,13 +439,89 @@
   animation: paw-files-state-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
 }
 
+.paw-files-filter-results {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 1px;
+}
+
+.paw-files-filter-results__meta {
+  margin: 0;
+  padding: 6px 10px 8px;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.paw-files-filter-results ul {
+  display: grid;
+  gap: 1px;
+}
+
+.paw-files-filter-results li > button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-filter-results li > button:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 48%, transparent);
+}
+
+.paw-files-filter-results li > button > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.paw-files-filter-results li > button strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 13.5px;
+  line-height: 1.4;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-files-filter-results li > button strong mark {
+  border-radius: 3px;
+  padding: 0 1px;
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  color: inherit;
+}
+
+.paw-files-filter-results li > button span small,
+.paw-files-filter-results li > button > small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font: 12px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .paw-files-preview {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  background: #fff;
+  background: var(--color-paper);
 }
 
 .paw-files-preview > header {
@@ -374,7 +533,7 @@
   gap: 10px;
   padding: 9px 18px;
   border-bottom: 1px solid var(--color-border);
-  background: #fff;
+  background: var(--color-paper);
   animation: paw-files-preview-enter 190ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
 }
 
@@ -386,7 +545,7 @@
   place-items: center;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--color-paper);
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
@@ -395,6 +554,7 @@
 .paw-files-preview > header > div {
   display: grid;
   min-width: 0;
+  flex: 1 1 auto;
   gap: 2px;
 }
 
@@ -420,20 +580,14 @@
   font: 13px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
-.paw-files-preview > header em {
-  flex: none;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
-  color: color-mix(in srgb, var(--color-accent) 62%, #14202e);
-  font-size: 13px;
-  line-height: 1.4;
-  font-style: normal;
-  font-weight: 620;
-  white-space: nowrap;
+.paw-files-preview__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
 }
 
-.paw-files-preview__copy {
+.paw-files-preview__action {
   display: grid;
   width: 30px;
   height: 30px;
@@ -441,17 +595,17 @@
   place-items: center;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--color-paper);
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
-.paw-files-preview__copy:active {
+.paw-files-preview__action:active {
   transform: scale(.94);
 }
 
-.paw-files-preview__copy[data-copied] {
+.paw-files-preview__action[data-copied] {
   border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
   background: color-mix(in srgb, var(--color-accent) 9%, transparent);
   color: var(--color-accent);
@@ -461,21 +615,23 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: #fff;
+  background: var(--color-paper);
   scrollbar-color: rgb(29 29 31 / 18%) transparent;
 }
 
 .paw-files-preview__body:has(> .agent-file-code),
 .paw-files-preview__body:has(> .agent-diff-preview),
 .paw-files-preview__body:has(> .agent-file-preview__plain),
-.paw-files-preview__body:has(> .agent-rich-html-preview) {
+.paw-files-preview__body:has(> .agent-rich-html-preview),
+.paw-files-preview__body:has(> .paw-files-svg) {
   overflow: hidden;
 }
 
 .paw-files-preview__body > .agent-file-code,
 .paw-files-preview__body > .agent-diff-preview,
 .paw-files-preview__body > .agent-file-preview__plain,
-.paw-files-preview__body > .agent-rich-html-preview {
+.paw-files-preview__body > .agent-rich-html-preview,
+.paw-files-svg .agent-file-code {
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -489,6 +645,18 @@
    Repainting only the background here once left the light plain-text fallback
    unreadable on a light surface; Files must not recolour the code surface. */
 
+/* The Files header already names the open file and owns the copy actions, so
+   the shared reader's duplicate filename strip stays out of this App. */
+.paw-files-preview__body > .agent-file-code figcaption,
+.paw-files-svg .agent-file-code figcaption {
+  display: none;
+}
+
+.paw-files-preview__body > .agent-file-code,
+.paw-files-svg .agent-file-code {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .paw-files-preview__body > .agent-diff-preview .agent-diff-preview__files {
   height: 100%;
   max-height: none;
@@ -500,8 +668,76 @@
   padding: 24px 30px 70px;
 }
 
+.paw-files-svg {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.paw-files-svg__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-paper);
+}
+
+.paw-files-svg__bar button {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 9px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  transition: border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-svg__bar button[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
+}
+
+.paw-files-svg__bar button:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.paw-files-svg__stage {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: 26px;
+  overflow: auto;
+  background:
+    repeating-conic-gradient(rgb(29 29 31 / 5%) 0% 25%, transparent 0% 50%) 0 0 / 18px 18px,
+    var(--color-canvas);
+  scrollbar-color: rgb(29 29 31 / 18%) transparent;
+}
+
+.paw-files-svg__stage img {
+  max-width: 100%;
+  max-height: 100%;
+  filter: drop-shadow(0 2px 8px rgb(15 23 42 / 12%));
+}
+
 .paw-files-preview__empty {
   display: grid;
+  grid-row: 1 / -1;
   place-content: center;
   justify-items: center;
   gap: 8px;
@@ -551,6 +787,43 @@
   color: #c04a68;
 }
 
+/* The bounded reader: an honest range receipt plus the one real continuation
+   the read route supports. It never pretends the whole file is loaded. */
+.paw-files-preview__more {
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 18px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-chrome);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-files-preview__more > em {
+  color: var(--color-text-tertiary);
+  font-style: normal;
+}
+
+.paw-files-preview__more > em[role='alert'] {
+  color: var(--color-danger);
+}
+
+.paw-files-preview__more > button {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.paw-files-preview__more > button:disabled {
+  cursor: wait;
+  opacity: .62;
+}
+
 .paw-files-tree li > ul {
   animation: paw-files-branch-enter 180ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)) both;
   transform-origin: top;
@@ -564,7 +837,7 @@
   overflow: hidden;
   padding: 0 12px;
   border-top: 1px solid var(--color-border);
-  background: #f7f8fa;
+  background: var(--color-chrome);
   color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.4;
@@ -656,6 +929,10 @@
     display: grid;
   }
 
+  .paw-files-preview__more {
+    padding-inline: 12px;
+  }
+
   .paw-files-statusbar__root {
     display: none;
   }
@@ -685,21 +962,41 @@
   .paw-native-app__error button:hover,
   .paw-files-tree__state button:hover,
   .paw-files-preview__state button:hover,
-  .paw-files-preview__copy:hover {
+  .paw-files-preview__more > button:hover:not(:disabled),
+  .paw-files-preview__action:hover {
     border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
     background: color-mix(in srgb, var(--color-accent) 7%, transparent);
     color: var(--color-text);
   }
 
-  .paw-files-preview__copy[data-copied]:hover {
+  .paw-files-preview__action[data-copied]:hover {
     background: color-mix(in srgb, var(--color-accent) 12%, transparent);
     color: var(--color-accent);
   }
 
+  .paw-files-tree__filter > button:hover {
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-text);
+  }
+
+  .paw-files-svg__bar button:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    color: var(--color-text);
+  }
+
+  .paw-files-svg__bar button[aria-pressed='true']:hover {
+    color: var(--color-accent);
+  }
+
   .paw-files-tree__root-button:hover,
-  .paw-files-tree__row:hover {
+  .paw-files-tree__row:hover,
+  .paw-files-filter-results li > button:hover {
     background: color-mix(in srgb, var(--color-accent) 8%, transparent);
     color: var(--color-text);
+  }
+
+  .paw-files-tree__root-button:hover,
+  .paw-files-tree__row:hover {
     transform: translate3d(2px, 0, 0);
   }
 }
@@ -716,12 +1013,17 @@
 
   .paw-files-tree__root-button,
   .paw-files-tree__row,
+  .paw-files-filter-results li > button,
   .paw-files-app__toolbar > button,
   .paw-native-app__error button,
   .paw-files-tree__state button,
   .paw-files-preview__state button,
+  .paw-files-preview__more > button,
   .paw-files-preview__back,
-  .paw-files-preview__copy {
+  .paw-files-preview__action,
+  .paw-files-svg__bar button,
+  .paw-files-tree__filter,
+  .paw-files-tree__filter > button {
     transition-property: color, background-color, border-color, box-shadow;
   }
 
@@ -739,8 +1041,9 @@
   .paw-native-app__error button:active,
   .paw-files-tree__state button:active,
   .paw-files-preview__state button:active,
+  .paw-files-preview__more > button:active:not(:disabled),
   .paw-files-preview__back:active,
-  .paw-files-preview__copy:active {
+  .paw-files-preview__action:active {
     transform: none;
   }
 }
