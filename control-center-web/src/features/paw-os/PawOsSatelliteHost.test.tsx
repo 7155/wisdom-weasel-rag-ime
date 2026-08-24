@@ -496,8 +496,10 @@ describe('PawOsSatelliteHost', () => {
     expect(await screen.findByText('最近 48 / 共 49 条')).toBeInTheDocument();
     expect(screen.queryByText('活动 0')).not.toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('button', { name: '加载更早的 1 条' }));
-    expect(await screen.findByText('最近 49 / 共 49 条')).toBeInTheDocument();
-    expect(screen.getByText('活动 0')).toBeInTheDocument();
+    expect(await screen.findByText('活动 0')).toBeInTheDocument();
+    /* PF-CM-013/UR-056：历史全部可见后，边界行让位给真实对话。 */
+    expect(screen.queryByText(/最近 \d+ \/ 共 \d+ 条/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /加载更早的/ })).not.toBeInTheDocument();
   });
 
   it('keeps a manually collapsed running participant group collapsed after completion', async () => {

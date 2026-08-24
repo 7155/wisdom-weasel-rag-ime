@@ -522,6 +522,9 @@ type ParticipantTimelineItem =
 
 const PARTICIPANT_TIMELINE_WINDOW = 48;
 
+/** PF-CM-013/UR-056: the boundary row exists only while history is truly
+ *  hidden; once everything is loaded the compact satellite keeps the row of
+ *  space for real dialogue instead of a redundant count. */
 function ParticipantHistoryBoundary({
   hiddenBeforeCount,
   loadedCount,
@@ -533,10 +536,10 @@ function ParticipantHistoryBoundary({
   onLoadOlder: () => void;
   totalCount: number;
 }) {
-  if (!totalCount) return null;
+  if (!hiddenBeforeCount) return null;
   return <div className="paw-participant-chat__history-boundary" role="status">
     <span>最近 {loadedCount} / 共 {totalCount} 条</span>
-    {hiddenBeforeCount ? <button onClick={onLoadOlder} type="button">加载更早的 {Math.min(PARTICIPANT_TIMELINE_WINDOW, hiddenBeforeCount)} 条</button> : null}
+    <button onClick={onLoadOlder} type="button">加载更早的 {Math.min(PARTICIPANT_TIMELINE_WINDOW, hiddenBeforeCount)} 条</button>
   </div>;
 }
 
@@ -777,7 +780,7 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
         <>
           <div aria-label={`子 Agent ${target.title || run.task || target.id} 公开对话与运行事件`} aria-live="polite" className="paw-participant-chat__timeline" onScroll={(event) => { followLatestRef.current = timelineNearLatest(event.currentTarget); }} ref={timelineRef} role="log">
             <SubagentHistoryBoundary loadedRunCount={runs.length} onOpenAgent={() => openPawOsRoute(desktop, routePath('agent'))} />
-            {entries.length ? <div className="paw-participant-chat__history-boundary" data-unknown-total role="status">当前控制台加载 {entries.length} 条；接口未提供总数或加载更早记录的游标。</div> : null}
+            {entries.length ? <div className="paw-participant-chat__history-boundary" data-unknown-total role="status">控制台已加载 {entries.length} 条真实记录；更早历史此处暂不可加载。</div> : null}
             {timelineItems.map((item) => item.kind === 'activity-group' ? (
               <SatelliteDisclosure active={item.active} className="paw-participant-chat__activity-group" contentId={`subagent-activity-${item.id}`} dataActive={item.active} key={item.id} summary={(
                 <>
