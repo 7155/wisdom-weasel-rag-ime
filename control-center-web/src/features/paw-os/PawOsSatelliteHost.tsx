@@ -20,6 +20,7 @@ import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import { toggleDisclosurePreservingAnchor } from '@/features/agent/timeline/disclosure-anchor';
+import { buildRoomFocusProjection, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
 import './paw-os-satellite.css';
 
 export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
@@ -375,6 +376,9 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
   const room = roomFromResponse(roomQuery.data, target.roomId);
   const participant = room?.participants.find((candidate) => candidate.id === target.id);
   const projection = useRoomLiveStore((state) => state.projections[target.roomId]);
+  const focusPartner = useMemo(() => (
+    room ? buildRoomFocusProjection(room, projection).partners.find((partner) => partner.participantId === target.id) : undefined
+  ), [projection, room, target.id]);
   const timelineRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
   const fullTimeline = useMemo(() => {
@@ -460,9 +464,42 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
             ) : <ParticipantTimelineEntry entry={item} key={item.id} participantId={participant.id} room={room} />)}
             {!timeline.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>还没有消息或执行轨迹</span></div> : null}
           </div>
+          {/* PF-CM-013：卫星只补一条极薄状态行——当前工作一句、文字+色状态、
+              去完整 Session 的入口；身份与治理留在标题栏和主 Room。 */}
+          <SatelliteStatusline
+            currentWork={conciseParticipantEntry(focusPartner?.currentAction ?? '', '等待新的工作项')}
+            sessionId={participant.sessionId}
+            sessionLabel={`在 Agent 中打开 ${participant.displayName} 的完整 Session`}
+            state={focusPartner?.state ?? 'idle'}
+          />
         </>
       ) : null}
     </section>
+  );
+}
+
+function SatelliteStatusline({ currentWork, sessionId, sessionLabel, state }: {
+  currentWork: string;
+  sessionId: string;
+  sessionLabel: string;
+  state: RoomFocusState;
+}) {
+  const desktop = usePawOsDesktop();
+  return (
+    <footer aria-label="当前工作与状态" className="paw-participant-chat__statusline" data-state={state}>
+      <span className="paw-participant-chat__statusline-state"><i aria-hidden="true" />{roomFocusStateLabel(state)}</span>
+      <p title={currentWork}>{currentWork}</p>
+      {sessionId ? (
+        <button
+          aria-label={sessionLabel}
+          onClick={() => openPawOsRoute(desktop, `${routePath('agent')}?session=${encodeURIComponent(sessionId)}`)}
+          type="button"
+        >
+          <ExternalLink aria-hidden="true" size={12} />
+          <span>Session</span>
+        </button>
+      ) : null}
+    </footer>
   );
 }
 
@@ -733,28 +770,45 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
   const error = runsQuery.error || consoleQuery.error;
   return (
     <section className="paw-os-satellite paw-os-satellite--participant-chat paw-os-satellite--subagent-chat">
-      {runsQuery.isPending || (run && consoleQuery.isPending) ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
+      {runsQuery.isPending || (run && !error && consoleQuery.isPending) ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
       {error ? <SatelliteLoadError error={error} icon={MessageSquare} onRetry={() => { void runsQuery.refetch(); void consoleQuery.refetch(); }} title="子 Agent 窗口没有打开" /> : null}
       {!runsQuery.isPending && !runsQuery.error && !run ? <SatelliteMissing copy="这个子 Agent 已不在当前 Session 的运行图中。" icon={MessageSquare} route="agent" title="找不到这个子 Agent" /> : null}
-      {run && !error ? (
-        <div aria-label={`子 Agent ${target.title || run.task || target.id} 公开对话与运行事件`} aria-live="polite" className="paw-participant-chat__timeline" onScroll={(event) => { followLatestRef.current = timelineNearLatest(event.currentTarget); }} ref={timelineRef} role="log">
-          <SubagentHistoryBoundary loadedRunCount={runs.length} onOpenAgent={() => openPawOsRoute(desktop, routePath('agent'))} />
-          {entries.length ? <div className="paw-participant-chat__history-boundary" data-unknown-total role="status">当前控制台加载 {entries.length} 条；接口未提供总数或加载更早记录的游标。</div> : null}
-          {timelineItems.map((item) => item.kind === 'activity-group' ? (
-            <SatelliteDisclosure active={item.active} className="paw-participant-chat__activity-group" contentId={`subagent-activity-${item.id}`} dataActive={item.active} key={item.id} summary={(
-              <>
-                <span><strong>运行记录</strong><small>{item.entries.length} 条真实事件 · {item.entries.at(-1)?.text}</small></span>
-                <SatelliteRunState eventType={item.entries.at(-1)?.eventType ?? 'run'} status={item.entries.at(-1)?.status ?? 'completed'} />
-              </>
-            )}>
-              <div className="paw-participant-chat__activity-group-content">{item.entries.map((entry) => <SatelliteTimelineEntry entry={entry} key={entry.id} />)}</div>
-            </SatelliteDisclosure>
-          ) : <SatelliteTimelineEntry entry={item} key={item.id} />)}
-          {!entries.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>{run.state === 'queued' ? '等待开始' : '还没有公开进度'}</span></div> : null}
-        </div>
+      {run && !error && !consoleQuery.isPending ? (
+        <>
+          <div aria-label={`子 Agent ${target.title || run.task || target.id} 公开对话与运行事件`} aria-live="polite" className="paw-participant-chat__timeline" onScroll={(event) => { followLatestRef.current = timelineNearLatest(event.currentTarget); }} ref={timelineRef} role="log">
+            <SubagentHistoryBoundary loadedRunCount={runs.length} onOpenAgent={() => openPawOsRoute(desktop, routePath('agent'))} />
+            {entries.length ? <div className="paw-participant-chat__history-boundary" data-unknown-total role="status">当前控制台加载 {entries.length} 条；接口未提供总数或加载更早记录的游标。</div> : null}
+            {timelineItems.map((item) => item.kind === 'activity-group' ? (
+              <SatelliteDisclosure active={item.active} className="paw-participant-chat__activity-group" contentId={`subagent-activity-${item.id}`} dataActive={item.active} key={item.id} summary={(
+                <>
+                  <span><strong>运行记录</strong><small>{item.entries.length} 条真实事件 · {item.entries.at(-1)?.text}</small></span>
+                  <SatelliteRunState eventType={item.entries.at(-1)?.eventType ?? 'run'} status={item.entries.at(-1)?.status ?? 'completed'} />
+                </>
+              )}>
+                <div className="paw-participant-chat__activity-group-content">{item.entries.map((entry) => <SatelliteTimelineEntry entry={entry} key={entry.id} />)}</div>
+              </SatelliteDisclosure>
+            ) : <SatelliteTimelineEntry entry={item} key={item.id} />)}
+            {!entries.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>{run.state === 'queued' ? '等待开始' : '还没有公开进度'}</span></div> : null}
+          </div>
+          <SatelliteStatusline
+            currentWork={conciseParticipantEntry(run.task || run.todoTask, '等待新的工作项')}
+            sessionId={target.sessionId}
+            sessionLabel="在 Agent 中打开所属 Session"
+            state={subagentFocusState(run.state)}
+          />
+        </>
       ) : null}
     </section>
   );
+}
+
+function subagentFocusState(state: string): RoomFocusState {
+  if (state === 'queued') return 'waiting';
+  if (state === 'running') return 'running';
+  if (state === 'completed') return 'completed';
+  if (state === 'failed' || state === 'timed_out') return 'failed';
+  if (state === 'aborted') return 'stopped';
+  return 'idle';
 }
 
 type SubagentTimelineEntry = { id: string; actor: string; direction: 'in' | 'out'; kind: 'message' | 'activity' | 'inbox'; text: string; time: number; eventType: string; status: string };
