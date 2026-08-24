@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
+import { MotionProvider } from '@/design/motion';
 import { PawOsAppearanceProvider } from '@/design/paw-os-themes';
 import { PawOsAppSurfaceProvider, PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
@@ -293,11 +294,13 @@ function NativeHarness({
       <QueryClientProvider client={client}>
         <ControlTransportProvider transport={transport}>
           <PawOsAppearanceProvider>
-            <PawOsDesktopProvider openApp={openApp} openRoute={setRoute} openWindow={openWindow}>
-              <PawOsAppSurfaceProvider appId={appId} height={720} width={width}>
-                <PawNativeApp appId={appId} initialRoute={route} />
-              </PawOsAppSurfaceProvider>
-            </PawOsDesktopProvider>
+            <MotionProvider>
+              <PawOsDesktopProvider openApp={openApp} openRoute={setRoute} openWindow={openWindow}>
+                <PawOsAppSurfaceProvider appId={appId} height={720} width={width}>
+                  <PawNativeApp appId={appId} initialRoute={route} />
+                </PawOsAppSurfaceProvider>
+              </PawOsDesktopProvider>
+            </MotionProvider>
           </PawOsAppearanceProvider>
         </ControlTransportProvider>
       </QueryClientProvider>

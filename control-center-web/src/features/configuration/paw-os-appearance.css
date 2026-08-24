@@ -1,0 +1,311 @@
+/*
+ * System Settings › 外观
+ *
+ * Scoped to the appearance route. The mini desktop preview mirrors the real
+ * bright cool desktop tokens; Dock dots and App swatches read live identity
+ * colors from the [data-app] custom-property blocks instead of duplicates.
+ */
+
+main[data-route-id='appearance'] .paw-os-appearance-theme {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(230px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+/* Desktop preview ----------------------------------------------------------- */
+
+main[data-route-id='appearance'] .paw-os-appearance-preview {
+  position: relative;
+  min-height: 216px;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid rgb(15 23 42 / 8%);
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 90% at 18% 0%, rgb(255 255 255 / 65%) 0%, transparent 52%),
+    linear-gradient(158deg, #eef3f9 0%, #e5edf7 48%, #dde8f4 100%);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-preview__menu {
+  position: absolute;
+  inset: 10px 10px auto;
+  height: 14px;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 78%);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-preview__window {
+  position: absolute;
+  inset: 38px 24% 48px 11%;
+  display: grid;
+  grid-template-columns: 26% minmax(0, 1fr);
+  grid-template-rows: 20px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgb(15 23 42 / 9%);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 40px -18px rgb(15 23 42 / 30%);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-preview__titlebar {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid rgb(15 23 42 / 6%);
+  background-color: #fbfdff;
+  background-image:
+    radial-gradient(circle at 12px 10px, #f87171 0 2.6px, transparent 3.2px),
+    radial-gradient(circle at 24px 10px, #fbbf24 0 2.6px, transparent 3.2px),
+    radial-gradient(circle at 36px 10px, #34d399 0 2.6px, transparent 3.2px);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-preview__rail {
+  grid-row: 2;
+  border-right: 1px solid rgb(15 23 42 / 5%);
+  background: #f4f8fc;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-preview__content {
+  grid-row: 2;
+  background-color: #fff;
+  background-image:
+    linear-gradient(rgb(15 23 42 / 9%), rgb(15 23 42 / 9%)),
+    linear-gradient(rgb(15 23 42 / 5%), rgb(15 23 42 / 5%)),
+    linear-gradient(rgb(15 23 42 / 5%), rgb(15 23 42 / 5%)),
+    linear-gradient(rgb(37 99 235 / 14%), rgb(37 99 235 / 14%));
+  background-repeat: no-repeat;
+  background-size: 44% 8px, 72% 6px, 58% 6px, 30% 16px;
+  background-position: 14px 16px, 14px 34px, 14px 48px, 14px 66px;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-preview__dock {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 85%);
+  border-radius: 13px;
+  background: rgb(255 255 255 / 66%);
+  box-shadow: 0 8px 20px -10px rgb(15 23 42 / 25%);
+  transform: translateX(-50%);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-preview__dock i {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--paw-app-accent, #94a3b8);
+}
+
+/* Theme choice --------------------------------------------------------------- */
+
+main[data-route-id='appearance'] .paw-os-theme-settings {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+main[data-route-id='appearance'] .paw-os-theme-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 14px 15px;
+  border: 1px solid rgb(15 23 42 / 9%);
+  border-radius: 12px;
+  background: #fff;
+}
+
+main[data-route-id='appearance'] .paw-os-theme-option[data-selected] {
+  border-color: color-mix(in srgb, var(--paw-system-accent, #5b6f96) 46%, transparent);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--paw-system-accent, #5b6f96) 13%, transparent);
+}
+
+main[data-route-id='appearance'] :is(.paw-os-theme-option, .paw-os-appearance-motion__option) > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+main[data-route-id='appearance'] :is(.paw-os-theme-option, .paw-os-appearance-motion__option):focus-within {
+  outline: 2px solid color-mix(in srgb, var(--paw-system-accent, #5b6f96) 72%, white);
+  outline-offset: 2px;
+}
+
+main[data-route-id='appearance'] .paw-os-theme-option__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+main[data-route-id='appearance'] .paw-os-theme-option__copy strong {
+  font-size: 14px;
+}
+
+main[data-route-id='appearance'] .paw-os-theme-option__copy small {
+  color: var(--paw-system-muted, #5f6c80);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+main[data-route-id='appearance'] .paw-os-theme-option__check {
+  color: transparent;
+}
+
+main[data-route-id='appearance'] .paw-os-theme-option[data-selected] .paw-os-theme-option__check {
+  color: var(--paw-system-accent, #5b6f96);
+}
+
+/* Motion --------------------------------------------------------------------- */
+
+main[data-route-id='appearance'] .paw-os-appearance-motion {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__option {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 18px;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  min-height: 68px;
+  padding: 12px 13px;
+  border: 1px solid rgb(15 23 42 / 9%);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__option:hover {
+  border-color: color-mix(in srgb, var(--paw-system-accent, #5b6f96) 30%, rgb(15 23 42 / 9%));
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__option[data-selected] {
+  border-color: color-mix(in srgb, var(--paw-system-accent, #5b6f96) 46%, transparent);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--paw-system-accent, #5b6f96) 13%, transparent);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--paw-system-fill, rgb(15 23 42 / 4.5%));
+  color: var(--paw-system-muted, #5f6c80);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__option[data-selected] .paw-os-appearance-motion__icon {
+  background: var(--paw-system-accent-soft, rgb(91 111 150 / 12%));
+  color: var(--paw-system-accent, #5b6f96);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__copy strong {
+  font-size: 14px;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__copy small {
+  color: var(--paw-system-muted, #5f6c80);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__check {
+  margin-top: 2px;
+  color: transparent;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__option[data-selected] .paw-os-appearance-motion__check {
+  color: var(--paw-system-accent, #5b6f96);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-motion__state {
+  margin: 12px 0 0;
+  color: var(--paw-system-muted, #5f6c80);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* App identity colors -------------------------------------------------------- */
+
+main[data-route-id='appearance'] .paw-os-appearance-apps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-apps li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 11px;
+  border: 1px solid rgb(15 23 42 / 7%);
+  border-radius: 10px;
+  background: #fff;
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-apps i {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--paw-app-accent, #94a3b8);
+  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 8%);
+}
+
+main[data-route-id='appearance'] .paw-os-appearance-apps span {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Responsive composition ----------------------------------------------------- */
+
+@container paw-window (max-width: 860px) {
+  main[data-route-id='appearance'] .paw-os-appearance-theme {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-route-id='appearance'] .paw-os-appearance-preview {
+    min-height: 188px;
+  }
+}
+
+@container paw-window (max-width: 720px) {
+  main[data-route-id='appearance'] .paw-os-appearance-motion {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-route-id='appearance'] .paw-os-appearance-motion__option {
+    min-height: 56px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='appearance'] .paw-os-appearance-motion__option {
+    transition: none;
+  }
+}
