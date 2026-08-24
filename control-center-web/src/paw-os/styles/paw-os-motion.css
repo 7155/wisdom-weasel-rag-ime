@@ -42,11 +42,33 @@
 }
 
 .paw-system-mark:active,
-.paw-dock button:active,
-.paw-desktop-shortcuts button:active > span,
-.paw-launchpad section > div > button:active {
+.paw-desktop-shortcuts button:active > span {
   transform: scale(.96);
   transition-duration: var(--paw-motion-feedback);
+}
+
+/* Dock press feedback rides the magnification transform through its own
+ * multiplier, so pressing a magnified icon dips it without snapping the
+ * proximity scale (owned by paw-os.css). */
+.paw-dock button:active {
+  transition-duration: var(--paw-motion-feedback);
+}
+
+/* The Dock name label and Launchpad tiles reveal with short, interruptible
+   feedback; both surfaces are opaque, so the motion never re-blurs glass. */
+.paw-dock-tip {
+  transition:
+    opacity var(--paw-motion-feedback) ease,
+    translate var(--paw-motion-feedback) var(--paw-ease-out),
+    visibility var(--paw-motion-feedback);
+}
+
+.paw-launchpad section > div > button {
+  transition:
+    background-color var(--paw-motion-feedback) ease,
+    border-color var(--paw-motion-feedback) ease,
+    box-shadow var(--paw-motion-chrome) ease,
+    transform var(--paw-motion-feedback) var(--paw-ease-out);
 }
 
 /* Menus and Launchpad originate from their trigger plane. The backdrop and
@@ -101,6 +123,13 @@
 }
 
 .paw-desktop[data-collaboration-focus] .paw-desktop-viewport::before {
+  opacity: 1;
+}
+
+/* Window overview reuses the same quiet plane with a lighter mist, so scaled
+   windows separate from the wallpaper without a second dimming system. */
+.paw-desktop[data-overview]:not([data-collaboration-focus]) .paw-desktop-viewport::before {
+  background: rgb(23 26 33 / .16);
   opacity: 1;
 }
 
