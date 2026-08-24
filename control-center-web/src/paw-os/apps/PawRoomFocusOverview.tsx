@@ -73,20 +73,22 @@ export function PawRoomFocusOverview({
         </div>
       </header> : null}
 
-      <dl aria-label="协作摘要" className="paw-room-focus-overview__counts">
+      {/* 工作区顶部的信号条已经常驻同一组计数；面板内不再重复一份
+          （截图问题 3/5：叠层与状态噪音收敛）。 */}
+      {!hideMission ? <dl aria-label="协作摘要" className="paw-room-focus-overview__counts">
         <div data-tone="active"><dt>进行</dt><dd>{focus.counts.active}</dd></div>
         <div data-tone="review"><dt>复核</dt><dd>{focus.counts.review}</dd></div>
         <div data-tone="blocked"><dt>受阻</dt><dd>{focus.counts.blocked}</dd></div>
         <div data-tone="completed"><dt>完成</dt><dd>{focus.counts.completed}</dd></div>
-      </dl>
+      </dl> : null}
 
       <section aria-labelledby="paw-room-focus-work-title" className="paw-room-focus-overview__section paw-room-focus-overview__work">
         <header>
-          <span><GitCommitHorizontal aria-hidden="true" size={14} /><strong id="paw-room-focus-work-title">WorkItem 任务流</strong></span>
+          <span><GitCommitHorizontal aria-hidden="true" size={14} /><strong id="paw-room-focus-work-title">任务拆解</strong></span>
           <small>{focus.workItems.length} 项</small>
         </header>
         {focus.workItems.length ? (
-          <ol aria-label="WorkItem 任务流" className="paw-room-focus-overview__tree" role="tree">
+          <ol aria-label="任务拆解" className="paw-room-focus-overview__tree" role="tree">
             {focus.workItems.map((item) => {
               const partner = focus.partners.find((candidate) => candidate.participantId === item.ownerParticipantId);
               const level = item.parentId ? 2 : 1;
@@ -105,15 +107,15 @@ export function PawRoomFocusOverview({
               );
             })}
           </ol>
-        ) : <p className="paw-room-focus-overview__empty">还没有可投影的 WorkItem。</p>}
+        ) : <p className="paw-room-focus-overview__empty">还没有拆出任务。把目标发到对话里，分工会实时出现在这里。</p>}
       </section>
 
       <section aria-labelledby="paw-room-focus-partners-title" className="paw-room-focus-overview__section paw-room-focus-overview__partners">
         <header>
-          <span><Orbit aria-hidden="true" size={14} /><strong id="paw-room-focus-partners-title">行星伙伴</strong></span>
+          <span><Orbit aria-hidden="true" size={14} /><strong id="paw-room-focus-partners-title">协作伙伴</strong></span>
           <small>{focus.partners.length} 位</small>
         </header>
-        <ul aria-label="行星伙伴" className="paw-room-focus-overview__planet-list" role="list">
+        <ul aria-label="协作伙伴" className="paw-room-focus-overview__planet-list" role="list">
           {focus.partners.map((partner, index) => {
             const selected = selection.kind === 'partner' && selection.id === partner.participantId;
             return (
@@ -139,9 +141,9 @@ export function PawRoomFocusOverview({
         </ul>
       </section>
 
-      <section aria-label="交接流" className="paw-room-focus-overview__section paw-room-focus-overview__handoffs">
+      <section aria-label="任务交接" className="paw-room-focus-overview__section paw-room-focus-overview__handoffs">
         <header>
-          <span><ArrowRight aria-hidden="true" size={14} /><strong>交接流</strong></span>
+          <span><ArrowRight aria-hidden="true" size={14} /><strong>任务交接</strong></span>
           <small>{focus.handoffs.length} 次</small>
         </header>
         {focus.handoffs.length ? (
@@ -157,7 +159,7 @@ export function PawRoomFocusOverview({
               );
             })}
           </ol>
-        ) : <p className="paw-room-focus-overview__empty">当前没有待追踪的交接。</p>}
+        ) : <p className="paw-room-focus-overview__empty">伙伴之间还没有发生任务交接。</p>}
       </section>
 
       <FocusInspector
@@ -179,16 +181,16 @@ function FocusInspector({
   work?: RoomFocusWorkItem;
 }) {
   const state = work?.state ?? partner?.state ?? 'idle';
-  const action = workAction(work) || partner?.currentAction || '等待新的工作项';
+  const action = workAction(work) || partner?.currentAction || '等待新的任务';
   const evidence = work?.evidence ?? [];
   return (
-    <section aria-label="协作检查器" className="paw-room-focus-overview__inspector" data-state={state} key={`${work?.id ?? ''}:${partner?.participantId ?? ''}`} role="region">
+    <section aria-label="焦点详情" className="paw-room-focus-overview__inspector" data-state={state} key={`${work?.id ?? ''}:${partner?.participantId ?? ''}`} role="region">
       <header>
-        <span><FileCheck2 aria-hidden="true" size={14} /><strong>协作检查器</strong></span>
+        <span><FileCheck2 aria-hidden="true" size={14} /><strong>焦点详情</strong></span>
         <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(state)}</span>
       </header>
       <div className="paw-room-focus-overview__inspector-copy">
-        <small>{work ? '当前 WorkItem' : '当前伙伴'}</small>
+        <small>{work ? '当前任务' : '当前伙伴'}</small>
         <strong>{work?.objective || partner?.celestialName || 'Sol'}</strong>
         <p>{action}</p>
       </div>
@@ -206,8 +208,8 @@ function FocusInspector({
       ) : null}
       {work?.latestResult ? <p className="paw-room-focus-overview__result">{work.latestResult}</p> : null}
       {evidence.length ? (
-        <ul aria-label="证据与产物" className="paw-room-focus-overview__evidence">
-          {evidence.map((item) => <li key={`${item.kind}:${item.ref}`}><span>{item.kind === 'artifact' ? '产物' : '证据'}</span><code>{item.ref}</code></li>)}
+        <ul aria-label="依据与产物" className="paw-room-focus-overview__evidence">
+          {evidence.map((item) => <li key={`${item.kind}:${item.ref}`}><span>{item.kind === 'artifact' ? '产物' : '依据'}</span><code>{item.ref}</code></li>)}
         </ul>
       ) : null}
       {partner && onOpenParticipant ? (

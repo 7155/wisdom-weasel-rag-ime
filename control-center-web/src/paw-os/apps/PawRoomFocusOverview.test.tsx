@@ -107,20 +107,20 @@ describe('PawRoomFocusOverview', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
     expect(screen.getByRole('region', { name: 'Sol 协作态势' })).toHaveTextContent('任务图依赖验证');
-    expect(screen.getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现依赖数据投影');
-    expect(screen.getByRole('list', { name: '行星伙伴' })).toHaveTextContent('Earth');
-    expect(screen.getByLabelText('交接流')).toHaveTextContent('Earth → Mars');
-    expect(screen.getByRole('region', { name: '协作检查器' })).toHaveTextContent('等待独立复核');
+    expect(screen.getByRole('tree', { name: '任务拆解' })).toHaveTextContent('实现依赖数据投影');
+    expect(screen.getByRole('list', { name: '协作伙伴' })).toHaveTextContent('Earth');
+    expect(screen.getByLabelText('任务交接')).toHaveTextContent('Earth → Mars');
+    expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
   });
 
   it('selects a planet with pointer or keyboard and opens only its real participant target', () => {
     const onOpenParticipant = vi.fn();
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={onOpenParticipant} />);
-    const planets = screen.getByRole('list', { name: '行星伙伴' });
+    const planets = screen.getByRole('list', { name: '协作伙伴' });
     const mars = within(planets).getByRole('button', { name: /Mars/ });
 
     fireEvent.click(mars);
-    expect(screen.getByRole('region', { name: '协作检查器' })).toHaveTextContent('正在核对依赖投影');
+    expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('正在核对依赖投影');
     fireEvent.keyDown(within(planets).getByRole('button', { name: /Earth/ }), { key: 'Enter' });
     fireEvent.click(screen.getByRole('button', { name: '打开 Earth 伙伴窗口' }));
 

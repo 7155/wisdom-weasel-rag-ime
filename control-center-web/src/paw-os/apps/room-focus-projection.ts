@@ -141,7 +141,7 @@ export function buildRoomFocusProjection(
         currentAction: latestActivity?.summary.trim()
           || owned.find((item) => ['running', 'review', 'blocked', 'waiting'].includes(item.state))?.objective
           || owned.at(0)?.objective
-          || '等待新的工作项',
+          || '等待新的任务',
         latestReceipt: latestMessage?.text.trim()
           || owned.find((item) => item.latestResult)?.latestResult
           || (latestActivity?.status === 'completed' ? latestActivity.summary.trim() : undefined),

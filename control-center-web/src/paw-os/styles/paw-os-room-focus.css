@@ -95,6 +95,19 @@
 .paw-desktop-root .paw-room-focus-overview [data-state='completed'] .paw-room-focus-overview__state > i,
 .paw-desktop-root .paw-room-focus-overview__mission-state[data-state='completed'] > i { background: var(--focus-green); }
 
+/* 列表行内已有节点/行星示意承担形状信号，状态文字直接着色即可；
+   隐藏行尾的第二颗色点，收敛噪音（截图问题 5）。目标 chip 与焦点详情
+   保留唯一一颗状态点。 */
+.paw-desktop-root .paw-room-focus-overview__tree .paw-room-focus-overview__state > i,
+.paw-desktop-root .paw-room-focus-overview__planet-list .paw-room-focus-overview__state > i,
+.paw-desktop-root .paw-room-focus-overview__handoffs .paw-room-focus-overview__state > i { display: none; }
+.paw-desktop-root .paw-room-focus-overview [data-state='running'] .paw-room-focus-overview__state { color: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview [data-state='review'] .paw-room-focus-overview__state,
+.paw-desktop-root .paw-room-focus-overview [data-state='waiting'] .paw-room-focus-overview__state { color: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview [data-state='blocked'] .paw-room-focus-overview__state,
+.paw-desktop-root .paw-room-focus-overview [data-state='failed'] .paw-room-focus-overview__state { color: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview [data-state='completed'] .paw-room-focus-overview__state { color: var(--focus-green); }
+
 .paw-desktop-root .paw-room-focus-overview__counts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -145,6 +158,13 @@
 .paw-desktop-root .paw-room-focus-overview__tree li[aria-selected='true'] button { background: rgb(39 131 222 / .075); box-shadow: inset 0 0 0 1px rgb(39 131 222 / .09); }
 .paw-desktop-root .paw-room-focus-overview__tree-node { display: grid; width: 16px; height: 16px; place-items: center; }
 .paw-desktop-root .paw-room-focus-overview__tree-node::before { position: absolute; width: 7px; height: 7px; border: 1px solid rgb(39 131 222 / .36); border-radius: 50%; background: #fff; content: ''; }
+/* 树节点本身携带状态色，取代被隐藏的行尾状态点。 */
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-state='running'] .paw-room-focus-overview__tree-node::before { border-color: var(--focus-blue); background: color-mix(in srgb, var(--focus-blue) 22%, #fff); }
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-state='review'] .paw-room-focus-overview__tree-node::before,
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-state='waiting'] .paw-room-focus-overview__tree-node::before { border-color: var(--focus-amber); background: color-mix(in srgb, var(--focus-amber) 22%, #fff); }
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-state='blocked'] .paw-room-focus-overview__tree-node::before,
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-state='failed'] .paw-room-focus-overview__tree-node::before { border-color: var(--focus-red); background: color-mix(in srgb, var(--focus-red) 22%, #fff); }
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-state='completed'] .paw-room-focus-overview__tree-node::before { border-color: var(--focus-green); background: color-mix(in srgb, var(--focus-green) 24%, #fff); }
 .paw-desktop-root .paw-room-focus-overview__tree-copy { min-width: 0; display: grid; gap: 1px; }
 .paw-desktop-root .paw-room-focus-overview__tree-copy strong { overflow: hidden; font-size: 12.5px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-overview__tree-copy small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -166,13 +186,11 @@
 .paw-desktop-root .paw-room-focus-overview__planet-list > li > button > span:nth-child(2) small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .paw-desktop-root .paw-room-focus-overview__handoffs ol { display: grid; gap: 1px; margin: 0; padding: 5px; list-style: none; }
-.paw-desktop-root .paw-room-focus-overview__handoffs li { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 8px; align-items: center; gap: 8px; padding: 7px; border-radius: 8px; }
+/* 第二列曾是 8px 的色点位；DOM 里实际是状态文字，8px 会把文字挤出行外。 */
+.paw-desktop-root .paw-room-focus-overview__handoffs li { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px; border-radius: 8px; }
 .paw-desktop-root .paw-room-focus-overview__handoffs li > span { min-width: 0; display: grid; gap: 1px; }
 .paw-desktop-root .paw-room-focus-overview__handoffs li strong { font-size: 12px; font-weight: 620; }
 .paw-desktop-root .paw-room-focus-overview__handoffs li small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__handoffs li > i { width: 7px; height: 7px; border-radius: 50%; background: var(--focus-blue); }
-.paw-desktop-root .paw-room-focus-overview__handoffs li[data-state='completed'] > i { background: var(--focus-green); }
-.paw-desktop-root .paw-room-focus-overview__handoffs li[data-state='failed'] > i { background: var(--focus-red); }
 
 .paw-desktop-root .paw-room-focus-overview__inspector { min-width: 0; display: grid; align-content: start; overflow: hidden; border: 1px solid rgb(39 131 222 / .14); border-radius: 13px; background: #fff; box-shadow: 0 10px 28px rgb(42 45 52 / .055); animation: paw-room-focus-inspector-enter 180ms cubic-bezier(.23, 1, .32, 1) both; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy { display: grid; gap: 3px; padding: 10px 11px 8px; }

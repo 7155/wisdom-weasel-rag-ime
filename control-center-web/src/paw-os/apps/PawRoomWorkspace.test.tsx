@@ -23,16 +23,22 @@ describe('PAWOS Room collaboration tools', () => {
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
     expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(3);
-    expect(within(primaryNavigation).getByRole('button', { name: '公开对话' })).toHaveAttribute('aria-pressed', 'false');
-    expect(within(primaryNavigation).getByRole('button', { name: '协作态势' })).toHaveAttribute('aria-pressed', 'true');
+    /* 对话是 Room 的主面：协作态势默认收起，进 Room 先看到完整公开对话。 */
+    expect(within(primaryNavigation).getByRole('button', { name: '公开对话' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(primaryNavigation).getByRole('button', { name: '协作态势' })).toHaveAttribute('aria-pressed', 'false');
     expect(within(primaryNavigation).getByRole('button', { name: '星空' })).toHaveAttribute('aria-pressed', 'false');
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
+    expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
+
+    await user.click(within(primaryNavigation).getByRole('button', { name: '协作态势' }));
+    expect(within(primaryNavigation).getByRole('button', { name: '协作态势' })).toHaveAttribute('aria-pressed', 'true');
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'focus');
 
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     expect(within(tools).getAllByRole('tab')).toHaveLength(2);
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
-    expect(within(tools).getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现 Room 依赖数据投影');
+    expect(within(tools).getByRole('tree', { name: '任务拆解' })).toHaveTextContent('实现 Room 依赖数据投影');
     const userMessage = screen.getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
     expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();
@@ -87,8 +93,9 @@ describe('PAWOS Room collaboration tools', () => {
     renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
+    await user.click(screen.getByRole('button', { name: '协作态势' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
-    const partners = within(tools).getByRole('list', { name: '行星伙伴' });
+    const partners = within(tools).getByRole('list', { name: '协作伙伴' });
     await user.click(within(partners).getByRole('button', { name: /Mars/ }));
     await user.click(within(tools).getByRole('button', { name: '打开 Mars 伙伴窗口' }));
 

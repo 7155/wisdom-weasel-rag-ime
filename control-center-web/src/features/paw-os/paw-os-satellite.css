@@ -226,7 +226,15 @@
 .paw-participant-chat__timeline article[data-kind='activity'][data-status='timed_out'] .paw-participant-chat__activity-message { color: var(--paw-danger); }
 .paw-participant-chat__timeline article[data-kind='activity'] > .paw-participant-chat__raw-detail { flex: 1 0 100%; margin: 0 0 1px 23px; }
 .paw-participant-chat__timeline article[data-kind='inbox'] { background: color-mix(in srgb, var(--paw-accent) 6%, var(--paw-panel)); }
-.paw-participant-chat__empty { margin: auto; display: grid; justify-items: center; gap: 6px; color: var(--paw-muted); font-size: 14px; line-height: 20px; }
+/* 伙伴窗空态：一颗安静的行星示意加一句诚实的说明——这里将来会出现什么，
+   而不是一行冷冰冰的「没有数据」。 */
+.paw-participant-chat__empty { max-width: 36ch; margin: auto; display: grid; justify-items: center; gap: 6px; padding: 22px 14px; color: var(--paw-muted); font-size: 14px; line-height: 20px; text-align: center; }
+.paw-participant-chat__empty > strong { color: var(--paw-ink); font-size: 14px; font-weight: 640; }
+.paw-participant-chat__empty > p { margin: 0; font-size: 12.5px; line-height: 19px; }
+.paw-participant-chat__empty-planet { position: relative; width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 4px; }
+.paw-participant-chat__empty-planet::before { position: absolute; width: 42px; height: 16px; border: 1px solid color-mix(in srgb, var(--paw-accent) 28%, transparent); border-radius: 50%; transform: rotate(-24deg); content: ''; }
+.paw-participant-chat__empty-planet > i { width: 13px; height: 13px; border-radius: 50%; background: color-mix(in srgb, var(--paw-accent) 52%, var(--paw-panel-soft)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--paw-accent) 12%, transparent); }
+.paw-participant-chat__empty[data-state='running'] .paw-participant-chat__empty-planet > i { background: #2783de; }
 .paw-os-satellite__room-panel-body p,
 .paw-os-satellite__room-panel-body dd,
 .paw-os-satellite__task-body p,
