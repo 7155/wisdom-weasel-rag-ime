@@ -587,7 +587,7 @@ function AssemblyEvidence({ evidence, note }: { evidence: AssemblyEvidenceValue;
 }
 
 function traceNodeCaptureRecord(node: AgentContextTraceV1['nodes'][number]): string {
-  return formatEvidence(safeTraceEvidence({
+  return formatEvidenceValue(safeTraceEvidence({
     stage: node.stage,
     label: node.label || undefined,
     sourceKind: node.sourceKind,
