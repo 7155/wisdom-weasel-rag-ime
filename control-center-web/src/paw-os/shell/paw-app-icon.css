@@ -14,21 +14,25 @@
 .paw-app-icon__secondary { fill: var(--paw-app-icon-accent); }
 .paw-app-icon__tertiary { fill: color-mix(in srgb, var(--paw-app-icon-color) 52%, white); }
 .paw-app-icon__paper { fill: rgb(255 255 255 / .94); }
+.paw-app-icon__stroke { fill: none; stroke: var(--paw-app-icon-color); }
+.paw-app-icon__stroke-accent { fill: none; stroke: var(--paw-app-icon-accent); }
+.paw-app-icon__ring { fill: none; stroke: color-mix(in srgb, var(--paw-app-icon-color) 42%, white); }
 
-.paw-app-icon[data-paw-app-icon='room'] .paw-app-icon__primary { opacity: .96; }
-.paw-app-icon[data-paw-app-icon='room'] .paw-app-icon__secondary { opacity: .82; }
-.paw-app-icon[data-paw-app-icon='room'] .paw-app-icon__tertiary { opacity: .7; }
-.paw-app-icon[data-paw-app-icon='terminal'] .paw-app-icon__primary { fill: #1d1d1f; }
 .paw-app-icon[data-paw-app-icon='files'] .paw-app-icon__paper { fill: #eef4ff; }
 .paw-app-icon[data-paw-app-icon='memory'] .paw-app-icon__paper { fill: #eef6fb; }
-.paw-app-icon[data-paw-app-icon='knowledge'] .paw-app-icon__paper { opacity: .8; }
-.paw-app-icon[data-paw-app-icon='system-monitor'] .paw-app-icon__primary { fill: #3e4c59; }
+.paw-app-icon[data-paw-app-icon='knowledge'] .paw-app-icon__paper { opacity: .85; }
 .paw-app-icon[data-paw-app-icon='system-settings'] .paw-app-icon__paper { fill: #f7f7f8; }
 
 /* Ink identities need an optical lift on the dark Dock; their light-surface
    colour and geometry remain unchanged. */
+.paw-dock .paw-app-icon[data-paw-app-icon='terminal'] .paw-app-icon__stroke { stroke: #7d818b; }
 .paw-dock .paw-app-icon[data-paw-app-icon='terminal'] .paw-app-icon__primary { fill: #7d818b; }
 .paw-dock .paw-app-icon[data-paw-app-icon='system-monitor'] .paw-app-icon__primary { fill: #687c8d; }
+
+/* The PAW system mark is monochrome and follows the surrounding text colour. */
+.paw-brand-mark { display: block; flex: 0 0 auto; }
+.paw-desktop-root .paw-system-mark { display: inline-flex; gap: 6px; align-items: center; }
+.paw-launchpad-title .paw-brand-mark { align-self: center; }
 
 /* Small placements retain the same geometry; contrast is strengthened without
    replacing the identity with a generic tile. */
