@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
+import { TooltipProvider } from '@/components/primitives';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
 import {
@@ -52,13 +53,16 @@ describe('Agent context runtime panel', () => {
         }],
       },
       'agent.session.contextTrace.get': trace,
+      'agent.session.debugContext.get': debugContextFixture(),
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const user = userEvent.setup();
     render(
       <ControlTransportProvider transport={transport}>
         <QueryClientProvider client={client}>
-          <ContextRuntimeSections open sessionId="session-1" />
+          <TooltipProvider>
+            <ContextRuntimeSections open sessionId="session-1" />
+          </TooltipProvider>
         </QueryClientProvider>
       </ControlTransportProvider>,
     );
@@ -68,6 +72,7 @@ describe('Agent context runtime panel', () => {
     expect(await screen.findByText('研究任务已完成')).toBeVisible();
     const trigger = await screen.findByRole('button', { name: /用户输入/ });
     expect(transport.requests.some((request) => request.pathId === 'agent.session.contextTrace.get')).toBe(false);
+    expect(transport.requests.some((request) => request.pathId === 'agent.session.debugContext.get')).toBe(false);
 
     await user.click(trigger);
     const dialog = await screen.findByRole('dialog', { name: '上下文管线' });
@@ -82,6 +87,14 @@ describe('Agent context runtime panel', () => {
     await user.click(within(dialog).getByRole('button', { name: /动态工具目录/ }));
     expect(within(dialog).getByText('Token 估算')).toBeVisible();
     expect(transport.requests.some((request) => request.pathId === 'agent.session.contextTrace.get')).toBe(true);
+
+    // PF-CM-010：选中的装配节点不是死行——它直接展示该阶段的捕获原文。
+    const toolEvidence = await within(dialog).findByRole('region', { name: '本次模型调用收到的工具 Schema，可滚动原文' });
+    expect(toolEvidence).toHaveTextContent('PIPELINE_TOOL_SCHEMA_TEXT');
+    expect(toolEvidence).toHaveAttribute('tabindex', '0');
+    await user.click(within(dialog).getByRole('button', { name: /当前输入/ }));
+    const promptEvidence = await within(dialog).findByRole('region', { name: '本轮用户输入原文，可滚动原文' });
+    expect(promptEvidence).toHaveTextContent('PIPELINE_PROMPT_TEXT');
 
     await user.click(within(dialog).getByRole('button', { name: '关闭' }));
     await user.click(screen.getByRole('button', { name: '确认 研究任务已完成' }));
@@ -195,6 +208,42 @@ function traceFixture(): AgentContextTraceV1 {
     ],
     createdAtMs: 1_720_000_000_000,
     updatedAtMs: 1_720_000_000_100,
+  };
+}
+
+function debugContextFixture(): Record<string, unknown> {
+  return {
+    schemaVersion: 'rag-ime.pi-debug-context-response.v1',
+    available: true,
+    transient: false,
+    sessionId: 'session-1',
+    turnId: 'turn-1',
+    context: {
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      capturedAtMs: 1_720_000_000_000,
+      updatedAtMs: 1_720_000_000_100,
+      prompt: 'PIPELINE_PROMPT_TEXT',
+      systemPrompt: 'PIPELINE_SYSTEM_PROMPT_TEXT',
+      model: { provider: 'test', modelId: 'test-model' },
+      toolSchemas: [{ name: 'test-tool', description: 'PIPELINE_TOOL_SCHEMA_TEXT' }],
+      activeTools: ['test-tool'],
+      modelCalls: [{
+        index: 1,
+        providerContext: {
+          systemPrompt: 'PIPELINE_SYSTEM_PROMPT_TEXT',
+          tools: [{ name: 'test-tool', description: 'PIPELINE_TOOL_SCHEMA_TEXT' }],
+          messages: [{ role: 'user', content: 'PIPELINE_PROMPT_TEXT' }],
+        },
+        contextMessages: [{ role: 'user', content: 'PIPELINE_PROMPT_TEXT' }],
+      }],
+    },
+    storage: {
+      persistent: true,
+      directory: '/tmp/debug-context',
+      usedBytes: 1024,
+      maxBytes: 64 * 1024 * 1024,
+    },
   };
 }
 

@@ -46,6 +46,14 @@ import {
   type DebugToolExecution,
   type DebugTurnSummary,
 } from '@/features/context-debug/model';
+import {
+  assemblyStageEvidence,
+  formatEvidenceValue,
+  modelContextMessages,
+  modelSystemPrompt,
+  modelToolSchemas,
+  type AssemblyEvidenceValue,
+} from '@/features/agent/status/context-evidence';
 import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import {
@@ -348,7 +356,7 @@ export function PawContextTrace({
               <div className="an-stage-group">上下文节点 · 按装配顺序</div>
               {trace?.nodes?.length
                 ? trace.nodes.map((node) => {
-                    const evidence = traceNodeEvidence(node.stage, context);
+                    const evidence = assemblyStageEvidence(node.stage, context);
                     return (
                     <Disclosure
                       className="an-node"
@@ -490,14 +498,14 @@ function FallbackNodes({ context }: { context: DebugContextRecord }) {
       sub: `tools.schemas · ${resolvedToolSchemas.length} 个可用工具`,
       tokens: resolvedToolSchemas.length * 110,
       disp: 'included',
-      evidence: { label: '本次模型调用收到的工具 Schema', value: formatEvidence(resolvedToolSchemas), kind: 'json' },
+      evidence: { label: '本次模型调用收到的工具 Schema', value: formatEvidenceValue(resolvedToolSchemas), kind: 'json' },
     },
     {
       label: '上下文消息',
       sub: `context.messages · 最近一次调用 ${resolvedContextMessages.length} 条`,
-      tokens: estimateTokens(formatEvidence(resolvedContextMessages)),
+      tokens: estimateTokens(formatEvidenceValue(resolvedContextMessages)),
       disp: 'included',
-      evidence: { label: '按 Provider 顺序装配的上下文消息', value: formatEvidence(resolvedContextMessages), kind: 'json' },
+      evidence: { label: '按 Provider 顺序装配的上下文消息', value: formatEvidenceValue(resolvedContextMessages), kind: 'json' },
     },
     {
       label: '当前输入',
@@ -538,12 +546,6 @@ function FallbackNodes({ context }: { context: DebugContextRecord }) {
     </>
   );
 }
-
-type AssemblyEvidenceValue = {
-  label: string;
-  value: string;
-  kind: 'json' | 'text';
-};
 
 function AssemblyEvidence({ evidence }: { evidence: AssemblyEvidenceValue }) {
   return (
@@ -589,52 +591,6 @@ function EvidenceCopyButton({ label, value }: { label: string; value: string }) 
       {copied ? '已复制' : '复制'}
     </button>
   );
-}
-
-function traceNodeEvidence(stage: string, context: DebugContextRecord): AssemblyEvidenceValue | undefined {
-  const normalized = stage.trim().toLowerCase();
-  if (normalized === 'input' || normalized.includes('prompt')) {
-    return { label: '本轮用户输入原文', value: context.prompt || '本轮未捕获用户输入。', kind: 'text' };
-  }
-  if (normalized === 'tools' || normalized.includes('tool')) {
-    return { label: '本次模型调用收到的工具 Schema', value: formatEvidence(modelToolSchemas(context)), kind: 'json' };
-  }
-  if (normalized.includes('message') || normalized.includes('context') || normalized === 'runtime_request') {
-    return { label: '按 Provider 顺序装配的上下文消息', value: formatEvidence(modelContextMessages(context)), kind: 'json' };
-  }
-  if (normalized === 'session' || normalized === 'system' || normalized === 'project') {
-    return { label: '本次模型调用收到的系统指令', value: modelSystemPrompt(context) || '本轮未捕获系统指令。', kind: 'text' };
-  }
-  return undefined;
-}
-
-function latestModelCall(context: DebugContextRecord): DebugModelCall | undefined {
-  return context.modelCalls.at(-1);
-}
-
-function modelSystemPrompt(context: DebugContextRecord): string {
-  const value = latestModelCall(context)?.providerContext.systemPrompt;
-  return typeof value === 'string' ? value : context.systemPrompt;
-}
-
-function modelToolSchemas(context: DebugContextRecord): unknown[] {
-  const providerContext = latestModelCall(context)?.providerContext;
-  return providerContext && Array.isArray(providerContext.tools) ? providerContext.tools : context.toolSchemas;
-}
-
-function modelContextMessages(context: DebugContextRecord): unknown[] {
-  const call = latestModelCall(context);
-  if (!call) return [];
-  return Array.isArray(call.providerContext.messages) ? call.providerContext.messages : call.contextMessages;
-}
-
-function formatEvidence(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value ?? null, null, 2) ?? String(value ?? '');
-  } catch {
-    return String(value ?? '');
-  }
 }
 
 /* ---------- 数据派生 ---------- */
@@ -918,7 +874,7 @@ function activityEvidenceSections(payload: Record<string, unknown>): TraceEviden
     const key = keys.find((candidate) => Object.hasOwn(payload, candidate));
     if (!key) return;
     consumed.add(key);
-    sections.push({ label, value: formatEvidence(safeTraceEvidence(payload[key])) });
+    sections.push({ label, value: formatEvidenceValue(safeTraceEvidence(payload[key])) });
   };
   addFirst('调用参数', ['args', 'arguments', 'input', 'request']);
   addFirst('过程记录', ['progressHistory', 'updates', 'progress']);
@@ -928,7 +884,7 @@ function activityEvidenceSections(payload: Record<string, unknown>): TraceEviden
     Object.entries(payload).filter(([key]) => !consumed.has(key)),
   );
   if (Object.keys(remaining).length || sections.length === 0) {
-    sections.push({ label: '事件载荷', value: formatEvidence(safeTraceEvidence(remaining)) });
+    sections.push({ label: '事件载荷', value: formatEvidenceValue(safeTraceEvidence(remaining)) });
   }
   return sections;
 }
