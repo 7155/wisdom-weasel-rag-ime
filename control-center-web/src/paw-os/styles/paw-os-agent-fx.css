@@ -154,6 +154,18 @@
   background: color-mix(in srgb, var(--paw-chat-ok) 10%, transparent);
 }
 
+/* The settled-state dot must tell the truth: a failed turn folds behind a
+   danger tone and an aborted turn behind a neutral one, never the ok green. */
+.paw-desktop-root .paw-chatfx .agent-turn-work__toggle[data-status='failed'] .agent-turn-work__state {
+  color: var(--paw-chat-danger);
+  background: color-mix(in srgb, var(--paw-chat-danger) 10%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .agent-turn-work__toggle[data-status='aborted'] .agent-turn-work__state {
+  color: var(--paw-chat-text-tertiary);
+  background: color-mix(in srgb, var(--paw-chat-text-tertiary) 12%, transparent);
+}
+
 .paw-desktop-root .paw-chatfx .agent-turn-work__copy {
   min-width: 0;
   display: inline-flex;

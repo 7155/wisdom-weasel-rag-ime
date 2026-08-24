@@ -1319,8 +1319,15 @@ function statusLabel(status: AgentActivityProjection['status']): string {
 function activityDuration(activity: AgentActivityProjection, nowMs: number): string {
   const endMs = activity.status === 'running' ? nowMs : activity.updatedAtMs;
   const elapsedMs = Math.max(0, endMs - activity.createdAtMs);
-  // A restored activity with an invalid epoch should not display a fantastical timer.
-  if (!Number.isFinite(elapsedMs) || (activity.status === 'running' && elapsedMs > 7 * 24 * 60 * 60 * 1_000)) return '';
+  // A restored activity with an invalid epoch should not display a fantastical
+  // timer, and a receipt without measurable elapsed time is not "0 ms" work.
+  if (
+    !Number.isFinite(elapsedMs)
+    || elapsedMs === 0
+    || (activity.status === 'running' && elapsedMs > 7 * 24 * 60 * 60 * 1_000)
+  ) {
+    return '';
+  }
   return elapsedLabel(elapsedMs);
 }
 
@@ -1451,7 +1458,10 @@ function FxActivityDisclosure({
   const subagent = isSubagentActivity(activity);
   const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : subagent ? 'vio' : 'ok';
   const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : subagent ? '后台完成' : '完成';
-  const meta = fxActivityMeta(activity);
+  const nowMs = useActivityClock(running);
+  // A Tool receipt with an explicit duration stays authoritative; otherwise a
+  // live row shows its real elapsed clock and a settled row its measured span.
+  const meta = fxActivityMeta(activity) || activityDuration(activity, nowMs);
   const progress = activityProgressView(activity);
   return (
     <div

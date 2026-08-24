@@ -496,6 +496,33 @@ describe('Agent chat rendering', () => {
     expect(document.querySelector('.paw-activity')).not.toBeNull();
   });
 
+  it('shows the real elapsed clock on a live FX activity row', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(60_000);
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'responding',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'tool_started', { toolCallId: 'call-live-elapsed', toolName: 'overview' }),
+    ]);
+
+    render(<AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+
+    const row = document.querySelector<HTMLButtonElement>('.paw-activity')!;
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(row.querySelector('.fx-meta')).toHaveTextContent(/60 秒/);
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(row.querySelector('.fx-meta')).toHaveTextContent(/1 分/);
+  });
+
   it('aggregates Provider usage once after the whole Tool Loop settles', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';
