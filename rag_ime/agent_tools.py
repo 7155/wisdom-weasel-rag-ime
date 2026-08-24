@@ -915,6 +915,15 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "accept 时写明已核对的证据；return 或 retry 时给负责 Partner 的具体原因。"
                 ),
             },
+            "supersededByWorkId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": (
+                    "当 Partner 已提出 failed/unverified/not_satisfied 时，"
+                    "accept 必须指向之后提交且提出 passed/satisfied 的复核 WorkItem。"
+                ),
+            },
             "phase": {
                 "type": "string",
                 "minLength": 1,

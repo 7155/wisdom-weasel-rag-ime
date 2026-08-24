@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from .agent_room_prompt_context import agent_message_text
 from .agent_room_turn_registry import RoomSessionBusyError
+from .agent_room_work import infer_proposed_verdicts_from_summary
 from .contracts.json_schema import validate_contract
 
 
@@ -237,6 +238,9 @@ class RoomPartnerApplicationService:
             "evidenceRefs": args.get("evidenceRefs"),
             "reason": args.get("reason"),
         }
+        superseded_by = args.get("supersededByWorkId")
+        if superseded_by is not None and str(superseded_by).strip():
+            payload["supersededByWorkId"] = superseded_by
         callback = self.accept_room_work if accept else self.return_room_work
         wake = record.get("wake")
         prior_wake = dict(wake) if isinstance(wake, Mapping) else {}
@@ -2408,13 +2412,22 @@ class RoomPartnerApplicationService:
                         f"{document.get('documentId')}@"
                         f"{document.get('documentRevision')}"
                     )
+                summary = (
+                    result[:4_000]
+                    or "Partner Session completed the delegated WorkItem."
+                )
+                (
+                    proposed_operability,
+                    proposed_requirement,
+                ) = infer_proposed_verdicts_from_summary(summary)
                 current = self.room_work.submit(
                     str(target["sessionId"]),
                     {
                         "workId": current["id"],
-                        "resultSummary": result[:4_000]
-                        or "Partner Session completed the delegated WorkItem.",
+                        "resultSummary": summary,
                         "evidenceRefs": evidence_refs,
+                        "proposedOperabilityVerdict": proposed_operability,
+                        "proposedRequirementVerdict": proposed_requirement,
                     },
                 )
                 self._publish_work_activity(

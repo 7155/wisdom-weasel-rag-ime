@@ -454,6 +454,234 @@ class AgentRoomWorkTests(unittest.TestCase):
                 },
             )
 
+    def test_accept_cannot_upgrade_proposed_failed_or_unverified_submission(
+        self,
+    ) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-proposed-gate", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:proposed-gate",
+        )
+        submitted = self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "浏览器执行失败，两轴均未验证。",
+                "evidenceRefs": ["review:browser-run-failed"],
+                "proposedOperabilityVerdict": "failed",
+                "proposedRequirementVerdict": "unverified",
+            },
+            updated_at_ms=30,
+        )
+        self.assertEqual(submitted["proposedOperabilityVerdict"], "failed")
+        self.assertEqual(submitted["proposedRequirementVerdict"], "unverified")
+
+        with self.assertRaisesRegex(ValueError, "supersed"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    "expectedRevision": submitted["revision"],
+                    "operabilityVerdict": "passed",
+                    "requirementVerdict": "satisfied",
+                    "evidenceRefs": ["review:facilitator-claim"],
+                    "reason": "试图无视 Partner 的失败结论直接验收。",
+                },
+            )
+
+        unchanged = self.work.get(
+            str(submitted["id"]),
+            room_id=str(self.room["id"]),
+        )
+        self.assertEqual(unchanged["state"], "review")
+        self.assertEqual(unchanged["proposedOperabilityVerdict"], "failed")
+        self.assertEqual(unchanged["proposedRequirementVerdict"], "unverified")
+
+    def test_accept_over_failed_proposal_requires_valid_superseding_review(
+        self,
+    ) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-supersede", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:supersede-worker",
+        )
+        submitted = self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "两轴 UNVERIFIED，遗留 HIGH 风险。",
+                "evidenceRefs": ["review:integration-unverified"],
+                "proposedOperabilityVerdict": "unverified",
+                "proposedRequirementVerdict": "unverified",
+            },
+            updated_at_ms=30,
+        )
+
+        accept_payload = {
+            "workId": submitted["id"],
+            "expectedRevision": submitted["revision"],
+            "operabilityVerdict": "passed",
+            "requirementVerdict": "satisfied",
+            "evidenceRefs": ["review:superseding-review"],
+            "reason": "复核 WorkItem 已通过双轴验证。",
+        }
+        with self.assertRaisesRegex(ValueError, "superseding review WorkItem"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": "room-work:missing"},
+            )
+
+        stale_review = self.work.create(
+            room_id=str(self.room["id"]),
+            objective="早于失败提交的复核不算数",
+            expected_output="记录",
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            created_by_participant_id=str(self.coordinator_participant["id"]),
+            client_message_id="stale-review",
+            acceptance_criteria=["复核"],
+            created_at_ms=10,
+        )
+        with self.assertRaisesRegex(ValueError, "superseding review WorkItem"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": stale_review["id"]},
+            )
+
+        fresh_review = self.work.create(
+            room_id=str(self.room["id"]),
+            objective="对失败提交的新证据复核",
+            expected_output="双轴复核结论",
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            created_by_participant_id=str(self.coordinator_participant["id"]),
+            client_message_id="fresh-review",
+            acceptance_criteria=["复核"],
+            created_at_ms=40,
+        )
+        with self.assertRaisesRegex(ValueError, "superseding review WorkItem"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": fresh_review["id"]},
+            )
+
+        reviewed = self.work.submit(
+            str(self.researcher["id"]),
+            {
+                "workId": fresh_review["id"],
+                "resultSummary": "复跑真实路径，两轴通过。",
+                "evidenceRefs": ["review:rerun-passed"],
+                "proposedOperabilityVerdict": "passed",
+                "proposedRequirementVerdict": "satisfied",
+            },
+            updated_at_ms=50,
+        )
+        self.assertEqual(reviewed["state"], "review")
+
+        completed = self.work.accept(
+            str(self.coordinator["id"]),
+            {**accept_payload, "supersededByWorkId": fresh_review["id"]},
+            updated_at_ms=60,
+        )
+        self.assertEqual(completed["state"], "done")
+        self.assertEqual(completed["proposedOperabilityVerdict"], "unverified")
+        self.assertEqual(completed["proposedRequirementVerdict"], "unverified")
+        events = self.work.list_events(str(submitted["id"]))
+        self.assertEqual(events[-1]["eventType"], "completed")
+        self.assertEqual(
+            events[-1]["payload"]["supersededByWorkId"],
+            fresh_review["id"],
+        )
+
+    def test_retry_resets_proposed_verdicts_with_result_fields(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-proposed-retry", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:proposed-retry",
+        )
+        self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "失败提交",
+                "evidenceRefs": ["review:failed"],
+                "proposedOperabilityVerdict": "failed",
+                "proposedRequirementVerdict": "not_satisfied",
+            },
+        )
+        returned = self.work.return_for_revision(
+            str(self.coordinator["id"]),
+            {
+                "workId": active["id"],
+                "expectedRevision": 0,
+                "operabilityVerdict": "failed",
+                "requirementVerdict": "not_satisfied",
+                "evidenceRefs": ["review:returned"],
+                "reason": "按提交结论退回修订。",
+            },
+        )
+        self.assertEqual(returned["state"], "active")
+        failed = self.work.escalate(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "reason": "修订失败",
+                "nextStep": "改派空闲伙伴",
+            },
+        )
+        retried = self.work.retry(
+            str(failed["id"]),
+            actor_participant_id=str(self.coordinator_participant["id"]),
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            expected_revision=1,
+            reason="改派后重跑同一合同",
+        )
+        self.assertEqual(retried["proposedOperabilityVerdict"], "")
+        self.assertEqual(retried["proposedRequirementVerdict"], "")
+
+    def test_submit_infers_proposed_verdicts_from_failed_summary(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-infer-failed", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:infer-failed",
+        )
+        submitted = self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "status: FAILED\n真实路径未跑通。",
+                "evidenceRefs": ["review:status-failed"],
+            },
+        )
+        self.assertEqual(submitted["proposedOperabilityVerdict"], "failed")
+        self.assertEqual(submitted["proposedRequirementVerdict"], "not_satisfied")
+        with self.assertRaisesRegex(ValueError, "supersed"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    "expectedRevision": submitted["revision"],
+                    "operabilityVerdict": "passed",
+                    "requirementVerdict": "satisfied",
+                    "evidenceRefs": ["review:dishonest"],
+                    "reason": "试图把 FAILED 提交写成通过。",
+                },
+            )
+
     def test_list_for_root_is_not_truncated_by_room_recent_limit(self) -> None:
         room_id = str(self.room["id"])
         owner_id = str(self.coordinator_participant["id"])
