@@ -201,7 +201,7 @@ export function PawOsFilesApp() {
 
   function treeHidden(): boolean {
     const tree = treeRef.current;
-    return tree !== null && window.getComputedStyle(tree).display === 'none';
+    return Boolean(tree && window.getComputedStyle(tree).display === 'none');
   }
 
   function goBackToTree(): void {

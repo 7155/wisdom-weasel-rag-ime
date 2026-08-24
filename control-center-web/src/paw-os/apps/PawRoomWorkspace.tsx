@@ -56,6 +56,7 @@ import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-st
 import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
+import { roomAutoSatelliteRequests } from './room-satellite-auto-open';
 import '@/features/rooms/rooms.css';
 
 type RoomToolPanel = 'focus' | 'governance';
@@ -349,6 +350,17 @@ export function PawRoomWorkspace({
     if (!desktop || !record) return;
     desktop.bindRoomMain?.({ kind: 'room', id: record.id, title: record.title, subtitle: record.description });
   }, [desktop, record]);
+  /* UR-054：进入 Room 自动展开活跃伙伴卫星窗（后台，不抢主 Room 焦点）。
+     每位伙伴每次进入只展开一次，用户关闭后不会被循环重开。 */
+  const autoExpandedParticipantIds = useRef(new Set<string>());
+  useEffect(() => { autoExpandedParticipantIds.current = new Set(); }, [recordId]);
+  useEffect(() => {
+    if (!desktop || !record || record.id !== recordId) return;
+    for (const request of roomAutoSatelliteRequests(record, participantAliases, autoExpandedParticipantIds.current)) {
+      if (request.target.kind === 'participant') autoExpandedParticipantIds.current.add(request.target.id);
+      desktop.openWindow(request);
+    }
+  }, [desktop, participantAliases, record, recordId]);
   const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
     <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span>
     <nav aria-label="Room 工作台视图">

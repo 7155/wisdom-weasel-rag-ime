@@ -124,11 +124,51 @@
 
 .paw-os-satellite--participant-chat {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
   background: var(--paw-panel-strong);
   color: var(--paw-ink);
 }
+/* PF-CM-013：极薄状态行——一句当前工作、文字+色状态、去完整 Session 的入口。
+   一行高度，绝不挤压对话正文；身份与治理仍属标题栏与主 Room。 */
+.paw-participant-chat__statusline {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--paw-line-soft);
+  background: color-mix(in srgb, var(--paw-panel-soft) 55%, var(--paw-panel-strong));
+  color: var(--paw-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+.paw-participant-chat__statusline-state { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; font-weight: 680; color: var(--paw-satellite-state, var(--paw-muted)); }
+.paw-participant-chat__statusline-state > i { width: 7px; height: 7px; border-radius: 50%; background: var(--paw-satellite-state, var(--paw-muted)); }
+.paw-participant-chat__statusline > p { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: var(--paw-ink); text-overflow: ellipsis; white-space: nowrap; }
+.paw-participant-chat__statusline > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--paw-line-soft);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--paw-accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+.paw-participant-chat__statusline > button:hover { border-color: color-mix(in srgb, var(--paw-accent) 40%, var(--paw-line-soft)); color: var(--paw-ink); }
+.paw-participant-chat__statusline > button:focus-visible { outline: 2px solid var(--paw-accent); outline-offset: 1px; }
+.paw-participant-chat__statusline[data-state='running'] { --paw-satellite-state: #2783de; }
+.paw-participant-chat__statusline[data-state='waiting'],
+.paw-participant-chat__statusline[data-state='review'] { --paw-satellite-state: #b36a0b; }
+.paw-participant-chat__statusline[data-state='blocked'],
+.paw-participant-chat__statusline[data-state='failed'] { --paw-satellite-state: #c64747; }
+.paw-participant-chat__statusline[data-state='completed'] { --paw-satellite-state: #248a4d; }
+.paw-participant-chat__statusline:is([data-state='stopped'], [data-state='idle'], [data-state='disconnected']) { --paw-satellite-state: var(--paw-muted); }
 .paw-participant-chat__timeline { min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 6px 14px 18px; scrollbar-gutter: stable; }
 .paw-participant-chat__history-boundary { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 6px; padding: 5px 2px 8px; border-bottom: 1px solid var(--paw-line-soft); color: var(--paw-muted); font-size: 12px; line-height: 18px; }
 .paw-participant-chat__history-boundary > span { min-width: 0; overflow-wrap: anywhere; }
@@ -269,4 +309,6 @@
   .paw-participant-chat__history-boundary { align-items: stretch; flex-direction: column; }
   .paw-participant-chat__history-boundary > button { align-self: flex-start; }
   .paw-participant-chat__activity-group__summary { grid-template-columns: minmax(0, 1fr) 16px 12px; padding-inline: 8px; }
+  .paw-participant-chat__statusline { gap: 6px; padding-inline: 8px; }
+  .paw-participant-chat__statusline > button > span { display: none; }
 }

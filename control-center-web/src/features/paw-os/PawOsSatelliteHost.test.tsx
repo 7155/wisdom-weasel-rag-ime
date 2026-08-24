@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { createRoomProjection } from '@/contracts/room-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
@@ -75,6 +76,11 @@ describe('PawOsSatelliteHost', () => {
     expect(screen.getAllByRole('img', { name: '执行中' })).toHaveLength(3);
     expect(document.querySelector('.agent-persona-avatar')).not.toBeInTheDocument();
     expect(document.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
+    const statusline = screen.getByLabelText('当前工作与状态');
+    expect(statusline).toHaveAttribute('data-state', 'running');
+    expect(statusline).toHaveTextContent('进行中');
+    expect(statusline).toHaveTextContent('实现子 Agent 卫星窗');
+    expect(screen.getByRole('button', { name: '在 Agent 中打开所属 Session' })).toBeInTheDocument();
   });
 
   it('reads one authoritative background run log without starting a second command', async () => {
@@ -232,6 +238,29 @@ describe('PawOsSatelliteHost', () => {
     expect(screen.queryByRole('banner', { name: '实现伙伴 当前上下文' })).not.toBeInTheDocument();
     expect(document.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
     expect(transport.requests.map(({ request }) => request.pathId)).toEqual(['agent.room.get']);
+  });
+
+  it('shows one thin statusline with current work, text+colour state, and a full Session route', async () => {
+    const room = participantRoom();
+    const projection = participantProjectionWithActivities(room.id, [
+      roomActivity('participant-tool-1', 'participant-a', 101, '正在读取 PawWindowLayer.tsx'),
+    ]);
+    useRoomLiveStore.setState({ projections: { [room.id]: projection } });
+    const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
+    const openRoute = vi.fn();
+
+    renderSatellite(transport, {
+      kind: 'participant', id: 'participant-a', roomId: room.id,
+      title: '实现伙伴', subtitle: '实现 · session-a',
+    }, { openRoute });
+
+    const statusline = await screen.findByLabelText('当前工作与状态');
+    expect(statusline).toHaveClass('paw-participant-chat__statusline');
+    expect(statusline).toHaveAttribute('data-state', 'running');
+    expect(statusline).toHaveTextContent('进行中');
+    expect(statusline).toHaveTextContent('正在读取 PawWindowLayer.tsx');
+    await userEvent.setup().click(screen.getByRole('button', { name: '在 Agent 中打开 实现伙伴 的完整 Session' }));
+    expect(openRoute).toHaveBeenCalledWith('/agent?session=session-a');
   });
 
   it('projects only supported activities addressed to this participant across all event fields', async () => {
@@ -513,10 +542,11 @@ describe('PawOsSatelliteHost', () => {
     const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
     renderSatellite(transport, { kind: 'participant', id: 'participant-a', roomId: room.id, title: '实现伙伴', subtitle: '实现 · session-a' });
 
+    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
     await user.click(await screen.findByRole('button', { name: '查看公开原文' }));
-    expect(await screen.findByText(/需要在公开原文中逐层读取/)).toBeInTheDocument();
+    expect(await within(timeline).findByText(/需要在公开原文中逐层读取/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '查看公开原文' }));
-    expect(screen.queryByText(/需要在公开原文中逐层读取/)).not.toBeInTheDocument();
+    expect(within(timeline).queryByText(/需要在公开原文中逐层读取/)).not.toBeInTheDocument();
   });
 
   it('keeps history actions and disclosure controls reachable in a narrow satellite', () => {
@@ -524,17 +554,32 @@ describe('PawOsSatelliteHost', () => {
     expect(satelliteCss).toContain('.paw-participant-chat__history-boundary { align-items: stretch; flex-direction: column; }');
     expect(satelliteCss).toContain('.paw-participant-chat__activity-group__summary { grid-template-columns: minmax(0, 1fr) 16px 12px; padding-inline: 8px; }');
   });
+
+  it('keeps the statusline one text row that never squeezes the dialogue at 280 width', () => {
+    expect(satelliteCss).toContain('.paw-os-satellite--participant-chat {\n  display: grid;\n  grid-template-rows: minmax(0, 1fr) auto;');
+    expect(satelliteCss).toContain('.paw-participant-chat__statusline > p { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: var(--paw-ink); text-overflow: ellipsis; white-space: nowrap; }');
+    expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='running'] { --paw-satellite-state: #2783de; }");
+    expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='blocked'],\n.paw-participant-chat__statusline[data-state='failed'] { --paw-satellite-state: #c64747; }");
+    expect(satelliteCss).toContain('.paw-participant-chat__statusline > button > span { display: none; }');
+  });
 });
 
-function renderSatellite(transport: MockControlTransport, target: Parameters<typeof PawOsSatelliteHost>[0]['target']) {
+function renderSatellite(
+  transport: MockControlTransport,
+  target: Parameters<typeof PawOsSatelliteHost>[0]['target'],
+  desktop?: { openRoute?: (route: string) => void },
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const rendered = render(
+  const host = (
     <ControlTransportProvider transport={transport}>
       <QueryClientProvider client={queryClient}>
         <PawOsSatelliteHost target={target} />
       </QueryClientProvider>
-    </ControlTransportProvider>,
+    </ControlTransportProvider>
   );
+  const rendered = render(desktop
+    ? <PawOsDesktopProvider openRoute={desktop.openRoute} openWindow={() => undefined}>{host}</PawOsDesktopProvider>
+    : host);
   return { ...rendered, queryClient };
 }
 
