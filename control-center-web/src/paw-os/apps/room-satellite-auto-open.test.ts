@@ -1,6 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomParticipant, RoomSummary } from '@/features/rooms/room-types';
-import { ROOM_AUTO_SATELLITE_LIMIT, roomAutoSatelliteRequests } from './room-satellite-auto-open';
+import { ROOM_AUTO_SATELLITE_LIMIT, roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
+
+describe('roomPlanetWindowRequest (planet 窗口统一铭牌)', () => {
+  it('gives every entrance the same planet window: celestial title, human subtitle, no machine session id', () => {
+    const request = roomPlanetWindowRequest(participant('participant-a', 0), 'room-a');
+
+    expect(request).toEqual({
+      appId: 'agent',
+      background: false,
+      target: {
+        kind: 'participant',
+        id: 'participant-a',
+        roomId: 'room-a',
+        title: 'Earth',
+        subtitle: '伙伴 participant-a · 实现与验证',
+      },
+    });
+    expect(request.target.subtitle).not.toContain('session-');
+  });
+
+  it('keeps a readable planet name beyond the named celestial list', () => {
+    const request = roomPlanetWindowRequest(participant('participant-i', 8), 'room-a', true);
+
+    expect(request.background).toBe(true);
+    expect(request.target.title).toBe('Planet 9');
+  });
+});
 
 describe('room satellite auto expansion (UR-054)', () => {
   it('expands active partners as background satellites so the main Room keeps focus', () => {
@@ -9,7 +35,7 @@ describe('room satellite auto expansion (UR-054)', () => {
       participant('participant-b', 1),
     ]);
 
-    const requests = roomAutoSatelliteRequests(room, { 'participant-a': 'Earth' }, new Set());
+    const requests = roomAutoSatelliteRequests(room, new Set());
 
     expect(requests).toHaveLength(2);
     for (const request of requests) {
@@ -21,15 +47,15 @@ describe('room satellite auto expansion (UR-054)', () => {
       id: 'participant-a',
       roomId: 'room-a',
       title: 'Earth',
-      subtitle: '伙伴 participant-a · 实现与验证 · session-participant-a',
+      subtitle: '伙伴 participant-a · 实现与验证',
     });
-    expect(requests[1]?.target).toMatchObject({ id: 'participant-b', title: '伙伴 participant-b' });
+    expect(requests[1]?.target).toMatchObject({ id: 'participant-b', title: 'Mars' });
   });
 
   it('never expands more than the four-to-five partner bound and keeps real ordinal order', () => {
     const room = roomWith(Array.from({ length: 7 }, (_, index) => participant(`participant-${index}`, 6 - index)));
 
-    const requests = roomAutoSatelliteRequests(room, {}, new Set());
+    const requests = roomAutoSatelliteRequests(room, new Set());
 
     expect(ROOM_AUTO_SATELLITE_LIMIT).toBe(5);
     expect(requests.map((request) => request.target.id)).toEqual([
@@ -40,10 +66,10 @@ describe('room satellite auto expansion (UR-054)', () => {
   it('does not loop-reopen partners the user already saw or closed in this Room visit', () => {
     const room = roomWith([participant('participant-a', 0), participant('participant-b', 1)]);
 
-    const requests = roomAutoSatelliteRequests(room, {}, new Set(['participant-a']));
+    const requests = roomAutoSatelliteRequests(room, new Set(['participant-a']));
 
     expect(requests.map((request) => request.target.id)).toEqual(['participant-b']);
-    expect(roomAutoSatelliteRequests(room, {}, new Set(['participant-a', 'participant-b']))).toEqual([]);
+    expect(roomAutoSatelliteRequests(room, new Set(['participant-a', 'participant-b']))).toEqual([]);
   });
 
   it('expands nothing for archived Rooms or inactive partners', () => {
@@ -51,11 +77,11 @@ describe('room satellite auto expansion (UR-054)', () => {
       participant('participant-a', 0),
       { ...participant('participant-b', 1), status: 'removed' },
     ]);
-    expect(roomAutoSatelliteRequests(inactive, {}, new Set()).map((request) => request.target.id))
+    expect(roomAutoSatelliteRequests(inactive, new Set()).map((request) => request.target.id))
       .toEqual(['participant-a']);
 
     const archived = { ...roomWith([participant('participant-a', 0)]), status: 'archived' };
-    expect(roomAutoSatelliteRequests(archived, {}, new Set())).toEqual([]);
+    expect(roomAutoSatelliteRequests(archived, new Set())).toEqual([]);
   });
 });
 

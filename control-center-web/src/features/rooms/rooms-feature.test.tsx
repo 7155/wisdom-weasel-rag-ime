@@ -4527,13 +4527,17 @@ describe('Rooms experience', () => {
     await user.click(screen.getByRole('button', { name: '伙伴状态 2' }));
     await user.click(screen.getByRole('button', { name: '打开澄伙伴窗口' }));
 
+    /* planet 窗口统一铭牌：标题是行星名，真实姓名与分工进副标题，
+       不再携带机器 Session id。 */
     expect(requests).toEqual([{
       appId: 'agent',
+      background: false,
       target: expect.objectContaining({
         kind: 'participant',
         id: 'room-a:p1',
         roomId: 'room-a',
-        title: '澄',
+        title: 'Earth',
+        subtitle: '澄 · 最终汇合与回复',
       }),
     }]);
   });

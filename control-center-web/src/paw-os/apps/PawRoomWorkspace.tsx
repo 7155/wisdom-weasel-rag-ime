@@ -59,7 +59,7 @@ import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/ro
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 import { PawRoomStarfield } from './PawStarfield';
 import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
-import { roomAutoSatelliteRequests } from './room-satellite-auto-open';
+import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
 import '@/features/rooms/rooms.css';
 
 type RoomToolPanel = 'focus' | 'governance';
@@ -333,17 +333,10 @@ export function PawRoomWorkspace({
     ?? record?.topics?.find((topic) => topic.status === 'active');
   const activeRootId = activeTurn?.rootId ?? activeTurn?.id ?? '';
   const abortingActiveTurn = Boolean(activeRootId && abortingTurnIds.has(activeRootId));
-  const openParticipant = useCallback((participant: RoomSummary['participants'][number], background = false) => desktop?.openWindow({
-    appId: 'agent',
-    background,
-    target: {
-      kind: 'participant',
-      id: participant.id,
-      roomId: recordId,
-      title: participantAliases[participant.id] || participant.displayName,
-      subtitle: `${participant.displayName} · ${roomCollaborationRoleLabel(participant.collaborationRole)} · ${participant.sessionId}`,
-    },
-  }), [desktop, participantAliases, recordId]);
+  /* planet 窗口统一铭牌：从任何入口打开同一伙伴都走 roomPlanetWindowRequest。 */
+  const openParticipant = useCallback((participant: RoomSummary['participants'][number], background = false) => desktop?.openWindow(
+    roomPlanetWindowRequest(participant, recordId, background),
+  ), [desktop, recordId]);
   const openParticipantById = useCallback((participantId: string) => {
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!participant) return;
@@ -378,11 +371,18 @@ export function PawRoomWorkspace({
   useEffect(() => { autoExpandedParticipantIds.current = new Set(); }, [recordId]);
   useEffect(() => {
     if (!desktop || !record || record.id !== recordId) return;
-    for (const request of roomAutoSatelliteRequests(record, participantAliases, autoExpandedParticipantIds.current)) {
+    for (const request of roomAutoSatelliteRequests(record, autoExpandedParticipantIds.current)) {
       if (request.target.kind === 'participant') autoExpandedParticipantIds.current.add(request.target.id);
       desktop.openWindow(request);
     }
-  }, [desktop, participantAliases, record, recordId]);
+  }, [desktop, record, recordId]);
+  /* status overlay 克制：为 0 的计数是噪音，状态行只亮出真实存在的工作。 */
+  const signalChips = ([
+    ['active', focusProjection?.counts.active ?? 0, '进行'],
+    ['review', focusProjection?.counts.review ?? 0, '复核'],
+    ['blocked', focusProjection?.counts.blocked ?? 0, '受阻'],
+    ['complete', focusProjection?.counts.completed ?? 0, '完成'],
+  ] as const).filter(([, count]) => count > 0);
   const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
     <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span>
     <nav aria-label="Room 工作台视图">
@@ -409,11 +409,8 @@ export function PawRoomWorkspace({
           <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
           <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 项任务</span>
         </div>
-        {focusProjection ? <div aria-label="Sol 当前状态" className="paw-room-workspace__signal-status">
-          <span data-tone="active"><i />{focusProjection.counts.active} 进行</span>
-          <span data-tone="review"><i />{focusProjection.counts.review} 复核</span>
-          <span data-tone="blocked"><i />{focusProjection.counts.blocked} 受阻</span>
-          <span data-tone="complete"><i />{focusProjection.counts.completed} 完成</span>
+        {signalChips.length ? <div aria-label="Sol 当前状态" className="paw-room-workspace__signal-status">
+          {signalChips.map(([tone, count, label]) => <span data-tone={tone} key={tone}><i />{count} {label}</span>)}
         </div> : null}
       </section>
 
@@ -825,7 +822,7 @@ function PawRoomInlineActivity({ activity, onApprovalDecision, onOpenProcessActi
   };
   return <article className="paw-room-chronology__activity" data-kind={approvalId ? 'approval' : eventType} data-status={activity.status}>
     <span aria-hidden="true">{approvalId ? <ShieldAlert size={14} /> : activity.status === 'completed' ? <CheckCircle2 size={14} /> : <LoaderCircle className={activity.status === 'running' ? 'ui-spin' : undefined} size={14} />}</span>
-    <div><strong>{participant?.displayName || 'Root'} · {pawRoomActivityKindLabel(eventType, approvalId)}</strong><p>{summary}</p></div>
+    <div><strong title={participant?.displayName}>{participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'} · {pawRoomActivityKindLabel(eventType, approvalId)}</strong><p>{summary}</p></div>
     <time>{pawRoomClock(activity.createdAtMs)}</time>
     {rawDetail && rawDetail !== summary ? <PawRoomRawActivityDetail detail={rawDetail} /> : null}
     {processWindow ? <footer><button onClick={() => onOpenProcessActivity?.(activity)} type="button">查看后台 Bash</button></footer> : null}
