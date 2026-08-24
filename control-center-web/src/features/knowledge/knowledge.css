@@ -849,7 +849,14 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 .knowledge-job-detail__technical > .ui-disclosure__reveal > div { padding-bottom: var(--space-2); }
 .knowledge-detail-loading { padding: var(--space-4); color: var(--color-text-secondary); font-size: 13px; }
 
-.knowledge-viewer { display: grid; height: 100%; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); }
+/* The viewer column keeps the toolbar at its own height and hands the rest to
+   the document tabs. The previous fixed three-row grid template broke as soon
+   as the optional loading/error rows were absent: the tabs then landed in an
+   `auto` row, grew to full content height, and were clipped without any
+   scrollbar. Flex keeps the tabs on the remaining height in every state. */
+.knowledge-viewer { display: flex; height: 100%; min-height: 0; flex-direction: column; }
+.knowledge-viewer > * { flex: 0 0 auto; }
+.knowledge-viewer > .knowledge-document-tabs { flex: 1 1 auto; min-height: 0; }
 .knowledge-viewer__bar {
   display: flex;
   align-items: end;
@@ -864,7 +871,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 .knowledge-viewer__bar label { display: grid; min-width: min(420px, 56%); margin-right: auto; gap: 4px; }
 .knowledge-viewer__bar label > span { color: var(--color-text-tertiary); font-size: 13px; }
 .knowledge-viewer__bar > span { color: var(--color-text-secondary); font-size: 13px; }
-.knowledge-document-tabs { display: grid; height: 100%; min-height: 0; overflow: hidden; grid-template-rows: auto minmax(0, 1fr); }
+.knowledge-document-tabs { display: grid; height: auto; min-height: 0; overflow: hidden; grid-template-rows: auto minmax(0, 1fr); }
 .knowledge-document-tabs > [role='tablist'] { margin: var(--space-2) 0; }
 .knowledge-document-tabs > [role='tabpanel'] { min-height: 0; overflow: auto; }
 .knowledge-document-tabs [role='tab'] { display: inline-flex; align-items: center; gap: 5px; }
@@ -884,7 +891,11 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 .knowledge-source-fallback strong { font-size: 13px; }
 .knowledge-source-fallback a { color: var(--color-accent); font-size: 13px; }
 
-.knowledge-markdown-preview { width: min(960px, 100%); height: 100%; margin: 0 auto; overflow: auto; border: 1px solid var(--color-border); background: var(--color-surface); }
+/* The reader grows with its content and the focusable tab panel above it owns
+   the scroll, so wheel, trackpad, and keyboard all reach the full document.
+   Locking the reader to 100% viewport height hid everything below the fold
+   whenever an ancestor lost its height constraint. */
+.knowledge-markdown-preview { width: min(960px, 100%); height: auto; min-height: 100%; margin: 0 auto; overflow: visible; border: 1px solid var(--color-border); background: var(--color-surface); }
 .knowledge-markdown-preview > header { position: sticky; top: 0; display: flex; justify-content: space-between; padding: 8px var(--space-3); border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-tertiary); font-size: 13px; }
 .knowledge-markdown-body { padding: var(--space-4); color: var(--color-text-secondary); font-size: 14px; line-height: 1.72; overflow-wrap: anywhere; }
 .knowledge-markdown-body > :first-child { margin-top: 0; }
@@ -910,9 +921,11 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 
 .knowledge-page-preview {
   display: grid;
-  height: 100%;
+  height: auto;
+  min-height: 100%;
+  align-content: start;
   padding: var(--space-3) max(var(--space-3), 4vw);
-  overflow: auto;
+  overflow: visible;
   background: color-mix(in srgb, var(--color-surface-subtle) 74%, var(--color-surface));
   gap: var(--space-3);
 }
@@ -935,9 +948,11 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 
 .knowledge-chunk-grid {
   display: grid;
-  height: 100%;
+  height: auto;
+  min-height: 100%;
+  align-content: start;
   padding: var(--space-2) 0;
-  overflow: auto;
+  overflow: visible;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
@@ -964,7 +979,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library {
 .knowledge-focus-banner { display: flex; align-items: center; grid-column: 1 / -1; min-height: 34px; padding: 6px 8px; border: 1px solid var(--color-accent); background: var(--color-accent-subtle); color: var(--color-text-secondary); font-size: 13px; gap: 6px; }
 .knowledge-more-note { display: flex; align-items: center; justify-content: space-between; grid-column: 1 / -1; min-height: 34px; color: var(--color-text-tertiary); font-size: 13px; gap: 8px; }
 
-.knowledge-artifacts { display: grid; height: 100%; overflow: auto; gap: var(--space-4); }
+.knowledge-artifacts { display: grid; height: auto; min-height: 100%; align-content: start; overflow: visible; gap: var(--space-4); }
 .knowledge-artifacts > section > header { display: flex; align-items: center; min-height: 34px; border-bottom: 1px solid var(--color-border); gap: 6px; }
 .knowledge-artifacts > section > header strong { font-size: 13px; }
 .knowledge-artifacts > section > header span { color: var(--color-text-tertiary); font-size: 13px; }
@@ -1432,6 +1447,12 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-nati
   box-shadow: none;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
+  /* The flowing-sheet route sets `align-items: start` so the page can grow.
+     Inside a fixed PAWOS window that alignment detaches the detail column
+     from its minmax(0, 1fr) row: it grows to full content height and the
+     library's overflow: hidden clips it with no scrollbar anywhere. The
+     window layout must stretch its rows. */
+  align-items: stretch;
 }
 
 .knowledge-base-switcher {
@@ -1569,6 +1590,15 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-libr
   flex: none;
   flex-wrap: nowrap;
   gap: 0;
+}
+
+/* Radix keeps inactive tab panels in the DOM as empty [hidden] divs. The
+   `display: block` reset above overrides the UA `[hidden] { display: none }`
+   rule, so the empty materials panel silently occupied the grid's flexible
+   row and pushed the active panel into an unconstrained implicit row — the
+   clipped, unscrollable Markdown viewer. Hidden panels stay display: none. */
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'][hidden] {
+  display: none;
 }
 
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-base-switcher {
