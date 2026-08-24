@@ -191,11 +191,14 @@ def room_participant_prompt(
         owner_name = participant_names.get(owner_id, "未分配伙伴")
         owner_session = participant_sessions.get(owner_id, "")
         scope = "你负责" if work_id in related_ids else "Room 共享"
+        live_revision = authority.get("authorityRevision")
+        if not isinstance(live_revision, int):
+            live_revision = document.get("authorityRevision") or 0
         room_document_lines.append(
             f"- [{scope}] WorkItem {work_id} → "
             f"{_bounded_text(document.get('path'), maximum=1_000)}；"
             f"documentId={_bounded_text(document.get('documentId'), maximum=240)}；"
-            f"authorityRevision={int(document.get('authorityRevision') or 0)}；"
+            f"authorityRevision={int(live_revision)}；"
             f"标题={_bounded_text(document.get('title'), maximum=240) or '未命名工作文档'}；"
             f"负责人=@{owner_name}；Session={owner_session or '未绑定'}"
         )

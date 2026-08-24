@@ -291,6 +291,113 @@ class WorkDocumentTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(receipts, [("applied",), ("applied",)])
 
+    def test_bound_rewrite_rebinds_when_open_authority_revision_advances(self) -> None:
+        todo, document, _content = self._todo_document("rebind")
+        bound_revision = int(document["authorityRevision"])
+        self.sessions.mutate_agent_todo(
+            self.session_id,
+            {"op": "append", "phase": "Delivery", "items": ["keep going"]},
+        )
+        live = self.service.authority_context("session_todo", self.session_id)
+        self.assertGreater(int(live["authorityRevision"]), bound_revision)
+        canonical = self.root / str(document["path"])
+        canonical.write_text("# rebind\n\nstill the same work\n", encoding="utf-8")
+        updated = self.service.register(
+            {
+                "authorityKind": "session_todo",
+                "authorityId": self.session_id,
+                "authorityRevision": bound_revision,
+                "workspaceRoot": str(self.root),
+                "sourcePath": document["path"],
+                "title": "rebind",
+            }
+        )["document"]
+        self.assertEqual(updated["state"], "active")
+        self.assertEqual(
+            int(updated["authorityRevision"]),
+            int(live["authorityRevision"]),
+        )
+        self.assertEqual(updated["path"], document["path"])
+
+    def test_blocked_room_work_bound_rewrite_uses_document_revision(self) -> None:
+        worker_session = self.sessions.create(title="blocked room worker")
+        rooms = AgentRoomStore(self.db_path, room_dir=self.root / "rooms")
+        rooms.initialize()
+        room = rooms.create(
+            title="blocked work document room",
+            routing_policy="moderator",
+            participants=[
+                {
+                    "sessionId": self.session_id,
+                    "roleId": "coordinator",
+                    "roleVersion": "1",
+                    "displayName": "Coordinator",
+                    "collaborationRole": "coordinator",
+                },
+                {
+                    "sessionId": worker_session["id"],
+                    "roleId": "worker",
+                    "roleVersion": "1",
+                    "displayName": "Worker",
+                    "collaborationRole": "implementer",
+                },
+            ],
+        )
+        room_work = AgentRoomWorkStore(
+            self.db_path, terminal_observer=self.service.observe_authority
+        )
+        room_work.initialize()
+        item = room_work.create(
+            room_id=str(room["id"]),
+            objective="keep the bound document writable",
+            expected_output="updated markdown",
+            current_owner_participant_id=str(room["participants"][1]["id"]),
+            created_by_participant_id=str(room["participants"][0]["id"]),
+            accountable_participant_id=str(room["participants"][0]["id"]),
+            client_message_id="work-document-blocked-rebind",
+            acceptance_criteria=["document stays active"],
+        )
+        source = self.root / "docs/drafts/blocked-room.md"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("# Room work\n", encoding="utf-8")
+        document = self.service.register(
+            {
+                "authorityKind": "room_work_item",
+                "authorityId": item["id"],
+                "authorityRevision": 1,
+                "workspaceRoot": str(self.root),
+                "sourcePath": "docs/drafts/blocked-room.md",
+                "title": "blocked room",
+            }
+        )["document"]
+        room_work.block(
+            str(worker_session["id"]),
+            {
+                "workId": item["id"],
+                "reason": "waiting on review evidence",
+                "nextStep": "rewrite the bound document",
+            },
+        )
+        live = self.service.authority_context("room_work_item", str(item["id"]))
+        self.assertGreater(int(live["authorityRevision"]), int(document["authorityRevision"]))
+        canonical = self.root / str(document["path"])
+        canonical.write_text("# Room work\n\nupdated while blocked\n", encoding="utf-8")
+        updated = self.service.register(
+            {
+                "authorityKind": "room_work_item",
+                "authorityId": item["id"],
+                "authorityRevision": document["authorityRevision"],
+                "workspaceRoot": str(self.root),
+                "sourcePath": document["path"],
+                "title": "blocked room",
+            }
+        )["document"]
+        self.assertEqual(updated["state"], "active")
+        self.assertEqual(
+            int(updated["authorityRevision"]),
+            int(live["authorityRevision"]),
+        )
+
     def test_terminal_revision_fence_rejects_stale_receipt_then_advances(self) -> None:
         todo, document, _content = self._todo_document("revision-fence")
         initial_receipt = self._latest_todo_event_id()

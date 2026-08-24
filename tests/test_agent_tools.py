@@ -3462,6 +3462,101 @@ class ControlToolGatewayTests(unittest.TestCase):
             registration["document"]["documentId"],
         )
 
+    def test_workspace_write_apply_rebinds_after_open_authority_advances(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-work-document-rebind"
+        workspace.mkdir()
+        coordinator = self.store.create(
+            title="work document rebind coordinator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=9,
+        )
+        session_id = str(coordinator["id"])
+        todo = self._start_todo(session_id)
+        documents = WorkDocumentService(
+            self.store.db_path,
+            sessions=self.store,
+            context_runtime=AgentContextRuntime(self.store.db_path),
+        )
+        documents.initialize()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            work_documents=documents,
+        )
+        prepared = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_write",
+                    "apply",
+                    path="docs/work.md",
+                    resourceRevision="missing",
+                    content="# Canonical work\n",
+                    workDocument={
+                        "authorityKind": "session_todo",
+                        "authorityId": session_id,
+                        "authorityRevision": todo["revision"],
+                        "title": "Canonical work",
+                    },
+                ),
+                "sessionId": session_id,
+            }
+        )["result"]
+        first = gateway.apply_approval(
+            self.store.decide_approval(
+                prepared["approval"]["approvalId"],
+                approved=True,
+                payload_sha256=prepared["approval"]["payloadSha256"],
+            )
+        )
+        canonical = str(first["workDocumentRegistration"]["document"]["path"])
+        bound_revision = int(
+            first["workDocumentRegistration"]["document"]["authorityRevision"]
+        )
+        self.store.mutate_agent_todo(
+            session_id,
+            {"op": "append", "phase": "受控工作区执行", "items": ["继续绑定写回"]},
+            actor="test-user",
+        )
+        live = documents.authority_context("session_todo", session_id)
+        self.assertGreater(int(live["authorityRevision"]), bound_revision)
+        rewritten = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_write",
+                    "apply",
+                    path=canonical,
+                    resourceRevision="sha256:" + str(first["postimageSha256"]),
+                    content="# Canonical work\n\nrebound\n",
+                    workDocument={
+                        "authorityKind": "session_todo",
+                        "authorityId": session_id,
+                        "authorityRevision": bound_revision,
+                        "title": "Canonical work",
+                    },
+                ),
+                "sessionId": session_id,
+            }
+        )["result"]
+        receipt = gateway.apply_approval(
+            self.store.decide_approval(
+                rewritten["approval"]["approvalId"],
+                approved=True,
+                payload_sha256=rewritten["approval"]["payloadSha256"],
+            )
+        )
+        self.assertEqual(
+            int(receipt["workDocumentRegistration"]["document"]["authorityRevision"]),
+            int(live["authorityRevision"]),
+        )
+        self.assertEqual(
+            receipt["workDocumentRegistration"]["document"]["state"],
+            "active",
+        )
+
     def test_workspace_write_rolls_back_when_work_document_registration_fails(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-work-document-rollback"
         workspace.mkdir()
