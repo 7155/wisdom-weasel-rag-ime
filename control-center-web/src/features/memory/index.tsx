@@ -23,7 +23,6 @@ import {
   EmptyState,
   Field,
   Input,
-  SegmentedControl,
   Select,
   Switch,
   Tabs as ViewTabs,
@@ -45,7 +44,7 @@ import {
 import { MemoryRelations } from './MemoryRelations';
 import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
 import { ActivityTimeline } from './ActivityTimeline';
-import { MemorySystemOverview } from './MemorySystemOverview';
+import { MemoryPipeline } from './MemoryPipeline';
 import { MemoryPreferences } from './MemoryPreferences';
 import { RoleBookLayer } from './RoleBookLayer';
 import {
@@ -81,12 +80,6 @@ import './memory.css';
 type MemoryLayer = 'evidence' | 'atoms' | 'books';
 type MemoryRouteLayer = MemoryLayer | 'timelines' | 'role-books';
 type MemoryView = 'catalog' | 'roleBooks' | 'timeline' | 'relations' | 'organize' | 'preferences';
-
-const layers = [
-  { value: 'evidence', label: '记录来源' },
-  { value: 'atoms', label: '已整理记忆' },
-  { value: 'books', label: '主题' },
-] as const;
 
 function defaultMemoryStatus(kind: MemoryKind): string {
   if (kind === 'phrases') return 'approved';
@@ -190,19 +183,15 @@ export function MemoryFeature() {
     >
       <div className="memory-second-brain" data-layer={layer} data-view={view}>
         <QueryState error={error} isPending={pending} onRetry={refresh}>
-        {view === 'catalog' ? (
-          <Disclosure className="memory-system-summary" summary="查看记忆整理状态">
-            <MemorySystemOverview
-              activeLayer={layer}
-              onOpenLayer={openCatalogLayer}
-              onOpenOrganize={() => openView('organize')}
-              onOpenPreferences={() => openView('preferences')}
-              onOpenRelations={() => openView('relations')}
-              onOpenTimeline={() => openView('timeline')}
-              summary={summaryPayload}
-            />
-          </Disclosure>
-        ) : null}
+        <MemoryPipeline
+          activeLayer={view === 'catalog' ? layer : ''}
+          onOpenLayer={openCatalogLayer}
+          onOpenOrganize={() => openView('organize')}
+          onRetry={refresh}
+          organizeActive={view === 'organize'}
+          summary={summaryPayload}
+          summaryState={summaryState}
+        />
 
         <ViewTabs
           className="memory-view-tabs"
@@ -224,46 +213,37 @@ export function MemoryFeature() {
               title={`${kindLabel(kind)} 目录`}
               description={memoryLayerDescription(kind)}
             >
-              <div className="mgmt-stack">
-                <SegmentedControl
-                  aria-label="记忆内容分类"
-                  items={layers}
-                  onValueChange={(next) => openCatalogLayer(next as MemoryLayer)}
-                  value={layer}
-                />
-                <MemoryLayerContext kind={kind} summary={summaryPayload} />
-                <div className="mgmt-filter-row memory-catalog-filters">
-                  <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
-                    <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
-                  </Field>
-                  <Button className="memory-catalog-filters__submit" leadingIcon={<Search size={14} />} onClick={runSearch} size="small">筛选</Button>
-                  <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
+              <div className="mgmt-filter-row memory-catalog-filters">
+                <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
+                  <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
+                </Field>
+                <Button className="memory-catalog-filters__submit" leadingIcon={<Search size={14} />} onClick={runSearch} size="small">筛选</Button>
+                <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
+                  <Select
+                    id="memory-status-filter"
+                    onValueChange={(value) => {
+                      setStatus(value);
+                      setSelectedId('');
+                      setEditOpen(false);
+                    }}
+                    options={memoryStatusOptions(kind)}
+                    value={status}
+                  />
+                </Field>
+                {ownerAwareKind(kind) ? (
+                  <Field className="memory-catalog-filters__owner" htmlFor="memory-owner-filter" label="归属">
                     <Select
-                      id="memory-status-filter"
+                      id="memory-owner-filter"
                       onValueChange={(value) => {
-                        setStatus(value);
+                        setOwnerKey(value);
                         setSelectedId('');
                         setEditOpen(false);
                       }}
-                      options={memoryStatusOptions(kind)}
-                      value={status}
+                      options={ownerOptions}
+                      value={ownerKey}
                     />
                   </Field>
-                  {ownerAwareKind(kind) ? (
-                    <Field className="memory-catalog-filters__owner" htmlFor="memory-owner-filter" label="归属">
-                      <Select
-                        id="memory-owner-filter"
-                        onValueChange={(value) => {
-                          setOwnerKey(value);
-                          setSelectedId('');
-                          setEditOpen(false);
-                        }}
-                        options={ownerOptions}
-                        value={ownerKey}
-                      />
-                    </Field>
-                  ) : null}
-                </div>
+                ) : null}
               </div>
               <div className="memory-layer-workspace" data-detail-open={selected ? true : undefined}>
                 <aside className="memory-layer-list" aria-label={`${kindLabel(kind)}目录`}>
@@ -662,42 +642,6 @@ function safeCatalogStringList(value: unknown): string[] {
     const text = item.trim().slice(0, 64);
     return text ? [text] : [];
   }).slice(0, 64);
-}
-
-function MemoryLayerContext({
-  kind,
-  summary,
-}: {
-  kind: MemoryKind;
-  summary: Record<string, unknown>;
-}) {
-  const values = {
-    evidence: {
-      label: '来源记录',
-      count: numberValue(
-        summary.memoryEvidenceCount,
-        numberValue(summary.evidenceSourceCount) + numberValue(summary.agentEvidenceCount),
-      ),
-      text: '可核对的原始记录',
-    },
-    atoms: {
-      label: '记忆',
-      count: numberValue(summary.currentAtomCount, numberValue(summary.memoryAtomCount)),
-      text: '可查找，并保留来源',
-    },
-    books: {
-      label: '主题',
-      count: numberValue(summary.memoryBookCount),
-      text: '按主题持续查找',
-    },
-  } as const;
-  const current = values[kind as MemoryLayer] ?? values.atoms;
-  return (
-    <div className="memory-layer-context" data-layer={kind}>
-      <strong>{current.count} 条可用{current.label}</strong>
-      <span>{current.text}</span>
-    </div>
-  );
 }
 
 function memoryLayerDescription(kind: MemoryKind): string {
