@@ -7,14 +7,17 @@
  */
 
 .paw-desktop-root .paw-system-app {
+  /* The four system Apps share the desktop's cool slate family (#eef3f9 field,
+     #0f172a ink) so a maximized Settings or Monitor window reads as the same
+     material as the desktop behind it. */
   --paw-system-accent: #5e5ce6;
   --paw-system-accent-soft: rgb(94 92 230 / 10%);
-  --paw-system-stage: #f4f5f7;
+  --paw-system-stage: #f2f5f9;
   --paw-system-surface: #fff;
-  --paw-system-fill: rgb(24 32 44 / 4.5%);
-  --paw-system-line: rgb(24 32 44 / 9%);
-  --paw-system-ink: #1d222b;
-  --paw-system-muted: #707783;
+  --paw-system-fill: rgb(15 23 42 / 4.5%);
+  --paw-system-line: rgb(15 23 42 / 8.5%);
+  --paw-system-ink: #0f172a;
+  --paw-system-muted: #5f6c80;
   display: grid;
   grid-template-columns: 196px minmax(0, 1fr);
   width: 100%;
@@ -32,13 +35,13 @@
 }
 
 .paw-desktop-root .paw-system-app[data-system-app='system-monitor'] {
-  --paw-system-accent: #3e5969;
-  --paw-system-accent-soft: rgb(62 89 105 / 10%);
+  --paw-system-accent: #42688a;
+  --paw-system-accent-soft: rgb(66 104 138 / 10%);
 }
 
 .paw-desktop-root .paw-system-app[data-system-app='system-settings'] {
-  --paw-system-accent: #64718c;
-  --paw-system-accent-soft: rgb(100 113 140 / 11%);
+  --paw-system-accent: #5b6f96;
+  --paw-system-accent-soft: rgb(91 111 150 / 11%);
 }
 
 .paw-desktop-root .paw-system-app ::selection {
@@ -59,45 +62,44 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: rgb(255 255 255 / 94%);
+  background: rgb(251 253 255 / 96%);
   border-right: 1px solid var(--paw-system-line);
 }
 
 .paw-desktop-root .paw-system-app__nav nav {
   display: grid;
   align-content: start;
-  gap: 3px;
+  gap: 2px;
   min-height: 0;
-  padding: 11px 9px;
+  padding: 12px 10px;
   overflow: auto;
-  scrollbar-color: rgb(24 32 44 / 20%) transparent;
+  scrollbar-color: rgb(15 23 42 / 20%) transparent;
   scrollbar-width: thin;
 }
 
 .paw-desktop-root .paw-system-app__nav nav button {
   display: grid;
-  grid-template-columns: 17px minmax(0, 1fr) 13px;
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 0 9px;
+  gap: 9px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 9px;
   background: transparent;
   color: var(--paw-system-muted);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.4;
   text-align: left;
   cursor: pointer;
   transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 
-.paw-desktop-root .paw-system-app__nav nav button > svg:last-child {
-  justify-self: end;
-  opacity: 0;
-  transform: translateX(-2px);
-  transition: opacity 140ms ease-out, transform 140ms ease-out;
+.paw-desktop-root .paw-system-app__nav nav button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .paw-desktop-root .paw-system-app__nav nav button:hover {
@@ -115,9 +117,8 @@
   color: var(--paw-system-accent);
 }
 
-.paw-desktop-root .paw-system-app__nav nav button[aria-current='page'] > svg:last-child {
-  opacity: .62;
-  transform: none;
+.paw-desktop-root .paw-system-app__stage {
+  position: relative;
 }
 
 .paw-desktop-root .paw-system-app__stage,
@@ -126,6 +127,23 @@
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+/* Every system page reserves the same 40px chrome strip; naming the current
+   page there removes the anonymous empty band without adding a second h1. */
+.paw-desktop-root .paw-system-app__page-title {
+  position: absolute;
+  top: 0;
+  left: 24px;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  color: var(--paw-system-ink);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  pointer-events: none;
 }
 
 /* Shared operational canvas ------------------------------------------------ */
@@ -139,7 +157,7 @@
   overflow: auto;
   background: var(--paw-system-stage);
   color: var(--paw-system-ink);
-  scrollbar-color: rgb(24 32 44 / 22%) transparent;
+  scrollbar-color: rgb(15 23 42 / 22%) transparent;
   scrollbar-width: thin;
 }
 
@@ -158,7 +176,7 @@
   align-items: center;
   min-height: 40px;
   padding: 4px 16px;
-  background: #f6f7f9;
+  background: #f5f8fb;
   border-bottom: 1px solid var(--paw-system-line);
   backdrop-filter: none;
 }
@@ -169,7 +187,7 @@
   z-index: 8;
   display: block;
   height: 40px;
-  background: #f6f7f9;
+  background: #f5f8fb;
   border-bottom: 1px solid var(--paw-system-line);
   backdrop-filter: none;
   content: '';
@@ -429,7 +447,7 @@
 
 .paw-desktop-root .paw-system-package:hover {
   border-color: color-mix(in srgb, var(--paw-system-accent) 24%, var(--paw-system-line));
-  box-shadow: 0 8px 20px rgb(24 32 44 / 7%);
+  box-shadow: 0 8px 20px rgb(15 23 42 / 7%);
   transform: translateY(-1px);
 }
 
@@ -637,22 +655,6 @@
   line-height: 1.45;
 }
 
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-settings {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 11px;
-}
-
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-option {
-  border-color: var(--paw-system-line);
-  border-radius: 12px;
-}
-
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-option[data-selected] {
-  border-color: color-mix(in srgb, var(--paw-system-accent) 44%, transparent);
-  box-shadow: 0 7px 18px rgb(24 32 44 / 7%);
-}
-
 .paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.configuration-destinations, .configuration-editor, .governance-columns, .approvals-list) {
   border-color: var(--paw-system-line);
 }
@@ -670,7 +672,6 @@
 @container paw-window (max-width: 900px) {
   .paw-desktop-root .paw-system-package-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .paw-desktop-root .paw-system-app .mgmt-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @container paw-window (max-width: 720px) {
@@ -688,8 +689,9 @@
     padding: 0;
   }
 
-  .paw-desktop-root .paw-system-app__nav nav button span,
-  .paw-desktop-root .paw-system-app__nav nav button > svg:last-child { display: none; }
+  .paw-desktop-root .paw-system-app__nav nav button span { display: none; }
+
+  .paw-desktop-root .paw-system-app__page-title { left: 16px; }
 
   .paw-desktop-root .paw-system-app .mgmt-page__body { padding: 14px 14px 20px; }
   .paw-desktop-root .paw-system-app .mgmt-section { padding: 14px; border-radius: 12px; }
@@ -703,7 +705,6 @@
 
 @container paw-window (max-width: 520px) {
   .paw-desktop-root .paw-system-app .mgmt-metrics { grid-template-columns: minmax(0, 1fr); }
-  .paw-desktop-root .paw-system-app[data-system-app='system-settings'] .paw-os-theme-settings { grid-template-columns: minmax(0, 1fr); }
   .paw-desktop-root .paw-system-agent-fields > label { grid-template-columns: minmax(0, 1fr); }
   .paw-desktop-root .paw-system-agent-fields small { grid-column: 1; }
   .paw-desktop-root .paw-system-package > header { grid-template-columns: 34px minmax(0, 1fr); }
@@ -715,7 +716,6 @@
   .paw-desktop-root .paw-system-app .mgmt-status i,
   .paw-desktop-root .paw-system-resource-state[data-state='loading'] svg { animation: none; }
   .paw-desktop-root .paw-system-app__nav nav button,
-  .paw-desktop-root .paw-system-app__nav nav button > svg:last-child,
   .paw-desktop-root .paw-system-package,
   .paw-desktop-root .paw-system-app :is(.ui-button, button) { transition: none; }
 }
