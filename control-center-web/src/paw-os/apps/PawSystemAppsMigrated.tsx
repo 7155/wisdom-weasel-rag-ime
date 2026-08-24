@@ -147,7 +147,7 @@ export function PawSystemAppsMigrated({
     refetchInterval: 60_000,
     retry: false,
   });
-  const pendingApprovals = appId === 'system-settings' ? pendingApprovalCount(approvalsBadge.data) : 0;
+  const approvalSignals = appId === 'system-settings' ? pendingApprovalSignals(approvalsBadge.data) : { pending: 0, highRisk: 0 };
 
   return (
     <div className="paw-system-app" data-page-id={page.id} data-system-app={appId}>
@@ -156,8 +156,13 @@ export function PawSystemAppsMigrated({
           {pages.map((candidate, index) => {
             const Icon = candidate.icon;
             const current = candidate.id === page.id;
-            const badge = candidate.id === 'approvals' ? pendingApprovals : 0;
-            const name = badge ? `${candidate.label}（${badge} 项待处理）` : candidate.label;
+            const badge = candidate.id === 'approvals' ? approvalSignals.pending : 0;
+            const highRisk = candidate.id === 'approvals' ? approvalSignals.highRisk : 0;
+            const name = badge
+              ? highRisk
+                ? `${candidate.label}（${badge} 项待处理，含 ${highRisk} 项高风险）`
+                : `${candidate.label}（${badge} 项待处理）`
+              : candidate.label;
             return (
               <Fragment key={candidate.id}>
                 {candidate.group && candidate.group !== pages[index - 1]?.group ? (
@@ -172,7 +177,7 @@ export function PawSystemAppsMigrated({
                 >
                   <Icon aria-hidden="true" size={16} />
                   <span>{candidate.label}</span>
-                  {badge ? <span aria-hidden="true" className="paw-system-app__nav-badge">{badge > 99 ? '99+' : badge}</span> : null}
+                  {badge ? <span aria-hidden="true" className="paw-system-app__nav-badge" data-tone={highRisk ? 'danger' : undefined}>{badge > 99 ? '99+' : badge}</span> : null}
                 </button>
               </Fragment>
             );
@@ -539,13 +544,16 @@ function useAgentModelResource() {
   return { data, error, loading, reload };
 }
 
-function pendingApprovalCount(value: unknown): number {
+function pendingApprovalSignals(value: unknown): { pending: number; highRisk: number } {
   const items = asRecord(value).items;
-  if (!Array.isArray(items)) return 0;
-  return items.filter((item) => {
-    const approval = asRecord(item);
-    return approval.schemaVersion === 'rag-ime.agent-approval.v1' && approval.state === 'pending';
-  }).length;
+  if (!Array.isArray(items)) return { pending: 0, highRisk: 0 };
+  const waiting = items.map(asRecord).filter((approval) => (
+    approval.schemaVersion === 'rag-ime.agent-approval.v1' && approval.state === 'pending'
+  ));
+  return {
+    pending: waiting.length,
+    highRisk: waiting.filter((approval) => approval.riskLevel === 'R3').length,
+  };
 }
 
 function systemPageForRoute(pages: readonly SystemPage[], route: string): SystemPage {

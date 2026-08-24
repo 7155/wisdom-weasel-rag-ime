@@ -113,7 +113,7 @@
 }
 
 /* The human decision queue announces itself from the rail; everything else
-   stays quiet. */
+   stays quiet. A waiting R3 escalates the badge from accent to danger red. */
 .paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge {
   min-width: 20px;
   padding: 1px 6px;
@@ -125,6 +125,10 @@
   font-weight: 700;
   line-height: 1.5;
   text-align: center;
+}
+
+.paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge[data-tone='danger'] {
+  background: #dc2626;
 }
 
 .paw-desktop-root .paw-system-app__nav nav button > span {

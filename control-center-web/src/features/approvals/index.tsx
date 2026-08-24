@@ -10,7 +10,7 @@ import {
   ShieldQuestion,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, Disclosure, EmptyState, Field, Input, SegmentedControl, Select } from '@/components/primitives';
 import type { AgentApprovalV1 } from '@/contracts/generated/agent-approval.v1';
@@ -66,7 +66,7 @@ export function ApprovalsFeature() {
   const sessions = useMemo(() => sessionTitles(sessionsQuery.data), [sessionsQuery.data]);
   const pending = approvals.filter((item) => item.state === 'pending');
   const highRisk = pending.filter((item) => item.riskLevel === 'R3');
-  const expiring = pending.filter((item) => item.expiresAtMs > Date.now() && item.expiresAtMs - Date.now() <= 5 * 60_000);
+  const expiring = pending.filter((item) => expiryUrgencyMs(item) > 0);
   const completed = approvals.filter((item) => ['applied', 'rejected'].includes(item.state));
   const visible = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
@@ -89,6 +89,29 @@ export function ApprovalsFeature() {
     });
   }, [approvals, filter, query, risk, sessions]);
   const selected = visible.find((item) => item.approvalId === selectedId) ?? visible[0];
+
+  // The queue is a real work list: arrow keys walk it, Home/End jump to the
+  // edges, and the decision panel follows the moved selection.
+  function moveSelection(event: KeyboardEvent<HTMLOListElement>): void {
+    if (!visible.length) return;
+    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+    let nextIndex = -1;
+    if (step) {
+      const currentIndex = visible.findIndex((item) => item.approvalId === selected?.approvalId);
+      nextIndex = Math.min(visible.length - 1, Math.max(0, currentIndex + step));
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = visible.length - 1;
+    }
+    const next = visible[nextIndex];
+    if (!next) return;
+    event.preventDefault();
+    setSelectedId(next.approvalId);
+    event.currentTarget
+      .querySelector<HTMLButtonElement>(`button[data-approval-id="${next.approvalId.replace(/"/g, '\\"')}"]`)
+      ?.focus();
+  }
 
   async function decide(item: AgentApprovalV1, decision: 'approve' | 'reject'): Promise<void> {
     if (decision === 'approve' && item.riskLevel === 'R3' && confirmingId !== item.approvalId) {
@@ -176,12 +199,13 @@ export function ApprovalsFeature() {
             </div>
 
             {visible.length ? (
-              <ol aria-label="审批项目" className="approvals-queue__list">
+              <ol aria-label="审批项目" className="approvals-queue__list" onKeyDown={moveSelection}>
                 {visible.map((item) => {
                   const active = item.approvalId === selected?.approvalId;
+                  const urgentMs = expiryUrgencyMs(item);
                   return (
-                    <li data-active={active || undefined} data-risk={item.riskLevel} data-state={item.state} key={item.approvalId}>
-                      <button aria-current={active ? 'true' : undefined} onClick={() => setSelectedId(item.approvalId)} type="button">
+                    <li data-active={active || undefined} data-risk={item.riskLevel} data-state={item.state} data-urgent={urgentMs > 0 || undefined} key={item.approvalId}>
+                      <button aria-current={active ? 'true' : undefined} data-approval-id={item.approvalId} onClick={() => setSelectedId(item.approvalId)} type="button">
                         <span aria-hidden="true" className="approvals-risk">{item.riskLevel}</span>
                         <span className="approvals-queue__copy">
                           <strong>{previewSummary(item.preview) || `${item.toolId} · ${item.operation}`}</strong>
@@ -189,7 +213,11 @@ export function ApprovalsFeature() {
                         </span>
                         <span className="approvals-queue__meta">
                           <StatusBadge label={stateLabel(item.state)} tone={stateTone(item.state)} />
-                          <time dateTime={new Date(item.requestedAtMs).toISOString()}>{formatTime(item.requestedAtMs)}</time>
+                          {urgentMs > 0 ? (
+                            <span className="approvals-queue__urgency">剩 {Math.max(1, Math.ceil(urgentMs / 60_000))} 分钟</span>
+                          ) : (
+                            <time dateTime={new Date(item.requestedAtMs).toISOString()}>{formatTime(item.requestedAtMs)}</time>
+                          )}
                         </span>
                       </button>
                     </li>
@@ -301,7 +329,7 @@ function ApprovalDecision({
         <footer className="approvals-decision__actions">
           {confirming ? <Button disabled={pending} onClick={onCancelConfirm} size="small" variant="quiet">取消</Button> : null}
           <Button disabled={pending} leadingIcon={<X size={14} />} onClick={() => onDecide('reject')} size="small" variant="quiet">拒绝</Button>
-          <Button leadingIcon={<Check size={14} />} loading={pending} onClick={() => onDecide('approve')} size="small" variant="primary">{confirming ? '确认批准' : '批准'}</Button>
+          <Button leadingIcon={<Check size={14} />} loading={pending} onClick={() => onDecide('approve')} size="small" variant={confirming ? 'danger' : 'primary'}>{confirming ? '确认批准' : '批准'}</Button>
         </footer>
       ) : null}
     </article>
@@ -409,6 +437,17 @@ function expiryLabel(value: number): string {
   if (remaining <= 0) return '正在核对是否过期';
   const minutes = Math.max(1, Math.ceil(remaining / 60_000));
   return `${minutes} 分钟后过期`;
+}
+
+/**
+ * Milliseconds left before a pending request expires, but only within the
+ * five-minute urgency window; everything else reports 0 so the queue stays
+ * quiet. The pending-poll refetch keeps the countdown honest.
+ */
+function expiryUrgencyMs(item: AgentApprovalV1): number {
+  if (item.state !== 'pending') return 0;
+  const remaining = item.expiresAtMs - Date.now();
+  return remaining > 0 && remaining <= 5 * 60_000 ? remaining : 0;
 }
 
 function formatTime(value: number): string {

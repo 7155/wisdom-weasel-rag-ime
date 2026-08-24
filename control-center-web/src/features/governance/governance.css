@@ -68,7 +68,10 @@ main[data-route-id='governance'] .governance-stats {
   gap: 8px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
-main[data-route-id='governance'] .governance-stats > div {
+
+/* Each stat is a shortcut into the owning records view, so the tiles keep the
+   quiet card look but pick up pointer and focus affordances. */
+main[data-route-id='governance'] .governance-stats > button {
   display: grid;
   min-width: 0;
   gap: 2px;
@@ -76,24 +79,32 @@ main[data-route-id='governance'] .governance-stats > div {
   border: 1px solid color-mix(in srgb, #64748b 16%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, #fff 72%, transparent);
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+  transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
-main[data-route-id='governance'] .governance-stats dt {
+main[data-route-id='governance'] .governance-stats > button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+main[data-route-id='governance'] .governance-stats__label {
   color: #64748b;
   font-size: 12px;
   font-weight: 650;
   letter-spacing: .02em;
 }
-main[data-route-id='governance'] .governance-stats dd {
+main[data-route-id='governance'] .governance-stats__value {
   margin: 0;
   color: #0f172a;
   font-size: 19px;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
-main[data-route-id='governance'] .governance-stats > div[data-tone='success'] dd { color: var(--color-success); }
-main[data-route-id='governance'] .governance-stats > div[data-tone='warning'] dd { color: var(--color-warning); }
-main[data-route-id='governance'] .governance-stats > div[data-tone='danger'] dd { color: var(--color-danger); }
-main[data-route-id='governance'] .governance-stats > div[data-tone='info'] dd { color: var(--color-accent); }
+main[data-route-id='governance'] .governance-stats > button[data-tone='success'] .governance-stats__value { color: var(--color-success); }
+main[data-route-id='governance'] .governance-stats > button[data-tone='warning'] .governance-stats__value { color: var(--color-warning); }
+main[data-route-id='governance'] .governance-stats > button[data-tone='danger'] .governance-stats__value { color: var(--color-danger); }
+main[data-route-id='governance'] .governance-stats > button[data-tone='info'] .governance-stats__value { color: var(--color-accent); }
 
 /* ------------------------------ view switcher ------------------------------ */
 main[data-route-id='governance'] .governance-viewbar {
@@ -450,11 +461,16 @@ main[data-route-id='governance'] .governance-load-error > .ui-button { min-heigh
     border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
     background: color-mix(in srgb, var(--color-accent) 5%, #fff 84%);
   }
+  main[data-route-id='governance'] .governance-stats > button:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 4%, #fff 78%);
+  }
   main[data-route-id='governance'] .governance-filter-disclosure > summary:hover { background: var(--color-surface-hover); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   main[data-route-id='governance'] .governance-attention button,
+  main[data-route-id='governance'] .governance-stats > button,
   main[data-route-id='governance'] .governance-filter-disclosure > summary,
   main[data-route-id='governance'] .governance-filter-disclosure > summary::before { transition: none; }
 }

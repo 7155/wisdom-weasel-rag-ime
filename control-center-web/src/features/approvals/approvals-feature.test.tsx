@@ -39,14 +39,38 @@ describe('ApprovalsFeature', () => {
     const releaseRow = within(queue).getByRole('button', { name: /构建并安装 Control Center 开发版本/ });
     expect(releaseRow).toHaveAttribute('aria-current', 'true');
 
+    // Only the request inside the five-minute expiry window announces its
+    // remaining time; the calmer request keeps its request timestamp.
+    expect(within(releaseRow).getByText('剩 3 分钟')).toBeVisible();
+    expect(releaseRow.closest('li')).toHaveAttribute('data-urgent');
+    const roomRow = within(queue).getByRole('button', { name: /允许 Room 伙伴使用 Session 子 Agent 模板/ });
+    expect(within(roomRow).queryByText(/^剩 \d+ 分钟$/)).toBeNull();
+    expect(roomRow.closest('li')).not.toHaveAttribute('data-urgent');
+
     const panel = screen.getByRole('region', { name: '审批详情' });
     expect(within(panel).getByRole('heading', { level: 3, name: '构建并安装 Control Center 开发版本' })).toBeInTheDocument();
     expect(within(panel).getByText('控制中心迁移')).toBeVisible();
 
-    await user.click(within(queue).getByRole('button', { name: /允许 Room 伙伴使用 Session 子 Agent 模板/ }));
+    await user.click(roomRow);
     expect(within(panel).getByRole('heading', { level: 3, name: '允许 Room 伙伴使用 Session 子 Agent 模板' })).toBeInTheDocument();
-    expect(within(queue).getByRole('button', { name: /允许 Room 伙伴使用 Session 子 Agent 模板/ })).toHaveAttribute('aria-current', 'true');
+    expect(roomRow).toHaveAttribute('aria-current', 'true');
     expect(releaseRow).not.toHaveAttribute('aria-current');
+
+    // The queue is a work list: arrow keys move the selection and focus, and
+    // the decision panel follows without touching the pointer.
+    await user.keyboard('{ArrowUp}');
+    expect(releaseRow).toHaveFocus();
+    expect(releaseRow).toHaveAttribute('aria-current', 'true');
+    expect(within(panel).getByRole('heading', { level: 3, name: '构建并安装 Control Center 开发版本' })).toBeInTheDocument();
+
+    await user.keyboard('{End}');
+    expect(roomRow).toHaveFocus();
+    expect(roomRow).toHaveAttribute('aria-current', 'true');
+    expect(within(panel).getByRole('heading', { level: 3, name: '允许 Room 伙伴使用 Session 子 Agent 模板' })).toBeInTheDocument();
+
+    await user.keyboard('{Home}');
+    expect(releaseRow).toHaveFocus();
+    expect(releaseRow).toHaveAttribute('aria-current', 'true');
   });
 
   it('keeps secret preview fields hidden and the R3 decision bound to the exact payload hash', async () => {
@@ -82,7 +106,10 @@ describe('ApprovalsFeature', () => {
 
     await user.click(within(panel).getByRole('button', { name: '批准' }));
     expect(within(panel).getByText('确认批准 R3 高风险操作？')).toBeVisible();
-    await user.click(within(panel).getByRole('button', { name: '确认批准' }));
+    // The moment of commitment is visibly destructive, not a friendly primary.
+    const confirmButton = within(panel).getByRole('button', { name: '确认批准' });
+    expect(confirmButton).toHaveAttribute('data-variant', 'danger');
+    await user.click(confirmButton);
 
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'agent.approval.decide'
