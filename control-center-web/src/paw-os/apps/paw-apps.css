@@ -613,6 +613,17 @@
   box-shadow: 0 -1px 0 rgb(255 255 255 / 55%) inset, 0 -4px 14px rgb(15 23 42 / 6%);
   transform: translateY(1px);
 }
+.paw-browser-tab[data-active]::after {
+  position: absolute;
+  top: -1px;
+  right: 10px;
+  left: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--paw-accent) 62%, transparent), transparent);
+  content: '';
+  pointer-events: none;
+}
 .paw-browser-new-tab {
   width: 30px;
   height: 30px;
@@ -889,7 +900,40 @@
 .paw-browser-setting-row button { min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--paw-line) 76%, transparent); border-radius: 10px; background: var(--paw-browser-control); color: var(--paw-ink); cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease, transform 140ms var(--paw-ease-out); }
 .paw-browser-settings-body output { display: block; margin: 12px 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--paw-success) 28%, var(--paw-line)); border-radius: 10px; background: color-mix(in srgb, var(--paw-success) 7%, var(--paw-panel-strong)); color: var(--paw-ink); font-size: 13px; animation: paw-browser-receipt-in 190ms var(--paw-ease-out) both; }
 
-.paw-browser-blank-page { min-width: 0; min-height: 0; background: #fff; }
+/* Blank page: a quiet aurora horizon instead of a dead white sheet. */
+.paw-browser-blank-page {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(560px 320px at 50% 30%, color-mix(in srgb, var(--paw-accent) 7%, transparent), transparent 70%),
+    radial-gradient(720px 440px at 84% 92%, rgb(72 104 189 / 6%), transparent 64%),
+    linear-gradient(180deg, var(--paw-panel-strong), color-mix(in srgb, var(--paw-panel-soft) 55%, var(--paw-panel-strong)));
+}
+.paw-browser-blank-page::before {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--paw-accent) 30%, transparent) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  content: '';
+  opacity: .3;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 0%, transparent 66%);
+  mask-image: radial-gradient(ellipse at 50% 40%, #000 0%, transparent 66%);
+}
+.paw-browser-blank-page::after {
+  position: absolute;
+  top: calc(40% - 34px);
+  left: calc(50% - 34px);
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 28%, rgb(255 255 255 / 92%) 0%, transparent 58%),
+    conic-gradient(from 210deg, color-mix(in srgb, var(--paw-accent) 24%, transparent), rgb(72 104 189 / 24%), rgb(82 197 226 / 20%), color-mix(in srgb, var(--paw-accent) 24%, transparent));
+  box-shadow: 0 14px 34px rgb(15 84 93 / 14%), 0 0 0 1px color-mix(in srgb, var(--paw-accent) 14%, transparent);
+  content: '';
+}
 /* CDP Live View */
 .paw-browser-live-view {
   min-width: 0;
@@ -1000,7 +1044,7 @@
   align-items: center;
   gap: 6px;
   color: var(--paw-ink);
-  font-size: 12px;
+  font-size: 13px;
 }
 .paw-browser-agent-stream > header svg { color: var(--paw-accent); }
 .paw-browser-agent-stream > header button {
@@ -1012,7 +1056,7 @@
   border: 1px solid color-mix(in srgb, var(--paw-danger) 30%, var(--paw-line));
   border-radius: 9px;
   color: var(--paw-danger);
-  font-size: 9px;
+  font-size: 12px;
   cursor: pointer;
   transition: background-color 140ms ease, color 140ms ease, transform 140ms var(--paw-ease-out);
 }
@@ -1060,13 +1104,13 @@
   color: var(--paw-danger);
 }
 .paw-browser-agent-stream article strong {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--paw-ink);
 }
 .paw-browser-agent-stream article small {
   color: var(--paw-muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .paw-browser-trace-steps {
   display: grid;
@@ -1083,7 +1127,7 @@
   align-items: center;
   gap: 5px;
   color: var(--paw-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 .paw-browser-trace-steps li > span {
   width: 5px;
@@ -1111,7 +1155,7 @@
   padding: 8px 12px;
   border-top: 1px solid var(--paw-line);
   color: var(--paw-muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .paw-browser-agent-stream > footer > span {
   width: 6px;
@@ -1136,7 +1180,7 @@
   text-align: center;
 }
 .paw-browser-no-trace strong {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--paw-ink);
 }
 @container paw-window (max-width: 760px) {
