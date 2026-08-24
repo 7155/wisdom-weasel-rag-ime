@@ -247,7 +247,9 @@
   color: var(--paw-chat-text-secondary);
   background: transparent;
   font-size: 13px;
-  font-weight: 540;
+  /* One weight for idle and active segments: a weight jump on toggle would
+     reflow the neighbouring segments under the pointer. */
+  font-weight: 570;
   transition: color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
 }
 
@@ -271,7 +273,6 @@
   color: var(--paw-chat-text);
   background: var(--paw-chat-surface);
   box-shadow: 0 1px 3px rgb(24 32 43 / 12%), 0 0 0 1px rgb(24 32 43 / 5%);
-  font-weight: 620;
 }
 
 .paw-desktop-root .paw-session-workspace__tools[data-open] > button {
@@ -417,10 +418,6 @@
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn {
   width: 100%;
   padding: 0;
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn + .agent-turn {
-  margin-top: 16px;
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message-shell {

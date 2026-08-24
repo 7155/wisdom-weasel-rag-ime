@@ -3,16 +3,16 @@
    presentation. Workspace chrome, composer geometry and trace remain owned by
    paw-os-agent-migrated-v1.css; shared rich renderers remain owned by agent.css. */
 
+/* 回合节奏：Virtuoso 给每个回合套 [data-index] 包装，兄弟选择器永远不命中，
+   所以回合间距由回合自己的底部内边距陈述（26px > 回合内 16px：先分回合，
+   再分回合内的对话步骤）。内边距参与虚拟列表测量，滚动不会跳。 */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn {
-  padding: 0;
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn + .agent-turn {
-  margin-top: 20px;
+  padding: 0 0 26px;
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn {
   margin-top: 0;
+  margin-bottom: 0;
   animation: none;
 }
 
