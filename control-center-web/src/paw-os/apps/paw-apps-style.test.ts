@@ -404,17 +404,19 @@ describe('PAWOS semantic type roles', () => {
   });
 
   it('uses one bounded motion contract without clipping open nested Tool evidence', () => {
+    // The shared disclosure voice is the 220ms conversation spring
+    // (DISCLOSURE_MOTION in SmoothDisclosureReveal.tsx / --paw-chat-spring).
     expect(agentFeatureCss).toMatch(
-      /\.agent-smooth-reveal\s*\{[^}]*height 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/s,
+      /\.agent-smooth-reveal\s*\{[^}]*height 220ms cubic-bezier\(0\.34, 1\.4, 0\.64, 1\)/s,
     );
     expect(agentFeatureCss).toMatch(
       /\.agent-smooth-reveal\[data-state='open'\]\s*\{[^}]*overflow:\s*visible/s,
     );
     expect(agentFxCss).toMatch(
-      /\.agent-turn-work__reveal\s*\{[^}]*height 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/s,
+      /\.agent-turn-work__reveal\s*\{[^}]*height 220ms var\(--paw-chat-spring, cubic-bezier\(\.34, 1\.4, \.64, 1\)\)/s,
     );
     expect(agentFxCss).toMatch(
-      /\.paw-activity__detail\s*\{[^}]*height 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/s,
+      /\.paw-activity__detail\s*\{[^}]*height 220ms var\(--paw-chat-spring, cubic-bezier\(\.34, 1\.4, \.64, 1\)\)/s,
     );
     expect(agentFxCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.paw-activity\[data-state='running'\] \.paw-activity__label\s*\{[^}]*animation:\s*none/s,

@@ -35,14 +35,14 @@ describe('PawContextTrace evidence access', () => {
     await user.click(memoryNode!.querySelector('summary')!);
     expect(memoryNode).toHaveAttribute('open');
 
-    const record = within(memoryNode!).getByRole('region', { name: '节点捕获记录，可滚动原文' });
+    const record = within(memoryNode!).getByRole('region', { name: '节点记录，可滚动原文' });
     expect(record).toHaveTextContent('"stage": "memory"');
     expect(record).toHaveTextContent('"summary": "3 条偏好"');
     expect(record).toHaveTextContent('"itemCount": 3');
-    expect(within(memoryNode!).getByText('contextTrace 未附带该阶段的原文捕获；以上为该节点记录的全部真实字段。')).toBeInTheDocument();
+    expect(within(memoryNode!).getByText('这一步没有保留原文；以上是记录到的全部字段。')).toBeInTheDocument();
 
-    await user.click(within(memoryNode!).getByRole('button', { name: '复制节点捕获记录' }));
-    expect(await within(memoryNode!).findByRole('button', { name: '复制节点捕获记录：已复制' })).toBeInTheDocument();
+    await user.click(within(memoryNode!).getByRole('button', { name: '复制节点记录' }));
+    expect(await within(memoryNode!).findByRole('button', { name: '复制节点记录：已复制' })).toBeInTheDocument();
     await expect(navigator.clipboard.readText()).resolves.toContain('"stage": "memory"');
   });
 
@@ -315,7 +315,7 @@ describe('PawContextTrace', () => {
       </ControlTransportProvider>,
     );
 
-    expect(await screen.findByText('这段 Session 当前未驻留 Pi Runtime。重新打开或发送一条消息后，再查看 Agent 轨迹。')).toBeInTheDocument();
+    expect(await screen.findByText('这段对话正在休眠，轨迹暂时看不到。回到对话发送一条消息，就会重新记录。')).toBeInTheDocument();
   });
 
   it('turns a Runtime snapshot timeout into readable copy with a working retry', async () => {
@@ -345,7 +345,7 @@ describe('PawContextTrace', () => {
       </ControlTransportProvider>,
     );
 
-    expect(await screen.findByText('Runtime 未及时返回轨迹快照；对话不受影响。请稍后重新读取。')).toBeInTheDocument();
+    expect(await screen.findByText('轨迹加载超时了；对话不受影响，可以稍后重新读取。')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '重新读取' }));
     expect(await screen.findByRole('heading', { name: 'T1 · Agent 轨迹' })).toBeInTheDocument();
     expect(attempts).toBe(2);
@@ -509,9 +509,9 @@ describe('PawContextTrace', () => {
       </ControlTransportProvider>,
     );
 
-    const empty = await screen.findByRole('status', { name: '当前轮次没有可投影事件' });
-    expect(empty).toHaveTextContent('T1 暂无可投影的 Session 事件');
-    expect(empty).toHaveTextContent('上下文装配记录可用');
+    const empty = await screen.findByRole('status', { name: '这一轮还没有事件记录' });
+    expect(empty).toHaveTextContent('T1 这一轮还没有事件记录');
+    expect(empty).toHaveTextContent('可以查看这一轮发给模型的完整内容');
     await user.click(screen.getByRole('button', { name: '查看上下文装配' }));
     expect(await screen.findByText('项目约束')).toBeInTheDocument();
   });

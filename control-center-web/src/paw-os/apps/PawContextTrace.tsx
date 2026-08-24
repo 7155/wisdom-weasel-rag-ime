@@ -241,7 +241,7 @@ export function PawContextTrace({
       <aside className="an-trace-rail">
         <header>
           <strong>轮次</strong>
-          <small>{turns.length ? `本机保留 ${turns.length} 轮 · 真实上下文装配记录` : '等待 Session 事件'}</small>
+          <small>{turns.length ? `已记录 ${turns.length} 轮，每轮都可展开核对` : '等待对话开始'}</small>
         </header>
         <div className="an-turn-list">
           {turns.map((turn, index) => {
@@ -290,13 +290,13 @@ export function PawContextTrace({
         </div>
 
         {error ? (
-          <div className="an-trace-notice" role="status">
+          <div className="an-trace-notice" data-tone="danger" role="status">
             <span>{error}</span>
             <button onClick={() => void loadLatest()} type="button">重试</button>
           </div>
         ) : null}
         {unavailable ? (
-          <div className="an-trace-notice" role="status">
+          <div className="an-trace-notice" data-tone="info" role="status">
             <span>{unavailable.message}</span>
             {unavailable.retryable ? (
               <button onClick={() => void loadLatest()} type="button">重新读取</button>
@@ -393,11 +393,11 @@ export function PawContextTrace({
                              invent content. */
                           <AssemblyEvidence
                             evidence={{
-                              label: '节点捕获记录',
+                              label: '节点记录',
                               value: traceNodeCaptureRecord(node),
                               kind: 'json',
                             }}
-                            note="contextTrace 未附带该阶段的原文捕获；以上为该节点记录的全部真实字段。"
+                            note="这一步没有保留原文；以上是记录到的全部字段。"
                           />
                         )}
                     </Disclosure>
@@ -427,7 +427,7 @@ export function PawContextTrace({
             </div>
           </div>
         ) : (
-          <div className="an-trace-body"><div className="an-trace-empty">{loading ? '正在读取上下文装配记录…' : '选择左侧轮次查看真实上下文。'}</div></div>
+          <div className="an-trace-body"><div className="an-trace-empty">{loading ? '正在读取这一轮的记录…' : '从左侧选择一轮，查看它发给模型的完整内容。'}</div></div>
         )}
       </div>
     </section>
@@ -556,8 +556,8 @@ function FallbackNodes({ context }: { context: DebugContextRecord }) {
           <AssemblyEvidence evidence={node.evidence} />
         </Disclosure>
       ))}
-      <div className="an-trace-notice" role="status">
-        <span>当前由 Runtime 的 debugContext 提供完整捕获内容；节点时序与处置证据需 contextTrace 才能显示。</span>
+      <div className="an-trace-notice" data-tone="info" role="status">
+        <span>已展示这一轮发给模型的完整内容；更细的装配顺序暂时没有记录。</span>
       </div>
     </>
   );
@@ -709,15 +709,15 @@ function SessionEventTrace({
           </div>
         ) : null}
         {!filteredTurns.length ? counts.all === 0 && debugTurn ? (
-          <div className="an-trace-empty an-trace-empty--events" role="status" aria-label="当前轮次没有可投影事件">
-            <strong>T{debugTurn.turnOrdinal ?? '—'} 暂无可投影的 Session 事件</strong>
-            <span>上下文装配记录可用 · {formatTime(debugTurn.updatedAtMs)} 更新。</span>
+          <div className="an-trace-empty an-trace-empty--events" role="status" aria-label="这一轮还没有事件记录">
+            <strong>T{debugTurn.turnOrdinal ?? '—'} 这一轮还没有事件记录</strong>
+            <span>可以查看这一轮发给模型的完整内容 · {formatTime(debugTurn.updatedAtMs)} 更新。</span>
             {assemblyAvailable ? <button onClick={onShowAssembly} type="button">查看上下文装配</button> : null}
           </div>
         ) : (
-          <div className="an-trace-empty an-trace-empty--events" role="status" aria-label="当前筛选没有可投影事件">
+          <div className="an-trace-empty an-trace-empty--events" role="status" aria-label="当前筛选没有事件">
             <strong>当前筛选没有事件</strong>
-            <span>选择其他筛选，或切换到上下文装配查看这一轮的真实输入结构。</span>
+            <span>换一个筛选，或切换到上下文装配查看这一轮的完整输入。</span>
             {assemblyAvailable ? <button onClick={onShowAssembly} type="button">查看上下文装配</button> : null}
           </div>
         ) : null}
@@ -1179,18 +1179,18 @@ function errorText(reason: unknown): string {
 function traceUnavailableState(reason: string): TraceUnavailable {
   if (reason === 'session_not_resident') {
     return {
-      message: '这段 Session 当前未驻留 Pi Runtime。重新打开或发送一条消息后，再查看 Agent 轨迹。',
+      message: '这段对话正在休眠，轨迹暂时看不到。回到对话发送一条消息，就会重新记录。',
       retryable: false,
     };
   }
   if (reason === 'runtime_unresponsive') {
     return {
-      message: 'Runtime 未及时返回轨迹快照；对话不受影响。请稍后重新读取。',
+      message: '轨迹加载超时了；对话不受影响，可以稍后重新读取。',
       retryable: true,
     };
   }
   return {
-    message: '当前 Session 还没有可查看的上下文装配记录。',
+    message: '这段对话还没有轨迹。开始一轮对话后，这里会记录 Agent 的每一步。',
     retryable: false,
   };
 }

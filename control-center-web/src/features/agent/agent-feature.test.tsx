@@ -3661,7 +3661,10 @@ describe('Agent experience', () => {
     const modelPicker = await screen.findByRole('button', {
       name: '模型：DeepSeek V4 · DeepSeek，思考强度：不启用推理',
     });
-    expect(modelPicker).toHaveTextContent('DeepSeek V4 · DeepSeek · 不启用推理');
+    // The chip stays compact: model name only while thinking is off. Provider
+    // and thinking detail remain in the accessible name asserted above.
+    expect(modelPicker).toHaveTextContent('DeepSeek V4');
+    expect(modelPicker).not.toHaveTextContent('不启用推理');
     expect(screen.getByRole('button', { name: '当前模型不支持图片' })).toBeDisabled();
 
     const image = new File(['png'], 'clipboard.png', { type: 'image/png' });
@@ -3700,7 +3703,7 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
     const unavailableTools = await screen.findByRole('button', { name: '能力列表暂不可用' });
     expect(unavailableTools).toBeDisabled();
-    expect(unavailableTools).toHaveTextContent('能力 · 未加载');
+    expect(unavailableTools).toHaveTextContent('工具 · 未加载');
   });
 
   it('opens the backend active conversation instead of a newer empty Session', async () => {

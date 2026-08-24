@@ -48,6 +48,51 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* Work-record rows: two calm lines with room to breathe. The title carries
+   the row; the meta line (project · time, or "N 位伙伴") stays tertiary. */
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-recents {
+  padding: 4px 8px 14px;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-group {
+  gap: 2px;
+  margin-bottom: 14px;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-group > header {
+  padding: 8px 10px 5px;
+  color: #7b8798;
+  letter-spacing: .02em;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row {
+  min-height: 50px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row > span {
+  gap: 2px;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row strong {
+  color: #18202b;
+  font-weight: 570;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row small {
+  color: #7b8798;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row[aria-current='page'] {
+  background: #e8effc;
+  box-shadow: none;
+}
+
+.paw-desktop-root .paw-window-shell[data-app='agent'] .paw-agent-row[aria-current='page'] small {
+  color: #526174;
+}
+
 .paw-desktop-root .paw-session-workspace[data-chrome-in-window='true'] {
   grid-template-rows: minmax(0, 1fr);
 }
@@ -166,12 +211,21 @@
   white-space: nowrap;
 }
 
+/* Header hierarchy: the view switch is one segmented control (which surface
+   am I on), runtime status and Session tools group on the right as quiet
+   secondary information. Three loose text links read as noise; one track with
+   a raised active segment reads as a single choice. */
 .paw-desktop-root .paw-session-workspace__view-switch {
   flex: 0 0 auto;
   gap: 2px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  padding: 2px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 9px;
+  background: var(--paw-chat-surface-subtle);
+}
+
+.paw-desktop-root .paw-session-workspace__runtime {
+  margin-left: auto;
 }
 
 .paw-desktop-root .paw-session-workspace__tools {
@@ -181,7 +235,7 @@
 
 .paw-desktop-root .paw-session-workspace__view-switch button,
 .paw-desktop-root .paw-session-workspace__tools > button {
-  min-height: 30px;
+  min-height: 26px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -194,15 +248,27 @@
   font-weight: 540;
 }
 
+.paw-desktop-root .paw-session-workspace__tools > button {
+  min-height: 30px;
+  border: 1px solid var(--paw-chat-border);
+  background: var(--paw-chat-surface);
+}
+
 .paw-desktop-root .paw-session-workspace__view-switch button:hover,
 .paw-desktop-root .paw-session-workspace__tools > button:hover {
   color: var(--paw-chat-text);
   background: var(--paw-chat-surface-hover);
 }
 
-.paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'],
+.paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'] {
+  color: var(--paw-chat-text);
+  background: var(--paw-chat-surface);
+  box-shadow: 0 1px 3px rgb(24 32 43 / 14%), 0 0 0 1px rgb(24 32 43 / 4%);
+}
+
 .paw-desktop-root .paw-session-workspace__tools[data-open] > button {
   color: var(--paw-chat-text);
+  border-color: transparent;
   background: var(--paw-chat-user-bubble);
   box-shadow: 0 0 0 1px rgb(42 28 0 / 5%);
 }
@@ -589,6 +655,39 @@
 :root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace__composer .agent-composer__send:not(:disabled) {
   transition: none;
   transform: none;
+}
+
+/* Composer chips read as one quiet set: same height, same pill shape, borders
+   appear only on interaction. The permission chip keeps its red warning tint
+   in full-trust mode because that state must stay visible. */
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__picker {
+  min-height: 28px;
+  padding-inline: 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--paw-chat-text-secondary);
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__picker:hover:not(:disabled) {
+  border-color: var(--paw-chat-border);
+  background: var(--paw-chat-surface-subtle);
+  color: var(--paw-chat-text);
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__picker[data-permission='dangerous'] {
+  border-color: color-mix(in srgb, var(--paw-chat-danger) 36%, transparent);
+  background: color-mix(in srgb, var(--paw-chat-danger) 7%, transparent);
+  color: var(--paw-chat-danger);
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__attachment {
+  border-color: transparent;
+  background: transparent;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__attachment:hover:not(:disabled) {
+  border-color: var(--paw-chat-border);
+  background: var(--paw-chat-surface-subtle);
 }
 
 .paw-desktop-root .paw-session-workspace__side {

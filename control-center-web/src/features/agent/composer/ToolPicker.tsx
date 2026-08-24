@@ -53,10 +53,10 @@ export function ToolPicker({
       ? '能力列表暂不可用'
       : `这段对话可用工具：${availableCount} 个`;
   const text = status === 'loading'
-    ? '能力 · 加载中'
+    ? '工具 · 加载中'
     : status === 'failed'
-      ? '能力 · 未加载'
-      : `能力 · ${availableCount}`;
+      ? '工具 · 未加载'
+      : `工具 · ${availableCount}`;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

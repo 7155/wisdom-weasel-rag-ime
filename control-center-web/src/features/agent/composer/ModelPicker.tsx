@@ -53,6 +53,13 @@ export function ModelPicker({
   const selectedLabel = selectedModel
     ? `${selectedModel.name} · ${selectedProvider?.displayName || selectedModel.provider}`
     : '未选择';
+  // The chip shows only what changes a reply: model name and, when enabled,
+  // the thinking level. Provider and the full detail stay in title/aria.
+  const chipLabel = selectedModel
+    ? thinking === 'off'
+      ? selectedModel.name
+      : `${selectedModel.name} · ${thinkingLabel(thinking)}`
+    : '选择模型';
   const defaultProviderId = selectedProvider?.id ?? catalog?.providers[0]?.id ?? '';
   const activeProvider = catalog?.providers.find(
     (provider) => provider.id === activeProviderId,
@@ -105,7 +112,7 @@ export function ModelPicker({
             ? <LoaderCircle className="ui-spin" size={15} />
             : <BrainCircuit size={15} />}
         >
-          {selectedModel ? selectedLabel : '选择模型'} · {thinkingLabel(thinking)}
+          {chipLabel}
         </Button>
       </PopoverTrigger>
       <PopoverContent
