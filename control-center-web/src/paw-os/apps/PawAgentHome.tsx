@@ -12,7 +12,6 @@
  * - UR-011/025：空态只给真实信息与下一步（最近工作记录、真实状态），不写愿景文案。
  *
  * 样式：paw-os/styles/paw-os-agent-next.css（类名 an-* 作用域）。
- * 注意：本文件在沙盒中未编译；拷贝后请先运行 `pnpm exec tsc --noEmit`。
  */
 
 import {
@@ -98,6 +97,11 @@ export function PawAgentHome({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const composerRef = useRef<HTMLDivElement>(null);
+  const chipRefs = useRef<Record<Exclude<OptionsPanel, null>, HTMLButtonElement | null>>({
+    permission: null,
+    model: null,
+    project: null,
+  });
   const preferenceHydratedRef = useRef(false);
   const preferenceEditedRef = useRef({ executionMode: false, modelReference: false, thinking: false });
 
@@ -127,13 +131,13 @@ export function PawAgentHome({
   }, [models]);
   const permission = PERMISSION_PRESETS.find((item) => item.executionMode === executionMode) ?? PERMISSION_PRESETS[0]!;
 
-  const recents = useMemo(() => {
-    const sessionCards = sessions.slice(0, 3).map((item) => ({ kind: 'session' as const, item }));
-    const roomCards = rooms.slice(0, 1).map((item) => ({ kind: 'room' as const, item }));
-    return [...sessionCards, ...roomCards]
-      .sort((left, right) => right.item.updatedAtMs - left.item.updatedAtMs)
-      .slice(0, 4);
-  }, [rooms, sessions]);
+  // 继续工作按真实更新时间取最近四条，而不是按目录返回顺序截断。
+  const recents = useMemo(() => [
+    ...sessions.map((item) => ({ kind: 'session' as const, item })),
+    ...rooms.map((item) => ({ kind: 'room' as const, item })),
+  ]
+    .sort((left, right) => right.item.updatedAtMs - left.item.updatedAtMs)
+    .slice(0, 4), [rooms, sessions]);
 
   useEffect(() => {
     if (!optionsPanel) return;
@@ -141,7 +145,9 @@ export function PawAgentHome({
       if (event.target instanceof Node && !composerRef.current?.contains(event.target)) setOptionsPanel(null);
     };
     const closeWithEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOptionsPanel(null);
+      if (event.key !== 'Escape') return;
+      setOptionsPanel(null);
+      chipRefs.current[optionsPanel]?.focus();
     };
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeWithEscape);
@@ -335,9 +341,10 @@ export function PawAgentHome({
                   aria-expanded={optionsPanel === 'permission'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'permission' ? null : 'permission')}
+                  ref={(node) => { chipRefs.current.permission = node; }}
                   type="button"
                 >
-                  <span className="mini-dot" />{permission.label}<ChevronDown className="caret" size={13} />
+                  <span className="mini-dot" data-execution-mode={executionMode} />{permission.label}<ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'permission' ? (
                   <div className="an-menu" role="menu">
@@ -371,6 +378,7 @@ export function PawAgentHome({
                   aria-expanded={optionsPanel === 'model'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
+                  ref={(node) => { chipRefs.current.model = node; }}
                   type="button"
                 >
                   {selectedModel?.name ?? '自动模型'} · {thinkingLabel(thinking)}<ChevronDown className="caret" size={13} />
@@ -426,6 +434,7 @@ export function PawAgentHome({
                   aria-expanded={optionsPanel === 'project'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'project' ? null : 'project')}
+                  ref={(node) => { chipRefs.current.project = node; }}
                   type="button"
                 >
                   <Folder size={12} />{workspaceRoot ? projectName([workspaceRoot]) : '选择工作目录'}<ChevronDown className="caret" size={13} />
@@ -502,11 +511,13 @@ export function PawAgentHome({
             </div>
           ) : null}
 
-          <div className="an-home-foot">
-            <span><span className="an-dot is-ok" />Pi Runtime 已连接</span>
-            {models.length ? <span>{models.length} 个可用模型</span> : null}
-            {defaultModel ? <span>默认模型 {defaultModel.split('/').pop()}</span> : null}
-          </div>
+          {/* 只陈述有真实目录数据支撑的事实；连接状态由 Session 工作区的运行时行负责。 */}
+          {models.length || defaultModel ? (
+            <div className="an-home-foot">
+              {models.length ? <span><span className="an-dot is-ok" />{models.length} 个可用模型</span> : null}
+              {defaultModel ? <span>默认模型 {defaultModel.split('/').pop()}</span> : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

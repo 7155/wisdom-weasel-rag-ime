@@ -67,6 +67,11 @@
 .an-chip[aria-expanded="true"] { border-color: var(--an-rule-strong); background: var(--an-paper-soft); }
 .an-chip .caret { flex: none; opacity: .58; }
 .an-chip .mini-dot { width: 7px; height: 7px; flex: none; border-radius: 2px; background: var(--an-teal); }
+/* 权限圆点跟随实际执行模式：只读最安全，逐项确认中性，托管有界，全自动需要注意。 */
+.an-chip .mini-dot[data-execution-mode='read_only'] { background: var(--an-teal); }
+.an-chip .mini-dot[data-execution-mode='per_action'] { background: var(--an-cobalt); }
+.an-chip .mini-dot[data-execution-mode='workspace_managed'] { background: var(--an-yellow); }
+.an-chip .mini-dot[data-execution-mode='full_trust'] { background: var(--an-red); }
 .an-send { display: grid; width: 32px; height: 32px; margin-left: auto; flex: none; place-items: center; border: 0; border-radius: 8px; background: var(--an-ink); color: var(--an-paper-bright); transition: transform 180ms var(--an-spring), opacity 140ms ease, background 140ms ease; }
 .an-send:hover:not(:disabled) { background: var(--an-cobalt); transform: translateY(-2px); }
 .an-send:active:not(:disabled) { transform: translateY(0) scale(.96); }
