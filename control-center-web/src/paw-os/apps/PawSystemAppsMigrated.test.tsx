@@ -118,6 +118,71 @@ describe('PawSystemAppsMigrated', () => {
     await waitFor(() => expect(document.querySelector('.paw-system-app__nav-badge')).toBeNull());
   });
 
+  it('counts pending Package proposals on the App Center rail without inventing numbers', async () => {
+    const transport = baseTransport({
+      'agent.extensions.proposals': {
+        ok: true,
+        items: [
+          { proposalId: 'proposal:one', summary: { action: 'install', pluginId: 'pkg-one' } },
+          { proposalId: 'proposal:two', summary: { action: 'update', pluginId: 'pkg-two' } },
+        ],
+      },
+    });
+    renderSystemApp('app-center', '/plugins', transport);
+
+    const proposalsButton = await screen.findByRole('button', { name: '建议（2 项待确认）' });
+    expect(proposalsButton.querySelector('.paw-system-app__nav-badge')?.textContent).toBe('2');
+  });
+
+  it('marks available Package updates on the App Center rail as a quiet count', async () => {
+    const transport = baseTransport({
+      'agent.extensions.catalog': {
+        ok: true,
+        items: [
+          { id: 'pkg-one', latestVersion: '1.1.0', installed: true, updateAvailable: true, actionable: true },
+          { id: 'pkg-two', latestVersion: '2.0.0', installed: true, updateAvailable: false, actionable: true },
+        ],
+      },
+    });
+    renderSystemApp('app-center', '/plugins', transport);
+
+    const catalogButton = await screen.findByRole('button', { name: '目录（1 个可更新）' });
+    const badge = catalogButton.querySelector('.paw-system-app__nav-badge');
+    expect(badge?.textContent).toBe('1');
+    expect(badge).toHaveAttribute('data-tone', 'quiet');
+  });
+
+  it('flags only explicitly failing runtime checks on the Monitor rail', async () => {
+    const transport = baseTransport({
+      'diagnostics.runtime': {
+        ok: true,
+        components: {
+          sidecar: { ok: false, status: 'stopped' },
+          predictor: { ok: false, status: 'stopped' },
+          sqlite: { ok: true, status: 'ready' },
+          deployment: { status: 'unknown' },
+        },
+      },
+    });
+    renderSystemApp('system-monitor', '/observability', transport);
+
+    const diagnosticsButton = await screen.findByRole('button', { name: '诊断（2 项需要检查）' });
+    const badge = diagnosticsButton.querySelector('.paw-system-app__nav-badge');
+    expect(badge?.textContent).toBe('2');
+    expect(badge).toHaveAttribute('data-tone', 'attention');
+  });
+
+  it('keeps the Monitor and App Center rails quiet without a truthful status source', async () => {
+    renderSystemApp('system-monitor', '/observability');
+    expect(await screen.findByRole('button', { name: '诊断' })).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.paw-system-app__nav-badge')).toBeNull());
+
+    cleanup();
+    renderSystemApp('app-center', '/plugins');
+    expect(await screen.findByRole('button', { name: '建议' })).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.paw-system-app__nav-badge')).toBeNull());
+  });
+
   it('moves between Input Studio pages while retaining the real feature owners', async () => {
     const user = userEvent.setup();
     renderSystemApp('input-studio', '/input');
