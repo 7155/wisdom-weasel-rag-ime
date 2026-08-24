@@ -29,6 +29,10 @@ describe('BrowserTabStrip', () => {
     expect(rendered[1]).toHaveAttribute('aria-busy', 'true');
     expect(rendered[2].querySelector('img')).toHaveAttribute('src', 'https://example.com/icon.png');
     expect(strip.querySelector('.paw-browser-tab[data-failed]')).not.toBeNull();
+    // The scrolling tablist holds nothing but tabs; new-tab is a strip-level
+    // sibling that stays reachable however far the tabs scroll.
+    expect(within(strip).queryByRole('button', { name: '新建标签页' })).toBeNull();
+    expect(screen.getByRole('button', { name: '新建标签页' }).parentElement).toHaveClass('paw-browser-tabstrip');
   });
 
   it('names each tab with its real load state and keeps one resting close affordance', () => {
@@ -111,67 +115,68 @@ describe('BrowserTabStrip', () => {
 });
 
 describe('BrowserOmnibox', () => {
-  it('shows a search icon while the draft differs from the committed page', () => {
-    render(
-      <BrowserOmnibox
-        address="paw"
-        currentUrl="https://example.com/"
-        onAddressChange={() => undefined}
-        onNavigate={() => undefined}
-      />,
-    );
+  it('shows a search icon while the human draft differs from the committed page', async () => {
+    const user = userEvent.setup();
+    render(<BrowserOmnibox committedUrl="https://example.com/" onNavigate={() => undefined} tabKey="tab-1" />);
+    expect(document.querySelector('.paw-lock-icon')).not.toBeNull();
+    const input = screen.getByRole('textbox', { name: '页面地址' });
+    await user.clear(input);
+    await user.type(input, 'paw');
     expect(document.querySelector(".paw-omnibox-icon[data-kind='search']")).not.toBeNull();
     expect(document.querySelector('.paw-lock-icon')).toBeNull();
   });
 
   it('locks only a committed HTTPS page and marks HTTP as unencrypted', () => {
     const { rerender } = render(
-      <BrowserOmnibox
-        address="https://example.com/"
-        currentUrl="https://example.com/"
-        onAddressChange={() => undefined}
-        onNavigate={() => undefined}
-      />,
+      <BrowserOmnibox committedUrl="https://example.com/" onNavigate={() => undefined} tabKey="tab-1" />,
     );
     expect(screen.getByTitle('连接已加密')).toHaveClass('paw-lock-icon');
-    rerender(
-      <BrowserOmnibox
-        address="http://example.com/"
-        currentUrl="http://example.com/"
-        onAddressChange={() => undefined}
-        onNavigate={() => undefined}
-      />,
-    );
+    rerender(<BrowserOmnibox committedUrl="http://example.com/" onNavigate={() => undefined} tabKey="tab-1" />);
     expect(screen.getByTitle('连接未加密')).toBeInTheDocument();
     expect(document.querySelector('.paw-lock-icon')).toBeNull();
   });
 
-  it('submits the typed address and clears through the clear control', async () => {
+  it('submits the typed draft and clears it through the clear control', async () => {
     const user = userEvent.setup();
-    const onAddressChange = vi.fn();
     const onNavigate = vi.fn();
-    render(
-      <BrowserOmnibox address="example.com" currentUrl="" onAddressChange={onAddressChange} onNavigate={onNavigate} />,
-    );
-    await user.type(screen.getByRole('textbox', { name: '页面地址' }), '{Enter}');
+    render(<BrowserOmnibox committedUrl="" onNavigate={onNavigate} tabKey="tab-1" />);
+    const input = screen.getByRole('textbox', { name: '页面地址' });
+    await user.type(input, 'example.com{Enter}');
     expect(onNavigate).toHaveBeenCalledWith('example.com');
+
+    await user.type(input, 'draft text');
     await user.click(screen.getByRole('button', { name: '清除地址' }));
-    expect(onAddressChange).toHaveBeenCalledWith('');
+    expect(input).toHaveValue('');
+    expect(input).toHaveFocus();
+  });
+
+  it('keeps the half-typed draft when the committed guest URL changes underneath', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <BrowserOmnibox committedUrl="https://one.example/" onNavigate={() => undefined} tabKey="tab-1" />,
+    );
+    const input = screen.getByRole('textbox', { name: '页面地址' });
+    await user.clear(input);
+    await user.type(input, 'half-typed dr');
+    // A loading/favicon/Agent navigation event updates the committed URL; the
+    // human draft must survive it.
+    rerender(<BrowserOmnibox committedUrl="https://two.example/" onNavigate={() => undefined} tabKey="tab-1" />);
+    expect(input).toHaveValue('half-typed dr');
+    expect(document.querySelector(".paw-omnibox-icon[data-kind='search']")).not.toBeNull();
+
+    // Switching to another tab drops the draft and presents that tab's truth.
+    rerender(<BrowserOmnibox committedUrl="https://three.example/" onNavigate={() => undefined} tabKey="tab-2" />);
+    expect(input).toHaveValue('https://three.example/');
   });
 
   it('previews the exact URL Enter will open while editing', async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
-    render(
-      <BrowserOmnibox
-        address="example.com"
-        currentUrl="https://old.example/"
-        onAddressChange={() => undefined}
-        onNavigate={onNavigate}
-      />,
-    );
+    render(<BrowserOmnibox committedUrl="https://old.example/" onNavigate={onNavigate} tabKey="tab-1" />);
     expect(screen.queryByRole('button', { name: '打开 https://example.com' })).toBeNull();
-    await user.click(screen.getByRole('textbox', { name: '页面地址' }));
+    const input = screen.getByRole('textbox', { name: '页面地址' });
+    await user.clear(input);
+    await user.type(input, 'example.com');
     const commit = screen.getByRole('button', { name: '打开 https://example.com' });
     await user.click(commit);
     expect(onNavigate).toHaveBeenCalledWith('example.com');
@@ -179,44 +184,28 @@ describe('BrowserOmnibox', () => {
 
   it('previews a web search for non-URL drafts and hides the preview at rest', async () => {
     const user = userEvent.setup();
-    render(
-      <BrowserOmnibox
-        address="paw workbench"
-        currentUrl=""
-        onAddressChange={() => undefined}
-        onNavigate={() => undefined}
-      />,
-    );
-    await user.click(screen.getByRole('textbox', { name: '页面地址' }));
+    render(<BrowserOmnibox committedUrl="" onNavigate={() => undefined} tabKey="tab-1" />);
+    await user.type(screen.getByRole('textbox', { name: '页面地址' }), 'paw workbench');
     const commit = screen.getByRole('button', { name: '搜索 paw workbench' });
     expect(commit).toHaveTextContent('Google');
     expect(omniboxCommitPreview('https://example.com/', 'https://example.com/')).toBeNull();
     expect(omniboxCommitPreview('', '')).toBeNull();
   });
 
-  it('restores the committed address on Escape', () => {
-    const onAddressChange = vi.fn();
-    render(
-      <BrowserOmnibox
-        address="half-typed draft"
-        currentUrl="https://example.com/"
-        onAddressChange={onAddressChange}
-        onNavigate={() => undefined}
-      />,
-    );
-    fireEvent.keyDown(screen.getByRole('textbox', { name: '页面地址' }), { key: 'Escape' });
-    expect(onAddressChange).toHaveBeenCalledWith('https://example.com/');
+  it('restores the committed address on Escape', async () => {
+    const user = userEvent.setup();
+    render(<BrowserOmnibox committedUrl="https://example.com/" onNavigate={() => undefined} tabKey="tab-1" />);
+    const input = screen.getByRole('textbox', { name: '页面地址' });
+    await user.clear(input);
+    await user.type(input, 'half-typed draft');
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(input).toHaveValue('https://example.com/');
   });
 
   it('emphasizes the real host at rest without changing the field value', async () => {
     const user = userEvent.setup();
     render(
-      <BrowserOmnibox
-        address="https://example.com/path?q=1"
-        currentUrl="https://example.com/path?q=1"
-        onAddressChange={() => undefined}
-        onNavigate={() => undefined}
-      />,
+      <BrowserOmnibox committedUrl="https://example.com/path?q=1" onNavigate={() => undefined} tabKey="tab-1" />,
     );
     const input = screen.getByRole('textbox', { name: '页面地址' });
     expect(input).toHaveValue('https://example.com/path?q=1');

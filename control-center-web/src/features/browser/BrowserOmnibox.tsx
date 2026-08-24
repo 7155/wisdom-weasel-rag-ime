@@ -1,5 +1,5 @@
 import { CornerDownLeft, Globe2, Info, LockKeyhole, Search, X } from 'lucide-react';
-import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   normalizedAddress,
   omniboxIconKind,
@@ -50,45 +50,67 @@ export function committedUrlParts(url: string): CommittedUrlParts | null {
 }
 
 /**
- * Real omnibox. The leading icon states the truth about the committed page:
- * a lock only for HTTPS, an unencrypted mark for HTTP, and search while the
- * draft differs from the committed URL or nothing is committed yet. While
- * editing, one action row previews the exact URL or search Enter commits;
- * Escape restores the committed address. At rest the committed URL is shown
- * with the host emphasized, without changing the underlying field value.
+ * Real omnibox with one clear ownership split: the App owns the committed
+ * guest URL, this field owns the human draft. While no draft exists the field
+ * simply presents the committed address, so guest events (loading, favicon,
+ * title, or an Agent navigation) can never clobber half-typed input. The
+ * draft drops only on tab switch, Escape, or commit.
+ *
+ * The leading icon states the truth about the committed page: a lock only for
+ * HTTPS, an unencrypted mark for HTTP, and search while a draft differs from
+ * the committed URL or nothing is committed yet. While editing, one action
+ * row previews the exact URL or search Enter commits; Escape restores the
+ * committed address. At rest the committed URL is shown with the host
+ * emphasized, without changing the underlying field value.
  */
 export function BrowserOmnibox({
-  address,
-  currentUrl,
-  onAddressChange,
+  committedUrl,
   onNavigate,
+  tabKey,
 }: {
-  address: string;
-  currentUrl: string;
-  onAddressChange(value: string): void;
+  committedUrl: string;
   onNavigate(rawAddress: string): void;
+  tabKey: string;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const selectAllOnMouseUp = useRef(false);
   const [focused, setFocused] = useState(false);
-  const kind = omniboxIconKind(address, currentUrl);
-  const committed = currentUrl === 'about:blank' ? '' : currentUrl;
-  const preview = focused ? omniboxCommitPreview(address, currentUrl) : null;
-  const restingParts = !focused && address && address === committed ? committedUrlParts(committed) : null;
+  // null = no human draft: present the committed URL and follow it truthfully.
+  const [draft, setDraft] = useState<string | null>(null);
+  const lastTabKey = useRef(tabKey);
+  if (lastTabKey.current !== tabKey) {
+    lastTabKey.current = tabKey;
+    setDraft(null);
+  }
+
+  const committed = committedUrl === 'about:blank' ? '' : committedUrl;
+  const value = draft ?? committed;
+  const kind = omniboxIconKind(value, committedUrl);
+  const preview = focused ? omniboxCommitPreview(value, committedUrl) : null;
+  const restingParts = !focused && value && value === committed ? committedUrlParts(committed) : null;
+
+  useEffect(() => {
+    if (!focused && draft !== null && draft === committed) setDraft(null);
+  }, [committed, draft, focused]);
+
+  const commit = () => {
+    onNavigate(value);
+    setDraft(null);
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onNavigate(address);
+    commit();
   };
 
   const keyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
-    if (address === committed) {
+    if (draft === null || draft === committed) {
       inputRef.current?.blur();
       return;
     }
-    onAddressChange(committed);
+    setDraft(null);
   };
 
   // First pointer click selects the whole address; a second click keeps the
@@ -124,7 +146,7 @@ export function BrowserOmnibox({
         <input
           aria-label="页面地址"
           onBlur={blur}
-          onChange={(event) => onAddressChange(event.target.value)}
+          onChange={(event) => setDraft(event.target.value)}
           onFocus={focus}
           onKeyDown={keyDown}
           onMouseUp={mouseUp}
@@ -132,7 +154,7 @@ export function BrowserOmnibox({
           placeholder="输入网址或搜索内容…"
           ref={inputRef}
           spellCheck={false}
-          value={address}
+          value={value}
         />
         {restingParts ? (
           <span aria-hidden="true" className="paw-omnibox-presentation">
@@ -142,12 +164,12 @@ export function BrowserOmnibox({
           </span>
         ) : null}
       </span>
-      {address ? (
+      {value ? (
         <button
           aria-label="清除地址"
           className="paw-omnibox-clear"
           onClick={() => {
-            onAddressChange('');
+            setDraft('');
             inputRef.current?.focus();
           }}
           onMouseDown={(event) => event.preventDefault()}
@@ -160,7 +182,7 @@ export function BrowserOmnibox({
         <div className="paw-omnibox-commit-hint">
           <button
             aria-label={preview.kind === 'search' ? `搜索 ${preview.query}` : `打开 ${preview.url}`}
-            onClick={() => onNavigate(address)}
+            onClick={commit}
             onMouseDown={(event) => event.preventDefault()}
             type="button"
           >

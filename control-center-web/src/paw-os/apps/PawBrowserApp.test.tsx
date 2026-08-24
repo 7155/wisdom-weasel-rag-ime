@@ -146,6 +146,75 @@ describe('PAW Browser App', () => {
     expect(screen.getByRole('button', { name: '收起步骤到最近 4 项' })).toBeInTheDocument();
   });
 
+  it('keeps host-only toolbar commands absent instead of disabled without the desktop host', async () => {
+    render(
+      <ControlTransportProvider transport={browserTransport()}>
+        <PawBrowserApp />
+      </ControlTransportProvider>,
+    );
+
+    await screen.findByRole('textbox', { name: '页面地址' });
+    // No PAWOS desktop host: History, Settings, and the page-tools menu would
+    // be theatre, so they are absent rather than permanently disabled.
+    expect(screen.queryByRole('button', { name: '浏览历史' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Browser 设置' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Browser 菜单' })).toBeNull();
+    // Navigation and the Agent trace remain fully real in this mode.
+    expect(screen.getByRole('button', { name: '后退' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '显示 Agent 浏览器轨迹' })).toBeInTheDocument();
+  });
+
+  it('closes exactly the clicked managed tab, never the selected one', async () => {
+    const user = userEvent.setup();
+    const transport = browserTransport({
+      tabs: () => ({ ok: true, items: [
+        { deviceId: 'paw-browser', tabId: 1, title: 'One', url: 'https://one.example', active: true },
+        { deviceId: 'paw-browser', tabId: 2, title: 'Two', url: 'https://two.example', active: false },
+      ] }),
+      snapshot: () => browserSnapshot('https://one.example', 1, 'One'),
+    });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawBrowserApp />
+      </ControlTransportProvider>,
+    );
+
+    await screen.findByRole('tab', { name: 'Two' });
+    await user.click(screen.getByRole('button', { name: '关闭标签页：Two' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'browser.command'
+      && record(request.body).action === 'close_tab'
+      && record(request.body).tabId === 2
+    ))).toBe(true));
+    expect(transport.requests.some(({ request }) => (
+      record(request.body).action === 'close_tab' && record(request.body).tabId === 1
+    ))).toBe(false);
+  });
+
+  it('shows the real transport failure beside the retry action', async () => {
+    const user = userEvent.setup();
+    const transport = browserTransport({
+      command: (request) => record(request.body).action === 'navigate'
+        ? { ok: false, summary: '浏览器网关超时' }
+        : { ok: true, status: 'completed' },
+    });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawBrowserApp />
+      </ControlTransportProvider>,
+    );
+
+    const address = await screen.findByRole('textbox', { name: '页面地址' });
+    await waitFor(() => expect(address).toHaveValue('https://example.com'));
+    await user.clear(address);
+    await user.type(address, 'https://blocked.example/{Enter}');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('页面没有打开');
+    expect(alert).toHaveTextContent('浏览器网关超时');
+    expect(within(alert).getByRole('button', { name: '重试' })).toBeInTheDocument();
+  });
+
   it('selects the exact Agent target without creating another Browser tab', async () => {
     const transport = browserTransport({
       tabs: () => ({ ok: true, items: [
@@ -199,7 +268,9 @@ describe('PAW Browser App', () => {
     const tablist = await within(titlebar).findByRole('tablist', { name: 'PAW Browser 标签页' });
     expect(document.querySelector('webview')).toHaveAttribute('allowpopups', 'true');
     expect(document.querySelector('.paw-window-body .paw-browser-tabstrip')).toBeNull();
-    await user.click(within(tablist).getByRole('button', { name: '新建标签页' }));
+    // The tablist scrolls tabs only; new-tab sits beside it and stays reachable.
+    expect(within(tablist).queryByRole('button', { name: '新建标签页' })).toBeNull();
+    await user.click(within(titlebar).getByRole('button', { name: '新建标签页' }));
     expect(within(tablist).getAllByRole('tab')).toHaveLength(2);
     await user.click(within(tablist).getAllByRole('tab')[0]);
     expect(within(tablist).getAllByRole('tab')[0]).toHaveAttribute('aria-selected', 'true');
@@ -517,10 +588,12 @@ function browserTransport(overrides: {
   tabs?: (request: { query?: unknown }) => unknown;
   snapshot?: (request: { query?: unknown }) => unknown;
   traces?: unknown;
+  command?: (request: { body?: unknown }) => unknown;
 } = {}) {
   const snapshot = browserSnapshot('https://example.com', 41, 'Example');
   const tabs = overrides.tabs ?? (() => ({ ok: true, items: [{ deviceId: 'paw-browser', tabId: 41, title: 'Example', url: 'https://example.com', active: true }] }));
   const snapshotRoute = overrides.snapshot ?? (() => snapshot);
+  const commandRoute = overrides.command ?? (() => ({ ok: true, status: 'completed' }));
   return new MockControlTransport({
     browserSnapshotImageUrl: () => 'blob:paw-browser-snapshot',
     routes: {
@@ -541,7 +614,7 @@ function browserTransport(overrides: {
       'browser.tabs': (request: ControlRequest) => tabs({ query: request.query }),
       'browser.snapshot.latest': (request: ControlRequest) => snapshotRoute({ query: request.query }),
       'browser.traces': overrides.traces ?? { ok: true, items: [{ commandId: 'cmd-1', action: 'navigate', sourceKind: 'agent', status: 'completed', createdAtMs: Date.now(), completedAtMs: Date.now(), durationMs: 140, result: { summary: 'Example' } }] },
-      'browser.command': { ok: true, status: 'completed' },
+      'browser.command': (request: ControlRequest) => commandRoute({ body: request.body }),
       'browser.stop': { ok: true, cancelled: 0 },
     },
   });

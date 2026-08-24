@@ -575,6 +575,8 @@
   border-bottom: 0;
   background: transparent;
 }
+/* Only the tablist scrolls; the new-tab control is a strip-level sibling so
+   it stays reachable however many tabs are open. */
 .paw-browser-tabs-live {
   min-width: 0;
   display: flex;
@@ -724,7 +726,6 @@
 }
 .paw-browser-menu-zoom { height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) 28px 44px 28px; align-items: center; padding-left: 9px; color: var(--paw-ink); font-size: 14px; }
 .paw-browser-menu-zoom button { width: 26px; height: 26px; }
-.paw-browser-menu-zoom b { text-align: center; font-size: 13px; font-weight: 600; }
 
 .paw-omnibox-form {
   min-width: 0;
