@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PAW · Agent 对话 · 新基线 v2</title>
+<style>
+/* ============================================================
+   PAWOS Agent 对话基线 v2
+   - 语义 token 三层：reference → semantic → component
+   - 共享网格：时间线 798px / Composer 742px，气泡、正文、
+     活动行、富块、Composer 全部对齐同一左右轴
+   - 状态双重编码：色点 + 文字，不只依赖颜色
+   ============================================================ */
+:root {
+  /* reference */
+  --ref-white:#fff; --ref-subtle:#f9f8f7; --ref-hover:rgba(33,27,23,.05);
+  --ref-ink:#2c2c2b; --ref-ink-2:#7d7a75; --ref-ink-3:#a19e99; --ref-icon:#8e8b86;
+  --ref-line:#f0efed; --ref-line-t:rgba(42,28,0,.07);
+  --ref-accent:#2783de; --ref-ok:#1f9d4d; --ref-warn:#b26a00; --ref-violet:#8944ab; --ref-danger:#cd3c3a;
+  /* semantic */
+  --surface-workspace:var(--ref-white);
+  --surface-raised:var(--ref-white);
+  --surface-subtle:var(--ref-subtle);
+  --surface-hover:var(--ref-hover);
+  --surface-user: rgba(42,28,0,.07);
+  --text-primary:var(--ref-ink);
+  --text-secondary:var(--ref-ink-2);
+  --text-tertiary:var(--ref-ink-3);
+  --icon-default:var(--ref-icon);
+  --border-subtle:var(--ref-line);
+  --border-default:var(--ref-line-t);
+  --action-primary:var(--ref-accent);
+  --status-ok:var(--ref-ok);
+  --status-running:var(--ref-accent);
+  --status-waiting:var(--ref-warn);
+  --status-subagent:var(--ref-violet);
+  --status-failed:var(--ref-danger);
+  --focus-ring:0 0 0 2px #fff,0 0 0 4px rgba(39,131,222,.45);
+  --shadow-sm:0 2px 4px rgba(0,0,0,.04),0 0 0 1px var(--ref-line-t);
+  --shadow-md:0 8px 12px rgba(25,25,25,.027),0 2px 6px rgba(25,25,25,.027),0 0 0 1px var(--ref-line-t);
+  /* component */
+  --chat-grid-max:798px;
+  --chat-composer-max:742px;
+  --chat-rail-width:320px;
+  --chat-indent:20px;             /* 工具卡/详情 与活动行详情共用缩进轴 */
+  --radius-message:16px;
+  --radius-composer:16px;
+  --radius-card:12px;
+  --radius-inner:8px;
+  --radius-control:6px;
+  --motion-fast:120ms;
+  --motion-disclosure:180ms;
+  --motion-layout:200ms;
+  --spring:cubic-bezier(.34,1.4,.64,1);
+  --font-ui:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI",Helvetica,"PingFang SC","Microsoft YaHei",Arial,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@property --glow-angle { syntax:"<angle>"; initial-value:0deg; inherits:false; }
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:var(--font-ui);color:var(--text-primary);background:var(--surface-workspace);font-size:14px;-webkit-font-smoothing:antialiased}
+button,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:none;box-shadow:var(--focus-ring);border-radius:var(--radius-control)}
+
+/* ============ App chrome：单层 48px ============ */
+.chat-shell{height:100vh;min-height:600px;display:flex;flex-direction:column;background:var(--surface-workspace);overflow:hidden}
+.chat-header{height:48px;flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);position:relative;z-index:5}
+.chat-header__left{display:flex;align-items:center;gap:4px;min-width:0;flex:1 1 auto}
+.chat-header__right{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.ai-face{width:24px;height:24px;border-radius:999px;display:grid;place-items:center;background:var(--surface-raised);box-shadow:var(--shadow-sm);font-weight:700;font-size:11px;color:var(--action-primary);margin:0 4px 0 2px;flex:0 0 auto}
+.icon-btn{width:28px;height:28px;border:0;border-radius:var(--radius-control);background:transparent;display:grid;place-items:center;color:var(--icon-default);transition:background var(--motion-fast),transform var(--motion-fast);flex:0 0 auto}
+.icon-btn:hover{background:var(--surface-hover)}
+.icon-btn:active{transform:scale(.95)}
+.icon-btn[aria-pressed="true"]{background:var(--surface-user);color:var(--text-primary)}
+.breadcrumb{height:28px;border:0;background:transparent;border-radius:var(--radius-control);padding:0 8px;display:flex;align-items:center;gap:2px;white-space:nowrap;min-width:0;font-size:13px;color:var(--text-secondary)}
+.breadcrumb:hover{background:var(--surface-hover)}
+.breadcrumb b{color:var(--text-primary);font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.breadcrumb .slash{color:#bcbab6;padding:0 2px}
+.session-kind{font-size:12px;color:var(--text-tertiary);white-space:nowrap;flex:0 0 auto}
+/* 视图切换：对话 / Agent 轨迹（UR-117 两个同级视图） */
+.view-switch{display:flex;background:var(--surface-subtle);border-radius:8px;padding:2px;gap:0}
+.view-switch button{height:24px;border:0;border-radius:6px;background:transparent;padding:0 12px;font-size:12.5px;font-weight:500;color:var(--text-secondary);transition:background var(--motion-fast),color var(--motion-fast)}
+.view-switch button[aria-selected="true"]{background:var(--surface-raised);color:var(--text-primary);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+
+/* ============ 工作区 ============ */
+.chat-workarea{position:relative;display:flex;flex:1 1 auto;min-height:0}
+.chat-main{position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-width:300px;min-height:0}
+.chat-scroll{flex:1 1 auto;min-height:0;overflow:auto;scrollbar-gutter:stable;scroll-behavior:smooth}
+.fade{position:sticky;z-index:2;pointer-events:none;height:24px}
+.fade.top{top:0;background:linear-gradient(var(--surface-workspace),rgba(255,255,255,0));margin-bottom:-24px}
+.fade.bottom{bottom:0;background:linear-gradient(rgba(255,255,255,0),var(--surface-workspace));margin-top:-24px}
+
+/* 共享阅读网格：一切内容对齐此左右轴 */
+.timeline{width:100%;max-width:var(--chat-grid-max);margin:0 auto;padding:8px 52px 8px}
+
+.day-divider{display:flex;align-items:center;gap:12px;margin:6px 0 16px;color:var(--text-tertiary);font-size:12px;letter-spacing:.06em}
+.day-divider::before,.day-divider::after{content:"";flex:1;height:1px;background:var(--border-subtle)}
+
+.context-chips{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.context-chip{display:inline-flex;align-items:center;gap:5px;max-width:55%;font-size:12px;color:var(--text-secondary);padding:3px 10px 3px 8px;border-radius:12px;background:var(--surface-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.context-chip i{width:5px;height:5px;border-radius:99px;background:var(--status-waiting);flex:0 0 auto}
+.context-chip.neutral i{background:var(--text-tertiary)}
+
+/* ---- 用户消息：右轴对齐 ---- */
+.user-step{display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin:0 0 18px}
+.user-message{max-width:min(560px,86%);padding:7px 14px;border-radius:var(--radius-message);background:var(--surface-user);font-size:16px;line-height:24px;overflow-wrap:anywhere}
+.user-meta{font-size:12px;color:var(--text-tertiary);padding-right:6px;font-variant-numeric:tabular-nums}
+
+/* ---- Agent 回合：左轴对齐，正文不是气泡 ---- */
+.turn{display:flex;flex-direction:column;gap:14px;margin:0 0 24px}
+.prose{font-size:16px;line-height:25px;padding-inline:4px;color:var(--text-primary);overflow-wrap:anywhere}
+.prose p{margin:0 0 10px}
+.prose p:last-child{margin-bottom:0}
+.prose h3{font-size:17px;line-height:26px;margin:14px 0 6px;font-weight:650}
+.prose ul{margin:6px 0;padding-left:22px}
+.prose li{margin:3px 0}
+.prose a{color:var(--action-primary);text-decoration:none;border-bottom:1px solid rgba(39,131,222,.35)}
+.prose code{font-family:var(--font-mono);font-size:13.5px;background:var(--surface-subtle);border-radius:4px;padding:1px 5px}
+.md-table{width:100%;border-collapse:collapse;margin:8px 0 4px;font-size:14px;line-height:22px}
+.md-table th{text-align:left;font-weight:600;color:var(--text-secondary);font-size:12.5px;padding:6px 10px;border-bottom:1px solid var(--border-default)}
+.md-table td{padding:7px 10px;border-bottom:1px solid var(--border-subtle);vertical-align:top}
+.md-table tr:last-child td{border-bottom:0}
+.md-table td:first-child{font-weight:500}
+
+/* ---- 活动行：可折叠，一次调用一个单元 ---- */
+.activity-stack{display:flex;flex-direction:column;gap:2px}
+.activity{width:fit-content;max-width:100%;border:0;background:transparent;border-radius:var(--radius-control);padding:0;text-align:left;color:var(--text-secondary)}
+.activity__row{display:flex;align-items:center;gap:5px;padding:3px 6px 3px 4px;font-size:14px;line-height:20px;border-radius:var(--radius-control);transition:background var(--motion-fast)}
+.activity:hover .activity__row{background:var(--surface-hover)}
+.chevron{width:16px;height:16px;display:inline-grid;place-items:center;color:var(--text-tertiary);font-size:10px;transition:transform var(--motion-disclosure) var(--spring);flex:0 0 auto}
+.activity[aria-expanded="true"] .chevron{transform:rotate(90deg)}
+.activity__detail{display:grid;grid-template-rows:0fr;opacity:0;margin-left:var(--chat-indent);transition:grid-template-rows .22s var(--spring),opacity .15s ease,margin .2s ease}
+.activity__detail>.inner{overflow:hidden;min-height:0}
+.activity[aria-expanded="true"]+.activity__detail{grid-template-rows:1fr;opacity:1;margin:4px 0 6px var(--chat-indent)}
+.activity__detail .detail-text{font-size:13px;line-height:21px;color:var(--text-secondary);padding:2px 0 4px}
+.activity__detail b{color:var(--text-primary);font-weight:600}
+
+/* 状态 pill：色点 + 文字 */
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:1.5px 9px;border-radius:999px;line-height:17px;white-space:nowrap;flex:0 0 auto}
+.pill i{width:5px;height:5px;border-radius:99px;font-style:normal}
+.pill.ok{color:var(--status-ok);background:rgba(31,157,77,.10)}.pill.ok i{background:var(--status-ok)}
+.pill.run{color:var(--status-running);background:rgba(39,131,222,.10)}.pill.run i{background:var(--status-running);animation:pulse 1.7s ease-in-out infinite}
+.pill.wait{color:var(--status-waiting);background:rgba(178,106,0,.10)}.pill.wait i{background:var(--status-waiting)}
+.pill.vio{color:var(--status-subagent);background:rgba(137,68,171,.10)}.pill.vio i{background:var(--status-subagent)}
+.pill.fail{color:var(--status-failed);background:rgba(205,60,58,.10)}.pill.fail i{background:var(--status-failed)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.meta{font-size:12px;color:var(--text-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---- 工具卡 ---- */
+.tool{margin:2px 0 6px var(--chat-indent)}
+.tool__id{display:flex;align-items:center;gap:8px;padding:3px 0 5px 4px;user-select:none;min-width:0}
+.tool__id-main{display:flex;align-items:center;gap:5px;min-width:0;color:var(--text-secondary);font-size:13.5px}
+.tool__glyph{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;background:var(--surface-subtle);font-size:11px;flex:0 0 auto}
+.tool__slash{color:var(--text-tertiary)}
+.tool__name{color:var(--text-primary);font-weight:600}
+.tool__instance{font-size:11.5px;background:var(--surface-user);border-radius:4px;padding:1px 5px;color:var(--text-secondary)}
+.tool__state{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.tool-card{border:1px solid var(--border-subtle);border-radius:var(--radius-card);background:var(--surface-raised);overflow:hidden;transition:box-shadow var(--motion-fast)}
+.tool-card:hover{box-shadow:var(--shadow-sm)}
+.tool-tabs{display:flex;align-items:center;gap:2px;padding:10px 12px 6px}
+.tool-tab{height:27px;border:0;border-radius:999px;background:transparent;padding:0 11px;font-size:12.5px;font-weight:500;color:var(--text-secondary);transition:background var(--motion-fast),color var(--motion-fast)}
+.tool-tab:hover{background:var(--surface-hover)}
+.tool-tab[aria-selected="true"]{color:var(--text-primary);background:var(--surface-user)}
+.tool-panel{padding:6px 14px 13px}
+.mono-block{border-radius:var(--radius-inner);background:var(--surface-subtle);padding:11px 13px;font-family:var(--font-mono);font-size:12.5px;line-height:19px;white-space:pre;overflow:auto;max-height:360px;color:var(--text-primary)}
+.code-block{border-radius:var(--radius-inner);background:#202020;color:#e8e6e3;padding:12px 14px;font-family:var(--font-mono);font-size:12.5px;line-height:19.5px;overflow:auto;max-height:360px;margin:2px 0}
+.code-block .cm{color:#8a8781}
+.code-block .kw{color:#8ec4f5}
+.code-block .st{color:#9ed19b}
+
+/* diff */
+.diff{border-radius:var(--radius-inner);overflow:hidden;border:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:12.5px;line-height:19px}
+.diff .dh{padding:6px 12px;background:var(--surface-subtle);border-bottom:1px solid var(--border-subtle);display:flex;justify-content:space-between;gap:12px;color:var(--text-secondary)}
+.diff .dh span:last-child{flex:0 0 auto}
+.diff .add{display:block;padding:1.5px 12px;color:var(--status-ok);background:rgba(31,157,77,.07);white-space:pre;overflow:auto}
+.diff .del{display:block;padding:1.5px 12px;color:var(--status-failed);background:rgba(205,60,58,.06);white-space:pre;overflow:auto}
+.diff .ctx{display:block;padding:1.5px 12px;color:var(--text-tertiary);white-space:pre;overflow:auto}
+
+/* 产物 chips */
+.arts{display:flex;gap:8px;flex-wrap:wrap;margin:2px 0}
+.art{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border-subtle);border-radius:var(--radius-inner);padding:5px 11px;font-size:12.5px;background:var(--surface-raised);transition:box-shadow var(--motion-fast);max-width:100%}
+.art:hover{box-shadow:var(--shadow-sm)}
+.art .fs{font-size:11.5px;color:var(--text-tertiary);white-space:nowrap}
+.art .path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.art.preview{border-color:rgba(39,131,222,.30);color:var(--action-primary)}
+
+/* 审批卡：等待 → 已批准，状态迁移可见 */
+.approval{margin:2px 0 4px var(--chat-indent);border:1px solid var(--border-subtle);border-radius:var(--radius-card);background:var(--surface-raised);overflow:hidden;position:relative}
+.approval::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:#e8a23d;transition:background var(--motion-layout)}
+.approval .bd{padding:12px 16px 13px;font-size:13px;line-height:21px;color:var(--text-secondary)}
+.approval .hd{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.approval .hd b{font-size:14px;color:var(--text-primary)}
+.approval .ops{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}
+.btn{font-size:13px;font-weight:600;padding:6px 15px;border-radius:8px;border:0;transition:transform 150ms var(--spring),background var(--motion-fast)}
+.btn:active{transform:scale(.94)}
+.btn.primary{background:var(--action-primary);color:#fff}
+.btn.primary:hover{background:#3a8fe6}
+.btn.ghost{background:var(--surface-hover);color:var(--text-primary)}
+.btn.ghost:hover{background:rgba(33,27,23,.09)}
+.approval.approved::before{background:var(--status-ok)}
+.approval.approved .when{color:var(--status-ok);font-weight:600}
+
+/* 运行中：真实比例进度（completed/total 来自事件，不猜百分比） */
+.track{height:5px;border-radius:99px;background:var(--surface-hover);overflow:hidden;margin:11px 0 7px}
+.track .fill{height:100%;width:0%;background:var(--status-running);border-radius:99px;transition:width .5s var(--spring)}
+.runrow{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-secondary)}
+.stop-mini{margin-left:auto;border:0;background:rgba(205,60,58,.09);color:var(--status-failed);border-radius:7px;font-size:12px;font-weight:600;padding:4px 12px;transition:background var(--motion-fast)}
+.stop-mini:hover{background:rgba(205,60,58,.16)}
+
+/* 失败回合：行内状态卡，证据保留，恢复动作只在最新回合 */
+.turn-failed{margin:2px 0 4px var(--chat-indent);border:1px solid rgba(205,60,58,.22);border-left:3px solid var(--status-failed);border-radius:var(--radius-card);background:rgba(205,60,58,.03);padding:12px 16px 13px}
+.turn-failed .hd{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.turn-failed .hd b{font-size:14px}
+.turn-failed .bd{font-size:13px;line-height:21px;color:var(--text-secondary)}
+.turn-failed .ops{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}
+.turn-failed .hint{font-size:12px;color:var(--text-tertiary);margin-top:9px}
+.turn-failed.recovering{border-color:rgba(39,131,222,.3);border-left-color:var(--status-running);background:rgba(39,131,222,.03)}
+.turn-failed.recovered{border-color:rgba(31,157,77,.3);border-left-color:var(--status-ok);background:rgba(31,157,77,.04)}
+
+/* compaction 通知：行内小 chip，不伪装成聊天正文 */
+.compact-note{display:flex;align-items:center;gap:8px;margin:4px 0 2px var(--chat-indent);font-size:12px;color:var(--text-secondary);border:1px dashed rgba(42,28,0,.18);border-radius:var(--radius-inner);padding:5px 12px;background:var(--surface-subtle);width:fit-content;max-width:calc(100% - var(--chat-indent))}
+
+/* 回合尾部用量：遥测降级到这里 */
+.usage{margin:2px 0 0 var(--chat-indent);font-size:12px;color:var(--text-tertiary);letter-spacing:.01em;font-variant-numeric:tabular-nums}
+
+/* 到达动效 */
+.arrive{opacity:0;transform:translateY(8px);animation:enter .34s var(--spring) both}
+@keyframes enter{to{opacity:1;transform:none}}
+
+/* ============ Composer ============ */
+.composer-zone{flex:0 0 auto;padding:2px 0 20px;position:relative;z-index:4}
+.composer-wrap{width:100%;max-width:var(--chat-composer-max);margin:0 auto;padding:0 24px;display:flex;flex-direction:column;gap:8px}
+.composer{position:relative;background:var(--surface-raised);border-radius:var(--radius-composer);box-shadow:var(--shadow-sm);transition:box-shadow var(--motion-fast)}
+.composer::before{content:"";position:absolute;inset:-1px;border-radius:calc(var(--radius-composer) + 1px);padding:1.5px;
+  background:conic-gradient(from var(--glow-angle),rgba(39,131,222,.0) 0%,rgba(39,131,222,.55) 12%,rgba(137,68,171,.4) 22%,rgba(39,131,222,0) 34%);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  opacity:0;transition:opacity var(--motion-layout);pointer-events:none}
+.composer:focus-within{box-shadow:var(--shadow-md)}
+.composer:focus-within::before{opacity:.55}
+.composer.running::before{opacity:.9;animation:glow-rotate 3.2s linear infinite}
+@keyframes glow-rotate{to{--glow-angle:360deg}}
+.composer textarea{display:block;width:100%;min-height:56px;max-height:220px;resize:none;border:0;outline:0;background:transparent;padding:13px 14px 0;font-size:16px;line-height:24px;color:var(--text-primary);overflow:auto}
+.composer textarea::placeholder{color:var(--text-tertiary)}
+.composer__bar{display:flex;align-items:center;gap:4px;padding:5px 8px 8px;min-width:0;container-type:inline-size;container-name:composer}
+.composer__left{display:flex;align-items:center;gap:4px;min-width:0;flex:1 1 auto;overflow:hidden}
+.composer__right{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 0 auto}
+.round-btn{width:28px;height:28px;border:0;border-radius:999px;background:transparent;display:grid;place-items:center;color:var(--icon-default);transition:background var(--motion-fast)}
+.round-btn:hover{background:var(--surface-hover)}
+.chip-btn{height:28px;border:0;border-radius:999px;background:transparent;display:inline-flex;align-items:center;gap:6px;padding:0 11px;font-size:12.5px;font-weight:500;color:var(--text-secondary);white-space:nowrap;transition:background var(--motion-fast)}
+.chip-btn:hover{background:var(--surface-user)}
+.chip-btn .dot{width:5px;height:5px;border-radius:99px;background:var(--status-waiting)}
+.send-btn{width:28px;height:28px;border:0;border-radius:999px;background:var(--action-primary);display:grid;place-items:center;color:#fff;transition:transform 200ms var(--spring),background var(--motion-fast)}
+.send-btn:hover{transform:scale(1.1)}
+.send-btn svg{width:14px;height:14px}
+.stop-btn{width:28px;height:28px;border:0;border-radius:999px;background:var(--text-primary);display:none;place-items:center;color:#fff}
+.stop-btn::before{content:"";width:9px;height:9px;border-radius:2px;background:currentColor}
+.composer.running .stop-btn{display:grid}
+@container composer (max-width:400px){.chip-btn .lbl{display:none}.chip-btn{padding:0 8px}}
+
+/* 回到底部 */
+.scroll-bottom{position:absolute;left:50%;bottom:96px;transform:translateX(-50%) scale(.8);width:32px;height:32px;border:0;border-radius:999px;background:#1d1d1b;color:#fff;display:grid;place-items:center;box-shadow:0 1px 2px rgba(0,0,0,.06),0 4px 16px -2px rgba(0,0,0,.16);opacity:0;pointer-events:none;transition:opacity var(--motion-fast),transform var(--motion-layout) var(--spring);z-index:3;font-size:13px}
+.scroll-bottom[data-visible="true"]{opacity:1;pointer-events:auto;transform:translateX(-50%) scale(1)}
+
+/* ============ 详情栏（按需披露） ============ */
+.rail-layer{position:absolute;inset:0;overflow:clip;pointer-events:none;z-index:6}
+.rail-motion{position:absolute;inset:0;pointer-events:none;transition:opacity var(--motion-fast) ease-out,transform var(--motion-fast) var(--spring)}
+.rail-motion[data-open="false"]{opacity:0;transform:translateX(20px)}
+.rail{position:absolute;top:8px;right:16px;width:var(--chat-rail-width);max-height:calc(100% - 16px);display:flex;flex-direction:column;min-height:0;overflow:hidden;pointer-events:auto;border:1px solid var(--border-default);border-radius:var(--radius-message);background:var(--surface-raised);box-shadow:var(--shadow-md)}
+.rail__scroll{flex:1 1 auto;min-height:0;overflow:auto}
+.rail-section{border-bottom:1px solid var(--border-subtle)}
+.rail-section:last-child{border-bottom:0}
+.rail-heading{width:100%;min-height:42px;padding:10px 16px;border:0;background:transparent;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text-secondary);font-weight:600;font-size:13px}
+.rail-heading:hover{background:var(--surface-hover)}
+.rail-heading .chevron{transition:transform var(--motion-fast) var(--spring)}
+.rail-section[data-open="false"] .rail-heading .chevron{transform:rotate(-90deg)}
+.rail-body{padding:2px 10px 12px;display:flex;flex-direction:column;gap:2px}
+.rail-section[data-open="false"] .rail-body{display:none}
+.rail-item{width:100%;border:0;background:transparent;border-radius:var(--radius-inner);padding:5px 8px;text-align:left}
+.rail-item:hover{background:var(--surface-hover)}
+.rail-item__row{display:flex;align-items:flex-start;gap:9px;min-width:0}
+.rail-item__icon{width:24px;height:24px;flex:0 0 auto;display:grid;place-items:center;border-radius:6px;background:var(--surface-subtle);font-size:11px}
+.rail-item__body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.rail-item__title{font-size:13px;line-height:18px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail-item__meta{font-size:12px;line-height:16px;color:var(--text-tertiary)}
+
+/* ============ Agent 轨迹视图（诊断，不复制聊天正文） ============ */
+.trace{display:none;padding:8px 0 24px}
+.chat-shell[data-view="trace"] .trace{display:block}
+.chat-shell[data-view="trace"] .conversation{display:none}
+.trace-turn{margin:0 0 6px;border:1px solid var(--border-subtle);border-radius:var(--radius-card);overflow:hidden}
+.trace-turn__hd{display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--surface-subtle);font-size:13px}
+.trace-turn__hd b{font-weight:600}
+.trace-turn__hd .meta{margin-left:auto}
+.trace-ev{display:flex;align-items:baseline;gap:10px;padding:6px 14px;font-size:13px;line-height:19px;border-top:1px solid var(--border-subtle)}
+.trace-ev .seq{font-family:var(--font-mono);font-size:11.5px;color:var(--text-tertiary);width:26px;flex:0 0 auto;text-align:right}
+.trace-ev .type{font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);flex:0 0 auto;min-width:150px}
+.trace-ev .sum{color:var(--text-primary);min-width:0;overflow-wrap:anywhere}
+.trace-ev .st{margin-left:auto;flex:0 0 auto}
+
+/* ============ 自适应 ============ */
+@media (max-width:1100px){.rail{box-shadow:var(--shadow-md)}}
+@media (max-width:860px){
+  .timeline{padding-inline:24px}
+  .composer-wrap{padding-inline:16px}
+  .rail{right:8px;width:min(320px,calc(100vw - 32px))}
+  .session-kind{display:none}
+}
+@media (max-width:640px){
+  .timeline{padding-inline:16px}
+  .user-message{max-width:92%}
+  .breadcrumb .proj{display:none}
+  .breadcrumb .slash{display:none}
+  .tool{margin-left:0}
+  .approval,.turn-failed,.compact-note{margin-left:0;max-width:100%}
+  .activity__detail{margin-left:14px}
+  .usage{margin-left:0}
+  .trace-ev .type{min-width:0}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+  .arrive{opacity:1;transform:none}
+  .composer::before{display:none}
+  .composer:focus-within{box-shadow:var(--shadow-md)}
+}
+</style>
+</head>
+<body>
+<div class="chat-shell" id="shell" data-view="conversation">
+
+  <!-- 单层 chrome：身份 + 视图 + 按需工具，无第二层标题栏 -->
+  <header class="chat-header">
+    <div class="chat-header__left">
+      <button class="icon-btn" title="会话列表" aria-label="会话列表">☰</button>
+      <span class="ai-face" aria-hidden="true">P</span>
+      <button class="breadcrumb"><span class="proj">IME</span><span class="slash">/</span><b>词库整理</b></button>
+      <span class="session-kind">Session · 单聊</span>
+    </div>
+    <div class="chat-header__right">
+      <div class="view-switch" role="tablist" aria-label="视图">
+        <button role="tab" aria-selected="true" data-view="conversation">对话</button>
+        <button role="tab" aria-selected="false" data-view="trace">Agent 轨迹</button>
+      </div>
+      <button class="icon-btn" id="railToggle" title="详情栏" aria-label="详情栏" aria-pressed="true">☷</button>
+      <button class="icon-btn" title="更多" aria-label="更多">⋯</button>
+    </div>
+  </header>
+
+  <div class="chat-workarea">
+    <div class="chat-main">
+      <div class="chat-scroll" id="scroll">
+        <div class="fade top"></div>
+        <div class="timeline">
+
+          <!-- ============ 对话视图 ============ -->
+          <div class="conversation">
+            <div class="day-divider">今天 · 8 月 23 日</div>
+            <div class="context-chips">
+              <span class="context-chip neutral"><i></i>IME 项目 · 工作区</span>
+              <span class="context-chip"><i></i>权限 · 写入前需确认</span>
+            </div>
+
+            <!-- Turn 1：扫描 + Markdown 摘要（表格/列表/链接） -->
+            <div class="user-step">
+              <div class="user-message">把近 30 天的输入记录整理进词库，先给我看看候选。</div>
+              <span class="user-meta">10:21:04</span>
+            </div>
+            <section class="turn">
+              <div class="prose"><p>已扫描全部输入记录。先跑一次统计，再按频率分组生成候选词表。</p></div>
+              <div class="activity-stack">
+                <button class="activity" aria-expanded="false">
+                  <span class="activity__row"><span class="chevron">▸</span>ime.lexicon.scan<span class="pill ok"><i></i>完成</span><span class="meta">12,438 条 · 1.8s</span></span>
+                </button>
+                <div class="activity__detail"><div class="inner">
+                  <div class="mono-block">读取 30 天输入记录 → 去重 → 词频统计
+records: 12,438 · dedup: 9,211 · window: 30d</div>
+                  <div class="arts" style="margin-top:8px">
+                    <button class="art"><span aria-hidden="true">⌗</span><span class="path">ime/scan-report.json</span><span class="fs">96 KB</span></button>
+                    <button class="art"><span aria-hidden="true">⌗</span><span class="path">ime/freq-top500.csv</span><span class="fs">41 KB</span></button>
+                  </div>
+                </div></div>
+              </div>
+              <div class="prose">
+                <h3>候选概览</h3>
+                <table class="md-table">
+                  <thead><tr><th>分组</th><th>词数</th><th>权重</th><th>去向</th></tr></thead>
+                  <tbody>
+                    <tr><td>高频</td><td>58</td><td>1.0</td><td>默认词库 · 参与云同步</td></tr>
+                    <tr><td>中频</td><td>121</td><td>0.8</td><td>默认词库 · 不同步</td></tr>
+                    <tr><td>长尾</td><td>163</td><td>0.6</td><td>候选区 · 等你确认</td></tr>
+                  </tbody>
+                </table>
+                <p>阈值取 P80 / P50。完整分布见 <a href="#">scan-report.json</a>。</p>
+              </div>
+            </section>
+
+            <!-- Turn 2：构建工具卡（结果/Diff/产物）+ 子 Agent + 审批 -->
+            <div class="user-step">
+              <div class="user-message">按频率分三组，长尾保留但权重调低。</div>
+              <span class="user-meta">10:21:20</span>
+            </div>
+            <section class="turn">
+              <div class="activity-stack">
+                <button class="activity" aria-expanded="false">
+                  <span class="activity__row"><span class="chevron">▸</span>思考摘要<span class="meta">8.2s</span></span>
+                </button>
+                <div class="activity__detail"><div class="inner">
+                  <div class="detail-text">高频进入默认词库并参与云同步；中频进默认词库不同步；长尾写入候选区等待确认。权重：长尾 × 0.6，避免拉低首候选命中率。</div>
+                </div></div>
+              </div>
+
+              <div class="tool">
+                <div class="tool__id">
+                  <span class="tool__id-main">
+                    <span class="tool__glyph" aria-hidden="true">⚙</span>ime.lexicon<span class="tool__slash">/</span><span class="tool__name">build</span>
+                    <span class="tool__instance">#T2</span>
+                  </span>
+                  <span class="tool__state"><span class="pill ok"><i></i>完成</span><span class="meta">3.4s</span></span>
+                </div>
+                <div class="tool-card">
+                  <div class="tool-tabs" role="tablist">
+                    <button class="tool-tab" role="tab" aria-selected="true" data-tab="0">结果</button>
+                    <button class="tool-tab" role="tab" aria-selected="false" data-tab="1">Diff</button>
+                    <button class="tool-tab" role="tab" aria-selected="false" data-tab="2">产物</button>
+                  </div>
+                  <div class="tool-panel" data-panel="0">
+                    <div class="mono-block">候选 342 词 · 按频率三组
+高频   58 词 · weight 1.0
+中频  121 词 · weight 0.8
+长尾  163 词 · weight 0.6 · 需确认</div>
+                  </div>
+                  <div class="tool-panel" data-panel="1" hidden>
+                    <div class="diff">
+                      <div class="dh"><span class="path">ime/lexicon.yaml</span><span>+342 −0</span></div>
+                      <span class="ctx">  # 默认词库</span>
+                      <span class="add">+ 高频组: 58 词 · weight 1.0</span>
+                      <span class="add">+ 中频组: 121 词 · weight 0.8</span>
+                      <span class="add">+ 长尾组: 163 词 · weight 0.6 · 需确认</span>
+                    </div>
+                  </div>
+                  <div class="tool-panel" data-panel="2" hidden>
+                    <div class="arts">
+                      <button class="art"><span aria-hidden="true">⌗</span><span class="path">ime/lexicon.candidates.yaml</span><span class="fs">18 KB · 342 词</span></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="activity-stack">
+                <button class="activity" aria-expanded="false">
+                  <span class="activity__row"><span class="chevron">▸</span>子 Agent · 词频复核<span class="pill vio"><i></i>后台完成</span><span class="meta">并发 · 未阻塞</span></span>
+                </button>
+                <div class="activity__detail"><div class="inner">
+                  <div class="detail-text">独立抽检 500 条记录的归类正确性：误判 <b>3</b> 条（已标注）。可打开子 Agent 窗口查看其公开对话与工具进度。</div>
+                </div></div>
+              </div>
+
+              <div class="approval" id="approvalCard">
+                <div class="bd">
+                  <div class="hd"><b>审批 · 应用词表 preview</b><span class="pill wait" id="approvalPill"><i></i>等待你</span></div>
+                  改动 3 个文件 · 可回滚（快照 #41）<br>
+                  证据：scan 报告 / 频率分布 / 子 Agent 复核<br>
+                  未验证项：长按冲突 2 处已标注
+                  <div class="ops" id="approvalOps">
+                    <button class="btn primary" id="btnApprove">批准并应用</button>
+                    <button class="btn ghost">预览 diff</button>
+                    <button class="btn ghost">拒绝</button>
+                  </div>
+                </div>
+              </div>
+              <div class="usage">tokens 12,408 · cache 87% · 本轮 3 次工具调用 · 1 个子 Agent</div>
+            </section>
+
+            <!-- Turn 3：应用 + 回归（真实比例进度）+ HTML 预览 + 代码块 -->
+            <div class="user-step">
+              <div class="user-message">批准。应用后跑一次回归校验。</div>
+              <span class="user-meta">10:22:02</span>
+            </div>
+            <section class="turn">
+              <div class="prose"><p>已应用 342 词（写入 3 个文件，快照 #41 可回滚）。回归校验进行中。</p></div>
+              <div class="activity-stack">
+                <button class="activity" aria-expanded="false">
+                  <span class="activity__row"><span class="chevron">▸</span>ime.lexicon.apply<span class="pill ok"><i></i>完成</span><span class="meta">3 文件 · 快照 #41</span></span>
+                </button>
+                <div class="activity__detail"><div class="inner">
+                  <div class="mono-block">ime/lexicon.yaml        +342 −0
+ime/sync-manifest.json   +58 −0
+ime/candidates.meta.json  +1 −0
+snapshot: #41（可回滚）</div>
+                </div></div>
+              </div>
+
+              <div class="tool" id="regressionTool">
+                <div class="tool__id">
+                  <span class="tool__id-main">
+                    <span class="tool__glyph" aria-hidden="true">⚙</span>ime.regression<span class="tool__slash">/</span><span class="tool__name">run</span>
+                    <span class="tool__instance">#T3</span>
+                  </span>
+                  <span class="tool__state"><span class="pill run" id="regPill"><i></i>运行中</span><span class="meta">已确认 <b id="regCount">0</b> / 342</span></span>
+                </div>
+                <div class="tool-card">
+                  <div class="tool-panel" style="padding-top:12px">
+                    <span style="font-size:13px;color:var(--text-secondary)">正在校验词表冲突与首候选命中率</span>
+                    <div class="track"><div class="fill" id="regFill"></div></div>
+                    <div class="runrow"><span id="regPct" class="meta" aria-live="polite">0%</span><span class="meta">真实比例 · 已确认进展</span><button class="stop-mini" id="regStop">停止</button></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="prose" id="regResult" hidden>
+                <p>342 个候选词全部通过：冲突 0、首候选命中率 +2.1pp。回归配置如下，预览报告已生成。</p>
+              </div>
+              <div class="tool" id="regEvidence" hidden>
+                <div class="code-block"><span class="cm"># lexicon-regression.yaml</span>
+suite: lexicon-regression
+words: 342
+assert:
+  - <span class="kw">conflict_count</span> == 0
+  - <span class="kw">top1_hit_rate</span> &gt;= baseline + <span class="st">0.02</span></div>
+                <div class="arts" style="margin-top:8px">
+                  <button class="art preview"><span aria-hidden="true">▣</span><span class="path">regression-report.html</span><span class="fs">预览 · 64 KB</span></button>
+                  <button class="art"><span aria-hidden="true">⌗</span><span class="path">ime/regression/lexicon-regression-with-a-very-long-path-segment.yaml</span><span class="fs">2 KB</span></button>
+                </div>
+              </div>
+              <div class="usage" id="regUsage" hidden>tokens 21,930 · cache 91% · 本轮 2 次工具调用 · 用时 6.4s</div>
+            </section>
+
+            <!-- Turn 4：失败 + 恢复（最新回合才拥有恢复动作） -->
+            <div class="user-step">
+              <div class="user-message">检查安装态截图是否已经生成。</div>
+              <span class="user-meta">10:23:40</span>
+            </div>
+            <section class="turn">
+              <div class="activity-stack">
+                <button class="activity" aria-expanded="false">
+                  <span class="activity__row"><span class="chevron">▸</span>workspace.read<span class="pill fail"><i></i>失败</span><span class="meta">ENOENT</span></span>
+                </button>
+                <div class="activity__detail"><div class="inner">
+                  <div class="mono-block">读取 output/acceptance.png
+error: ENOENT · 文件不存在（证据已保留）</div>
+                </div></div>
+              </div>
+              <div class="turn-failed" id="failCard">
+                <div class="hd"><b id="failTitle">本轮未完成</b><span class="pill fail" id="failPill"><i></i>失败</span></div>
+                <div class="bd" id="failBody">缺少安装态截图，复核未执行。你的输入与本轮工具证据都已保留，不会丢失。</div>
+                <div class="ops" id="failOps">
+                  <button class="btn primary" id="btnRetry">重试本轮</button>
+                  <button class="btn ghost">编辑后重发</button>
+                  <button class="btn ghost">切换模型</button>
+                </div>
+                <div class="hint" id="failHint">恢复动作只出现在最新回合；历史失败回合保留证据但不再提供重试。</div>
+              </div>
+            </section>
+
+            <div style="height:32px"></div>
+          </div>
+
+          <!-- ============ Agent 轨迹视图 ============ -->
+          <div class="trace" aria-label="Agent 轨迹">
+            <div class="day-divider">Agent 轨迹 · 按 Turn 与事件顺序</div>
+            <div class="trace-turn">
+              <div class="trace-turn__hd"><b>Turn s1-t1</b><span class="pill ok"><i></i>已完成</span><span class="meta">10:21:04 – 10:21:12</span></div>
+              <div class="trace-ev"><span class="seq">1</span><span class="type">reasoning_summary</span><span class="sum">先统计输入记录，再生成分组候选</span><span class="st meta">completed</span></div>
+              <div class="trace-ev"><span class="seq">2</span><span class="type">tool_started</span><span class="sum">ime.lexicon.scan · 正在扫描输入记录</span><span class="st meta">10:21:05</span></div>
+              <div class="trace-ev"><span class="seq">3</span><span class="type">tool_finished</span><span class="sum">已去重 12,438 条输入记录</span><span class="st meta">ok · 1.8s</span></div>
+              <div class="trace-ev"><span class="seq">4</span><span class="type">turn_completed</span><span class="sum">回合完成</span><span class="st meta">10:21:12</span></div>
+            </div>
+            <div class="trace-turn">
+              <div class="trace-turn__hd"><b>Turn s1-t2</b><span class="pill ok"><i></i>已完成</span><span class="meta">10:21:20 – 10:21:39</span></div>
+              <div class="trace-ev"><span class="seq">5</span><span class="type">reasoning_summary</span><span class="sum">高频 1.0 / 中频 0.8 / 长尾 0.6，长尾待确认</span><span class="st meta">completed</span></div>
+              <div class="trace-ev"><span class="seq">6–7</span><span class="type">tool_started→finished</span><span class="sum">ime.lexicon.build · 候选 342 词，diff +342 −0</span><span class="st meta">ok · 3.4s</span></div>
+              <div class="trace-ev"><span class="seq">8–9</span><span class="type">subagent</span><span class="sum">词频复核 · 抽检 500 条，误判 3 条</span><span class="st meta">ok · 后台</span></div>
+              <div class="trace-ev"><span class="seq">10</span><span class="type">approval_required</span><span class="sum">应用候选词表 · R2 · 可回滚（快照 #41）</span><span class="st meta">等待用户</span></div>
+            </div>
+            <div class="trace-turn">
+              <div class="trace-turn__hd"><b>Turn s1-t3</b><span class="pill ok"><i></i>已完成</span><span class="meta">10:22:02 – 10:22:09</span></div>
+              <div class="trace-ev"><span class="seq">11</span><span class="type">approval_resolved</span><span class="sum">用户已批准</span><span class="st meta">approved</span></div>
+              <div class="trace-ev"><span class="seq">12</span><span class="type">tool_finished</span><span class="sum">ime.lexicon.apply · 写入 3 文件，快照 #41</span><span class="st meta">ok</span></div>
+              <div class="trace-ev"><span class="seq">13–15</span><span class="type">tool progress</span><span class="sum">ime.regression.run · 已确认 342 / 342</span><span class="st meta">ok · 6.4s</span></div>
+              <div class="trace-ev"><span class="seq">16</span><span class="type">turn_completed</span><span class="sum">回合完成</span><span class="st meta">10:22:09</span></div>
+            </div>
+            <div class="trace-turn">
+              <div class="trace-turn__hd"><b>Turn s2-failed</b><span class="pill fail"><i></i>失败</span><span class="meta">10:23:40 – 10:23:41</span></div>
+              <div class="trace-ev"><span class="seq">1</span><span class="type">tool_started</span><span class="sum">workspace.read · 读取安装态截图</span><span class="st meta">10:23:40</span></div>
+              <div class="trace-ev"><span class="seq">2</span><span class="type">tool_finished</span><span class="sum">isError · ENOENT · output/acceptance.png 不存在</span><span class="st meta">error</span></div>
+              <div class="trace-ev"><span class="seq">3</span><span class="type">turn_failed</span><span class="sum">缺少安装态截图；生成后再复核</span><span class="st meta">failed</span></div>
+            </div>
+          </div>
+
+        </div>
+        <div class="fade bottom"></div>
+      </div>
+
+      <button class="scroll-bottom" id="scrollBottom" data-visible="false" title="回到底部" aria-label="回到底部">↓</button>
+
+      <!-- Composer：设置形态收进 footer，发送是唯一主动作 -->
+      <div class="composer-zone">
+        <div class="composer-wrap">
+          <div class="composer" id="composer">
+            <textarea id="composerInput" placeholder="消息 · IME / 词库整理 …" rows="2" aria-label="消息输入"></textarea>
+            <div class="composer__bar">
+              <div class="composer__left">
+                <button class="round-btn" title="附件" aria-label="附件">＋</button>
+                <button class="chip-btn"><span class="lbl">Pi · 默认模型</span></button>
+                <button class="chip-btn"><span class="lbl">推理 · 中</span></button>
+                <button class="chip-btn"><span class="dot"></span><span class="lbl">权限 · 需确认</span></button>
+                <button class="chip-btn"><span class="lbl">Session · 单聊</span></button>
+              </div>
+              <div class="composer__right">
+                <button class="round-btn" title="语音输入" aria-label="语音输入">◉</button>
+                <button class="stop-btn" id="stopBtn" title="停止" aria-label="停止"></button>
+                <button class="send-btn" title="发送" aria-label="发送"><svg viewBox="0 0 16 16" fill="none"><path d="M8 13V3M8 3L3.5 7.5M8 3l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 详情栏：按需披露，不挤压正文 -->
+    <div class="rail-layer">
+      <div class="rail-motion" id="railMotion" data-open="true">
+        <aside class="rail" aria-label="详情栏">
+          <div class="rail__scroll">
+            <section class="rail-section" data-open="true">
+              <button class="rail-heading">任务<span class="chevron">▾</span></button>
+              <div class="rail-body">
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">⚙</span><span class="rail-item__body"><span class="rail-item__title">ime.regression.run</span><span class="rail-item__meta" id="railRegMeta">运行中 · 已确认 0 / 342</span></span></span></button>
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">◈</span><span class="rail-item__body"><span class="rail-item__title">子 Agent · 词频复核</span><span class="rail-item__meta">后台完成 · 误判 3 条</span></span></span></button>
+              </div>
+            </section>
+            <section class="rail-section" data-open="true">
+              <button class="rail-heading">上下文<span class="chevron">▾</span></button>
+              <div class="rail-body">
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">⌗</span><span class="rail-item__body"><span class="rail-item__title">IME 项目 · 工作区</span><span class="rail-item__meta">3 个文件在本轮范围内</span></span></span></button>
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">⚿</span><span class="rail-item__body"><span class="rail-item__title">权限 · 需确认</span><span class="rail-item__meta">写词库前必须经你批准</span></span></span></button>
+              </div>
+            </section>
+            <section class="rail-section" data-open="false">
+              <button class="rail-heading">产物 · 4<span class="chevron">▾</span></button>
+              <div class="rail-body">
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">▣</span><span class="rail-item__body"><span class="rail-item__title">regression-report.html</span><span class="rail-item__meta">预览 · 64 KB</span></span></span></button>
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">⌗</span><span class="rail-item__body"><span class="rail-item__title">lexicon.candidates.yaml</span><span class="rail-item__meta">18 KB · 342 词</span></span></span></button>
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">⌗</span><span class="rail-item__body"><span class="rail-item__title">scan-report.json</span><span class="rail-item__meta">96 KB</span></span></span></button>
+                <button class="rail-item"><span class="rail-item__row"><span class="rail-item__icon">⌗</span><span class="rail-item__body"><span class="rail-item__title">freq-top500.csv</span><span class="rail-item__meta">41 KB</span></span></span></button>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* 活动行折叠 */
+$$('.activity').forEach(a=>a.addEventListener('click',()=>{
+  a.setAttribute('aria-expanded',String(a.getAttribute('aria-expanded')!=='true'));
+}));
+
+/* 详情栏 section 折叠与开关 */
+$$('.rail-heading').forEach(h=>h.addEventListener('click',()=>{
+  const s=h.closest('.rail-section');s.dataset.open=s.dataset.open==='true'?'false':'true';
+}));
+const railMotion=$('#railMotion'),railToggle=$('#railToggle');
+railToggle.addEventListener('click',()=>{
+  const open=railMotion.dataset.open==='true';
+  railMotion.dataset.open=String(!open);
+  railToggle.setAttribute('aria-pressed',String(!open));
+});
+
+/* 工具卡 tabs */
+$$('.tool-card').forEach(card=>{
+  const tool=card.closest('.tool');
+  card.querySelectorAll('.tool-tab').forEach(tab=>tab.addEventListener('click',()=>{
+    card.querySelectorAll('.tool-tab').forEach(t=>t.setAttribute('aria-selected','false'));
+    tab.setAttribute('aria-selected','true');
+    card.querySelectorAll('.tool-panel').forEach(p=>p.hidden=p.dataset.panel!==tab.dataset.tab);
+  }));
+});
+
+/* 对话 / Agent 轨迹 视图切换 */
+$$('.view-switch button').forEach(b=>b.addEventListener('click',()=>{
+  $$('.view-switch button').forEach(x=>x.setAttribute('aria-selected','false'));
+  b.setAttribute('aria-selected','true');
+  $('#shell').dataset.view=b.dataset.view;
+}));
+
+/* 审批：等待 → 已批准（状态迁移可见，回滚入口保留） */
+$('#btnApprove').addEventListener('click',()=>{
+  const card=$('#approvalCard');
+  card.classList.add('approved');
+  const pill=$('#approvalPill');
+  pill.className='pill ok';pill.innerHTML='<i></i>已批准';
+  $('#approvalOps').innerHTML='<button class="btn ghost">查看快照 #41</button><button class="btn ghost">回滚</button>';
+  card.querySelector('.bd').insertAdjacentHTML('beforeend','<div class="when" style="margin-top:8px;font-size:12px">已于 10:22:02 批准 · 应用范围：3 个文件</div>');
+});
+
+/* 回归进度：真实比例（completed/total 驱动，可停止） */
+const composer=$('#composer');
+let reg={done:0,total:342,stop:false,doneFlag:false};
+const regFill=$('#regFill'),regCount=$('#regCount'),regPct=$('#regPct'),regPill=$('#regPill'),railRegMeta=$('#railRegMeta');
+function regTick(){
+  if(reg.stop||reg.doneFlag)return;
+  reg.done=Math.min(reg.total,reg.done+Math.ceil(Math.random()*23));
+  const pct=Math.round(reg.done/reg.total*100);
+  regFill.style.width=pct+'%';
+  regCount.textContent=reg.done;
+  regPct.textContent=pct+'%';
+  railRegMeta.textContent='运行中 · 已确认 '+reg.done+' / 342';
+  if(reg.done>=reg.total){
+    reg.doneFlag=true;
+    regPill.className='pill ok';regPill.innerHTML='<i></i>完成';
+    $('#regStop').remove();
+    railRegMeta.textContent='完成 · 342 / 342 · 冲突 0';
+    ['#regResult','#regEvidence','#regUsage'].forEach((s,i)=>{
+      const el=$(s);el.hidden=false;el.classList.add('arrive');
+      if(!reduced)el.style.animationDelay=(i*90)+'ms';
+    });
+    composer.classList.remove('running');
+    return;
+  }
+  setTimeout(regTick,reduced?60:170);
+}
+composer.classList.add('running');
+setTimeout(regTick,reduced?10:500);
+$('#regStop').addEventListener('click',()=>{
+  reg.stop=true;
+  regPill.className='pill wait';regPill.innerHTML='<i></i>已停止';
+  regPct.textContent='已停止于 '+Math.round(reg.done/reg.total*100)+'%';
+  $('#regStop').textContent='重新运行';
+  $('#regStop').addEventListener('click',()=>{reg.stop=false;reg.done=0;regPill.className='pill run';regPill.innerHTML='<i></i>运行中';regTick();},{once:true});
+  composer.classList.remove('running');
+});
+
+/* 失败回合恢复：重试 → compaction 提示 → 恢复成功；草稿不丢 */
+$('#btnRetry').addEventListener('click',()=>{
+  const card=$('#failCard');
+  card.classList.add('recovering');
+  $('#failPill').className='pill run';$('#failPill').innerHTML='<i></i>恢复中';
+  $('#failTitle').textContent='正在重试本轮';
+  $('#failBody').textContent='保留上一轮证据，只重跑缺失的复核步骤。';
+  $('#failOps').style.visibility='hidden';
+  setTimeout(()=>{
+    const note=document.createElement('div');
+    note.className='compact-note arrive';
+    note.innerHTML='<span aria-hidden="true">⇄</span><span>上下文已折叠：保留目标、已完成结果与失败证据（119.8K → 46.1K tokens）</span>';
+    card.after(note);
+    card.classList.remove('recovering');
+    card.classList.add('recovered');
+    $('#failPill').className='pill ok';$('#failPill').innerHTML='<i></i>已恢复';
+    $('#failTitle').textContent='复核已完成';
+    $('#failBody').textContent='截图已生成并通过复核。旧失败证据保留在原位，未删除。';
+    $('#failOps').style.visibility='visible';
+    $('#failOps').innerHTML='<button class="btn ghost">查看复核结果</button>';
+    $('#failHint').textContent='恢复通过真实重试完成，不是前端猜测状态。';
+  },reduced?60:1300);
+});
+
+/* 回到底部 */
+const scroll=$('#scroll'),scrollBottom=$('#scrollBottom');
+scroll.addEventListener('scroll',()=>{
+  scrollBottom.dataset.visible=String(scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight>240);
+});
+scrollBottom.addEventListener('click',()=>scroll.scrollTo({top:scroll.scrollHeight,behavior:reduced?'auto':'smooth'}));
+
+/* 详情栏窄窗默认关闭 */
+if(innerWidth<860){railMotion.dataset.open='false';railToggle.setAttribute('aria-pressed','false');}
+</script>
+</body>
+</html>

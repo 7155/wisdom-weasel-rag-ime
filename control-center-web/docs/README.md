@@ -9,6 +9,7 @@ prose under repo-root `/docs/` is gitignored and is **not** on GitHub.
 2. [../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) — current frontend contract (`PF-CM-001`–`023`) and App-by-App spec.
 3. [../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) — latest checkpoint and unfinished lanes.
 4. [pawos/PAWOS_FRONTEND_HANDOFF.md](pawos/PAWOS_FRONTEND_HANDOFF.md) — earlier implementation receipts (progress context, not current proof).
+5. [references/pawos-conversation-baseline.html](references/pawos-conversation-baseline.html) — Agent conversation visual/interaction baseline. Craft reference only; not implementation authority.
 
 **Supporting inventories (not requirement authority)**
 

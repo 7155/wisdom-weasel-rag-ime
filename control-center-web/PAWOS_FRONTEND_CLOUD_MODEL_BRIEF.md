@@ -17,6 +17,7 @@ These files are on `main` and are the GitHub-visible authority pack:
 | `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` | This file: `PF-CM-*`, eleven-App spec, completion gate |
 | `control-center-web/PAWOS_FRONTEND_CONTINUATION_HANDOFF.md` | 2026-08-24 checkpoint of what landed and what remains |
 | `control-center-web/docs/handoffs/` | Function inventory, per-App function map, privacy-safe fixtures |
+| `control-center-web/docs/references/pawos-conversation-baseline.html` | Agent conversation craft/interaction baseline; not the App implementation |
 
 - The current brief explicitly names only a subset of `UR-*` identifiers. A
   requirement not repeated here is not deleted. Reconcile the relevant ledger

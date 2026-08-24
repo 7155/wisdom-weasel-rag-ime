@@ -39,6 +39,7 @@ Root `/docs/` is gitignored. A cloud model must read the tracked copies:
 4. this file — latest checkpoint
 5. `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` — earlier receipts
 6. `control-center-web/docs/handoffs/` — function map and privacy-safe fixtures
+7. `control-center-web/docs/references/pawos-conversation-baseline.html` — Agent conversation baseline HTML (craft reference, not the App)
 
 Newest explicit user correction wins. Do not silently drop a `UR-*` that the brief only links.
 
