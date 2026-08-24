@@ -1845,7 +1845,7 @@ class AgentRoomServiceTests(unittest.TestCase):
 
         self.assertEqual(
             getattr(blocked.exception, "cause_code", ""),
-            "GOAL_CANCELLED",
+            "goal_cancelled",
         )
         self.assertEqual(
             str(self.service.sessions.agent_goal(lead_session)["status"]),
@@ -1857,6 +1857,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             if event["eventType"] == "turn_failed"
         ]
         self.assertEqual(len(failures), 1)
+        # Room durable events uppercase the same canonical lowercase error_code.
         self.assertEqual(
             failures[0]["payload"].get("causeCode"),
             "GOAL_CANCELLED",

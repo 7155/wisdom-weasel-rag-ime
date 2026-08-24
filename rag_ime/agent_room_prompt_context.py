@@ -283,7 +283,7 @@ def room_participant_prompt(
                         "不得取消、轮询或重新分派该伙伴。",
                         "交付到达后先 collect 当前 WorkItem、WorkDocument 与证据，再显式 accept 或 return。"
                         "分别判断运行可操作性和需求满足度；两轴均通过才用 expectedRevision、verdicts、"
-                        "evidenceRefs accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
+                        "evidenceRefs 与非空 reason accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
                         "文档修订都不能代替验收。审查报告 unverified、changes_required、failed 或未解决 "
                         "HIGH/MEDIUM 时必须 return，不得写成 passed/satisfied。return 后重新委派修订时，"
                         "必须用新的 Tool 调用并携带原 workItemId；不要新建一个 WorkItem 来冒充同一修订链。"

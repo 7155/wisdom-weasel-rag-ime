@@ -1340,6 +1340,10 @@ class AgentRoomWorkStore:
                 "Room work may be accepted only when operability is passed "
                 "and the requirement is satisfied"
             )
+        if accept and not feedback:
+            raise ValueError(
+                "accept requires a concrete reason stating what was verified"
+            )
         if not accept and not feedback:
             raise ValueError("revision return requires a concrete reason")
         if (

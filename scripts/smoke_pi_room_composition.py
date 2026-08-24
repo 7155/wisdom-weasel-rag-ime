@@ -385,6 +385,7 @@ def main() -> int:
                             ),
                             f"room-dispatch:{child_dispatch_id}",
                         ],
+                        "reason": "伙伴交付的真实路径与需求验收均通过。",
                     },
                     tool_call_id="room-composition-partner-accept",
                 )

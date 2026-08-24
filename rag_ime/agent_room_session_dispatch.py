@@ -634,6 +634,13 @@ def _public_error(error: BaseException) -> str:
 
 
 def _error_cause_code(error: BaseException) -> str:
+    """Project a durable Room causeCode.
+
+    Session receipts keep the canonical lowercase ``error_code``
+    (``goal_paused``). Room timeline events uppercase the same token so they
+    match existing wake/partner cause comparisons.
+    """
+
     return " ".join(
         str(
             getattr(error, "cause_code", "")

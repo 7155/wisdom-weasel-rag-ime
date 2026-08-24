@@ -96,6 +96,7 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
         self.assertIn("伙伴完成后由持久 wake 唤醒你", prompt)
         self.assertIn("显式 accept 或 return", prompt)
         self.assertIn("携带原 workItemId", prompt)
+        self.assertIn("非空 reason accept", prompt)
         self.assertIn("不得写成 passed/satisfied", prompt)
         self.assertIn("不要把仍在进行的 Room Goal 暂停", prompt)
         self.assertIn("网页验收只用 product browser", prompt)

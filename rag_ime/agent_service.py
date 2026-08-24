@@ -3470,10 +3470,18 @@ class AgentService:
                 if cause_code in {
                     "SESSION_BUSY",
                     "AGENT_TURN_CONFLICT",
+                    # Paused Goal must not auto-resume on wake. Defer until an
+                    # explicit user Room message resumes the Goal; do not burn
+                    # the completion wake as a terminal failure.
+                    "GOAL_PAUSED",
                 }:
                     self.wake_schedules.defer(
                         run_id,
-                        reason="Facilitator 刚刚开始其他回合，伙伴交付稍后重试",
+                        reason=(
+                            "Facilitator Goal 已暂停，等待用户在 Room 中继续后再验收"
+                            if cause_code == "GOAL_PAUSED"
+                            else "Facilitator 刚刚开始其他回合，伙伴交付稍后重试"
+                        ),
                         cause_code=cause_code,
                         delay_ms=5_000,
                     )

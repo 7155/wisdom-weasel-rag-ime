@@ -163,6 +163,44 @@ class AgentServiceRoomPartnerWakeTest(unittest.TestCase):
         )
         self.assertEqual(projected["wake"]["state"], "scheduled")
 
+    def test_paused_goal_defers_room_completion_wake_without_resume(
+        self,
+    ) -> None:
+        claim, facilitator, dispatch = self._room_completion_claim()
+        facilitator_session_id = str(facilitator["sessionId"])
+        goal = self.service.sessions.mutate_agent_goal(
+            facilitator_session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "objective": "验收伙伴交付",
+                "expectedRevision": 0,
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            facilitator_session_id,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )
+
+        self.service.wake_scheduler._dispatch_safely(claim)
+
+        schedule = self.service.get_wake_schedule(str(claim["id"]))
+        self.assertEqual(schedule["status"], "scheduled")
+        self.assertEqual(schedule["runCount"], 0)
+        self.assertEqual(schedule["latestRun"]["state"], "deferred")
+        self.assertEqual(
+            schedule["latestRun"]["result"]["causeCode"],
+            "GOAL_PAUSED",
+        )
+        self.assertEqual(
+            self.service.sessions.agent_goal(facilitator_session_id)["status"],
+            "paused",
+        )
+        projected = self.service.room_partner_dispatches.get(
+            str(dispatch["childDispatchId"])
+        )
+        self.assertEqual(projected["wake"]["state"], "scheduled")
+
     def test_host_busy_rejection_persists_typed_receipt_and_defers_wake(
         self,
     ) -> None:

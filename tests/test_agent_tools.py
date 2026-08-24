@@ -1468,6 +1468,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "operabilityVerdict",
                 "requirementVerdict",
                 "evidenceRefs",
+                "reason",
             ],
         )
         self.assertEqual(
@@ -1534,6 +1535,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:real-path", "test:requirement"],
+                "reason": "真实路径与需求验收均通过。",
             },
             {
                 "op": "return",
@@ -1567,6 +1569,15 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "expectedRevision": 0,
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "not_satisfied",
+                "evidenceRefs": ["test:requirement"],
+                "reason": "需求未满足不能验收。",
+            },
+            {
+                "op": "accept",
+                "workItemId": "room-work:1",
+                "expectedRevision": 0,
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:requirement"],
             },
             {

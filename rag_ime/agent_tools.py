@@ -907,7 +907,9 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 2_000,
-                "description": "return 或 retry 时给负责 Partner 的具体原因。",
+                "description": (
+                    "accept 时写明已核对的证据；return 或 retry 时给负责 Partner 的具体原因。"
+                ),
             },
             "phase": {
                 "type": "string",
@@ -1026,6 +1028,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "operabilityVerdict",
                     "requirementVerdict",
                     "evidenceRefs",
+                    "reason",
                 ],
                 "properties": {
                     "op": {"const": "accept"},

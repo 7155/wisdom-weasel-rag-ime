@@ -235,7 +235,7 @@ class RoomPartnerApplicationService:
             "operabilityVerdict": args.get("operabilityVerdict"),
             "requirementVerdict": args.get("requirementVerdict"),
             "evidenceRefs": args.get("evidenceRefs"),
-            **({"reason": args.get("reason")} if not accept else {}),
+            "reason": args.get("reason"),
         }
         callback = self.accept_room_work if accept else self.return_room_work
         wake = record.get("wake")

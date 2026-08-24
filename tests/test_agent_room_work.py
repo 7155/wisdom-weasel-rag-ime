@@ -110,6 +110,7 @@ class AgentRoomWorkTests(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:test_room", "artifact:src/room.py"],
+                "reason": "窄测试与产物核对通过。",
             },
             updated_at_ms=40,
         )
@@ -121,7 +122,7 @@ class AgentRoomWorkTests(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:test_room", "artifact:src/room.py"],
-                "reason": "",
+                "reason": "窄测试与产物核对通过。",
                 "reviewerParticipantId": self.coordinator_participant["id"],
                 "reviewedAtMs": 40,
             },
@@ -268,6 +269,7 @@ class AgentRoomWorkTests(unittest.TestCase):
             "operabilityVerdict": "passed",
             "requirementVerdict": "satisfied",
             "evidenceRefs": ["review:test-review-contract"],
+            "reason": "双轴验收通过。",
         }
         for missing in required:
             with self.subTest(missing=missing), self.assertRaises(ValueError):
@@ -304,12 +306,24 @@ class AgentRoomWorkTests(unittest.TestCase):
                     "expectedRevision": submitted["revision"] + 1,
                 },
             )
+        with self.assertRaisesRegex(ValueError, "accept requires a concrete reason"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    **{key: value for key, value in required.items() if key != "reason"},
+                },
+            )
         with self.assertRaisesRegex(ValueError, "concrete reason"):
             self.work.return_for_revision(
                 str(self.coordinator["id"]),
                 {
                     "workId": submitted["id"],
-                    **required,
+                    **{
+                        key: value
+                        for key, value in required.items()
+                        if key != "reason"
+                    },
                     "requirementVerdict": "not_satisfied",
                 },
             )

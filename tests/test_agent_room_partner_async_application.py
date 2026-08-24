@@ -209,6 +209,7 @@ class RoomPartnerAsyncApplicationTest(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:green", "workdoc:one@2"],
+                "reason": "真实路径与需求验收均通过。",
             },
             tool_call_id="tool:accept",
         )
@@ -225,6 +226,7 @@ class RoomPartnerAsyncApplicationTest(unittest.TestCase):
                         "operabilityVerdict": "passed",
                         "requirementVerdict": "satisfied",
                         "evidenceRefs": ["test:green", "workdoc:one@2"],
+                        "reason": "真实路径与需求验收均通过。",
                     },
                 )
             ],
@@ -293,6 +295,7 @@ class RoomPartnerAsyncApplicationTest(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:green"],
+                "reason": "真实路径与需求验收均通过。",
             },
             tool_call_id="tool:accept-before-wake",
         )

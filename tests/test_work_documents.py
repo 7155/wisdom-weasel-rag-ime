@@ -756,6 +756,7 @@ class WorkDocumentTests(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["docs/drafts/room.md"],
+                "reason": "Room 文档交付核对通过。",
             },
         )
         self.assertEqual(
