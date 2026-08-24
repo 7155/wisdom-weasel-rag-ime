@@ -467,7 +467,7 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
           {/* PF-CM-013：卫星只补一条极薄状态行——当前工作一句、文字+色状态、
               去完整 Session 的入口；身份与治理留在标题栏和主 Room。 */}
           <SatelliteStatusline
-            currentWork={conciseParticipantEntry(focusPartner?.currentAction ?? '', '等待新的工作项')}
+            currentWork={conciseParticipantEntry(focusPartner?.currentAction ?? '', satelliteStatuslineFallback(focusPartner?.state ?? 'idle'))}
             sessionId={participant.sessionId}
             sessionLabel={`在 Agent 中打开 ${participant.displayName} 的完整 Session`}
             state={focusPartner?.state ?? 'idle'}
@@ -571,13 +571,23 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
   room?: RoomSummary;
 }) {
   const fromParticipant = entry.participantId === participantId;
-  const sourceLabel = entry.kind === 'activity'
-    ? roomSatelliteEntryLabel(entry.eventType)
-    : fromParticipant
-      ? '公开回复'
-      : entry.role === 'user'
-        ? '你'
-        : room?.participants.find((item) => item.id === entry.participantId)?.displayName || 'Room';
+  if (entry.kind === 'activity') {
+    return <SatelliteActivityRow
+      direction={fromParticipant ? 'out' : 'in'}
+      eventType={entry.eventType}
+      message={entry.summary}
+      rawContentId={`participant-raw-${entry.id}`}
+      rawLabel="查看公开原文"
+      rawText={entry.text}
+      status={entry.status}
+      time={entry.time}
+    />;
+  }
+  const sourceLabel = fromParticipant
+    ? '公开回复'
+    : entry.role === 'user'
+      ? '你'
+      : room?.participants.find((item) => item.id === entry.participantId)?.displayName || 'Room';
   return <article data-direction={fromParticipant ? 'out' : 'in'} data-event-type={entry.eventType} data-kind={entry.kind} data-status={entry.status}>
     <header>
       <strong>{sourceLabel}</strong>
@@ -586,6 +596,27 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
     </header>
     <p>{entry.summary}</p>
     {entry.text.trim() !== entry.summary.trim() ? <SatelliteRawDetail contentId={`participant-raw-${entry.id}`} label="查看公开原文" text={entry.text} /> : null}
+  </article>;
+}
+
+/** 工具/运行事件压成一行：状态 · 类型 · 消息（可截断）· 时间弱化在行尾。
+ *  失败沿用红色警示图标，超出摘要的公开原文披露仍折在行下。 */
+function SatelliteActivityRow({ direction, eventType, message, rawContentId, rawLabel, rawText, status, time }: {
+  direction: 'in' | 'out';
+  eventType: string;
+  message: string;
+  rawContentId: string;
+  rawLabel: string;
+  rawText: string;
+  status: string;
+  time: number;
+}) {
+  return <article data-direction={direction} data-event-type={eventType} data-kind="activity" data-status={status}>
+    <span className="paw-participant-chat__activity-state"><SatelliteRunState eventType={eventType} status={status} /></span>
+    <strong>{roomSatelliteEntryLabel(eventType)}</strong>
+    <span className="paw-participant-chat__activity-message" title={message}>{message}</span>
+    <time>{time ? formatTime(time) : ''}</time>
+    {rawText.trim() !== message.trim() ? <SatelliteRawDetail contentId={rawContentId} label={rawLabel} text={rawText} /> : null}
   </article>;
 }
 
@@ -653,7 +684,7 @@ function conciseParticipantActivity(
 
 function conciseParticipantEntry(detail: string, fallback: string): string {
   const source = detail.trim();
-  if (!source || participantDetailIsRaw(source)) return fallback;
+  if (!source || participantDetailIsRaw(source) || participantDetailIsMachineToken(source)) return fallback;
   const compact = source
     .replace(/```[\s\S]*?```/gu, '')
     .replace(/\[([^\]]+)\]\([^)]+\)/gu, '$1')
@@ -679,6 +710,20 @@ function participantDetailIsRaw(source: string): boolean {
     || /\/(?:Users|Volumes|home|private|tmp|var)\//u.test(source)
     || /\b[a-f\d]{48,}\b/iu.test(source)
     || /["'](?:path|sha256|payload|metadata)["']\s*:/iu.test(source);
+}
+
+/** 形如 participant_activity 的事件枚举是机器串，不能作为给人看的摘要。 */
+function participantDetailIsMachineToken(source: string): boolean {
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/iu.test(source);
+}
+
+/** 页脚兜底跟随状态给一句用户可读的话，而不是机器事件名。 */
+function satelliteStatuslineFallback(state: RoomFocusState): string {
+  if (state === 'running') return '正在推进当前工作';
+  if (state === 'completed') return '活动已完成';
+  if (state === 'failed' || state === 'blocked') return '最近一项活动需要关注';
+  if (state === 'waiting' || state === 'review') return '等待下一步安排';
+  return '等待新的工作项';
 }
 
 function participantToolStatusLabel(status: string): string {
@@ -794,7 +839,7 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
             {!entries.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>{run.state === 'queued' ? '等待开始' : '还没有公开进度'}</span></div> : null}
           </div>
           <SatelliteStatusline
-            currentWork={conciseParticipantEntry(run.task || run.todoTask, '等待新的工作项')}
+            currentWork={conciseParticipantEntry(run.task || run.todoTask, satelliteStatuslineFallback(subagentFocusState(run.state)))}
             sessionId={target.sessionId}
             sessionLabel="在 Agent 中打开所属 Session"
             state={subagentFocusState(run.state)}
@@ -830,6 +875,18 @@ function timelineNearLatest(timeline: HTMLDivElement): boolean {
 
 function SatelliteTimelineEntry({ entry }: { entry: SubagentTimelineEntry }) {
   const summary = conciseParticipantEntry(entry.text, entry.kind === 'activity' ? '运行状态已更新' : '公开消息已更新');
+  if (entry.kind === 'activity') {
+    return <SatelliteActivityRow
+      direction={entry.direction}
+      eventType={entry.eventType}
+      message={summary}
+      rawContentId={`subagent-raw-${entry.id}`}
+      rawLabel="查看完整原文"
+      rawText={entry.text}
+      status={entry.status}
+      time={entry.time}
+    />;
+  }
   return <article data-direction={entry.direction} data-kind={entry.kind} data-status={entry.status}>
     <header><strong>{entry.actor}</strong><time>{entry.time ? formatTime(entry.time) : ''}</time><SatelliteRunState eventType={entry.eventType} status={entry.status} /></header>
     <p>{summary}</p>

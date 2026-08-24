@@ -215,8 +215,16 @@
 .paw-participant-chat__activity-group-content { display: grid; padding: 2px 10px 8px; border-top: 1px solid var(--paw-line-soft); }
 .paw-participant-chat__activity-group article { animation: none; }
 .paw-participant-chat__activity-group article + article { border-top: 0; }
-.paw-participant-chat__timeline article[data-kind='activity'] { padding-block: 7px; }
-.paw-participant-chat__timeline article[data-kind='activity'] p { color: var(--paw-muted); font-size: 13px; line-height: 19px; white-space: normal; }
+/* 工具/运行事件压成一行：状态 · 类型 · 消息（截断）· 时间弱化在行尾。
+   失败图标保持红色警示；原文披露折到行下；纵向留白收紧但列对齐防止糊成一团。 */
+.paw-participant-chat__timeline article[data-kind='activity'] { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; padding-block: 3px; }
+.paw-participant-chat__activity-state { display: grid; width: 16px; height: 16px; flex: 0 0 16px; place-items: center; }
+.paw-participant-chat__timeline article[data-kind='activity'] > strong { flex: 0 0 auto; color: var(--paw-muted); font-size: 12px; font-weight: 600; line-height: 18px; }
+.paw-participant-chat__activity-message { flex: 1 1 0; min-width: 0; overflow: hidden; color: color-mix(in srgb, var(--paw-ink) 82%, var(--paw-muted)); font-size: 12.5px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-participant-chat__timeline article[data-kind='activity'] > time { flex: 0 0 auto; color: color-mix(in srgb, var(--paw-muted) 74%, transparent); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.paw-participant-chat__timeline article[data-kind='activity'][data-status='failed'] .paw-participant-chat__activity-message,
+.paw-participant-chat__timeline article[data-kind='activity'][data-status='timed_out'] .paw-participant-chat__activity-message { color: var(--paw-danger); }
+.paw-participant-chat__timeline article[data-kind='activity'] > .paw-participant-chat__raw-detail { flex: 1 0 100%; margin: 0 0 1px 23px; }
 .paw-participant-chat__timeline article[data-kind='inbox'] { background: color-mix(in srgb, var(--paw-accent) 6%, var(--paw-panel)); }
 .paw-participant-chat__empty { margin: auto; display: grid; justify-items: center; gap: 6px; color: var(--paw-muted); font-size: 14px; line-height: 20px; }
 .paw-os-satellite__room-panel-body p,
