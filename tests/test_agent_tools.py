@@ -1236,6 +1236,78 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "agent-tool-result.v1.json",
             )
 
+    def test_room_facilitator_delegation_requires_active_root_work_document(self) -> None:
+        workspace = Path(self.tmp.name) / "room-root-document-gate"
+        workspace.mkdir()
+        facilitator = self.store.create(
+            title="Room facilitator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+        session_id = str(facilitator["id"])
+        goal = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "Build the Room result",
+                "successCriteria": "Bind the Root document first",
+                "evidenceExpectations": ["workDocumentRegistration"],
+            },
+            actor="agent-runtime",
+            updated_at_ms=4,
+        )["workflow"]["goal"]
+        participant = {
+            "id": "participant:root",
+            "sessionId": session_id,
+            "collaborationRole": "coordinator",
+        }
+        calls: list[dict[str, object]] = []
+        collaboration = SimpleNamespace(
+            rooms=SimpleNamespace(
+                participant_for_session=lambda *_args, **_kwargs: participant,
+            ),
+            execute_room_partner_tool=lambda _session_id, args, **_kwargs: (
+                calls.append(dict(args)) or {"operation": str(args["op"])}
+            ),
+        )
+        documents: list[dict[str, object]] = []
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=collaboration,
+            work_documents=SimpleNamespace(list=lambda **_kwargs: {"items": list(documents)}),
+        )
+        request = {
+            **self._tool_call(
+                "room_partner",
+                "delegate",
+                targetParticipantId="participant:worker",
+                task="Implement one bounded lane",
+                expectedOutput="Evidence",
+                acceptanceCriteria=["Provide a receipt"],
+            ),
+            "sessionId": session_id,
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "Act Gate blocked workspace mutation.*active Root WorkDocument",
+        ):
+            gateway.execute(request)
+        self.assertEqual(calls, [])
+        documents.append(
+            {
+                "authorityKey": f"session_goal:{goal['goalId']}",
+                "state": "active",
+            }
+        )
+        self.assertEqual(gateway.execute(request)["result"]["operation"], "delegate")
+        self.assertEqual(len(calls), 1)
+
     def test_room_partner_contract_routes_through_the_room_gateway(self) -> None:
         calls = []
 
