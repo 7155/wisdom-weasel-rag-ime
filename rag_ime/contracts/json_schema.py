@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 CONTRACTS_DIR = Path(__file__).with_name("json")
+JsonSchema = Mapping[str, object] | bool
 
 
 class ContractValidationError(ValueError):
@@ -23,8 +24,102 @@ def load_contract(name: str) -> dict[str, object]:
     return payload
 
 
-def validate_contract(payload: object, contract: str | Mapping[str, object]) -> None:
-    schema = load_contract(contract) if isinstance(contract, str) else dict(contract)
+def validate_json_schema(
+    schema: object,
+    *,
+    path: str = "schema",
+    maximum_depth: int = 32,
+    maximum_nodes: int = 512,
+    allow_boolean_root: bool = True,
+) -> JsonSchema:
+    """Validate the JSON-Schema shape accepted by the local contract runtime."""
+
+    nodes = [0]
+
+    def visit(value: object, *, current_path: str, depth: int) -> None:
+        if depth > maximum_depth:
+            raise ValueError(f"{current_path} exceeds the maximum schema depth")
+        nodes[0] += 1
+        if nodes[0] > maximum_nodes:
+            raise ValueError(f"{path} contains too many schema nodes")
+        if isinstance(value, bool):
+            return
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{current_path} must be a JSON Schema object or boolean")
+
+        reference = value.get("$ref")
+        if reference is not None and not isinstance(reference, str):
+            raise ValueError(f"{current_path}.$ref must be a string")
+        declared_type = value.get("type")
+        schema_types = {
+            "null", "boolean", "object", "array", "number", "integer", "string",
+        }
+        if declared_type is not None:
+            if isinstance(declared_type, str):
+                declared_types = [declared_type]
+            elif (
+                isinstance(declared_type, list)
+                and declared_type
+                and all(isinstance(item, str) for item in declared_type)
+            ):
+                declared_types = declared_type
+            else:
+                raise ValueError(f"{current_path}.type must be a string or string array")
+            if any(item not in schema_types for item in declared_types):
+                raise ValueError(f"{current_path}.type contains an unsupported JSON type")
+
+        for keyword in ("properties", "patternProperties", "$defs", "dependentSchemas"):
+            children = value.get(keyword)
+            if children is None:
+                continue
+            if not isinstance(children, Mapping):
+                raise ValueError(f"{current_path}.{keyword} must be an object")
+            for key, child in children.items():
+                visit(
+                    child,
+                    current_path=f"{current_path}.{keyword}.{key}",
+                    depth=depth + 1,
+                )
+
+        for keyword in (
+            "items", "additionalProperties", "contains", "not", "if", "then", "else",
+            "propertyNames",
+        ):
+            child = value.get(keyword)
+            if child is not None:
+                visit(
+                    child,
+                    current_path=f"{current_path}.{keyword}",
+                    depth=depth + 1,
+                )
+
+        for keyword in ("allOf", "anyOf", "oneOf", "prefixItems"):
+            children = value.get(keyword)
+            if children is None:
+                continue
+            if not isinstance(children, list) or not children:
+                raise ValueError(f"{current_path}.{keyword} must be a non-empty schema array")
+            for index, child in enumerate(children):
+                visit(
+                    child,
+                    current_path=f"{current_path}.{keyword}[{index}]",
+                    depth=depth + 1,
+                )
+
+        for unsupported in ("unevaluatedProperties", "unevaluatedItems"):
+            if unsupported in value:
+                raise ValueError(f"{current_path}.{unsupported} is not supported")
+
+    if isinstance(schema, bool) and not allow_boolean_root:
+        raise ValueError(f"{path} must be a JSON Schema object")
+    visit(schema, current_path=path, depth=0)
+    return schema if isinstance(schema, bool) else dict(schema)
+
+
+def validate_contract(payload: object, contract: str | JsonSchema) -> None:
+    schema = validate_json_schema(
+        load_contract(contract) if isinstance(contract, str) else contract
+    )
     errors: list[str] = []
     _validate(payload, schema, root=schema, path="$", errors=errors)
     if errors:
@@ -33,12 +128,18 @@ def validate_contract(payload: object, contract: str | Mapping[str, object]) -> 
 
 def _validate(
     value: object,
-    schema: Mapping[str, object],
+    schema: JsonSchema,
     *,
-    root: Mapping[str, object],
+    root: JsonSchema,
     path: str,
     errors: list[str],
 ) -> None:
+    if schema is True:
+        return
+    if schema is False:
+        errors.append(f"{path}: matches a forbidden schema")
+        return
+
     reference = schema.get("$ref")
     if isinstance(reference, str):
         target = _resolve_reference(reference, root)
@@ -48,7 +149,7 @@ def _validate(
     all_of = schema.get("allOf")
     if isinstance(all_of, list):
         for candidate in all_of:
-            if isinstance(candidate, Mapping):
+            if isinstance(candidate, (Mapping, bool)):
                 _validate(
                     value,
                     candidate,
@@ -62,7 +163,7 @@ def _validate(
         matching = [
             candidate
             for candidate in any_of
-            if isinstance(candidate, Mapping)
+            if isinstance(candidate, (Mapping, bool))
             and _schema_matches(value, candidate, root=root, path=path)
         ]
         if not matching:
@@ -73,7 +174,7 @@ def _validate(
         match_count = sum(
             1
             for candidate in one_of
-            if isinstance(candidate, Mapping)
+            if isinstance(candidate, (Mapping, bool))
             and _schema_matches(value, candidate, root=root, path=path)
         )
         if match_count != 1:
@@ -83,19 +184,19 @@ def _validate(
 
     excluded = schema.get("not")
     if (
-        isinstance(excluded, Mapping)
+        isinstance(excluded, (Mapping, bool))
         and _schema_matches(value, excluded, root=root, path=path)
     ):
         errors.append(f"{path}: matches a forbidden schema")
 
     condition = schema.get("if")
-    if isinstance(condition, Mapping):
+    if isinstance(condition, (Mapping, bool)):
         branch = (
             schema.get("then")
             if _schema_matches(value, condition, root=root, path=path)
             else schema.get("else")
         )
-        if isinstance(branch, Mapping):
+        if isinstance(branch, (Mapping, bool)):
             _validate(
                 value,
                 branch,
@@ -141,14 +242,28 @@ def _validate(
                 if isinstance(key, str) and key not in value:
                     errors.append(f"{path}: missing required field {key}")
         properties = schema.get("properties")
+        pattern_properties = schema.get("patternProperties")
         if isinstance(properties, Mapping):
             additional = schema.get("additionalProperties")
             for key in value:
-                if key in properties:
+                pattern_schemas = [
+                    candidate
+                    for pattern, candidate in pattern_properties.items()
+                    if isinstance(pattern_properties, Mapping)
+                    and isinstance(pattern, str)
+                    and re.search(pattern, str(key)) is not None
+                ] if isinstance(pattern_properties, Mapping) else []
+                if key in properties or pattern_schemas:
+                    for candidate in pattern_schemas:
+                        if isinstance(candidate, (Mapping, bool)):
+                            _validate(
+                                value[key], candidate, root=root,
+                                path=f"{path}.{key}", errors=errors,
+                            )
                     continue
                 if additional is False:
                     errors.append(f"{path}: unsupported field {key}")
-                elif isinstance(additional, Mapping):
+                elif isinstance(additional, (Mapping, bool)):
                     _validate(
                         value[key],
                         additional,
@@ -157,7 +272,7 @@ def _validate(
                         errors=errors,
                     )
             for key, child_schema in properties.items():
-                if key in value and isinstance(child_schema, Mapping):
+                if key in value and isinstance(child_schema, (Mapping, bool)):
                     _validate(
                         value[key],
                         child_schema,
@@ -165,9 +280,33 @@ def _validate(
                         path=f"{path}.{key}",
                         errors=errors,
                     )
+        elif isinstance(pattern_properties, Mapping):
+            additional = schema.get("additionalProperties")
+            for key in value:
+                matches = [
+                    child for pattern, child in pattern_properties.items()
+                    if isinstance(pattern, str) and re.search(pattern, str(key)) is not None
+                ]
+                if matches:
+                    for child in matches:
+                        if isinstance(child, (Mapping, bool)):
+                            _validate(value[key], child, root=root, path=f"{path}.{key}", errors=errors)
+                elif additional is False:
+                    errors.append(f"{path}: unsupported field {key}")
+                elif isinstance(additional, (Mapping, bool)):
+                    _validate(value[key], additional, root=root, path=f"{path}.{key}", errors=errors)
         elif schema.get("additionalProperties") is False and value:
             for key in value:
                 errors.append(f"{path}: unsupported field {key}")
+        dependent_schemas = schema.get("dependentSchemas")
+        if isinstance(dependent_schemas, Mapping):
+            for key, child in dependent_schemas.items():
+                if key in value and isinstance(child, (Mapping, bool)):
+                    _validate(value, child, root=root, path=path, errors=errors)
+        property_names = schema.get("propertyNames")
+        if isinstance(property_names, (Mapping, bool)):
+            for key in value:
+                _validate(str(key), property_names, root=root, path=f"{path}.{key}", errors=errors)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         minimum_items = schema.get("minItems")
         if isinstance(minimum_items, int) and len(value) < minimum_items:
@@ -179,9 +318,18 @@ def _validate(
             identities = [_json_identity(item) for item in value]
             if len(identities) != len(set(identities)):
                 errors.append(f"{path}: array items must be unique")
+        prefix_items = schema.get("prefixItems")
+        prefix_count = len(prefix_items) if isinstance(prefix_items, list) else 0
+        if isinstance(prefix_items, list):
+            for index, child_schema in enumerate(prefix_items[:len(value)]):
+                if isinstance(child_schema, (Mapping, bool)):
+                    _validate(
+                        value[index], child_schema, root=root,
+                        path=f"{path}[{index}]", errors=errors,
+                    )
         items = schema.get("items")
-        if isinstance(items, Mapping):
-            for index, item in enumerate(value):
+        if isinstance(items, (Mapping, bool)):
+            for index, item in enumerate(value[prefix_count:], start=prefix_count):
                 _validate(
                     item,
                     items,
@@ -189,13 +337,25 @@ def _validate(
                     path=f"{path}[{index}]",
                     errors=errors,
                 )
+        contains = schema.get("contains")
+        if isinstance(contains, (Mapping, bool)):
+            matches = sum(
+                1 for index, item in enumerate(value)
+                if _schema_matches(item, contains, root=root, path=f"{path}[{index}]")
+            )
+            minimum_contains = schema.get("minContains", 1)
+            maximum_contains = schema.get("maxContains")
+            if isinstance(minimum_contains, int) and matches < minimum_contains:
+                errors.append(f"{path}: array has fewer than {minimum_contains} matching items")
+            if isinstance(maximum_contains, int) and matches > maximum_contains:
+                errors.append(f"{path}: array has more than {maximum_contains} matching items")
 
 
 def _schema_matches(
     value: object,
-    schema: Mapping[str, object],
+    schema: JsonSchema,
     *,
-    root: Mapping[str, object],
+    root: JsonSchema,
     path: str,
 ) -> bool:
     candidate_errors: list[str] = []
@@ -221,7 +381,7 @@ def _json_identity(value: object) -> str:
         return repr(value)
 
 
-def _resolve_reference(reference: str, root: Mapping[str, object]) -> Mapping[str, object]:
+def _resolve_reference(reference: str, root: JsonSchema) -> JsonSchema:
     if not reference.startswith("#/"):
         raise ValueError(f"only local JSON references are supported: {reference}")
     value: object = root
@@ -230,9 +390,9 @@ def _resolve_reference(reference: str, root: Mapping[str, object]) -> Mapping[st
         if not isinstance(value, Mapping) or key not in value:
             raise ValueError(f"invalid JSON contract reference: {reference}")
         value = value[key]
-    if not isinstance(value, Mapping):
-        raise ValueError(f"JSON contract reference is not an object: {reference}")
-    return value
+    if not isinstance(value, (Mapping, bool)):
+        raise ValueError(f"JSON contract reference is not a schema: {reference}")
+    return value if isinstance(value, bool) else dict(value)
 
 
 def _matches_type(value: object, expected: object) -> bool:

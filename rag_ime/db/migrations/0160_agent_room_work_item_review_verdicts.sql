@@ -1,0 +1,2 @@
+-- Columns are added by migration hook 0160 so an interrupted SQLite DDL
+-- sequence can resume without rewriting an already-added column.

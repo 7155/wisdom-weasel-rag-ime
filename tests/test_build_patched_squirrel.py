@@ -177,7 +177,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let cancelledSelectedTextHash", patch_text)
         self.assertIn("post_commit_pending_overlay_disabled", patch_text)
         self.assertIn("assistant_overlay_local_placeholder_suppressed", patch_text)
-        self.assertIn("打开澄控制中心...", patch_text)
+        self.assertIn("打开 PAW...", patch_text)
         self.assertIn("配置由控制中心管理", patch_text)
         self.assertIn("重新启动后台服务", patch_text)
         self.assertIn("诊断与修复...", patch_text)
@@ -2186,7 +2186,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
             'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
             'func traceRimeComposition() { _ = "rime_composition_started"; _ = "rime_composition_candidates_visible" }; '
-            'func controlCenterMenu() { _ = "打开澄控制中心..."; _ = "配置由控制中心管理"; '
+            'func controlCenterMenu() { _ = "打开 PAW..."; _ = "配置由控制中心管理"; '
             '_ = "重新启动后台服务"; _ = "诊断与修复..."; _ = "com.rag-ime.control" }; '
             'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '

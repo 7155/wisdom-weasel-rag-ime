@@ -4,17 +4,40 @@ import unittest
 from threading import Event, Lock
 from types import SimpleNamespace
 
-from rag_ime.agent_room_partner_application import RoomPartnerApplicationService
+from rag_ime.agent_room_partner_application import (
+    RoomPartnerApplicationService,
+    _partner_task_message,
+)
 from rag_ime.contracts.json_schema import validate_contract
 
 
 class _RoomEvents:
     def __init__(self) -> None:
         self.published: list[dict[str, object]] = []
+        self.projections: dict[str, dict[str, object]] = {}
 
     def publish(self, **values: object) -> dict[str, object]:
         self.published.append(dict(values))
         return dict(values)
+
+    def publish_projection(
+        self,
+        *,
+        projection_key: str,
+        **values: object,
+    ) -> dict[str, object]:
+        projected = dict(values)
+        existing = self.projections.get(projection_key)
+        if existing is not None:
+            if existing != projected:
+                raise ValueError("Room projection key was rebound")
+            return dict(existing)
+        self.projections[projection_key] = projected
+        self.published.append(projected)
+        return dict(projected)
+
+    def has_projection(self, projection_key: str) -> bool:
+        return projection_key in self.projections
 
 
 class _RoomWorkLedger:
@@ -46,6 +69,14 @@ class _RoomWorkLedger:
                 "state": "active",
                 "resultSummary": "",
                 "evidenceRefs": [],
+                "review": {
+                    "operabilityVerdict": "",
+                    "requirementVerdict": "",
+                    "evidenceRefs": [],
+                    "reason": "",
+                    "reviewerParticipantId": "",
+                    "reviewedAtMs": None,
+                },
             }
             self.items[work_id] = item
             return dict(item)
@@ -57,6 +88,20 @@ class _RoomWorkLedger:
                 dict(item)
                 for item in self.items.values()
                 if not states or item["state"] in states
+            ]
+
+    def list_for_root(
+        self,
+        *,
+        room_id: str,
+        root_turn_id: str,
+    ) -> list[dict[str, object]]:
+        with self._lock:
+            return [
+                dict(item)
+                for item in self.items.values()
+                if item["roomId"] == room_id
+                and item["rootTurnId"] == root_turn_id
             ]
 
     def get(self, work_id: str, **_values: object) -> dict[str, object]:
@@ -89,6 +134,14 @@ class _RoomWorkLedger:
         with self._lock:
             item = self.items[str(payload["workId"])]
             item["state"] = "done"
+            item["review"] = {
+                "operabilityVerdict": payload.get("operabilityVerdict", ""),
+                "requirementVerdict": payload.get("requirementVerdict", ""),
+                "evidenceRefs": list(payload.get("evidenceRefs") or []),
+                "reason": "",
+                "reviewerParticipantId": "room-a:p1",
+                "reviewedAtMs": 1,
+            }
             return dict(item)
 
     def escalate(self, _session_id: str, payload: object) -> dict[str, object]:
@@ -111,6 +164,24 @@ class _RoomWorkLedger:
 
 
 class RoomPartnerApplicationTest(unittest.TestCase):
+    def test_partner_task_brief_exposes_conditional_private_agent_choice(self) -> None:
+        message = _partner_task_message(
+            source={"displayName": "澄·远"},
+            task="实现多个互不重叠的游戏子系统",
+            expected_output="可运行实现与验证证据",
+            acceptance_criteria=["真实路径通过", "需求语义满足"],
+        )
+
+        self.assertIn("至少两个独立、非重叠", message)
+        self.assertIn("agents", message)
+        self.assertIn("一次批量", message)
+        self.assertIn("父 Agent 保留自己的工作线", message)
+        self.assertIn("否则当前 Session 直接完成", message)
+        self.assertIn("产物真实存在后再派发", message)
+        self.assertIn("不要让审核者和生产者在同一波", message)
+        self.assertNotIn("Luna", message)
+        self.assertNotIn("GPT-5", message)
+
     def test_peer_ask_and_reply_preserve_direct_participant_identity(self) -> None:
         source = {
             "id": "room-a:p2",
@@ -344,7 +415,8 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         self.assertEqual(result["operation"], "delegate_batch")
         self.assertEqual(result["phase"], "并行调查")
         self.assertEqual(result["parallelism"], 2)
-        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(result["accepted"], 2)
         self.assertTrue(str(result["waveId"]).startswith("room-wave:"))
         self.assertEqual(
             [item["participantId"] for item in result["results"]],
@@ -450,7 +522,98 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         self.assertEqual(route["payload"]["reason"], "partner_delegate")  # type: ignore[index]
         self.assertIs(route["payload"]["child"], True)  # type: ignore[index]
 
-    def test_completed_work_is_accepted_without_a_fake_human_review(self) -> None:
+    def test_cancelled_child_admission_releases_work_without_marking_it_failed(
+        self,
+    ) -> None:
+        source = {
+            "id": "room-a:p1",
+            "roomId": "room-a",
+            "sessionId": "room-a:s1",
+            "displayName": "Facilitator",
+            "status": "active",
+        }
+        target = {
+            "id": "room-a:p2",
+            "roomId": "room-a",
+            "sessionId": "room-a:s2",
+            "displayName": "Partner",
+            "status": "active",
+        }
+        room = {
+            "id": "room-a",
+            "status": "active",
+            "activeTopicId": "topic-a",
+            "participants": [source, target],
+        }
+        ledger = _RoomWorkLedger()
+        work_phases: list[str] = []
+        rooms = SimpleNamespace(
+            participant_for_session=lambda session_id, **_kwargs: (
+                source if session_id == source["sessionId"] else target
+            ),
+            get=lambda _room_id: room,
+            participant=lambda _participant_id: target,
+            plan_routes=lambda *_args, **_kwargs: [{
+                "reason": "partner_delegate",
+                "targetDisplayName": target["displayName"],
+                "targetParticipantId": target["id"],
+            }],
+            unread_public_messages=lambda *_args, **_kwargs: {
+                "items": [],
+                "omittedCount": 0,
+                "throughSequence": 0,
+            },
+            list_events=lambda *_args, **_kwargs: [],
+        )
+        service = RoomPartnerApplicationService(
+            rooms=rooms,
+            room_turns=SimpleNamespace(
+                active_turn=lambda _session_id: ("root-a", "dispatch-a"),
+                turn_targets=lambda *_args, **_kwargs: [],
+                hold_priority_if_idle=lambda *_args, **_kwargs: None,
+                release_priority_session=lambda *_args, **_kwargs: None,
+            ),
+            runtime_status=lambda: {},
+            sessions=SimpleNamespace(),
+            room_events=_RoomEvents(),
+            room_target_idle=lambda *_args, **_kwargs: True,
+            begin_room_turn=lambda *_args, **_kwargs: None,
+            room_dispatch=SimpleNamespace(
+                dispatch_target=lambda **_kwargs: {
+                    "accepted": False,
+                    "cancelled": True,
+                    "status": "cancelled",
+                    "error": "Pi Runtime cancelled the Room dispatch before admission",
+                },
+            ),
+            cancel_room_turn=lambda *_args, **_kwargs: None,
+            abort_session=lambda *_args, **_kwargs: {},
+            room_topic_for_turn=lambda _root_id: "topic-a",
+            room_work=ledger,
+            publish_room_work_activity=lambda _work, **kwargs: work_phases.append(
+                str(kwargs["phase"])
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "cancelled.*before admission"):
+            service.execute(
+                str(source["sessionId"]),
+                {
+                    "op": "delegate",
+                    "targetParticipantId": target["id"],
+                    "task": "执行取消语义测试",
+                    "expectedOutput": "保持真实 WorkItem 状态",
+                    "acceptanceCriteria": ["取消不误报失败"],
+                },
+                tool_call_id="tool:cancelled-admission",
+            )
+
+        work = next(iter(ledger.items.values()))
+        self.assertEqual(work["state"], "active")
+        self.assertEqual(work["acceptedTurnId"], "")
+        self.assertEqual(work_phases, ["assigned", "aborted"])
+
+    def test_completed_work_stays_in_review_until_facilitator_decides(self) -> None:
         source = {
             "id": "room-a:p1",
             "roomId": "room-a",
@@ -517,16 +680,16 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             target=target,
         )
 
-        self.assertEqual(submitted["state"], "done")  # type: ignore[index]
+        self.assertEqual(submitted["state"], "review")  # type: ignore[index]
         self.assertEqual(submitted["evidenceRefs"], ["room-child:1"])  # type: ignore[index]
         receipt = service.execute(
             str(source["sessionId"]),
             {"op": "post", "kind": "result", "content": "Root 已汇合"},
             tool_call_id="tool:post",
         )
-        self.assertEqual(ledger.items[str(work["id"])]["state"], "done")
+        self.assertEqual(ledger.items[str(work["id"])]["state"], "review")
         self.assertEqual(receipt["settledWorkItems"], [])
-        self.assertEqual(published_phases, ["assigned", "submitted", "completed"])
+        self.assertEqual(published_phases, ["assigned", "submitted"])
 
     def test_completed_work_blocks_until_its_document_has_opening_and_final_updates(self) -> None:
         source = {
@@ -592,7 +755,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         self.assertIn("WorkDocument", blocked["blocker"]["reason"])  # type: ignore[index]
         self.assertEqual(published_phases, ["assigned", "blocked"])
 
-    def test_work_result_post_completes_delegate_without_waiting_for_session_terminal(self) -> None:
+    def test_work_result_delivery_submits_without_automatic_acceptance(self) -> None:
         source = {
             "id": "room-a:p1", "roomId": "room-a", "sessionId": "room-a:s1",
             "displayName": "澄·远", "status": "active",
@@ -662,23 +825,18 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             acceptance_criteria=["同步工作文档"],
         )
 
-        result = service._wait_for_child(
-            room_id="room-a",
-            root_id="root-a",
+        result = service._settle_delegated_work(
+            work,
+            phase="completed",
+            result="文档和实现均已交付",
             child_dispatch_id=child_dispatch_id,
-            target=target,
             source=source,
-            timeout_seconds=1,
-            idempotent_replay=False,
-            work_item=work,
+            target=target,
         )
 
-        self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["completionSource"], "room_post")
-        self.assertEqual(result["postId"], post_id)
-        self.assertEqual(result["result"], "文档和实现均已交付")
-        self.assertEqual(result["workItem"]["state"], "done")  # type: ignore[index]
-        self.assertEqual(published_phases, ["assigned", "submitted", "completed"])
+        self.assertEqual(result["state"], "review")  # type: ignore[index]
+        self.assertEqual(result["resultSummary"], "文档和实现均已交付")  # type: ignore[index]
+        self.assertEqual(published_phases, ["assigned", "submitted"])
 
     def test_post_publishes_one_valid_typed_room_post(self) -> None:
         participant = {
@@ -745,6 +903,20 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             "kind": "room_post",
             "ref": "tool:room-final",
         })
+        self.assertTrue(
+            events.has_projection("room-terminal-result:room-a:root-a")
+        )
+        replay = service.execute(
+            "room-a:s1",
+            {
+                "op": "post",
+                "kind": "result",
+                "content": "不应形成第二个 Room 终态。",
+            },
+            tool_call_id="tool:room-final-replay",
+        )
+        self.assertIs(replay["published"], False)
+        self.assertEqual(len(events.published), 1)
 
 
 if __name__ == "__main__":

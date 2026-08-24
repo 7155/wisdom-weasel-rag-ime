@@ -18,7 +18,11 @@ from rag_ime.memory_book_compiler import (
 from rag_ime.models import InputEvent
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.retrieval_vector_index import rebuild_retrieval_doc_vectors
-from rag_ime.session_memory_recall import SessionMemoryRecallBuilder, _select_hits
+from rag_ime.session_memory_recall import (
+    SessionMemoryRecallBuilder,
+    _select_hits,
+    _visible_memory_owners_for_trigger,
+)
 from rag_ime.text_utils import now_ms
 
 
@@ -26,6 +30,24 @@ PROJECT = "wisdom-weasel-rag-ime"
 
 
 class SessionMemoryRecallTests(unittest.TestCase):
+    def test_room_and_subagent_tasks_exclude_cross_project_personal_memory(self) -> None:
+        for trigger in ("room_task", "subagent_task"):
+            with self.subTest(trigger=trigger):
+                owners = _visible_memory_owners_for_trigger(
+                    project="wisdom-weasel-rag-ime",
+                    role_id="implementer",
+                    session_id="agent:minecraft-partner",
+                    room_ids=("room:minecraft",),
+                    trigger=trigger,
+                )
+                self.assertEqual(
+                    owners,
+                    (
+                        ("session", "agent:minecraft-partner"),
+                        ("room", "room:minecraft"),
+                    ),
+                )
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="rag-ime-session-recall-")
         self.db_path = Path(self.temporary.name) / "rag-ime.sqlite"

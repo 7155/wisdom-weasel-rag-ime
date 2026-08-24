@@ -281,7 +281,7 @@ class PublicReleaseAuditTests(unittest.TestCase):
     @staticmethod
     def _write_public_metadata(root: Path, *, ready: bool, include_license: bool) -> tuple[str, ...]:
         for name in (
-            "ARCHITECTURE.md",
+            "docs/project/ARCHITECTURE.md",
             "CHANGELOG.md",
             "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",
@@ -290,7 +290,9 @@ class PublicReleaseAuditTests(unittest.TestCase):
             "THIRD_PARTY_NOTICES.md",
             "pyproject.toml",
         ):
-            (root / name).write_text("public metadata\n", encoding="utf-8")
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("public metadata\n", encoding="utf-8")
         if include_license:
             (root / "LICENSE").write_text("test license\n", encoding="utf-8")
         release = root / "release"
@@ -312,7 +314,7 @@ class PublicReleaseAuditTests(unittest.TestCase):
             encoding="utf-8",
         )
         tracked = [
-            "ARCHITECTURE.md",
+            "docs/project/ARCHITECTURE.md",
             "CHANGELOG.md",
             "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",

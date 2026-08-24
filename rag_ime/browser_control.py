@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
-import secrets
+import shutil
 import signal
 import sqlite3
 import subprocess
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -15,16 +15,34 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from .paw_browser_runtime import PawBrowserRuntime, PawBrowserRuntimeError
+
 
 SCHEMA_VERSION = "rag-ime.browser-control.v1"
-ALLOWED_MODES = frozenset({"observe", "codrive", "managed"})
 READ_ACTIONS = frozenset({"tabs", "snapshot", "read_page", "screenshot"})
-WRITE_ACTIONS = frozenset({"navigate", "click", "type", "scroll", "wait"})
+WRITE_ACTIONS = frozenset(
+    {
+        "run",
+        "navigate",
+        "new_tab",
+        "close_tab",
+        "reload",
+        "back",
+        "forward",
+        "click",
+        "type",
+        "scroll",
+        "wait",
+    }
+)
 ALLOWED_ACTIONS = READ_ACTIONS | WRITE_ACTIONS
 MAX_SNAPSHOT_MARKDOWN = 160_000
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_RESULT_JSON = 256_000
+MAX_EGO_SCRIPT_CHARS = 24_000
+MAX_EGO_OUTPUT_CHARS = 120_000
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 15.0
+CLIENT_CONNECTED_TTL_MS = 30_000
 
 
 class BrowserControlError(ValueError):
@@ -32,21 +50,18 @@ class BrowserControlError(ValueError):
 
 
 class BrowserControlService:
-    """Durable localhost bridge shared by the Sidecar and Agent Gateway.
-
-    The extension continuously records compact page snapshots. Agent calls only
-    read those snapshots on demand or enqueue an explicit command. SQLite is
-    used deliberately because the 8766 and 8768 processes must observe the same
-    queue without introducing a third resident daemon.
-    """
+    """Own PAW's isolated Chromium and its durable direct-control trace."""
 
     def __init__(
         self,
         db_path: str | Path,
         *,
-        extension_root: str | Path | None = None,
         app_support_root: str | Path | None = None,
         command_runner: Any | None = None,
+        browser_runtime: PawBrowserRuntime | None = None,
+        ego_runtime_root: str | Path | None = None,
+        ego_check_runner: Any | None = None,
+        ego_process_runner: Any | None = None,
     ) -> None:
         self.db_path = Path(db_path).expanduser().resolve(strict=False)
         self.app_support_root = Path(
@@ -54,8 +69,20 @@ class BrowserControlService:
             or os.environ.get("RAG_IME_APP_SUPPORT_DIR")
             or Path.home() / "Library" / "Application Support" / "RagIme"
         ).expanduser()
-        self.extension_root = self._resolve_extension_root(extension_root)
         self.command_runner = command_runner or subprocess.Popen
+        self.browser_runtime = browser_runtime or PawBrowserRuntime(
+            self.app_support_root / "Browser" / "runtime-profile"
+        )
+        self.ego_runtime_root = Path(
+            ego_runtime_root
+            or os.environ.get("RAG_IME_EGO_BROWSER_ROOT")
+            or Path(__file__).resolve().parents[1]
+            / "integrations"
+            / "ego-browser"
+            / "upstream"
+        ).expanduser().resolve(strict=False)
+        self.ego_check_runner = ego_check_runner or subprocess.run
+        self.ego_process_runner = ego_process_runner or subprocess.Popen
         self.initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -95,6 +122,18 @@ class BrowserControlService:
                     active_tab_id INTEGER,
                     last_seen_ms INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS browser_control_tabs (
+                    device_id TEXT NOT NULL,
+                    tab_id INTEGER NOT NULL,
+                    window_id INTEGER,
+                    url TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    active INTEGER NOT NULL DEFAULT 0,
+                    last_seen_ms INTEGER NOT NULL,
+                    PRIMARY KEY(device_id, tab_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_browser_tabs_seen
+                    ON browser_control_tabs(last_seen_ms DESC);
                 CREATE TABLE IF NOT EXISTS browser_control_snapshots (
                     snapshot_id TEXT PRIMARY KEY,
                     device_id TEXT NOT NULL,
@@ -112,6 +151,8 @@ class BrowserControlService:
                 );
                 CREATE INDEX IF NOT EXISTS idx_browser_snapshots_device_tab
                     ON browser_control_snapshots(device_id, tab_id, created_at_ms DESC);
+                CREATE INDEX IF NOT EXISTS idx_browser_snapshots_created
+                    ON browser_control_snapshots(created_at_ms DESC);
                 CREATE TABLE IF NOT EXISTS browser_control_commands (
                     command_id TEXT PRIMARY KEY,
                     device_id TEXT NOT NULL,
@@ -128,17 +169,6 @@ class BrowserControlService:
                 );
                 CREATE INDEX IF NOT EXISTS idx_browser_commands_queue
                     ON browser_control_commands(device_id, status, created_at_ms);
-                CREATE TABLE IF NOT EXISTS browser_control_permissions (
-                    prompt_id TEXT PRIMARY KEY,
-                    device_id TEXT NOT NULL,
-                    origin TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    decision TEXT,
-                    created_at_ms INTEGER NOT NULL,
-                    resolved_at_ms INTEGER
-                );
                 CREATE TABLE IF NOT EXISTS browser_control_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     kind TEXT NOT NULL,
@@ -151,97 +181,7 @@ class BrowserControlService:
                     ON browser_control_events(created_at_ms DESC);
                 """
             )
-            if self._setting(connection, "pairing_token") is None:
-                self._set_setting(connection, "pairing_token", secrets.token_urlsafe(32))
-            if self._setting(connection, "mode") not in ALLOWED_MODES:
-                self._set_setting(connection, "mode", "observe")
             connection.commit()
-
-    def authenticate(self, token: str) -> bool:
-        candidate = str(token or "").strip()
-        if not candidate:
-            return False
-        with self._connection() as connection:
-            expected = self._setting(connection, "pairing_token") or ""
-        return secrets.compare_digest(candidate, expected)
-
-    def pairing(self) -> dict[str, object]:
-        with self._connection() as connection:
-            token = self._setting(connection, "pairing_token") or ""
-        return {
-            "schemaVersion": SCHEMA_VERSION,
-            "ok": True,
-            "bridgeUrl": os.environ.get("RAG_IME_BROWSER_BRIDGE_URL", "http://127.0.0.1:8766"),
-            "pairingToken": token,
-            "tokenFingerprint": self._fingerprint(token),
-            "extensionPath": str(self.extension_root),
-        }
-
-    def rotate_pairing(self) -> dict[str, object]:
-        token = secrets.token_urlsafe(32)
-        with self._connection() as connection:
-            self._set_setting(connection, "pairing_token", token)
-            connection.execute("DELETE FROM browser_control_clients")
-            connection.commit()
-        response = self.pairing()
-        response["summary"] = "配对凭据已轮换，现有浏览器需要重新连接"
-        return response
-
-    def hello(self, payload: Mapping[str, object]) -> dict[str, object]:
-        device_id = self._identifier(payload.get("deviceId"), field="deviceId")
-        display_name = self._text(payload.get("displayName"), maximum=80) or "Chrome"
-        client_kind = self._text(payload.get("clientKind"), maximum=24) or "user"
-        if client_kind not in {"user", "managed"}:
-            raise BrowserControlError("clientKind must be user or managed")
-        now = self._now_ms()
-        with self._connection() as connection:
-            existing = connection.execute(
-                "SELECT client_kind FROM browser_control_clients WHERE device_id=?",
-                (device_id,),
-            ).fetchone()
-            if client_kind == "managed" and (
-                existing is None or existing["client_kind"] != "managed"
-            ):
-                expected = self._setting(connection, "managed_bootstrap_token") or ""
-                provided = self._text(
-                    payload.get("managedBootstrapToken"),
-                    maximum=240,
-                )
-                if not expected or not secrets.compare_digest(provided, expected):
-                    raise BrowserControlError("managed browser bootstrap token is invalid")
-            connection.execute(
-                """
-                INSERT INTO browser_control_clients(
-                    device_id, display_name, client_kind, extension_version,
-                    browser_name, active_tab_id, last_seen_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(device_id) DO UPDATE SET
-                    display_name=excluded.display_name,
-                    client_kind=excluded.client_kind,
-                    extension_version=excluded.extension_version,
-                    browser_name=excluded.browser_name,
-                    active_tab_id=COALESCE(excluded.active_tab_id, browser_control_clients.active_tab_id),
-                    last_seen_ms=excluded.last_seen_ms
-                """,
-                (
-                    device_id,
-                    display_name,
-                    client_kind,
-                    self._text(payload.get("extensionVersion"), maximum=40),
-                    self._text(payload.get("browserName"), maximum=80) or "Chrome",
-                    self._positive_int(payload.get("activeTabId"), allow_none=True),
-                    now,
-                ),
-            )
-            self._event(connection, "connected", device_id, {"clientKind": client_kind})
-            connection.commit()
-        return {
-            "schemaVersion": SCHEMA_VERSION,
-            "ok": True,
-            "deviceId": device_id,
-            "mode": self.mode(),
-            "pollAfterMs": 450,
-        }
 
     def push_snapshot(self, payload: Mapping[str, object]) -> dict[str, object]:
         device_id = self._identifier(payload.get("deviceId"), field="deviceId")
@@ -290,6 +230,24 @@ class BrowserControlService:
                 """,
                 (tab_id, now, device_id),
             )
+            connection.execute(
+                """
+                INSERT INTO browser_control_tabs(
+                    device_id, tab_id, window_id, url, title, active, last_seen_ms
+                ) VALUES (?, ?, NULL, ?, ?, 1, ?)
+                ON CONFLICT(device_id, tab_id) DO UPDATE SET
+                    url=excluded.url,
+                    title=excluded.title,
+                    last_seen_ms=excluded.last_seen_ms
+                """,
+                (
+                    device_id,
+                    tab_id,
+                    page_url,
+                    self._text(payload.get("title"), maximum=500),
+                    now,
+                ),
+            )
             self._event(
                 connection,
                 "snapshot",
@@ -311,6 +269,7 @@ class BrowserControlService:
         return {"schemaVersion": SCHEMA_VERSION, "ok": True, "snapshotId": snapshot_id}
 
     def status(self, *, agent_safe: bool = False) -> dict[str, object]:
+        self._sync_direct_browser()
         now = self._now_ms()
         with self._connection() as connection:
             clients = [
@@ -325,81 +284,79 @@ class BrowserControlService:
                     "SELECT status, COUNT(*) AS count FROM browser_control_commands GROUP BY status"
                 ).fetchall()
             }
-            permission_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM browser_control_permissions WHERE status='pending'"
-                ).fetchone()[0]
-            )
             snapshot = self._latest_snapshot_row(connection)
         response: dict[str, object] = {
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
-            "mode": self.mode(),
+            "mode": "managed",
             "connected": any(client["connected"] for client in clients),
             "clients": clients,
             "commandCounts": counts,
-            "pendingPermissions": permission_count,
             "managedBrowser": self.managed_status(),
             "latestSnapshot": self._public_snapshot(snapshot, include_markdown=False) if snapshot else None,
             "summary": (
-                f"{sum(1 for item in clients if item['connected'])} 个浏览器已连接"
-                if clients
-                else "尚未连接浏览器插件"
+                "PAW Browser 已就绪，Agent 可直接操作"
+                if any(client["connected"] for client in clients)
+                else "PAW Browser 尚未启动"
             ),
         }
-        if not agent_safe:
-            response["extensionPath"] = str(self.extension_root)
         return response
 
-    def mode(self) -> str:
-        with self._connection() as connection:
-            return self._setting(connection, "mode") or "observe"
-
-    def set_mode(self, value: object) -> dict[str, object]:
-        mode = str(value or "").strip()
-        if mode not in ALLOWED_MODES:
-            raise BrowserControlError("mode must be observe, codrive, or managed")
-        with self._connection() as connection:
-            self._set_setting(connection, "mode", mode)
-            self._event(connection, "mode_changed", "", {"mode": mode})
-            connection.commit()
-        return {"schemaVersion": SCHEMA_VERSION, "ok": True, "mode": mode}
-
     def tabs(self) -> dict[str, object]:
+        direct_tabs = self._sync_direct_browser()
+        target_ids = {
+            int(item["tabId"]): str(item.get("targetId") or "")
+            for item in direct_tabs
+            if item.get("tabId") is not None
+        }
         now = self._now_ms()
         with self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT snapshots.*
-                FROM browser_control_snapshots snapshots
-                INNER JOIN (
-                    SELECT device_id, tab_id, MAX(created_at_ms) AS newest
-                    FROM browser_control_snapshots
-                    GROUP BY device_id, tab_id
-                ) latest
-                ON latest.device_id=snapshots.device_id
-                AND latest.tab_id=snapshots.tab_id
-                AND latest.newest=snapshots.created_at_ms
-                ORDER BY snapshots.created_at_ms DESC
+                SELECT tabs.*, clients.display_name, clients.client_kind
+                FROM browser_control_tabs tabs
+                INNER JOIN browser_control_clients clients
+                    ON clients.device_id=tabs.device_id
+                WHERE clients.last_seen_ms>=?
+                    AND clients.client_kind='managed'
+                ORDER BY tabs.active DESC, tabs.last_seen_ms DESC, tabs.tab_id ASC
                 LIMIT 100
-                """
+                """,
+                (now - CLIENT_CONNECTED_TTL_MS,),
             ).fetchall()
-            client_rows = {
-                str(row["device_id"]): row
-                for row in connection.execute("SELECT * FROM browser_control_clients").fetchall()
-            }
-        items = []
-        for row in rows:
-            client = client_rows.get(str(row["device_id"]))
-            item = self._public_snapshot(row, include_markdown=False)
-            item.update(
-                {
-                    "deviceName": str(client["display_name"]) if client else str(row["device_id"]),
-                    "clientKind": str(client["client_kind"]) if client else "user",
-                    "connected": bool(client and now - int(client["last_seen_ms"]) <= 15_000),
+            items = []
+            for row in rows:
+                device_id = str(row["device_id"])
+                tab_id = int(row["tab_id"])
+                snapshot = self._latest_snapshot_row(
+                    connection,
+                    device_id=device_id,
+                    tab_id=tab_id,
+                )
+                item = self._public_snapshot(snapshot, include_markdown=False) if snapshot else {
+                    "snapshotId": "",
+                    "deviceId": device_id,
+                    "tabId": tab_id,
+                    "frameId": 0,
+                    "pageSummary": "",
+                    "interactiveCount": 0,
+                    "viewport": {},
+                    "hasScreenshot": False,
+                    "imagePath": "",
+                    "createdAtMs": int(row["last_seen_ms"]),
                 }
-            )
-            items.append(item)
+                item.update(
+                    {
+                        "targetId": target_ids.get(tab_id, ""),
+                        "url": str(row["url"]),
+                        "title": str(row["title"]),
+                        "active": bool(row["active"]),
+                        "deviceName": str(row["display_name"]),
+                        "clientKind": str(row["client_kind"]),
+                        "connected": True,
+                    }
+                )
+                items.append(item)
         return {
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
@@ -416,6 +373,22 @@ class BrowserControlService:
     ) -> dict[str, object]:
         with self._connection() as connection:
             row = self._latest_snapshot_row(connection, device_id=device_id, tab_id=tab_id)
+        if row is None:
+            current = self.managed_status()
+            port = int(current.get("debugPort") or 0)
+            if port:
+                direct = self.browser_runtime.execute(
+                    port,
+                    "snapshot",
+                    {"tabId": tab_id} if tab_id else {},
+                )
+                self._record_direct_snapshot(direct)
+                with self._connection() as connection:
+                    row = self._latest_snapshot_row(
+                        connection,
+                        device_id=PawBrowserRuntime.DEVICE_ID,
+                        tab_id=tab_id,
+                    )
         if row is None:
             raise BrowserControlError("browser snapshot is unavailable")
         return {
@@ -446,13 +419,8 @@ class BrowserControlService:
         normalized_action = str(action or "").strip()
         if normalized_action not in ALLOWED_ACTIONS:
             raise BrowserControlError(f"unsupported browser action: {normalized_action}")
-        mode = self.mode()
-        if normalized_action in WRITE_ACTIONS and mode == "observe":
-            raise BrowserControlError("browser is in observe mode; switch to co-drive or managed mode first")
-        device_id = self._select_device(
-            requested=str(payload.get("deviceId") or ""),
-            prefer_managed=mode == "managed",
-        )
+        self._sync_direct_browser()
+        device_id = self._select_device(requested=str(payload.get("deviceId") or ""))
         command_id = f"bcmd_{uuid.uuid4().hex}"
         command_payload = self._normalize_command(normalized_action, payload)
         now = self._now_ms()
@@ -482,109 +450,11 @@ class BrowserControlService:
             )
             connection.commit()
 
-        deadline = time.monotonic() + min(max(float(timeout_seconds), 1.0), 60.0)
-        while time.monotonic() < deadline:
-            with self._connection() as connection:
-                row = connection.execute(
-                    "SELECT * FROM browser_control_commands WHERE command_id=?",
-                    (command_id,),
-                ).fetchone()
-            if row is not None and row["status"] in {"completed", "failed", "cancelled"}:
-                result = self._json_object(row["result_json"])
-                return {
-                    "schemaVersion": SCHEMA_VERSION,
-                    "ok": row["status"] == "completed" and result.get("ok", True) is not False,
-                    "commandId": command_id,
-                    "action": normalized_action,
-                    "status": str(row["status"]),
-                    "durationMs": max(0, int(row["completed_at_ms"] or self._now_ms()) - int(row["created_at_ms"])),
-                    "failureReason": str(row["failure_reason"] or ""),
-                    "result": result,
-                    "summary": self._command_summary(normalized_action, row["status"], result),
-                }
-            time.sleep(0.12)
-        with self._connection() as connection:
-            connection.execute(
-                """
-                UPDATE browser_control_commands
-                SET status='failed', failure_reason='browser_command_timeout', completed_at_ms=?
-                WHERE command_id=? AND status IN ('queued', 'claimed')
-                """,
-                (self._now_ms(), command_id),
-            )
-            self._event(
-                connection,
-                "command_timeout",
-                device_id,
-                {"action": normalized_action},
-                command_id=command_id,
-            )
-            connection.commit()
-        return {
-            "schemaVersion": SCHEMA_VERSION,
-            "ok": False,
-            "commandId": command_id,
-            "action": normalized_action,
-            "status": "failed",
-            "failureReason": "browser_command_timeout",
-            "summary": "浏览器插件未在时限内返回结果",
-        }
-
-    def next_command(
-        self,
-        *,
-        device_id: str,
-        client_id: str,
-        timeout_seconds: float = 20.0,
-    ) -> dict[str, object]:
-        normalized_device = self._identifier(device_id, field="deviceId")
-        normalized_client = self._identifier(client_id, field="clientId")
-        deadline = time.monotonic() + min(max(float(timeout_seconds), 0.0), 25.0)
-        while True:
-            with self._connection() as connection:
-                connection.execute("BEGIN IMMEDIATE")
-                row = connection.execute(
-                    """
-                    SELECT * FROM browser_control_commands
-                    WHERE device_id=? AND status='queued'
-                    ORDER BY created_at_ms ASC
-                    LIMIT 1
-                    """,
-                    (normalized_device,),
-                ).fetchone()
-                if row is not None:
-                    claimed_at = self._now_ms()
-                    updated = connection.execute(
-                        """
-                        UPDATE browser_control_commands
-                        SET status='claimed', claimed_at_ms=?, claimed_by=?
-                        WHERE command_id=? AND status='queued'
-                        """,
-                        (claimed_at, normalized_client, row["command_id"]),
-                    ).rowcount
-                    if updated:
-                        self._touch_client(connection, normalized_device)
-                        self._event(
-                            connection,
-                            "command_claimed",
-                            normalized_device,
-                            {"action": row["action"], "clientId": normalized_client},
-                            command_id=str(row["command_id"]),
-                        )
-                        connection.commit()
-                        return {
-                            "schemaVersion": SCHEMA_VERSION,
-                            "ok": True,
-                            "command": {
-                                "commandId": str(row["command_id"]),
-                                "action": str(row["action"]),
-                                **self._json_object(row["payload_json"]),
-                            },
-                        }
-                connection.commit()
-            if time.monotonic() >= deadline:
-                return {"schemaVersion": SCHEMA_VERSION, "ok": True, "command": None}
-            time.sleep(0.2)
+        return self._execute_direct_command(
+            command_id=command_id,
+            action=normalized_action,
+            payload=command_payload,
+        )
 
     def complete_command(self, payload: Mapping[str, object]) -> dict[str, object]:
         command_id = self._identifier(payload.get("commandId"), field="commandId")
@@ -645,115 +515,6 @@ class BrowserControlService:
             connection.commit()
         return {"schemaVersion": SCHEMA_VERSION, "ok": True, "commandId": command_id}
 
-    def permissions(self, *, limit: int = 100) -> dict[str, object]:
-        with self._connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM browser_control_permissions
-                ORDER BY created_at_ms DESC
-                LIMIT ?
-                """,
-                (min(max(int(limit), 1), 200),),
-            ).fetchall()
-        return {
-            "schemaVersion": SCHEMA_VERSION,
-            "ok": True,
-            "items": [self._public_permission(row) for row in rows],
-            "summary": f"已读取 {len(rows)} 条浏览器权限记录",
-        }
-
-    def request_permission(self, payload: Mapping[str, object]) -> dict[str, object]:
-        device_id = self._identifier(payload.get("deviceId"), field="deviceId")
-        origin = self._origin(payload.get("origin"))
-        action = self._text(payload.get("action"), maximum=80)
-        prompt_id = f"bperm_{uuid.uuid4().hex}"
-        now = self._now_ms()
-        with self._connection() as connection:
-            remembered = connection.execute(
-                """
-                SELECT * FROM browser_control_permissions
-                WHERE device_id=? AND origin=? AND action=?
-                    AND status='resolved' AND decision IN ('allow_once', 'allow_site')
-                ORDER BY resolved_at_ms DESC
-                LIMIT 1
-                """,
-                (device_id, origin, action),
-            ).fetchone()
-            if remembered is not None:
-                decision = str(remembered["decision"])
-                if decision == "allow_once":
-                    connection.execute(
-                        "UPDATE browser_control_permissions SET status='consumed' WHERE prompt_id=?",
-                        (remembered["prompt_id"],),
-                    )
-                self._event(
-                    connection,
-                    "permission_reused",
-                    device_id,
-                    {"origin": origin, "decision": decision},
-                )
-                connection.commit()
-                return {
-                    "schemaVersion": SCHEMA_VERSION,
-                    "ok": True,
-                    "authorized": True,
-                    "decision": decision,
-                    "promptId": str(remembered["prompt_id"]),
-                }
-            connection.execute(
-                """
-                INSERT INTO browser_control_permissions(
-                    prompt_id, device_id, origin, action, reason, status, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
-                """,
-                (
-                    prompt_id,
-                    device_id,
-                    origin,
-                    action,
-                    self._text(payload.get("reason"), maximum=500),
-                    now,
-                ),
-            )
-            self._event(connection, "permission_requested", device_id, {"promptId": prompt_id})
-            connection.commit()
-        return {
-            "schemaVersion": SCHEMA_VERSION,
-            "ok": True,
-            "authorized": False,
-            "promptId": prompt_id,
-        }
-
-    def permission_status(self, prompt_id: str) -> dict[str, object]:
-        with self._connection() as connection:
-            row = connection.execute(
-                "SELECT * FROM browser_control_permissions WHERE prompt_id=?",
-                (self._identifier(prompt_id, field="promptId"),),
-            ).fetchone()
-        if row is None:
-            raise BrowserControlError("browser permission prompt not found")
-        return {"schemaVersion": SCHEMA_VERSION, "ok": True, **self._public_permission(row)}
-
-    def decide_permission(self, prompt_id: str, decision: object) -> dict[str, object]:
-        normalized = str(decision or "").strip()
-        if normalized not in {"allow_once", "allow_site", "deny"}:
-            raise BrowserControlError("decision must be allow_once, allow_site, or deny")
-        resolved_at = self._now_ms()
-        with self._connection() as connection:
-            updated = connection.execute(
-                """
-                UPDATE browser_control_permissions
-                SET status='resolved', decision=?, resolved_at_ms=?
-                WHERE prompt_id=? AND status='pending'
-                """,
-                (normalized, resolved_at, self._identifier(prompt_id, field="promptId")),
-            ).rowcount
-            if not updated:
-                raise BrowserControlError("browser permission prompt is no longer pending")
-            self._event(connection, "permission_resolved", "", {"promptId": prompt_id, "decision": normalized})
-            connection.commit()
-        return {"schemaVersion": SCHEMA_VERSION, "ok": True, "promptId": prompt_id, "decision": normalized}
-
     def traces(self, *, limit: int = 50) -> dict[str, object]:
         with self._connection() as connection:
             rows = connection.execute(
@@ -764,7 +525,23 @@ class BrowserControlService:
                 """,
                 (min(max(int(limit), 1), 200),),
             ).fetchall()
-        items = [self._public_trace(row) for row in rows]
+            items = [
+                self._public_trace(
+                    row,
+                    steps=[
+                        self._json_object(step["detail_json"])
+                        for step in connection.execute(
+                            """
+                            SELECT detail_json FROM browser_control_events
+                            WHERE command_id=? AND kind='ego_trace_step'
+                            ORDER BY created_at_ms ASC, event_id ASC
+                            """,
+                            (str(row["command_id"]),),
+                        ).fetchall()
+                    ],
+                )
+                for row in rows
+            ]
         return {
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
@@ -774,6 +551,7 @@ class BrowserControlService:
 
     def stop(self) -> dict[str, object]:
         now = self._now_ms()
+        stopped_runner = self._stop_ego_runner()
         with self._connection() as connection:
             cancelled = connection.execute(
                 """
@@ -783,76 +561,124 @@ class BrowserControlService:
                 """,
                 (now,),
             ).rowcount
-            self._event(connection, "stop_requested", "", {"cancelled": cancelled})
+            self._event(
+                connection,
+                "stop_requested",
+                "",
+                {"cancelled": cancelled, "egoRunnerStopped": stopped_runner},
+            )
             connection.commit()
         return {
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
             "cancelled": cancelled,
-            "summary": f"已停止 {cancelled} 个待执行浏览器操作",
+            "egoRunnerStopped": stopped_runner,
+            "summary": (
+                f"已停止 {cancelled} 个待执行浏览器操作"
+                + ("，并终止当前 ego-browser 脚本" if stopped_runner else "")
+            ),
         }
 
     def managed_status(self) -> dict[str, object]:
         with self._connection() as connection:
             raw_pid = self._setting(connection, "managed_pid") or ""
-        pid = int(raw_pid) if raw_pid.isdigit() else 0
-        running = self._pid_running(pid)
+        stored_pid = int(raw_pid) if raw_pid.isdigit() else 0
+        host_pid_file = getattr(self.browser_runtime, "host_pid_file", None)
+        electron_host_pid = self._read_pid(host_pid_file) if isinstance(host_pid_file, Path) else 0
+        pid = electron_host_pid if self._pid_running(electron_host_pid) else stored_pid
+        process_running = self._pid_running(pid)
+        port = self.browser_runtime.port() if process_running else 0
+        connected = False
+        browser_version = ""
+        if port:
+            try:
+                version = self.browser_runtime.version(port)
+                connected = True
+                browser_version = str(version.get("Browser") or "")
+            except (OSError, ValueError, PawBrowserRuntimeError):
+                connected = False
+        ego_paths = self._ego_paths(port=port)
+        ego_host_pid = self._read_pid(ego_paths["pid"])
         return {
-            "running": running,
-            "pid": pid if running else None,
-            "profilePath": str(self.app_support_root / "BrowserCopilot" / "managed-profile"),
+            "running": process_running,
+            "connected": connected,
+            "pid": pid if process_running else None,
+            "hostKind": "electron-webview" if pid and pid == electron_host_pid else "chromium-window",
+            "debugPort": port if connected else None,
+            "browserVersion": browser_version,
+            "profilePath": str(self.browser_runtime.profile_path),
+            "controlProtocol": "ego-browser",
+            "browserTransport": "cdp",
+            "egoBrowser": {
+                "available": self._ego_runtime_available(),
+                "hostRunning": self._pid_running(ego_host_pid),
+                "hostPid": ego_host_pid if self._pid_running(ego_host_pid) else None,
+                "taskSpacesPath": str(ego_paths["data"] / "spaces.json"),
+                "secondBrowserProcess": False,
+            },
         }
 
     def start_managed(self) -> dict[str, object]:
         current = self.managed_status()
         if current["running"]:
-            return {"schemaVersion": SCHEMA_VERSION, "ok": True, **current, "summary": "托管浏览器已在运行"}
+            self._sync_direct_browser()
+            return {
+                "schemaVersion": SCHEMA_VERSION,
+                "ok": True,
+                **self.managed_status(),
+                "summary": "PAW Browser 已在运行",
+            }
         chrome = self._chrome_executable()
         if chrome is None:
             raise BrowserControlError("未找到 Google Chrome 或 Chromium")
-        if not (self.extension_root / "manifest.json").is_file():
-            raise BrowserControlError(f"浏览器插件目录不可用: {self.extension_root}")
-        profile = self.app_support_root / "BrowserCopilot" / "managed-profile"
-        profile.mkdir(parents=True, exist_ok=True)
-        bootstrap_token = secrets.token_urlsafe(32)
-        bootstrap_url = (
-            "http://127.0.0.1:8766/api/browser/managed/bootstrap"
-            f"?token={bootstrap_token}"
-        )
-        command = [
-            str(chrome),
-            f"--user-data-dir={profile}",
-            f"--disable-extensions-except={self.extension_root}",
-            f"--load-extension={self.extension_root}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-sync",
-            bootstrap_url,
-        ]
-        process = self.command_runner(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        self._stop_ego_host()
+        self.browser_runtime.prepare_launch()
+        command = self.browser_runtime.launch_command(chrome)
+        with self._connection() as connection:
+            self._set_setting(connection, "managed_pid", "")
+            connection.commit()
+        try:
+            process = self.command_runner(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except BaseException:
+            raise
         pid = int(getattr(process, "pid", 0) or 0)
         if pid <= 0:
             raise BrowserControlError("托管浏览器未返回有效进程号")
         with self._connection() as connection:
             self._set_setting(connection, "managed_pid", str(pid))
-            self._set_setting(connection, "managed_bootstrap_token", bootstrap_token)
-            self._set_setting(connection, "mode", "managed")
             self._event(connection, "managed_started", "", {"pid": pid})
             connection.commit()
+        try:
+            self.browser_runtime.wait_for_port()
+            self._sync_direct_browser()
+        except BaseException:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            with self._connection() as connection:
+                self._set_setting(connection, "managed_pid", "")
+                connection.commit()
+            raise
         return {
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
             **self.managed_status(),
-            "summary": "托管浏览器已启动",
+            "summary": "PAW Browser 已启动，Agent 正通过 CDP 直接连接",
         }
 
     def stop_managed(self) -> dict[str, object]:
         current = self.managed_status()
+        self._stop_ego_runner()
+        self._stop_ego_host()
         pid = int(current.get("pid") or 0)
         if pid:
             try:
@@ -864,71 +690,528 @@ class BrowserControlService:
                     pass
         with self._connection() as connection:
             self._set_setting(connection, "managed_pid", "")
-            self._set_setting(connection, "managed_bootstrap_token", "")
-            self._set_setting(connection, "mode", "observe")
             self._event(connection, "managed_stopped", "", {"pid": pid})
+            connection.execute(
+                "DELETE FROM browser_control_clients WHERE device_id=?",
+                (PawBrowserRuntime.DEVICE_ID,),
+            )
+            connection.execute(
+                "DELETE FROM browser_control_tabs WHERE device_id=?",
+                (PawBrowserRuntime.DEVICE_ID,),
+            )
             connection.commit()
         return {
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
             "running": False,
-            "summary": "托管浏览器已停止",
+            "summary": "PAW Browser 已停止",
         }
 
-    def _resolve_extension_root(self, extension_root: str | Path | None) -> Path:
-        candidates = [
-            extension_root,
-            os.environ.get("RAG_IME_BROWSER_EXTENSION_DIR"),
-            self.app_support_root / "BrowserCopilot" / "extension",
-            Path(__file__).resolve().parents[1] / "integrations" / "browser-copilot" / "extension",
-        ]
-        for value in candidates:
-            if not value:
-                continue
-            path = Path(value).expanduser().resolve(strict=False)
-            if (path / "manifest.json").is_file():
-                return path
-        return Path(candidates[-1]).expanduser().resolve(strict=False)
+    def _sync_direct_browser(self) -> list[dict[str, object]]:
+        current = self.managed_status()
+        port = int(current.get("debugPort") or 0)
+        if not port:
+            return []
+        try:
+            tabs = self.browser_runtime.tabs(port)
+        except (OSError, ValueError, PawBrowserRuntimeError):
+            return []
+        now = self._now_ms()
+        active_tab_id = int(tabs[0]["tabId"]) if tabs else None
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO browser_control_clients(
+                    device_id, display_name, client_kind, extension_version,
+                    browser_name, active_tab_id, last_seen_ms
+                ) VALUES (?, ?, 'managed', 'direct-cdp', 'Chromium', ?, ?)
+                ON CONFLICT(device_id) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    client_kind='managed',
+                    extension_version='direct-cdp',
+                    browser_name='Chromium',
+                    active_tab_id=excluded.active_tab_id,
+                    last_seen_ms=excluded.last_seen_ms
+                """,
+                (
+                    PawBrowserRuntime.DEVICE_ID,
+                    PawBrowserRuntime.DISPLAY_NAME,
+                    active_tab_id,
+                    now,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM browser_control_tabs WHERE device_id=?",
+                (PawBrowserRuntime.DEVICE_ID,),
+            )
+            for index, tab in enumerate(tabs):
+                raw_url = str(tab.get("url") or "")
+                try:
+                    public_url = self._page_url(raw_url, allow_blank=True)
+                except BrowserControlError:
+                    public_url = ""
+                connection.execute(
+                    """
+                    INSERT INTO browser_control_tabs(
+                        device_id, tab_id, window_id, url, title, active, last_seen_ms
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?)
+                    """,
+                    (
+                        PawBrowserRuntime.DEVICE_ID,
+                        int(tab["tabId"]),
+                        public_url,
+                        self._text(tab.get("title"), maximum=500),
+                        1 if index == 0 else 0,
+                        now,
+                    ),
+                )
+            connection.commit()
+        return tabs
 
-    def _select_device(self, *, requested: str, prefer_managed: bool) -> str:
+    def _execute_direct_command(
+        self,
+        *,
+        command_id: str,
+        action: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        current = self.managed_status()
+        port = int(current.get("debugPort") or 0)
+        if not port:
+            raise BrowserControlError("PAW Browser is not connected")
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE browser_control_commands
+                SET status='claimed', claimed_at_ms=?, claimed_by='paw-cdp-direct'
+                WHERE command_id=? AND status='queued'
+                """,
+                (self._now_ms(), command_id),
+            )
+            connection.commit()
+        try:
+            if action == "run":
+                direct_result = self._run_ego_script(
+                    command_id=command_id,
+                    port=port,
+                    payload=payload,
+                )
+            else:
+                direct_result = self.browser_runtime.execute(port, action, payload)
+        except (OSError, ValueError, PawBrowserRuntimeError) as exc:
+            direct_result = {
+                "ok": False,
+                "failureReason": "direct_browser_error",
+                "error": self._text(exc, maximum=240),
+            }
+        with self._connection() as connection:
+            status_row = connection.execute(
+                "SELECT status FROM browser_control_commands WHERE command_id=?",
+                (command_id,),
+            ).fetchone()
+        if status_row is not None and status_row["status"] in {"queued", "claimed"}:
+            self.complete_command({"commandId": command_id, "result": direct_result})
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM browser_control_commands WHERE command_id=?",
+                (command_id,),
+            ).fetchone()
+        assert row is not None
+        result = self._json_object(row["result_json"])
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "ok": row["status"] == "completed" and result.get("ok", True) is not False,
+            "commandId": command_id,
+            "action": action,
+            "status": str(row["status"]),
+            "durationMs": max(0, int(row["completed_at_ms"] or self._now_ms()) - int(row["created_at_ms"])),
+            "failureReason": str(row["failure_reason"] or ""),
+            "result": result,
+            "summary": self._command_summary(action, row["status"], result),
+        }
+
+    def _run_ego_script(
+        self,
+        *,
+        command_id: str,
+        port: int,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        script = str(payload.get("script") or "")
+        timeout_ms = min(max(int(payload.get("timeoutMs") or 60_000), 1_000), 120_000)
+        node = self._ego_node()
+        paths = self._ego_paths(port=port)
+        environment = self._ego_environment(port=port, node=node)
+        trace_path = paths["data"] / "traces" / f"{command_id}.jsonl"
+        trace_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        trace_path.unlink(missing_ok=True)
+        environment["EGO_PAW_TRACE_PATH"] = str(trace_path)
+        self._ensure_ego_host(node=node, environment=environment)
+
+        with self._connection() as connection:
+            active_pid = int(self._setting(connection, "ego_runner_pid") or "0")
+            if self._pid_running(active_pid):
+                raise BrowserControlError("another ego-browser script is already running")
+            self._set_setting(connection, "ego_runner_pid", "")
+            self._set_setting(connection, "ego_runner_command_id", "")
+            connection.commit()
+
+        command = [
+            str(node),
+            "--permission",
+            f"--allow-fs-read={self.ego_runtime_root}",
+            f"--allow-fs-read={paths['data']}",
+            f"--allow-fs-write={trace_path}",
+            str(paths["cli"]),
+        ]
+        try:
+            process = self.ego_process_runner(
+                command,
+                cwd=str(self.ego_runtime_root),
+                env=environment,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise BrowserControlError(f"could not start ego-browser: {exc}") from exc
+        pid = int(getattr(process, "pid", 0) or 0)
+        if pid <= 0:
+            raise BrowserControlError("ego-browser did not return a valid process id")
+        with self._connection() as connection:
+            self._set_setting(connection, "ego_runner_pid", str(pid))
+            self._set_setting(connection, "ego_runner_command_id", command_id)
+            connection.commit()
+
+        timed_out = False
+        trace_stop = threading.Event()
+        trace_collector = threading.Thread(
+            target=self._collect_ego_trace,
+            args=(command_id, trace_path, trace_stop),
+            daemon=True,
+        )
+        trace_collector.start()
+        try:
+            stdout, stderr = process.communicate(
+                input=script,
+                timeout=timeout_ms / 1000.0,
+            )
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            self._terminate_process_group(pid)
+            stdout, stderr = process.communicate()
+        finally:
+            trace_stop.set()
+            trace_collector.join(timeout=1.0)
+            with self._connection() as connection:
+                if self._setting(connection, "ego_runner_pid") == str(pid):
+                    self._set_setting(connection, "ego_runner_pid", "")
+                    self._set_setting(connection, "ego_runner_command_id", "")
+                connection.commit()
+
+        output = str(stdout or "")[:MAX_EGO_OUTPUT_CHARS]
+        error_output = str(stderr or "")[:MAX_EGO_OUTPUT_CHARS]
+        return_code = int(getattr(process, "returncode", 1) or 0)
+        ok = not timed_out and return_code == 0
+        return {
+            "ok": ok,
+            "summary": (
+                "ego-browser 脚本已完成"
+                if ok
+                else "ego-browser 脚本超时"
+                if timed_out
+                else "ego-browser 脚本失败"
+            ),
+            "stdout": output,
+            "stderr": error_output,
+            "exitCode": return_code,
+            "timedOut": timed_out,
+            "failureReason": (
+                "ego_browser_timeout"
+                if timed_out
+                else "ego_browser_script_failed"
+                if return_code != 0
+                else ""
+            ),
+            "controlProtocol": "ego-browser",
+            "secondBrowserProcess": False,
+        }
+
+    def _ego_runtime_available(self) -> bool:
+        paths = self._ego_paths(port=0)
+        return all(
+            path.is_file()
+            for path in (paths["cli"], paths["host"], paths["harness"])
+        )
+
+    def _ego_paths(self, *, port: int) -> dict[str, Path]:
+        data = self.app_support_root / "Browser" / "ego-browser"
+        runtime = data / "runtime"
+        host_package = self.ego_runtime_root / "package" / "ego-linux-host"
+        return {
+            "data": data,
+            "runtime": runtime,
+            "socket": runtime / "host.sock",
+            "pid": runtime / "host.pid",
+            "cli": host_package / "bin" / "ego-browser.mjs",
+            "host": host_package / "bin" / "ego-linux-hostd.mjs",
+            "harness": self.ego_runtime_root
+            / "package"
+            / "ego-browser"
+            / "dist"
+            / "src"
+            / "run.js",
+            "profile": self.browser_runtime.profile_path,
+        }
+
+    def _ego_environment(self, *, port: int, node: Path) -> dict[str, str]:
+        paths = self._ego_paths(port=port)
+        paths["data"].mkdir(parents=True, exist_ok=True, mode=0o700)
+        paths["runtime"].mkdir(parents=True, exist_ok=True, mode=0o700)
+        environment = {
+            "HOME": str(Path.home()),
+            "PATH": os.environ.get("PATH", str(node.parent)),
+            "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+            "EGO_CONFIG_DIR": str(paths["data"] / "config"),
+            "EGO_DATA_DIR": str(paths["data"]),
+            "EGO_RUNTIME_DIR": str(paths["runtime"]),
+            "EGO_HOST_SOCK": str(paths["socket"]),
+            "EGO_USER_DATA_DIR": str(paths["profile"]),
+            "EGO_CDP_PORT": str(port),
+            "EGO_BROWSER_AGENT_WORKSPACE": str(
+                self.ego_runtime_root / "skills" / "ego-browser"
+            ),
+            "EGO_HEADLESS": "0",
+            "EGO_PAW_REUSE_SELECTED_TARGET": "1",
+            "EGO_PAW_ACTIVE_TARGET_FILE": str(
+                getattr(
+                    self.browser_runtime,
+                    "active_target_file",
+                    self.browser_runtime.profile_path
+                    / "PAWBrowserHost.active-target.json",
+                )
+            ),
+        }
+        try:
+            environment["EGO_PAW_HOST_ORIGIN"] = (
+                self.browser_runtime.host_origin_file.read_text(encoding="utf-8").strip()
+            )
+            environment["EGO_PAW_HOST_TOKEN"] = (
+                self.browser_runtime.host_pid_file.with_suffix(".token")
+                .read_text(encoding="utf-8")
+                .strip()
+            )
+        except (AttributeError, OSError):
+            pass
+        temporary = os.environ.get("TMPDIR")
+        if temporary:
+            environment["TMPDIR"] = temporary
+        return environment
+
+    def _ensure_ego_host(self, *, node: Path, environment: Mapping[str, str]) -> None:
+        if not self._ego_runtime_available():
+            raise BrowserControlError(
+                "ego-browser runtime is not built; run scripts/build_ego_browser_runtime.sh"
+            )
+
+        def doctor() -> Mapping[str, object]:
+            result = self.ego_check_runner(
+                [str(node), str(self._ego_paths(port=0)["cli"]), "--doctor"],
+                cwd=str(self.ego_runtime_root),
+                env=dict(environment),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=20.0,
+                check=False,
+            )
+            if int(getattr(result, "returncode", 1) or 0) != 0:
+                detail = self._text(getattr(result, "stderr", ""), maximum=500)
+                raise BrowserControlError(
+                    "ego-browser host did not become ready"
+                    + (f": {detail}" if detail else "")
+                )
+            try:
+                payload = json.loads(str(getattr(result, "stdout", "") or ""))
+            except json.JSONDecodeError as exc:
+                raise BrowserControlError(
+                    "ego-browser doctor returned invalid diagnostics"
+                ) from exc
+            if not isinstance(payload, Mapping):
+                raise BrowserControlError("ego-browser doctor returned invalid diagnostics")
+            return payload
+
+        expected_port = int(environment.get("EGO_CDP_PORT") or 0)
+        expected_profile = Path(
+            str(environment.get("EGO_USER_DATA_DIR") or "")
+        ).expanduser().resolve(strict=False)
+
+        def owns_current_browser(payload: Mapping[str, object]) -> bool:
+            try:
+                actual_port = int(payload.get("cdpPort") or 0)
+                actual_profile = Path(str(payload.get("profileDir") or "")).expanduser().resolve(
+                    strict=False
+                )
+            except (TypeError, ValueError, OSError):
+                return False
+            return (
+                payload.get("ok") is True
+                and payload.get("cdpUp") is True
+                and actual_port == expected_port
+                and actual_profile == expected_profile
+            )
+
+        diagnostics = doctor()
+        if owns_current_browser(diagnostics):
+            return
+
+        # The Unix socket can outlive the random Electron CDP listener it was
+        # created for. Restart only the Ego Host so it adopts the current PAW
+        # Browser authority; never fall through to launching another Chrome.
+        self._stop_ego_host()
+        diagnostics = doctor()
+        if not owns_current_browser(diagnostics):
+            actual_port = self._text(diagnostics.get("cdpPort"), maximum=12) or "unknown"
+            state = "up" if diagnostics.get("cdpUp") is True else "down"
+            raise BrowserControlError(
+                "ego-browser host is not attached to the current PAW Browser "
+                f"(expected CDP {expected_port}, got {actual_port} {state})"
+            )
+
+    def _stop_ego_runner(self) -> bool:
+        with self._connection() as connection:
+            raw_pid = self._setting(connection, "ego_runner_pid") or ""
+            pid = int(raw_pid) if raw_pid.isdigit() else 0
+            self._set_setting(connection, "ego_runner_pid", "")
+            self._set_setting(connection, "ego_runner_command_id", "")
+            connection.commit()
+        if not self._pid_running(pid):
+            return False
+        self._terminate_process_group(pid)
+        return True
+
+    def _stop_ego_host(self) -> bool:
+        paths = self._ego_paths(port=0)
+        pid = self._read_pid(paths["pid"])
+        if not self._pid_running(pid):
+            return False
+        try:
+            node = self._ego_node()
+            environment = self._ego_environment(port=0, node=node)
+            result = self.ego_check_runner(
+                [str(node), str(paths["host"]), "stop"],
+                cwd=str(self.ego_runtime_root),
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=8.0,
+                check=False,
+            )
+            if int(getattr(result, "returncode", 1) or 0) == 0:
+                return True
+        except (OSError, subprocess.SubprocessError, BrowserControlError):
+            pass
+        self._terminate_process_group(pid)
+        return True
+
+    def _ego_node(self) -> Path:
+        candidates = [
+            os.environ.get("RAG_IME_EGO_NODE"),
+            os.environ.get("RAG_IME_PI_NODE"),
+            os.environ.get("RAG_IME_MANAGED_NODE"),
+        ]
+        try:
+            from .managed_pi_runtime import discover_managed_pi_runtime
+
+            candidates.append(
+                discover_managed_pi_runtime(self.app_support_root).node_executable
+            )
+        except (OSError, ValueError, RuntimeError):
+            pass
+        candidates.append(shutil.which("node"))
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = Path(candidate).expanduser().resolve(strict=False)
+            if path.is_file() and os.access(path, os.X_OK):
+                return path
+        raise BrowserControlError("Node.js 22 or newer is unavailable for ego-browser")
+
+    @staticmethod
+    def _read_pid(path: Path) -> int:
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+            return int(raw) if raw.isdigit() else 0
+        except OSError:
+            return 0
+
+    @staticmethod
+    def _terminate_process_group(pid: int) -> None:
+        if pid <= 0:
+            return
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def _record_direct_snapshot(self, result: Mapping[str, object]) -> None:
+        self.push_snapshot(
+            {
+                "deviceId": PawBrowserRuntime.DEVICE_ID,
+                "tabId": result.get("tabId") or 1,
+                "url": result.get("url") or "",
+                "title": result.get("title") or "",
+                "summary": result.get("summary") or "",
+                "markdown": result.get("markdown") or "",
+                "interactiveCount": result.get("interactiveCount") or 0,
+                "viewport": result.get("viewport") or {},
+                "screenshotDataUrl": result.get("screenshotDataUrl") or "",
+            }
+        )
+
+    def _select_device(self, *, requested: str) -> str:
+        if requested and requested != PawBrowserRuntime.DEVICE_ID:
+            raise BrowserControlError("browser commands can only target PAW Browser")
         now = self._now_ms()
         with self._connection() as connection:
-            if requested:
-                row = connection.execute(
-                    "SELECT * FROM browser_control_clients WHERE device_id=?",
-                    (self._identifier(requested, field="deviceId"),),
-                ).fetchone()
-                if row is None or now - int(row["last_seen_ms"]) > 15_000:
-                    raise BrowserControlError("requested browser device is not connected")
-                if prefer_managed and row["client_kind"] != "managed":
-                    raise BrowserControlError(
-                        "managed mode cannot target the user's daily browser"
-                    )
-                return str(row["device_id"])
-            rows = connection.execute(
-                "SELECT * FROM browser_control_clients ORDER BY last_seen_ms DESC"
-            ).fetchall()
-        active = [row for row in rows if now - int(row["last_seen_ms"]) <= 15_000]
-        if prefer_managed:
-            managed = next((row for row in active if row["client_kind"] == "managed"), None)
-            if managed is not None:
-                return str(managed["device_id"])
-            raise BrowserControlError("managed browser extension is not connected")
-        if active:
-            return str(active[0]["device_id"])
-        raise BrowserControlError("browser extension is not connected")
+            row = connection.execute(
+                "SELECT * FROM browser_control_clients WHERE device_id=? AND client_kind='managed'",
+                (PawBrowserRuntime.DEVICE_ID,),
+            ).fetchone()
+        if row is None or now - int(row["last_seen_ms"]) > CLIENT_CONNECTED_TTL_MS:
+            raise BrowserControlError("PAW Browser is not connected")
+        return PawBrowserRuntime.DEVICE_ID
 
     def _normalize_command(self, action: str, payload: Mapping[str, object]) -> dict[str, object]:
         result: dict[str, object] = {}
+        if action == "run":
+            script = str(payload.get("script") or "")
+            if not script.strip() or len(script) > MAX_EGO_SCRIPT_CHARS or "\x00" in script:
+                raise BrowserControlError(
+                    f"ego-browser script must contain 1-{MAX_EGO_SCRIPT_CHARS} characters"
+                )
+            result["script"] = script
+            result["timeoutMs"] = min(
+                max(int(payload.get("timeoutMs") or 60_000), 1_000),
+                120_000,
+            )
+            return result
         if payload.get("tabId") is not None:
             result["tabId"] = self._positive_int(payload.get("tabId"))
         if payload.get("refId") is not None:
             result["refId"] = self._identifier(payload.get("refId"), field="refId")
-        if action == "navigate":
+        if action in {"navigate", "new_tab"}:
             result["url"] = self._url(payload.get("url"))
         if action == "type":
             result["text"] = str(payload.get("text") or "")[:8_000]
             result["clear"] = payload.get("clear") is not False
+            result["submit"] = payload.get("submit") is True
         if action == "scroll":
             direction = str(payload.get("direction") or "down")
             if direction not in {"up", "down", "left", "right"}:
@@ -1018,11 +1301,10 @@ class BrowserControlService:
             "deviceId": str(row["device_id"]),
             "displayName": str(row["display_name"]),
             "clientKind": str(row["client_kind"]),
-            "extensionVersion": str(row["extension_version"]),
             "browserName": str(row["browser_name"]),
             "activeTabId": row["active_tab_id"],
             "lastSeenMs": last_seen,
-            "connected": now - last_seen <= 15_000,
+            "connected": now - last_seen <= CLIENT_CONNECTED_TTL_MS,
         }
 
     def _public_snapshot(self, row: sqlite3.Row, *, include_markdown: bool) -> dict[str, object]:
@@ -1045,34 +1327,130 @@ class BrowserControlService:
             result["markdown"] = str(row["markdown"])
         return result
 
-    def _public_permission(self, row: sqlite3.Row) -> dict[str, object]:
-        return {
-            "promptId": str(row["prompt_id"]),
-            "deviceId": str(row["device_id"]),
-            "origin": str(row["origin"]),
-            "action": str(row["action"]),
-            "reason": str(row["reason"]),
-            "status": str(row["status"]),
-            "decision": str(row["decision"] or ""),
-            "createdAtMs": int(row["created_at_ms"]),
-            "resolvedAtMs": int(row["resolved_at_ms"]) if row["resolved_at_ms"] else None,
-        }
-
-    def _public_trace(self, row: sqlite3.Row) -> dict[str, object]:
+    def _public_trace(
+        self,
+        row: sqlite3.Row,
+        *,
+        steps: list[Mapping[str, object]] | None = None,
+    ) -> dict[str, object]:
         created = int(row["created_at_ms"])
         completed = int(row["completed_at_ms"]) if row["completed_at_ms"] else None
+        payload = self._json_object(row["payload_json"])
+        session_id = str(row["session_id"])
+        target = (
+            self._text(payload.get("url"), maximum=320)
+            or self._text(payload.get("refId"), maximum=160)
+            or ("Task Space" if str(row["action"]) == "run" else "")
+        )
         return {
             "commandId": str(row["command_id"]),
             "deviceId": str(row["device_id"]),
-            "sessionId": str(row["session_id"]),
+            "sessionId": session_id,
+            "sourceKind": "human" if session_id == "control-center" else "agent",
             "action": str(row["action"]),
+            "target": target,
+            "targetRefId": self._text(payload.get("refId"), maximum=160),
+            "tabId": payload.get("tabId"),
             "status": str(row["status"]),
             "createdAtMs": created,
             "claimedAtMs": int(row["claimed_at_ms"]) if row["claimed_at_ms"] else None,
             "completedAtMs": completed,
             "durationMs": max(0, completed - created) if completed else None,
             "failureReason": str(row["failure_reason"] or ""),
+            "steps": [self._public_ego_step(step) for step in (steps or [])],
             "result": self._trace_result(self._json_object(row["result_json"])),
+        }
+
+    def _collect_ego_trace(
+        self,
+        command_id: str,
+        trace_path: Path,
+        stop: threading.Event,
+    ) -> None:
+        position = 0
+        pending = ""
+        while True:
+            try:
+                with trace_path.open("r", encoding="utf-8") as stream:
+                    stream.seek(position)
+                    chunk = stream.read()
+                    position = stream.tell()
+            except FileNotFoundError:
+                chunk = ""
+            pending += chunk
+            while "\n" in pending:
+                line, pending = pending.split("\n", 1)
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, Mapping):
+                    self._record_ego_step(command_id, value)
+            if stop.is_set():
+                break
+            stop.wait(0.06)
+
+    def _record_ego_step(
+        self,
+        command_id: str,
+        value: Mapping[str, object],
+    ) -> None:
+        if value.get("schemaVersion") != "paw.ego-browser-step.v1":
+            return
+        event = self._text(value.get("event"), maximum=24)
+        action = self._text(value.get("action"), maximum=48)
+        if event not in {"started", "completed", "failed"} or not action:
+            return
+        detail = {
+            "event": event,
+            "action": action,
+            "target": self._text(value.get("target"), maximum=320),
+            "atMs": self._positive_int(value.get("atMs"), allow_none=True)
+            or self._now_ms(),
+            "error": self._text(value.get("error"), maximum=240),
+        }
+        with self._connection() as connection:
+            self._event(
+                connection,
+                "ego_trace_step",
+                PawBrowserRuntime.DEVICE_ID,
+                detail,
+                command_id=command_id,
+            )
+            connection.commit()
+        if event == "completed" and action in {
+            "navigate",
+            "reload",
+            "click",
+            "hover",
+            "drag",
+            "type",
+            "press",
+            "select",
+            "check",
+            "uncheck",
+            "upload",
+            "new_tab",
+            "switch_tab",
+            "close_tab",
+        }:
+            current = self.managed_status()
+            port = int(current.get("debugPort") or 0)
+            if port:
+                try:
+                    self._record_direct_snapshot(
+                        self.browser_runtime.execute(port, "screenshot", {})
+                    )
+                except (OSError, ValueError, PawBrowserRuntimeError):
+                    pass
+
+    def _public_ego_step(self, value: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "event": self._text(value.get("event"), maximum=24),
+            "action": self._text(value.get("action"), maximum=48),
+            "target": self._text(value.get("target"), maximum=320),
+            "atMs": self._positive_int(value.get("atMs"), allow_none=True),
+            "error": self._text(value.get("error"), maximum=240),
         }
 
     def _trace_result(self, value: Mapping[str, object]) -> dict[str, object]:
@@ -1174,10 +1552,6 @@ class BrowserControlService:
         return int(time.time() * 1000)
 
     @staticmethod
-    def _fingerprint(value: str) -> str:
-        return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-
-    @staticmethod
     def _text(value: object, *, maximum: int) -> str:
         return " ".join(str(value or "").split())[:maximum]
 
@@ -1213,6 +1587,8 @@ class BrowserControlService:
         text = str(value or "").strip()
         if allow_blank and not text:
             return ""
+        if text in {"about:blank", "chrome://history", "chrome://history/"}:
+            return text
         parsed = urlsplit(text)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise BrowserControlError("browser URL must use http or https")
@@ -1227,6 +1603,8 @@ class BrowserControlService:
         text = BrowserControlService._url(value, allow_blank=allow_blank)
         if not text:
             return ""
+        if text in {"about:blank", "chrome://history", "chrome://history/"}:
+            return text
         parsed = urlsplit(text)
         host = parsed.hostname or ""
         if ":" in host:
@@ -1264,14 +1642,6 @@ class BrowserControlService:
                 "state",
             )
         )
-
-    @staticmethod
-    def _origin(value: object) -> str:
-        text = str(value or "").strip()
-        parsed = urlsplit(text)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise BrowserControlError("browser origin must use http or https")
-        return f"{parsed.scheme}://{parsed.netloc}"[:500]
 
     @staticmethod
     def _json_object(value: object) -> dict[str, object]:

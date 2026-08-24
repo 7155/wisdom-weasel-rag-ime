@@ -982,6 +982,36 @@ class ConfigurationSettingsWorkContractTests(unittest.TestCase):
             ["configuration_settings_apply", "configuration_settings_rollback"],
         )
 
+    def test_agent_defaults_apply_and_reopen_from_the_sqlite_authority(self) -> None:
+        changes = {"agent.defaults.executionMode": "workspace_managed"}
+        preview = self.service.configuration_settings_preview(
+            {
+                "changes": changes,
+                "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+            }
+        )
+        applied = self.service.configuration_settings_apply(
+            {
+                "changes": changes,
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+
+        reopened = ManagementSettingsStore(self.db_path).get_settings()
+
+        validate_contract(applied, "management-work-receipt.v1.json")
+        self.assertEqual(
+            reopened["agent"]["defaults"],
+            {
+                "modelReference": "inherit",
+                "thinkingLevel": "high",
+                "executionMode": "workspace_managed",
+            },
+        )
+
     def test_settings_apply_rejects_a_preview_staled_by_another_setting_change(self) -> None:
         _before, after = self._width_change()
         preview = self.service.configuration_settings_preview(

@@ -155,20 +155,21 @@ class ControlPathId(str, Enum):
     AGENT_WAKE_SCHEDULE_ACTION = "agent.wakeSchedule.action"
 
     BROWSER_STATUS = "browser.status"
-    BROWSER_PAIRING = "browser.pairing"
     BROWSER_TABS = "browser.tabs"
     BROWSER_SNAPSHOT_LATEST = "browser.snapshot.latest"
     BROWSER_SNAPSHOT_IMAGE = "browser.snapshot.image"
     BROWSER_TRACES = "browser.traces"
-    BROWSER_PERMISSIONS = "browser.permissions"
-    BROWSER_PERMISSION_GET = "browser.permission.get"
-    BROWSER_PERMISSION_DECIDE = "browser.permission.decide"
-    BROWSER_MODE_UPDATE = "browser.mode.update"
-    BROWSER_PAIRING_ROTATE = "browser.pairing.rotate"
     BROWSER_COMMAND = "browser.command"
     BROWSER_STOP = "browser.stop"
     BROWSER_MANAGED_START = "browser.managed.start"
     BROWSER_MANAGED_STOP = "browser.managed.stop"
+
+    TERMINAL_SESSIONS_LIST = "terminal.sessions.list"
+    TERMINAL_SESSION_CREATE = "terminal.session.create"
+    TERMINAL_SESSION_READ = "terminal.session.read"
+    TERMINAL_SESSION_WRITE = "terminal.session.write"
+    TERMINAL_SESSION_RESIZE = "terminal.session.resize"
+    TERMINAL_SESSION_CLOSE = "terminal.session.close"
 
     PLANNING_DASHBOARD = "planning.dashboard"
     PLANNING_MUTATION_PREVIEW = "planning.mutation.preview"
@@ -656,7 +657,6 @@ _CONTEXT_TRACE = {"sessionId", "traceId"}
 _MEMORY_REFERENCE = {"kind", "referenceId"}
 _WAKE_SCHEDULE = {"scheduleId"}
 _BROWSER_SNAPSHOT = {"snapshotId"}
-_BROWSER_PERMISSION = {"promptId"}
 _KNOWLEDGE_BASE = {"kbId"}
 _KNOWLEDGE_DOCUMENT = {"kbId", "fileId"}
 _WORK_DOCUMENT = {"documentId"}
@@ -751,7 +751,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_BACKGROUND_JOBS_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/background-jobs", "/control/v1/agent/sessions/{sessionId}/background-jobs", params=_SESSION, query={"limit", "status"}),
         _route(ControlPathId.AGENT_SESSION_BACKGROUND_JOB_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/background-jobs/{jobId}", "/control/v1/agent/sessions/{sessionId}/background-jobs/{jobId}", params=_BACKGROUND_JOB),
         _route(ControlPathId.AGENT_SESSION_BACKGROUND_JOB_LOGS, ControlMethod.GET, "/api/agent/sessions/{sessionId}/background-jobs/{jobId}/logs", "/control/v1/agent/sessions/{sessionId}/background-jobs/{jobId}/logs", params=_BACKGROUND_JOB, query={"cursor", "limitBytes"}),
-        _route(ControlPathId.AGENT_SESSION_BACKGROUND_JOB_CANCEL, ControlMethod.POST, "/api/agent/sessions/{sessionId}/background-jobs/{jobId}/cancel", "/control/v1/agent/sessions/{sessionId}/background-jobs/{jobId}/cancel", params=_BACKGROUND_JOB, body={"reason"}),
+        _route(ControlPathId.AGENT_SESSION_BACKGROUND_JOB_CANCEL, ControlMethod.POST, "/api/agent/sessions/{sessionId}/background-jobs/{jobId}/cancel", "/control/v1/agent/sessions/{sessionId}/background-jobs/{jobId}/cancel", params=_BACKGROUND_JOB, body={"reason", "roomTurnId"}),
         _route(ControlPathId.AGENT_SESSION_INTERCOM_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"status", "limit"}),
         _route(ControlPathId.AGENT_SESSION_INTERCOM_SEND, ControlMethod.POST, "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"kind", "targetParticipantId", "clientMessageId", "replyTo", "content"}, required_body={"kind", "clientMessageId", "content"}, remote_body={"kind", "targetParticipantId", "clientMessageId", "replyTo", "content"}, remote_body_values={"kind": {"send", "ask", "reply"}}),
         _route(ControlPathId.AGENT_SESSION_CONTEXT_ITEMS_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-items", "/control/v1/agent/sessions/{sessionId}/context-items", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"status", "limit"}),
@@ -846,20 +846,21 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_WAKE_SCHEDULE_ACTION, ControlMethod.POST, "/api/agent/wake-schedules/{scheduleId}/action", "/control/v1/agent/wake-schedules/{scheduleId}/action", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_WAKE_SCHEDULE, body={"action", "confirmText"}, required_body={"action", "confirmText"}, remote_body={"action", "confirmText"}, remote_body_values={"action": {"pause", "resume", "cancel", "retry"}, "confirmText": {"apply"}}),
 
         _route(ControlPathId.BROWSER_STATUS, ControlMethod.GET, "/api/browser/status", "/control/v1/browser/status"),
-        _route(ControlPathId.BROWSER_PAIRING, ControlMethod.GET, "/api/browser/pairing", "/control/v1/browser/pairing"),
         _route(ControlPathId.BROWSER_TABS, ControlMethod.GET, "/api/browser/tabs", "/control/v1/browser/tabs"),
         _route(ControlPathId.BROWSER_SNAPSHOT_LATEST, ControlMethod.GET, "/api/browser/snapshots/latest", "/control/v1/browser/snapshots/latest", query={"deviceId", "tabId", "includeMarkdown"}),
         _route(ControlPathId.BROWSER_SNAPSHOT_IMAGE, ControlMethod.GET, "/api/browser/snapshots/{snapshotId}/image", "/control/v1/browser/snapshots/{snapshotId}/image", params=_BROWSER_SNAPSHOT, binary=True),
         _route(ControlPathId.BROWSER_TRACES, ControlMethod.GET, "/api/browser/traces", "/control/v1/browser/traces", query={"limit"}),
-        _route(ControlPathId.BROWSER_PERMISSIONS, ControlMethod.GET, "/api/browser/permissions", "/control/v1/browser/permissions", query={"limit"}),
-        _route(ControlPathId.BROWSER_PERMISSION_GET, ControlMethod.GET, "/api/browser/permissions/{promptId}", "/control/v1/browser/permissions/{promptId}", params=_BROWSER_PERMISSION),
-        _route(ControlPathId.BROWSER_PERMISSION_DECIDE, ControlMethod.POST, "/api/browser/permissions/{promptId}/decision", "/control/v1/browser/permissions/{promptId}/decision", params=_BROWSER_PERMISSION, body={"decision"}, required_body={"decision"}),
-        _route(ControlPathId.BROWSER_MODE_UPDATE, ControlMethod.POST, "/api/browser/mode", "/control/v1/browser/mode", body={"mode"}, required_body={"mode"}),
-        _route(ControlPathId.BROWSER_PAIRING_ROTATE, ControlMethod.POST, "/api/browser/pairing/rotate", "/control/v1/browser/pairing/rotate"),
-        _route(ControlPathId.BROWSER_COMMAND, ControlMethod.POST, "/api/browser/command", "/control/v1/browser/command", body={"action", "deviceId", "tabId", "refId", "url", "text", "clear", "direction", "amount", "timeoutMs", "timeoutSeconds"}, required_body={"action"}),
+        _route(ControlPathId.BROWSER_COMMAND, ControlMethod.POST, "/api/browser/command", "/control/v1/browser/command", body={"action", "deviceId", "tabId", "refId", "url", "text", "script", "clear", "submit", "direction", "amount", "timeoutMs", "timeoutSeconds"}, required_body={"action"}),
         _route(ControlPathId.BROWSER_STOP, ControlMethod.POST, "/api/browser/stop", "/control/v1/browser/stop"),
         _route(ControlPathId.BROWSER_MANAGED_START, ControlMethod.POST, "/api/browser/managed/start", "/control/v1/browser/managed/start"),
         _route(ControlPathId.BROWSER_MANAGED_STOP, ControlMethod.POST, "/api/browser/managed/stop", "/control/v1/browser/managed/stop"),
+
+        _route(ControlPathId.TERMINAL_SESSIONS_LIST, ControlMethod.GET, "/api/terminal/sessions", "/control/v1/terminal/sessions"),
+        _route(ControlPathId.TERMINAL_SESSION_CREATE, ControlMethod.POST, "/api/terminal/sessions", "/control/v1/terminal/sessions", body={"title", "cwd", "shell", "cols", "rows"}),
+        _route(ControlPathId.TERMINAL_SESSION_READ, ControlMethod.POST, "/api/terminal/read", "/control/v1/terminal/read", body={"terminalId", "cursor", "maxBytes"}, required_body={"terminalId"}),
+        _route(ControlPathId.TERMINAL_SESSION_WRITE, ControlMethod.POST, "/api/terminal/write", "/control/v1/terminal/write", body={"terminalId", "text"}, required_body={"terminalId", "text"}),
+        _route(ControlPathId.TERMINAL_SESSION_RESIZE, ControlMethod.POST, "/api/terminal/resize", "/control/v1/terminal/resize", body={"terminalId", "cols", "rows"}, required_body={"terminalId", "cols", "rows"}),
+        _route(ControlPathId.TERMINAL_SESSION_CLOSE, ControlMethod.POST, "/api/terminal/close", "/control/v1/terminal/close", body={"terminalId"}, required_body={"terminalId"}),
 
         _route(ControlPathId.PLANNING_DASHBOARD, ControlMethod.GET, "/api/planning/dashboard", "/control/v1/planning/dashboard", scopes=[ControlScope.PLANNING_READ], remote_safe=True, query={"date", "project"}),
         _route(ControlPathId.PLANNING_MUTATION_PREVIEW, ControlMethod.POST, "/api/planning/mutation/preview", "/control/v1/planning/mutation/preview", body={"kind", "payload", "expectedRuntimeRevision"}, required_body={"kind", "payload", "expectedRuntimeRevision"}),

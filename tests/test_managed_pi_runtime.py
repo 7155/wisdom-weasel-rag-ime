@@ -778,6 +778,27 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         ):
             write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
 
+    def test_protocol_v2_manifest_accepts_current_runtime_method_surface_with_a_bound(self) -> None:
+        payload, manifest = self._payload("runtime-v2-current-methods", protocol_version="2")
+        current_methods = (
+            *managed_runtime.REQUIRED_SESSION_RUNTIME_METHODS,
+            *(f"runtime.capability_{index}" for index in range(31)),
+        )
+        self.assertEqual(len(current_methods), 37)
+        manifest["runtimeMethods"] = list(current_methods)
+
+        write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
+
+        manifest["runtimeMethods"] = [
+            *managed_runtime.REQUIRED_SESSION_RUNTIME_METHODS,
+            *(f"runtime.excess_{index}" for index in range(59)),
+        ]
+        with self.assertRaisesRegex(
+            ManagedPiRuntimeError,
+            "method list is invalid",
+        ):
+            write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
+
     def test_pi_runtime_config_discovers_managed_install_without_path_fallback(self) -> None:
         payload, manifest = self._payload("runtime-1", pi_version="0.84.2")
         installed = install_managed_pi_runtime(payload, self.app_support)

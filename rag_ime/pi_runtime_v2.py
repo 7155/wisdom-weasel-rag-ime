@@ -38,6 +38,7 @@ from .pi_runtime_public import (
     last_assistant_preview,
     pi_message_id,
     pi_message_completes_public_turn,
+    pi_message_continues_public_turn,
     pi_message_is_public,
     provider_retry_status,
     public_code_tool_activity,
@@ -915,6 +916,111 @@ class PiRuntimeHostManager:
                 "reused": False,
             }
 
+    def retire_recovered_turn(
+        self,
+        session_id: str,
+        expected_turn_id: str,
+    ) -> dict[str, object]:
+        """Explicitly retire one interrupted durable turn after Host restart."""
+
+        normalized_turn_id = str(expected_turn_id).strip()
+        if not normalized_turn_id:
+            raise ValueError("expected recovered turn id must not be empty")
+        with self._lifecycle_lock:
+            if not bool(self._host_capabilities.get("sessionControlState")):
+                raise PiRuntimeError(
+                    "Pi Runtime Host does not support Session control state"
+                )
+            with self._lock:
+                if session_id not in self._open_sessions:
+                    raise PiRuntimeError(
+                        "Pi Runtime Session must be open before recovered turn retirement"
+                    )
+            client = self._require_client()
+
+            control = dict(
+                client.send(
+                    "session.control_state",
+                    {"sessionId": session_id},
+                )
+            )
+            if (
+                control.get("schemaVersion")
+                != "rag-ime.pi-session-control-state.v1"
+                or control.get("sessionId") != session_id
+                or not isinstance(control.get("isIdle"), bool)
+            ):
+                raise PiRuntimeError(
+                    "Pi Runtime Host returned an invalid Session control state"
+                )
+            active_turn = control.get("activeTurn")
+            active_turn_id = (
+                str(active_turn.get("turnId") or "").strip()
+                if isinstance(active_turn, Mapping)
+                else ""
+            )
+            if (
+                control.get("isIdle") is not True
+                or active_turn_id != normalized_turn_id
+            ):
+                raise PiRuntimeError(
+                    "Pi Runtime active turn does not match the expected recovered turn"
+                )
+
+            receipt = dict(
+                client.send(
+                    "session.abort",
+                    {"sessionId": session_id},
+                    timeout=1.0,
+                )
+            )
+            lifecycle = receipt.get("lifecycle")
+            lifecycle = lifecycle if isinstance(lifecycle, Mapping) else {}
+            pending_operations = lifecycle.get("pendingOperations")
+            if (
+                receipt.get("schemaVersion")
+                != "rag-ime.pi-session-abort-receipt.v1"
+                or receipt.get("sessionId") != session_id
+                or str(receipt.get("turnId") or "") != normalized_turn_id
+                or lifecycle.get("schemaVersion")
+                != "pi.agent-abort-receipt.v1"
+                or lifecycle.get("idle") is not True
+                or lifecycle.get("drained") is not True
+                or not isinstance(pending_operations, list)
+                or pending_operations
+            ):
+                raise PiRuntimeError(
+                    "Pi Runtime Host returned an invalid recovered Session abort receipt"
+                )
+
+            refreshed = dict(
+                client.send(
+                    "session.control_state",
+                    {"sessionId": session_id},
+                )
+            )
+            if (
+                refreshed.get("schemaVersion")
+                != "rag-ime.pi-session-control-state.v1"
+                or refreshed.get("sessionId") != session_id
+                or refreshed.get("isIdle") is not True
+                or refreshed.get("activeTurn") is not None
+            ):
+                raise PiRuntimeError(
+                    "Pi Runtime Host did not retire the recovered Session turn"
+                )
+            self._sync_idle_snapshot(session_id, refreshed)
+            with self._lock:
+                self._schedule_idle_locked()
+            return {
+                "schemaVersion": "rag-ime.pi-recovered-turn-retirement.v1",
+                "sessionId": session_id,
+                "turnId": normalized_turn_id,
+                "retired": True,
+                "receipt": receipt,
+                "state": refreshed,
+            }
+
     def _sync_idle_snapshot(
         self,
         session_id: str,
@@ -1498,7 +1604,10 @@ class PiRuntimeHostManager:
                 continue
             role = str(raw.get("role") or "assistant").lower()
             message_id = pi_message_id(raw, "history")
-            if role == "user" or not current_turn_id:
+            if (
+                role == "user"
+                and not pi_message_continues_public_turn(raw)
+            ) or not current_turn_id:
                 current_turn_id = f"history:{message_id}"
                 last_assistant_fingerprint = None
             payload = pi_message_payload(
@@ -3932,9 +4041,23 @@ class PiRuntimeHostManager:
             # when even the independent health lane does not answer.
             host_responsive = False
         runtime_status = "ready"
+        shared_host_protected = False
         with self._lock:
             state = self._states.get(session_id)
             if state is not None and state.turn_id == turn_id:
+                # ``health`` is dispatched concurrently inside the Host, but
+                # its reply still shares the serialized stdout JSONL lane with
+                # every Session event. A saturated output lane can therefore
+                # make the health RPC time out while unrelated Session turns
+                # are still alive. Never turn that ambiguous signal into a
+                # process-wide kill that sacrifices active peers. When there
+                # are no active peers, the existing kill gate remains the
+                # bounded recovery path for a genuinely stuck Host.
+                shared_host_protected = any(
+                    candidate_session_id != session_id
+                    and bool(candidate.turn_id)
+                    for candidate_session_id, candidate in self._states.items()
+                )
                 if state.settle_timer is not None:
                     state.settle_timer.cancel()
                     state.settle_timer = None
@@ -3957,7 +4080,11 @@ class PiRuntimeHostManager:
                 state.pending_approvals.clear()
                 state.pending_reviews.clear()
                 state.pending_ui_requests.clear()
-                if host_responsive and self._client is client and client.running:
+                if (
+                    (host_responsive or shared_host_protected)
+                    and self._client is client
+                    and client.running
+                ):
                     self._status = (
                         "busy"
                         if any(candidate.turn_id for candidate in self._states.values())
@@ -3981,13 +4108,13 @@ class PiRuntimeHostManager:
                 "aborted": True,
                 "terminalEvent": (
                     "abort_timeout_isolated"
-                    if host_responsive
+                    if host_responsive or shared_host_protected
                     else "abort_timeout_kill"
                 ),
             },
             turn_id=turn_id,
         )
-        if host_responsive:
+        if host_responsive or shared_host_protected:
             self.events.publish(
                 session_id,
                 "status_changed",
@@ -3998,6 +4125,8 @@ class PiRuntimeHostManager:
                     # Pi is still draining the already-requested cancellation;
                     # late events stay fenced to the retired turn above.
                     "cancellationPending": True,
+                    "hostHealthConfirmed": host_responsive,
+                    "sharedHostProtected": shared_host_protected,
                 },
                 turn_id=turn_id,
             )
@@ -4154,7 +4283,8 @@ def _pi_tool_history_events(
         role = str(raw.get("role") or "assistant").strip().lower()
         message_id = pi_message_id(raw, "history")
         if role == "user":
-            current_turn_id = f"history:{message_id}"
+            if not pi_message_continues_public_turn(raw):
+                current_turn_id = f"history:{message_id}"
             continue
         turn_id = current_turn_id or f"history:{message_id}"
         fingerprint = _pi_history_message_fingerprint(raw)

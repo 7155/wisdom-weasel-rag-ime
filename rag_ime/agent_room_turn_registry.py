@@ -81,6 +81,9 @@ class RoomTurnRegistry:
         child: bool = False,
     ) -> None:
         with self.lock:
+            if room_turn_id in self.cancelled_turns:
+                self.cancelled_root_by_session[session_id] = room_turn_id
+                raise ValueError("Room turn is cancelled")
             self._discard_pending_events_locked(session_id)
             self.cancelled_root_by_session.pop(
                 session_id,

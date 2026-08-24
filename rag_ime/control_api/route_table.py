@@ -378,7 +378,6 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
     _get("/api/runtime/config", "runtime_config"),
     _get("/api/runtime/components", "management.runtime_components"),
     _get("/api/browser/status", "browser_control.status"),
-    _get("/api/browser/pairing", "browser_control.pairing"),
     _get("/api/browser/tabs", "browser_control.tabs"),
     _get("/api/agent/runtime", "agent.runtime_status"),
     _get("/api/agent/providers", "pi_provider_auth.catalog"),
@@ -606,18 +605,22 @@ MEMORY_READ_ROUTES: tuple[RouteDescriptor, ...] = (
          query_args=("limit", "runId", "status")),
 )
 
-# Browser: only the argument-free lifecycle commands. The rest of this family
-# stays in the chains on purpose -- extension routes carry their own
-# authentication, snapshots return binary, several handlers take keyword
-# arguments or path parameters, and permission routes map BrowserControlError
-# to specific statuses. Migrating those needs descriptor support that does not
-# exist yet, and inventing it for one family would make the table describe
-# less than the chain does.
+# Browser: the product owns one managed Chromium and exposes only its lifecycle
+# here. Ego scripts and direct commands share `/api/browser/command`; the old
+# extension pairing and permission routes are deliberately no longer public.
 BROWSER_ROUTES: tuple[RouteDescriptor, ...] = (
-    _post("/api/browser/pairing/rotate", "browser_control.rotate_pairing", takes_arguments=False),
     _post("/api/browser/stop", "browser_control.stop", takes_arguments=False),
     _post("/api/browser/managed/start", "browser_control.start_managed", takes_arguments=False),
     _post("/api/browser/managed/stop", "browser_control.stop_managed", takes_arguments=False),
+)
+
+SYSTEM_TERMINAL_ROUTES: tuple[RouteDescriptor, ...] = (
+    _get("/api/terminal/sessions", "system_terminal.list", takes_arguments=False),
+    _post("/api/terminal/sessions", "system_terminal.create"),
+    _post("/api/terminal/read", "system_terminal.read"),
+    _post("/api/terminal/write", "system_terminal.write"),
+    _post("/api/terminal/resize", "system_terminal.resize"),
+    _post("/api/terminal/close", "system_terminal.close_terminal"),
 )
 
 WORK_DOCUMENT_ROUTES: tuple[RouteDescriptor, ...] = (
@@ -648,6 +651,7 @@ WORK_DOCUMENT_ROUTES: tuple[RouteDescriptor, ...] = (
 
 
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
+    *SYSTEM_TERMINAL_ROUTES,
     *WORK_DOCUMENT_ROUTES,
     *VOCABULARY_ROUTES,
     *BROWSER_ROUTES,

@@ -164,8 +164,10 @@ class ControlCenterCutoverTests(unittest.TestCase):
         )
         self.assertLess(
             installer.rindex("  prepare_stack_squirrel_workspace"),
-            installer.index('EXTENSION_SOURCE="$ROOT/integrations/browser-copilot/extension"'),
+            installer.index("required=(--require control --require sidecar --require squirrel)"),
         )
+        self.assertNotIn("browser-copilot/extension", installer)
+        self.assertNotIn("Browser Co-pilot extension", installer)
         self.assertIn("prune_managed_pi_runtime.py", installer)
         self.assertIn("--retain-generations 2", installer)
         self.assertIn("--plan \"$PI_RETENTION_PLAN\"", installer)

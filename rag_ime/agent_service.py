@@ -72,6 +72,9 @@ from .agent_room_management import RoomManagementService
 from .agent_room_partner_application import (
     RoomPartnerApplicationService,
 )
+from .agent_room_partner_dispatch_store import (
+    AgentRoomPartnerDispatchStore,
+)
 from .agent_room_prompt_context import (
     agent_message_text as _agent_message_text,
     room_intercom_prompt as _room_intercom_prompt,
@@ -226,6 +229,8 @@ class AgentService:
         self.rooms.initialize()
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
+        self.room_partner_dispatches = AgentRoomPartnerDispatchStore(db_path)
+        self.room_partner_dispatches.initialize()
         self.governance_projection = GovernanceProjectionStore(db_path)
         self.governance_projection.initialize()
         self.knowledge_promotion = KnowledgePromotionStore(db_path)
@@ -513,7 +518,7 @@ class AgentService:
         )
         self.wake_scheduler = AgentWakeScheduler(
             store=self.wake_schedules,
-            dispatch=self.wake_application.dispatch,
+            dispatch=self._dispatch_wake_claim,
             enabled=wake_scheduler_enabled,
             poll_seconds=wake_scheduler_poll_seconds,
             max_parallel=2,
@@ -554,8 +559,35 @@ class AgentService:
                 **kwargs,
             ),
             work_document_for_authority=self._work_document_for_authority,
+            dispatch_store=self.room_partner_dispatches,
+            wake_schedules=self.wake_schedules,
+            notify_wake_scheduler=self.wake_scheduler.wake,
+            dispatch_facilitator_wake=self._dispatch_room_partner_wake,
+            command_acceptance_evidence=lambda session_id, client_message_id: (
+                self.command_receipts.acceptance_evidence_for_exact_command(
+                    command_scope="session_prompt",
+                    scope_id=session_id,
+                    client_message_id=client_message_id,
+                )
+            ),
+            accept_room_work=lambda session_id, payload: self.room_work_application.accept_room_work(
+                session_id,
+                payload,
+            ),
+            return_room_work=lambda session_id, payload: self.room_work_application.return_room_work(
+                session_id,
+                payload,
+            ),
+            recover_faulted_session=self._recover_faulted_room_session,
         )
         self.room_work_application = RoomWorkApplicationService(self)
+        self._remove_room_partner_observer = self.room_events.add_observer(
+            self.room_partner_application.observe_room_event
+        )
+        self.wake_scheduler.bind_terminal_observer(
+            self.room_partner_application.observe_wake_terminal_event
+        )
+        self.room_partner_application.reconcile()
         self.approval_application = AgentApprovalApplicationService(self)
         self.message_snapshot = AgentMessageSnapshotService(
             sessions=self.sessions,
@@ -3312,6 +3344,151 @@ class AgentService:
         self.memory_context_application.clear_recall_state(retired.session_ids)
         return retired.consumed
 
+    def _dispatch_wake_claim(self, claim: Mapping[str, object]) -> None:
+        metadata = claim.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if str(metadata.get("kind") or "") != "room_partner_completion":
+            self.wake_application.dispatch(claim)
+            return
+        if not hasattr(self, "room_partner_application"):
+            self.wake_schedules.defer(
+                str(claim.get("runId") or ""),
+                reason="Room Partner wake adapter is still starting",
+                delay_ms=5_000,
+            )
+            return
+        try:
+            self.room_partner_application.dispatch_wake(claim)
+        except Exception as exc:
+            self.room_partner_application.record_wake_failure(claim, exc)
+            raise
+
+    def _dispatch_room_partner_wake(
+        self,
+        claim: Mapping[str, object],
+        dispatch: Mapping[str, object],
+    ) -> bool:
+        run_id = str(claim.get("runId") or "")
+        session_id = str(dispatch.get("sourceSessionId") or "")
+        root_id = str(dispatch.get("rootId") or "")
+        child_dispatch_id = str(dispatch.get("childDispatchId") or "")
+        self._recover_faulted_room_session(session_id)
+        session = self.sessions.get(session_id)
+        session_status = str(session.get("status") or "")
+        if session_status == "busy":
+            self.wake_schedules.defer(
+                run_id,
+                reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                delay_ms=5_000,
+            )
+            return False
+        if session_status not in {"idle", "active"}:
+            raise ValueError("Facilitator Session is unavailable for Room wake")
+        if not self._room_target_idle(session_id):
+            self.wake_schedules.defer(
+                run_id,
+                reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                delay_ms=5_000,
+            )
+            return False
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=True,
+        )
+        if participant is None or str(participant.get("id") or "") != str(
+            dispatch.get("sourceParticipantId") or ""
+        ):
+            raise ValueError("Facilitator is no longer active in this Room")
+        room = self.rooms.get(str(dispatch.get("roomId") or ""))
+        topic_id = self._room_topic_for_turn(root_id) or str(
+            room.get("activeTopicId") or ""
+        )
+        self.wake_application.enqueue_room_completion(
+            claim=claim,
+            dispatch=dispatch,
+        )
+        wake_dispatch_id = (
+            f"room-wake-dispatch:{child_dispatch_id}:"
+            f"{int((dispatch.get('wake') or {}).get('generation') or 0)}"
+            if isinstance(dispatch.get("wake"), Mapping)
+            else f"room-wake-dispatch:{child_dispatch_id}"
+        )
+        self._begin_room_turn(
+            session_id,
+            root_id,
+            topic_id,
+            dispatch_id=wake_dispatch_id,
+            child=False,
+        )
+        try:
+            accepted = self.prompt(
+                session_id,
+                {
+                    "message": "伙伴交付已到达，请检查并完成双轴验收。",
+                    "clientMessageId": run_id,
+                    "_contextSourceToken": self._context_source_token,
+                    "_contextSource": "room",
+                    "_checkpointText": "伙伴交付已到达，请检查并完成双轴验收。",
+                },
+            )
+        except Exception:
+            self._cancel_room_turn(session_id, root_id)
+            if str(self.sessions.get(session_id).get("status") or "") == "busy":
+                self.wake_schedules.defer(
+                    run_id,
+                    reason="Facilitator 刚刚开始其他回合，伙伴交付稍后重试",
+                    delay_ms=5_000,
+                )
+                return False
+            raise
+        turn_id = str(accepted.get("turnId") or "")
+        self._accept_room_turn(session_id, turn_id, root_id)
+        self.wake_schedules.accept(
+            run_id,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        replayed, _gap = self.events.replay(session_id)
+        for event in replayed:
+            if (
+                event.turn_id == turn_id
+                and event.event_type in {"turn_completed", "turn_failed"}
+            ):
+                self.wake_scheduler.observe_event(event)
+                break
+        return True
+
+    def _recover_faulted_room_session(self, session_id: str) -> None:
+        """Re-open one faulted Pi Session without replacing Room identity."""
+
+        session = self.sessions.get(session_id)
+        if str(session.get("status") or "") != "faulted":
+            return
+        # A terminal Provider/Host failure is not a live competing turn. Re-open
+        # the same Pi Session once so its durable transcript and Room Root stay
+        # authoritative for both durable wakes and explicit user retries.
+        ensured = self.runtime.ensure(session_id)
+        state = ensured.get("state")
+        state = state if isinstance(state, Mapping) else {}
+        active_turn = state.get("activeTurn")
+        active_turn = active_turn if isinstance(active_turn, Mapping) else {}
+        recovered_turn_id = str(active_turn.get("turnId") or "").strip()
+        if state.get("isIdle") is True and recovered_turn_id:
+            retire_recovered_turn = getattr(
+                self.runtime,
+                "retire_recovered_turn",
+                None,
+            )
+            if not callable(retire_recovered_turn):
+                raise RuntimeError(
+                    "Pi Runtime cannot retire the recovered Room Session turn"
+                )
+            retire_recovered_turn(session_id, recovered_turn_id)
+        if str(self.sessions.get(session_id).get("status") or "") == "faulted":
+            raise RuntimeError(
+                "Room participant Session remained faulted after Pi recovery"
+            )
+
 
 
 
@@ -3323,8 +3500,10 @@ class AgentService:
         self.background_jobs.close()
         self.events.close()
         self._remove_observation_room_observer()
+        self._remove_room_partner_observer()
         self.observations.close()
         self._remove_wake_observer()
+        self.wake_scheduler.bind_terminal_observer(None)
         self.wake_scheduler.close()
         self.room_intercom.close()
 

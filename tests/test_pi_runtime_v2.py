@@ -904,6 +904,166 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["piSkillsEnabled"])
         self.assertTrue(opened["params"]["codexSkillsEnabled"])
 
+    def test_retire_recovered_turn_uses_exact_idle_turn_and_confirms_clear(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        recovered_turn_id = "turn-recovered-resident"
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        methods: list[str] = []
+        stale = True
+
+        def recovered_send(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            nonlocal stale
+            methods.append(method)
+            if method == "session.control_state":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                    "sessionId": session_id,
+                    "isIdle": True,
+                    "isCompacting": False,
+                    "activeTurn": (
+                        {"turnId": recovered_turn_id} if stale else None
+                    ),
+                    "sequence": 1,
+                }
+            if method == "session.abort":
+                self.assertEqual(params, {"sessionId": session_id})
+                stale = False
+                return {
+                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                    "sessionId": session_id,
+                    "turnId": recovered_turn_id,
+                    "cancelledDecisionIds": [],
+                    "cancelledUIRequestIds": [],
+                    "lifecycle": {
+                        "schemaVersion": "pi.agent-abort-receipt.v1",
+                        "scopeId": session_id,
+                        "generation": 1,
+                        "reason": "user_abort",
+                        "cancelledContinuationIds": [],
+                        "cancelledOperationIds": [],
+                        "failedOperationIds": [],
+                        "operations": [],
+                        "pendingOperations": [],
+                        "drained": True,
+                        "idle": True,
+                    },
+                }
+            raise AssertionError(f"unexpected Host method: {method}")
+
+        with patch.object(client, "send", side_effect=recovered_send):
+            receipt = self.runtime.retire_recovered_turn(
+                session_id,
+                recovered_turn_id,
+            )
+
+        self.assertEqual(
+            methods,
+            ["session.control_state", "session.abort", "session.control_state"],
+        )
+        self.assertEqual(receipt["turnId"], recovered_turn_id)
+        self.assertTrue(receipt["retired"])
+        self.assertIsNone(receipt["state"]["activeTurn"])
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+
+    def test_retire_recovered_turn_rejects_a_different_active_turn(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        methods: list[str] = []
+
+        def different_turn(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            methods.append(method)
+            if method == "session.control_state":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                    "sessionId": session_id,
+                    "isIdle": True,
+                    "isCompacting": False,
+                    "activeTurn": {"turnId": "turn-newer"},
+                    "sequence": 1,
+                }
+            raise AssertionError(f"unexpected Host method: {method}")
+
+        with patch.object(client, "send", side_effect=different_turn):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "does not match the expected recovered turn",
+            ):
+                self.runtime.retire_recovered_turn(
+                    session_id,
+                    "turn-original-fault",
+                )
+
+        self.assertEqual(methods, ["session.control_state"])
+
+    def test_retire_recovered_turn_rejects_unsettled_abort_receipt(self) -> None:
+        session_id = str(self.first["id"])
+        recovered_turn_id = "turn-recovered-unsettled"
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+
+        def unsettled_abort(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            if method == "session.control_state":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                    "sessionId": session_id,
+                    "isIdle": True,
+                    "isCompacting": False,
+                    "activeTurn": {"turnId": recovered_turn_id},
+                    "sequence": 1,
+                }
+            if method == "session.abort":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                    "sessionId": session_id,
+                    "turnId": recovered_turn_id,
+                    "lifecycle": {
+                        "schemaVersion": "pi.agent-abort-receipt.v1",
+                        "scopeId": session_id,
+                        "generation": 1,
+                        "reason": "user_abort",
+                        "cancelledContinuationIds": [],
+                        "cancelledOperationIds": [],
+                        "failedOperationIds": [],
+                        "operations": [],
+                        "pendingOperations": ["provider"],
+                        "drained": False,
+                        "idle": False,
+                    },
+                }
+            raise AssertionError(f"unexpected Host method: {method}")
+
+        with patch.object(client, "send", side_effect=unsettled_abort):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "invalid recovered Session abort receipt",
+            ):
+                self.runtime.retire_recovered_turn(
+                    session_id,
+                    recovered_turn_id,
+                )
+
     def test_coding_tool_projection_keeps_useful_request_and_bounded_output(self) -> None:
         result = public_code_tool_activity(
             "grep",
@@ -1538,6 +1698,125 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual([entry["id"] for entry in selected_entries], ["entry-user", "entry-answer"])
         self.assertEqual(messages[0]["id"], "entry-user")
         self.assertEqual(messages[0]["timestamp"], 100)
+
+    def test_snapshot_keeps_transient_steer_in_the_active_history_turn(self) -> None:
+        session_id = str(self.first["id"])
+        transient = (
+            "RAG_IME_TRANSIENT_CONTEXT_V1\n"
+            + json.dumps(
+                {
+                    "schemaVersion": "rag-ime.runtime-prompt.v1",
+                    "message": "查看详细",
+                    "sessionContext": "private-session-context",
+                    "transientContext": "private-steer-context",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        messages = [
+            {
+                "id": "user-continue",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "继续"}],
+            },
+            {
+                "id": "assistant-browser",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "browser-call",
+                    "name": "browser",
+                    "arguments": {"action": "snapshot"},
+                }],
+            },
+            {
+                "id": "browser-result",
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "browser-call",
+                "toolName": "browser",
+                "content": [{"type": "text", "text": "page ready"}],
+            },
+            {
+                "id": "user-steer",
+                "role": "user",
+                "timestamp": 103,
+                "content": [{"type": "text", "text": transient}],
+            },
+            {
+                "id": "assistant-final",
+                "role": "assistant",
+                "timestamp": 104,
+                "content": [{"type": "text", "text": "这是详细结果"}],
+            },
+            {
+                "id": "user-next",
+                "role": "user",
+                "timestamp": 105,
+                "content": [{"type": "text", "text": "开始下一轮"}],
+            },
+            {
+                "id": "assistant-next",
+                "role": "assistant",
+                "timestamp": 106,
+                "content": [{"type": "text", "text": "下一轮结果"}],
+            },
+        ]
+        entries = [
+            {
+                "type": "message",
+                "id": str(message["id"]),
+                "parentId": str(messages[index - 1]["id"]) if index else "root",
+                "message": message,
+            }
+            for index, message in enumerate(messages)
+        ]
+
+        with patch.object(
+            self.runtime,
+            "_inspection_snapshot",
+            return_value={
+                "messages": messages,
+                "entries": entries,
+                "leafId": "assistant-next",
+                "messageQueue": {},
+            },
+        ):
+            snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(
+            [message["turnId"] for message in snapshot["messages"]],
+            [
+                "history:user-continue",
+                "history:user-continue",
+                "history:user-continue",
+                "history:user-next",
+                "history:user-next",
+            ],
+        )
+        self.assertEqual(
+            [
+                block["data"]["text"]
+                for message in snapshot["messages"]
+                for block in message["blocks"]
+                if block["type"] == "text"
+            ],
+            ["继续", "查看详细", "这是详细结果", "开始下一轮", "下一轮结果"],
+        )
+        self.assertEqual(
+            {
+                event["turnId"]
+                for event in snapshot["toolHistoryEvents"]
+            },
+            {"history:user-continue"},
+        )
+        serialized = json.dumps(snapshot, ensure_ascii=False)
+        self.assertNotIn("RAG_IME_TRANSIENT_CONTEXT_V1", serialized)
+        self.assertNotIn("private-session-context", serialized)
+        self.assertNotIn("private-steer-context", serialized)
 
     def test_mixed_text_and_tool_message_keeps_text_but_not_tool_protocol(self) -> None:
         mixed = {
@@ -3380,6 +3659,87 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout_kill")
         kill_gate = self.runtime.runtime_status()["runtimeHostKillGate"]
         self.assertEqual(kill_gate["lastKillReceipt"]["requestKind"], "cancel_timeout")
+
+    def test_abort_timeout_never_kills_a_shared_host_with_an_active_peer(self) -> None:
+        session_id = str(self.first["id"])
+        peer_session_id = str(self.second["id"])
+        accepted = self.runtime.prompt(session_id, "hang-without-settled")
+        turn_id = str(accepted["turnId"])
+        peer = self.runtime.prompt(peer_session_id, "hang-without-settled")
+        peer_turn_id = str(peer["turnId"])
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def fail_health(method, params=None, *, timeout=None, before_write=None):
+            if method == "health":
+                raise PiRuntimeError("Pi Runtime Host command timed out: health")
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=fail_health):
+            self.runtime.abort(session_id)
+            _wait_until(
+                lambda: any(
+                    item.event_type == "turn_completed"
+                    and item.turn_id == turn_id
+                    and item.payload.get("status") == "aborted"
+                    for item in self.events.replay(session_id)[0]
+                ),
+                timeout=2.5,
+            )
+
+        _wait_until(
+            lambda: any(
+                item.event_type == "status_changed"
+                and (
+                    item.payload.get("cancellationPending") is True
+                    or item.payload.get("escalated") is True
+                )
+                for item in self.events.replay(session_id)[0]
+            )
+            or self.store.get(peer_session_id)["status"] == "faulted",
+            timeout=2.5,
+        )
+
+        self.assertIsNone(
+            self.runtime.runtime_status()["runtimeHostKillGate"][
+                "lastKillReceipt"
+            ]
+        )
+        self.assertTrue(client.running)
+        self.assertEqual(self.runtime.runtime_status()["status"], "busy")
+        self.assertEqual(self.store.get(peer_session_id)["status"], "busy")
+        target_events = self.events.replay(session_id)[0]
+        completed = [
+            item
+            for item in target_events
+            if item.event_type == "turn_completed" and item.turn_id == turn_id
+        ]
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "abort_timeout_isolated",
+        )
+        isolated = [
+            item
+            for item in target_events
+            if item.event_type == "status_changed"
+            and item.payload.get("cancellationPending") is True
+        ]
+        self.assertFalse(isolated[-1].payload["hostHealthConfirmed"])
+        self.assertTrue(isolated[-1].payload["sharedHostProtected"])
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": peer_session_id,
+            "turnId": peer_turn_id,
+            "payload": {"type": "agent_settled"},
+        })
+        self.assertEqual(self.store.get(peer_session_id)["status"], "idle")
 
     def test_abort_accepts_host_idle_receipt_after_turn_already_settled(self) -> None:
         session_id = str(self.first["id"])

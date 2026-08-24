@@ -937,13 +937,30 @@ class AgentBackgroundJobHttpTests(unittest.TestCase):
                 )
                 with self.assertRaises(HTTPError) as raised:
                     urlopen(room_cancel_request, timeout=5)
-                rejected = json.load(raised.exception)
-                room_cancelled = service.agent.background_jobs.cancel_room_owned(
-                    str(session["id"]),
-                    room_job_id,
-                    room_turn_id="room-root:http",
-                    reason="room_http_owner",
+                with raised.exception as response:
+                    rejected = json.load(response)
+                wrong_room_cancel_request = Request(
+                    f"{base}/{room_job_path}/cancel",
+                    data=json.dumps(
+                        {"reason": "room_http_owner", "roomTurnId": "room-root:wrong"}
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
                 )
+                with self.assertRaises(HTTPError) as wrong_room_raised:
+                    urlopen(wrong_room_cancel_request, timeout=5)
+                with wrong_room_raised.exception as response:
+                    wrong_room_rejected = json.load(response)
+                owned_room_cancel_request = Request(
+                    f"{base}/{room_job_path}/cancel",
+                    data=json.dumps(
+                        {"reason": "room_http_owner", "roomTurnId": "room-root:http"}
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(owned_room_cancel_request, timeout=5) as response:
+                    room_cancelled = json.load(response)
 
                 self.assertEqual(listed["items"][0]["jobId"], job_id)
                 self.assertEqual(fetched["job"]["jobId"], job_id)
@@ -951,6 +968,7 @@ class AgentBackgroundJobHttpTests(unittest.TestCase):
                 self.assertTrue(cancelled["ok"])
                 self.assertEqual(cancelled["job"]["status"], "cancelled")
                 self.assertIn("Room/Root owner", json.dumps(rejected))
+                self.assertIn("another Room root", json.dumps(wrong_room_rejected))
                 self.assertTrue(room_cancelled["ok"])
                 self.assertEqual(room_cancelled["job"]["status"], "cancelled")
             finally:

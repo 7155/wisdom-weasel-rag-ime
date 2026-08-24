@@ -330,6 +330,8 @@ class PreparedWorkspaceWrite:
     root: Path
     content: str
     existed_before: bool
+    preimage: bytes
+    preimage_mode: int
     preimage_sha256: str
     preimage_size: int
     postimage_sha256: str
@@ -703,7 +705,7 @@ class WorkspaceHarness:
         atexit.register(self.close_lsp)
 
     def list(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         raw_path = str(args.get("path") or "").strip()
         if not raw_path:
             return {
@@ -734,7 +736,7 @@ class WorkspaceHarness:
         }
 
     def read(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         raw_path = str(args.get("path") or "").strip()
         if not raw_path:
             raise WorkspaceHarnessError("path is required for workspace_read")
@@ -808,7 +810,7 @@ class WorkspaceHarness:
         )
 
     def search(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         query = str(args.get("query") or "")
         if not query or len(query) > 200 or "\x00" in query or "\n" in query or "\r" in query:
             raise WorkspaceHarnessError("workspace_search query must be 1-200 single-line characters")
@@ -1518,7 +1520,7 @@ class WorkspaceHarness:
         session: Mapping[str, object],
         args: Mapping[str, object],
     ) -> tuple[Path, ...]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         raw_root = str(args.get("root") or "").strip()
         if not raw_root:
             return roots
@@ -1563,7 +1565,7 @@ class WorkspaceHarness:
             raise WorkspaceLspError("invalid_request", "path is required for workspace_lsp")
         try:
             target, root = self._resolve_existing_path(
-                self._session_roots(session),
+                self._read_session_roots(session),
                 raw_path,
                 allow_directory=False,
             )
@@ -3172,6 +3174,8 @@ class WorkspaceHarness:
             root=root,
             content=content,
             existed_before=existed_before,
+            preimage=before_raw,
+            preimage_mode=(target.stat().st_mode & 0o777) if existed_before else 0o644,
             preimage_sha256=preimage_sha256,
             preimage_size=len(before_raw),
             postimage_sha256=hashlib.sha256(postimage).hexdigest(),
@@ -3183,6 +3187,33 @@ class WorkspaceHarness:
                 else None
             ),
         )
+
+    def rollback_write(self, prepared: PreparedWorkspaceWrite) -> None:
+        """Restore an applied write when its coupled lifecycle commit fails.
+
+        The rollback is hash-guarded so a concurrent writer is never
+        overwritten.  This is intentionally narrower than a general undo
+        surface: it is only for a write whose postimage has not yet been
+        reported as successfully committed.
+        """
+
+        if not prepared.path.exists() or not prepared.path.is_file():
+            raise WorkspaceHarnessError(
+                "workspace write rollback target is no longer available"
+            )
+        current = prepared.path.read_bytes()
+        if hashlib.sha256(current).hexdigest() != prepared.postimage_sha256:
+            raise WorkspaceHarnessError(
+                "workspace file changed before work document rollback"
+            )
+        if prepared.existed_before:
+            self._atomic_write(
+                prepared.path,
+                prepared.preimage,
+                prepared.preimage_mode,
+            )
+            return
+        prepared.path.unlink()
 
     def write_preview(self, prepared: PreparedWorkspaceWrite) -> dict[str, object]:
         action = "覆盖" if prepared.existed_before else "创建"
@@ -3426,6 +3457,22 @@ class WorkspaceHarness:
     def _session_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
         if str(session.get("mode") or "") != "coordinator":
             raise WorkspaceHarnessError("工作区工具需要协调模式的对话")
+        return self._authorized_roots(session)
+
+    def _read_session_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
+        if str(session.get("mode") or "") == "coordinator":
+            return self._authorized_roots(session)
+        if not (
+            str(session.get("sessionKind") or "") == "subagent_runtime"
+            and str(session.get("mode") or "") == "assistant"
+            and str(session.get("toolProfileVersion") or "")
+            == "subagent-readonly-v1"
+            and str(session.get("executionMode") or "") == "read_only"
+        ):
+            raise WorkspaceHarnessError("工作区工具需要协调模式的对话")
+        return self._authorized_roots(session)
+
+    def _authorized_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
         values = session.get("workspaceRoots")
         if not isinstance(values, list) or not values:
             raise WorkspaceHarnessError(_NO_AUTHORIZED_WORKSPACE)
@@ -4102,6 +4149,11 @@ def _sandbox_profile(
     for pattern in sensitive_patterns:
         lines.append(f'(deny file-read* (regex #"{pattern}"))')
         lines.append(f'(deny file-write* (regex #"{pattern}"))')
+    # A managed preview server is still local product validation, not external
+    # network access. Let it bind a socket while accepting only loopback input;
+    # outbound access remains behind the explicit allowNetwork contract below.
+    lines.append('(allow network-bind (local ip "*:*"))')
+    lines.append('(allow network-inbound (local ip "localhost:*"))')
     if allow_network:
         lines.append("(allow network-outbound)")
         lines.append('(allow file-read* (literal "/private/etc/hosts"))')

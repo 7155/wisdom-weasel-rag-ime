@@ -2498,7 +2498,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(created["ok"])
         self.assertEqual(listed["items"][0]["id"], session_id)
         self.assertEqual(runtime["status"], "disabled")
-        self.assertEqual(roles["items"][0]["displayName"], "澄·远")
+        self.assertEqual(roles["items"][0]["displayName"], "Agent 3")
         self.assertNotIn("systemPrompt", roles["items"][0])
         self.assertEqual(maintenance["policy"], "auto_governed")
         self.assertFalse(maintenance["autoApply"])
@@ -2899,7 +2899,7 @@ class DebugManagementApiTests(unittest.TestCase):
                     f"{base_url}/rooms/{room_id}/messages",
                     data=json.dumps(
                         {
-                            "message": "@澄·初 请诊断状态",
+                            "message": "@Agent 2 请诊断状态",
                             "clientMessageId": "room-http-client-1",
                         }
                     ).encode("utf-8"),

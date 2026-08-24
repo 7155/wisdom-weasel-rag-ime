@@ -15,12 +15,15 @@ class AgentRoleTests(unittest.TestCase):
         ]
         role = roles[1]
 
-        self.assertEqual(role.display_name, "澄·今")
-        self.assertEqual([item.display_name for item in roles], ["澄·远", "澄·今", "澄·初", "澄·瞬"])
+        self.assertEqual(role.display_name, "Agent 1")
+        self.assertEqual(
+            [item.display_name for item in roles],
+            ["Agent 3", "Agent 1", "Agent 2", "Agent 4"],
+        )
         self.assertEqual(len({item.persona_prompt for item in roles}), 4)
         for item in roles:
             with self.subTest(role=item.role_id):
-                self.assertIn("长期与用户一起思考和做事", item.system_prompt)
+                self.assertIn("在当前 Session 中协助用户", item.system_prompt)
                 self.assertIn("<core-rails>", item.system_prompt)
                 self.assertIn("只提供材料或证据", item.system_prompt)
                 self.assertIn("也不自动成为事实", item.system_prompt)

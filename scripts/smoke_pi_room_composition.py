@@ -334,9 +334,68 @@ def main() -> int:
                     },
                     tool_call_id=partner_tool_call_id,
                 )
-                if child_result.get("status") != "completed":
+                if child_result.get("status") != "accepted":
                     raise RuntimeError(
-                        f"Room Partner child did not complete: {child_result}"
+                        "Room Partner delegate did not return an immediate receipt: "
+                        f"{child_result}"
+                    )
+                child_dispatch_id = str(child_result.get("childDispatchId") or "")
+                delegated_work_id = str(child_result.get("workItemId") or "")
+                if (
+                    not child_dispatch_id
+                    or delegated_work_id != str(delegated_work["id"])
+                ):
+                    raise RuntimeError(
+                        "Room Partner delegate receipt did not retain its dispatch and "
+                        f"WorkItem identities: {child_result}"
+                    )
+                collected_result = service.execute_room_partner_tool(
+                    str(facilitator["sessionId"]),
+                    {
+                        "op": "wait",
+                        "childDispatchId": child_dispatch_id,
+                        "timeoutSeconds": 12,
+                    },
+                    tool_call_id="room-composition-partner-wait",
+                )
+                collected_work = collected_result.get("workItem")
+                if (
+                    collected_result.get("status") != "review"
+                    or collected_result.get("timedOut") is not False
+                    or not isinstance(collected_work, Mapping)
+                    or collected_work.get("state") != "review"
+                ):
+                    raise RuntimeError(
+                        "Room Partner child did not stop at explicit Facilitator review: "
+                        f"{collected_result}"
+                    )
+                review_result = service.execute_room_partner_tool(
+                    str(facilitator["sessionId"]),
+                    {
+                        "op": "accept",
+                        "workItemId": delegated_work_id,
+                        "expectedRevision": int(collected_work.get("revision") or 0),
+                        "operabilityVerdict": "passed",
+                        "requirementVerdict": "satisfied",
+                        "evidenceRefs": [
+                            (
+                                "work-document:"
+                                f"{synced_document['documentId']}@"
+                                f"{synced_document['documentRevision']}"
+                            ),
+                            f"room-dispatch:{child_dispatch_id}",
+                        ],
+                    },
+                    tool_call_id="room-composition-partner-accept",
+                )
+                if (
+                    review_result.get("status") != "accepted"
+                    or not isinstance(review_result.get("workItem"), Mapping)
+                    or review_result["workItem"].get("state") != "done"
+                ):
+                    raise RuntimeError(
+                        "Facilitator explicit two-axis acceptance did not close the "
+                        f"WorkItem: {review_result}"
                     )
                 partner_events = _turn_events(
                     service,
@@ -421,7 +480,9 @@ def main() -> int:
                             "leadDispatchCount": len(started.get("dispatches") or []),
                             "leadSessionId": facilitator.get("sessionId"),
                             "partnerSessionId": partner.get("sessionId"),
-                            "partnerChildStatus": child_result.get("status"),
+                            "partnerDelegateStatus": child_result.get("status"),
+                            "partnerCollectedStatus": collected_result.get("status"),
+                            "partnerReviewStatus": review_result.get("status"),
                             "partnerChildTerminalCount": len(child_terminals),
                             "partnerWorkDocumentRevision": synced_document.get(
                                 "documentRevision"

@@ -9,10 +9,10 @@ from pathlib import Path
 
 ROOT_DOCUMENT_BUDGETS = {
     "AGENTS.md": 1_250,
-    "PROJECT.md": 900,
-    "OUTCOMES.md": 1_300,
-    "DECISIONS.md": 1_200,
-    "CONTEXT.md": 900,
+    "docs/project/PROJECT.md": 900,
+    "docs/project/OUTCOMES.md": 1_300,
+    "docs/project/DECISIONS.md": 1_200,
+    "docs/project/CONTEXT.md": 900,
 }
 
 CORE_SKILLS = (
@@ -39,12 +39,20 @@ RETIRED_FLOW_NAMES = (
 
 CURRENT_CONTRACT_DOCS = (
     "AGENTS.md",
-    "PROJECT.md",
-    "OUTCOMES.md",
-    "DECISIONS.md",
-    "CONTEXT.md",
+    "docs/README.md",
+    "docs/project/README.md",
+    "docs/project/PROJECT.md",
+    "docs/project/PRODUCT.md",
+    "docs/project/OUTCOMES.md",
+    "docs/project/DECISIONS.md",
+    "docs/project/CONTEXT.md",
+    "docs/project/DESIGN.md",
+    "docs/project/design-qa.md",
+    "docs/pawos/README.md",
+    "docs/pawos/PAWOS_REQUIREMENTS.md",
+    "docs/pawos/PAWOS_FRONTEND_HANDOFF.md",
     "README.md",
-    "ARCHITECTURE.md",
+    "docs/project/ARCHITECTURE.md",
 )
 
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -66,7 +74,7 @@ def _read_documents(root: Path, errors: list[str]) -> dict[str, str]:
     for relative, budget in ROOT_DOCUMENT_BUDGETS.items():
         path = root / relative
         if not path.is_file():
-            errors.append(f"missing root harness document: {relative}")
+            errors.append(f"missing bootstrap authority document: {relative}")
             continue
         text = path.read_text(encoding="utf-8")
         documents[relative] = text
@@ -81,7 +89,7 @@ def _read_documents(root: Path, errors: list[str]) -> dict[str, str]:
 def _validate_local_links(root: Path, relative: str, text: str, errors: list[str]) -> None:
     source_dir = (root / relative).parent
     for target in LOCAL_LINK_RE.findall(text):
-        if target.startswith(("http://", "https://", "mailto:", "#")):
+        if target.startswith("#") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target):
             continue
         local_target = target.split("#", 1)[0]
         if not local_target:
@@ -234,7 +242,13 @@ def validate_project_harness(root: Path) -> list[str]:
     documents = _read_documents(root, errors)
 
     agents = documents.get("AGENTS.md", "")
-    for relative in ("PROJECT.md", "OUTCOMES.md", "CONTEXT.md", "DECISIONS.md"):
+    for relative in (
+        "docs/README.md",
+        "docs/project/PROJECT.md",
+        "docs/project/OUTCOMES.md",
+        "docs/project/CONTEXT.md",
+        "docs/project/DECISIONS.md",
+    ):
         if f"]({relative})" not in agents:
             errors.append(f"AGENTS.md must route progressively to {relative}")
 
@@ -253,18 +267,16 @@ def validate_project_harness(root: Path) -> list[str]:
         text = documents.get(relative)
         if text is None:
             text = path.read_text(encoding="utf-8")
+        _validate_local_links(root, relative, text, errors)
         for retired in RETIRED_FLOW_NAMES:
             if retired in text:
                 errors.append(f"{relative} still references retired flow name: {retired}")
 
-    for relative, text in documents.items():
-        _validate_local_links(root, relative, text, errors)
-
-    outcomes = documents.get("OUTCOMES.md", "")
+    outcomes = documents.get("docs/project/OUTCOMES.md", "")
     if "release/product-status.json" not in outcomes:
         errors.append("OUTCOMES.md must name the machine-readable release evidence")
 
-    context = documents.get("CONTEXT.md", "")
+    context = documents.get("docs/project/CONTEXT.md", "")
     for implementation_marker in ("rag_ime/", "control-center-web/", "scripts/", ".py"):
         if implementation_marker in context:
             errors.append(
@@ -273,7 +285,7 @@ def validate_project_harness(root: Path) -> list[str]:
             )
 
     gitignore = root / ".gitignore"
-    if not gitignore.is_file() or "/docs/" not in gitignore.read_text(encoding="utf-8"):
+    if not gitignore.is_file() or "/docs/*" not in gitignore.read_text(encoding="utf-8"):
         errors.append("ignored local docs/ history boundary is missing from .gitignore")
 
     for retired in RETIRED_FLOW_NAMES[:5]:
@@ -294,7 +306,7 @@ def main() -> int:
             print(f"- {error}")
         return 1
     print(
-        "OK: bounded root context, progressive Skill routing, "
+        "OK: bounded bootstrap context, progressive docs/Skill routing, "
         "retired-flow cleanup, and release scope are consistent"
     )
     return 0

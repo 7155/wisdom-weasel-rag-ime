@@ -130,6 +130,25 @@ class AgentCommandReceiptStoreTests(unittest.TestCase):
                 },
             },
         )
+        self.assertEqual(
+            reopened.failure_evidence_for_exact_command(
+                command_scope="session_prompt",
+                scope_id="session-1",
+                client_message_id="client-failed",
+            ),
+            {
+                "schemaVersion": "rag-ime.agent-command-failure.v1",
+                "message": "another turn still owns the Session",
+                "causeCode": "AGENT_TURN_CONFLICT",
+            },
+        )
+        self.assertIsNone(
+            reopened.failure_evidence_for_exact_command(
+                command_scope="session_prompt",
+                scope_id="session-1",
+                client_message_id="client-1",
+            )
+        )
 
     def test_stale_pending_is_typed_unresolved_and_never_reclaimed(
         self,
@@ -213,6 +232,44 @@ class AgentCommandReceiptStoreTests(unittest.TestCase):
         self.assertEqual(accepted, recovered)
         self.assertEqual(late_completion, recovered)
         self.assertEqual(replay.replay_response, recovered)
+
+    def test_exact_command_lookup_returns_content_free_prompt_acceptance(
+        self,
+    ) -> None:
+        payload = {"message": "Room Partner task", "attachments": []}
+        claim = self.store.begin(
+            command_scope="session_prompt",
+            scope_id="session-partner",
+            client_message_id="room-child:receipt-window",
+            payload=payload,
+        )
+        self.store.record_acceptance_evidence(
+            claim,
+            command_scope="session_prompt",
+            scope_id="session-partner",
+            client_message_id="room-child:receipt-window",
+            accepted={
+                "turnId": "turn:partner-accepted",
+                "piEntryId": "pi:entry:accepted",
+            },
+        )
+
+        evidence = self.store.acceptance_evidence_for_exact_command(
+            command_scope="session_prompt",
+            scope_id="session-partner",
+            client_message_id="room-child:receipt-window",
+        )
+
+        self.assertEqual(
+            evidence,
+            {
+                "schemaVersion": "rag-ime.agent-command-acceptance-evidence.v1",
+                "accepted": True,
+                "clientMessageId": "room-child:receipt-window",
+                "turnId": "turn:partner-accepted",
+                "piEntryId": "pi:entry:accepted",
+            },
+        )
 
     def test_retry_lineage_requires_failed_equivalent_unique_predecessor(
         self,

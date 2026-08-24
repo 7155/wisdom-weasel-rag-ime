@@ -31,6 +31,11 @@ class RoomSessionHost(Protocol):
         session_id: str,
     ) -> None: ...
 
+    def _recover_faulted_room_session(
+        self,
+        session_id: str,
+    ) -> None: ...
+
     def _room_target_idle(
         self,
         session_id: str,
@@ -156,6 +161,9 @@ class RoomSessionDispatchService:
             for decision in decisions
         ]
         target_session_ids = [str(target["sessionId"]) for target in targets]
+        if retry_of_root_id:
+            for session_id in target_session_ids:
+                self.host._recover_faulted_room_session(session_id)
         attachment_receipts = self.resolve_attachments(
             room_id,
             target_session_ids,
@@ -351,6 +359,9 @@ class RoomSessionDispatchService:
             ]
 
         successful = [result for result in dispatch_results if result["accepted"] is True]
+        cancelled_only = bool(dispatch_results) and all(
+            result.get("status") == "cancelled" for result in dispatch_results
+        )
         if work_claimed and work_item is not None and not successful:
             try:
                 work_item = self.host.room_work.fail_dispatch(
@@ -359,7 +370,11 @@ class RoomSessionDispatchService:
                     actor_participant_id=str(targets[0]["id"]),
                     room_turn_id=room_turn_id,
                     previous_accepted_turn_id=previous_accepted_turn_id,
-                    reason="Room runtime rejected the assigned dispatch",
+                    reason=(
+                        "Room dispatch was cancelled before Runtime admission"
+                        if cancelled_only
+                        else "Room Runtime rejected the assigned dispatch"
+                    ),
                 )
             except Exception:
                 pass
@@ -383,7 +398,14 @@ class RoomSessionDispatchService:
             "schemaVersion": "rag-ime.agent-room-message.v1",
             "ok": True,
             "accepted": bool(successful),
-            "status": "accepted" if successful else "rejected",
+            "status": (
+                "accepted"
+                if successful
+                else "cancelled"
+                if cancelled_only
+                else "rejected"
+            ),
+            "cancelled": cancelled_only,
             "executionOwner": "session",
             "phase": (
                 "alignment"
@@ -444,6 +466,7 @@ class RoomSessionDispatchService:
                 session_id,
                 {
                     "message": message,
+                    "clientMessageId": dispatch_id,
                     "_contextSourceToken": self.host._context_source_token,
                     "_contextSource": "room",
                     "_checkpointText": message,
@@ -452,6 +475,74 @@ class RoomSessionDispatchService:
                     "_mediaOwnerRoomId": str(room["id"]),
                 },
             )
+            if accepted.get("accepted") is False:
+                cancelled = (
+                    accepted.get("cancelled") is True
+                    or accepted.get("admissionCancelled") is True
+                )
+                receipt_error = " ".join(
+                    str(accepted.get("error") or "").split()
+                )[:240]
+                error = receipt_error or (
+                    "Pi Runtime cancelled the Room dispatch before admission"
+                    if cancelled
+                    else "Pi Runtime rejected the Room dispatch"
+                )
+                self.host._cancel_room_turn(session_id, room_turn_id)
+                child = decision.get("child") is True
+                self.host.room_events.publish(
+                    room_id=str(room["id"]),
+                    event_type=(
+                        "participant_activity" if child else "turn_failed"
+                    ),
+                    payload=(
+                        {
+                            "activityKind": "child",
+                            "phase": "aborted" if cancelled else "failed",
+                            "status": (
+                                "dispatch_cancelled"
+                                if cancelled
+                                else "dispatch_rejected"
+                            ),
+                            "rootId": room_turn_id,
+                            "childDispatchId": dispatch_id,
+                            "dispatchId": dispatch_id,
+                            "parentDispatchId": str(
+                                decision.get("parentDispatchId") or ""
+                            ),
+                            "error": error,
+                        }
+                        if child
+                        else {
+                            "rootId": room_turn_id,
+                            "dispatchId": dispatch_id,
+                            "status": (
+                                "dispatch_cancelled"
+                                if cancelled
+                                else "dispatch_rejected"
+                            ),
+                            "cancelled": cancelled,
+                            "error": error,
+                        }
+                    ),
+                    turn_id=room_turn_id,
+                    participant_id=participant_id,
+                    source_session_id=session_id,
+                    topic_id=topic_id,
+                )
+                return {
+                    "participantId": participant_id,
+                    "sessionId": session_id,
+                    "dispatchId": dispatch_id,
+                    "accepted": False,
+                    "cancelled": cancelled,
+                    "admissionCancelled": (
+                        accepted.get("admissionCancelled") is True
+                    ),
+                    "status": "cancelled" if cancelled else "rejected",
+                    "sessionTurnId": "",
+                    "error": error,
+                }
             session_turn_id = str(accepted.get("turnId") or "")
             if not session_turn_id:
                 raise RuntimeError("Pi Runtime accepted a Room dispatch without a turnId")
@@ -472,6 +563,8 @@ class RoomSessionDispatchService:
                 "sessionId": session_id,
                 "dispatchId": dispatch_id,
                 "accepted": True,
+                "cancelled": False,
+                "status": "accepted",
                 "sessionTurnId": session_turn_id,
                 "error": "",
             }
@@ -513,6 +606,8 @@ class RoomSessionDispatchService:
                 "sessionId": session_id,
                 "dispatchId": dispatch_id,
                 "accepted": False,
+                "cancelled": False,
+                "status": "failed",
                 "sessionTurnId": "",
                 "error": _public_error(exc),
                 "_exception": exc,

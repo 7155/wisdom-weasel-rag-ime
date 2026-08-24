@@ -196,9 +196,9 @@ class ControlCenterWebHostTests(unittest.TestCase):
     def test_host_keeps_a_native_draggable_titlebar(self) -> None:
         source = (HOST / "RagImeControlWebApp.swift").read_text(encoding="utf-8")
 
-        self.assertNotIn(".fullSizeContentView", source)
-        self.assertIn("window.titlebarAppearsTransparent = false", source)
-        self.assertIn("window.titleVisibility = .visible", source)
+        self.assertIn(".fullSizeContentView", source)
+        self.assertIn("window.titlebarAppearsTransparent = true", source)
+        self.assertIn("window.titleVisibility = .hidden", source)
         self.assertIn("window.isMovable = true", source)
 
     def test_host_exposes_standard_and_control_edit_shortcuts(self) -> None:
@@ -247,7 +247,7 @@ class ControlCenterWebHostTests(unittest.TestCase):
             script,
         )
         first_dist_guard = script.index('"$ROOT/scripts/check_control_center_web_dist.sh"')
-        destructive_app_rebuild = script.index('rm -rf "$APP"')
+        destructive_app_rebuild = script.index('rm -rf "$APP"', first_dist_guard)
         self.assertLess(first_dist_guard, destructive_app_rebuild)
         self.assertIn(
             '"$WEB/dist" native "$FRONTEND_CHANNEL" "$SOURCE_COMMIT"',

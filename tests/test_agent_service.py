@@ -189,7 +189,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
         self.assertEqual(runtime["status"], "disabled")
         roles = self.service.list_roles()
-        self.assertEqual(roles["items"][0]["displayName"], "澄·远")
+        self.assertEqual(roles["items"][0]["displayName"], "Agent 3")
         self.assertEqual(
             [item["roleId"] for item in roles["items"]],
             ["companion-future-v1", "companion-present-v1", "companion-firstlight-v1", "companion-flash-v1"],
@@ -1921,6 +1921,64 @@ class AgentServiceTests(unittest.TestCase):
             "第一轮",
         )
         replay.assert_not_called()
+
+    def test_runtime_disabled_before_prompt_closes_receipt_as_failed(self) -> None:
+        session = self.service.create_session({"title": "本地运行时未启用"})["session"]
+        session_id = str(session["id"])
+        payload = {
+            "message": "这条消息不可能已被 Pi 接纳",
+            "clientMessageId": "runtime-disabled-before-prompt",
+        }
+
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=PiRuntimeError("Pi runtime is disabled"),
+        ):
+            with self.assertRaises(AgentCommandReceiptFailed) as failed:
+                self.service.prompt(session_id, payload)
+
+        self.assertEqual(
+            failed.exception.response_payload(),
+            {
+                "code": "AGENT_COMMAND_FAILED",
+                "commandReceipt": {
+                    "state": "failed",
+                    "clientMessageId": "runtime-disabled-before-prompt",
+                    "causeCode": "PI_RUNTIME_DISABLED",
+                },
+            },
+        )
+
+    def test_runtime_transport_errors_keep_acceptance_unknown(self) -> None:
+        for client_message_id, runtime_error in (
+            (
+                "runtime-prompt-timeout",
+                "Pi Runtime Host command timed out: session.prompt",
+            ),
+            (
+                "runtime-prompt-eof",
+                "Pi Runtime Host stdin closed",
+            ),
+        ):
+            with self.subTest(runtime_error=runtime_error):
+                session = self.service.create_session(
+                    {"title": client_message_id}
+                )["session"]
+                with patch.object(
+                    self.service.runtime,
+                    "prompt",
+                    side_effect=PiRuntimeError(runtime_error),
+                ):
+                    with self.assertRaises(AgentCommandReceiptPending) as pending:
+                        self.service.prompt(
+                            str(session["id"]),
+                            {
+                                "message": "接纳状态无法由传输错误判断",
+                                "clientMessageId": client_message_id,
+                            },
+                        )
+                self.assertEqual(pending.exception.recovery_state, "in_flight")
 
     def test_session_chat_does_not_load_optional_persona_package(self) -> None:
         with patch.object(

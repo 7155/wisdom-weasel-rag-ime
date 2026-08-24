@@ -81,7 +81,7 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_default_brand_uses_wisdom_weasel_name(self) -> None:
+    def test_default_brand_uses_paw_name(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="wisdom-weasel-brand-squirrel-") as tmp:
             app = _write_fake_squirrel_app(Path(tmp) / "Squirrel.app")
@@ -96,11 +96,11 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
             info = _read_plist(app / "Contents" / "Info.plist")
             strings = _read_plist(app / "Contents" / "Resources" / "en.lproj" / "InfoPlist.strings")
 
-        self.assertEqual(info["CFBundleDisplayName"], "澄输入法")
+        self.assertEqual(info["CFBundleDisplayName"], "PAW 输入法")
         self.assertFalse(info["SUEnableAutomaticChecks"])
         self.assertFalse(info["SUAutomaticallyUpdate"])
-        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hans"], "澄输入法")
-        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hant"], "澄输入法（繁体）")
+        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hans"], "PAW 输入法")
+        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hant"], "PAW 输入法（繁体）")
 
 
 def _write_fake_squirrel_app(path: Path) -> Path:

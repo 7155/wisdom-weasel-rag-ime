@@ -354,6 +354,25 @@ class RuntimeTurnBindingTests(unittest.TestCase):
             )
         )
 
+    def test_cancelled_root_cannot_begin_a_late_wake_turn(self) -> None:
+        registry = RoomTurnRegistry()
+        registry.record_cancellation(
+            "room-root:cancelled-before-wake",
+            "cancel:before-wake",
+        )
+
+        with self.assertRaisesRegex(ValueError, "cancelled"):
+            registry.begin(
+                "session:facilitator",
+                "room-root:cancelled-before-wake",
+                dispatch_id="room-wake:late",
+            )
+
+        self.assertEqual(
+            registry.cancelled_root_by_session["session:facilitator"],
+            "room-root:cancelled-before-wake",
+        )
+
 
 class TurnTargetSnapshotTests(unittest.TestCase):
     def setUp(self) -> None:

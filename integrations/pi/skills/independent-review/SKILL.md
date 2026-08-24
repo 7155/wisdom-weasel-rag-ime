@@ -13,8 +13,8 @@ Review a fixed scope without relying on the author's conclusion and without modi
 2. Stop without a verdict when the scope or fixed point cannot be resolved.
 3. Reconstruct expected behavior independently from the source material.
 4. Inspect the complete relevant effect, including downstream consumers and state transitions.
-5. Review requirement fidelity separately from code or artifact quality.
-6. Reproduce material evidence and probe risk-shaped negative paths proportional to the change.
+5. Verify two closeout axes separately: whether the implementation or real path runs, and whether the observed result satisfies the current precise requirement. Review code or artifact quality as a third, non-substituting concern.
+6. Reproduce material evidence and probe risk-shaped negative paths proportional to the change. A pass on one verification axis never implies a pass on the other.
 7. Report only actionable, evidence-backed findings. Keep optional improvements separate from defects.
 8. Write the review document when one is assigned, or return a proposed review delta.
 
@@ -24,6 +24,7 @@ Return the common `AgentResult` envelope with:
 
 ```text
 verdict: clear | clear_with_risk | changes_required
+operability verdict | requirement-satisfaction verdict
 requirement findings | quality findings | evidence
 required fixes | optional improvements | residual risk
 review-document update receipt or proposed delta
@@ -31,6 +32,6 @@ review-document update receipt or proposed delta
 
 ## Not For
 
-Do not modify reviewed work, self-review authored changes, manufacture a defect from preference, allocate repair work, or emit the caller's final result.
+Do not modify reviewed work, self-review authored changes, manufacture a defect from preference, allocate repair work, or emit the caller's final result. Return failures to the supervising Agent with evidence and the owning seam; the reviewer does not own Goal closure.
 
 Example: the Agent that authored a change may verify it, but a genuinely independent verdict must come from a different fixed-scope reviewer.

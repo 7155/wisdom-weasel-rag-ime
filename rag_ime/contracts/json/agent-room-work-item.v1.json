@@ -26,6 +26,7 @@
     "resultSummary",
     "artifactRefs",
     "evidenceRefs",
+    "review",
     "blocker",
     "acceptedTurnId",
     "createdAtMs",
@@ -70,6 +71,36 @@
       "type": "array",
       "maxItems": 24,
       "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operabilityVerdict",
+        "requirementVerdict",
+        "evidenceRefs",
+        "reason",
+        "reviewerParticipantId",
+        "reviewedAtMs"
+      ],
+      "properties": {
+        "operabilityVerdict": {
+          "type": "string",
+          "enum": ["", "passed", "failed", "unverified"]
+        },
+        "requirementVerdict": {
+          "type": "string",
+          "enum": ["", "satisfied", "not_satisfied", "unverified"]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+        },
+        "reason": {"type": "string", "maxLength": 2000},
+        "reviewerParticipantId": {"type": "string"},
+        "reviewedAtMs": {"type": ["integer", "null"], "minimum": 0}
+      }
     },
     "blocker": {"type": "object"},
     "acceptedTurnId": {"type": "string"},

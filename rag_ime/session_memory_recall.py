@@ -79,6 +79,32 @@ _PREVERIFIED_RECALL_TABLES = frozenset(
 )
 
 
+def _visible_memory_owners_for_trigger(
+    *,
+    project: str,
+    role_id: str,
+    session_id: str,
+    room_ids: Sequence[str],
+    trigger: str,
+) -> tuple[tuple[str, str], ...]:
+    owners = agent_visible_memory_owners(
+        project=project,
+        role_id=role_id,
+        session_id=session_id,
+        room_ids=room_ids,
+    )
+    if trigger not in {"room_task", "subagent_task"}:
+        return owners
+    # A delegated TaskBrief is already a bounded context envelope. Injecting
+    # user/shared/role memory from another workspace dilutes that contract and
+    # can make a Partner solve the remembered project instead of its WorkItem.
+    return tuple(
+        owner
+        for owner in owners
+        if owner[0] in {"session", "room"}
+    )
+
+
 class SessionMemoryRecallBuilder:
     """Build one query-aware, role-scoped memory pack for an Agent Session."""
 
@@ -156,11 +182,12 @@ class SessionMemoryRecallBuilder:
         }:
             raise ValueError("unsupported Session memory recall trigger")
 
-        visible_owners = agent_visible_memory_owners(
+        visible_owners = _visible_memory_owners_for_trigger(
             project=self.project,
             role_id=role,
             session_id=session,
             room_ids=room_ids,
+            trigger=normalized_trigger,
         )
         managed = MemoryMaintenanceSettings.load(
             self.db_path,
@@ -235,7 +262,7 @@ class SessionMemoryRecallBuilder:
                     NullEmbeddingProvider(),
                 )
                 effective_embedding = "none"
-                embedding_fallback = requested_embedding != "none"
+            embedding_fallback = requested_embedding != "none"
 
         selected, omitted = _select_hits(
             retrieval.get("memoryHits"),

@@ -65,6 +65,31 @@ class AgentProtocolTests(unittest.TestCase):
             "agent-memory-maintenance-status.v1.json",
         )
 
+    def test_json_schema_boolean_and_array_composition_constraints_are_enforced(self) -> None:
+        schema = {
+            "type": "array",
+            "prefixItems": [{"type": "string"}],
+            "items": False,
+        }
+        validate_contract(["only"], schema)
+        with self.assertRaisesRegex(ContractValidationError, r"\$\[1\]"):
+            validate_contract(["only", "extra"], schema)
+
+        validate_contract("ok", {"anyOf": [False, {"type": "string"}]})
+        validate_contract(4, {
+            "allOf": [{"type": "integer"}, {"minimum": 2}],
+            "oneOf": [{"maximum": 5}, {"minimum": 10}],
+        })
+        with self.assertRaisesRegex(ContractValidationError, "exactly one"):
+            validate_contract(12, {"oneOf": [{"type": "integer"}, {"minimum": 10}]})
+        with self.assertRaisesRegex(ContractValidationError, "forbidden schema"):
+            validate_contract({"secret": "no"}, {
+                "type": "object",
+                "properties": {"secret": False},
+            })
+        with self.assertRaisesRegex(ContractValidationError, "forbidden schema"):
+            validate_contract("blocked", {"not": True})
+
     def test_unknown_or_executable_provider_block_becomes_inert(self) -> None:
         block = normalize_agent_block(
             {

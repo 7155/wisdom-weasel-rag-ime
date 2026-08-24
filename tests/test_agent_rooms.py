@@ -309,6 +309,9 @@ class AgentRoomTests(unittest.TestCase):
         first = hub.publish_projection(projection_key="room-post:post:user:1", **values)
         replay = hub.publish_projection(projection_key="room-post:post:user:1", **values)
 
+        self.assertTrue(hub.has_projection("room-post:post:user:1"))
+        self.assertFalse(hub.has_projection("room-post:missing"))
+
         self.assertIsNotNone(first)
         self.assertEqual(replay, first)
         self.assertEqual(len(observed), 1)
@@ -316,6 +319,23 @@ class AgentRoomTests(unittest.TestCase):
             [event["eventType"] for event in self.store.list_events(room_id)],
             ["user_message"],
         )
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute(
+                "DELETE FROM agent_room_events WHERE event_id = ?",
+                (str(first["eventId"]),),  # type: ignore[index]
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertTrue(hub.has_projection("room-post:post:user:1"))
+        self.assertIsNone(
+            hub.publish_projection(
+                projection_key="room-post:post:user:1",
+                **values,
+            )
+        )
+        self.assertEqual(len(observed), 1)
         with self.assertRaisesRegex(ValueError, "projection key was rebound"):
             hub.publish_projection(
                 projection_key="room-post:post:user:1",
@@ -835,7 +855,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             {"roleId": "companion-future-v1", "roleVersion": "1"},
         )
         future = added["participant"]
-        self.assertEqual(future["displayName"], "澄·远")
+        self.assertEqual(future["displayName"], "Agent 3")
         self.assertEqual(len([p for p in added["room"]["participants"] if p["status"] == "active"]), 3)
 
         with patch.object(
@@ -1573,7 +1593,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             accepted = self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@澄·初 请先诊断状态",
+                    "message": "@Agent 2 请先诊断状态",
                     "clientMessageId": "room-client-1",
                     "retryOfRootId": "room-turn:prior-failed",
                 },
@@ -1581,7 +1601,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             replay = self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@澄·初 请先诊断状态",
+                    "message": "@Agent 2 请先诊断状态",
                     "clientMessageId": "room-client-1",
                     "retryOfRootId": "room-turn:prior-failed",
                 },
@@ -1589,12 +1609,12 @@ class AgentRoomServiceTests(unittest.TestCase):
         prompt.assert_called_once()
         self.assertEqual(prompt.call_args.args[0], str(hermes["sessionId"]))
         prompt_payload = prompt.call_args.args[1]
-        self.assertEqual(prompt_payload["message"], "@澄·初 请先诊断状态")
+        self.assertEqual(prompt_payload["message"], "@Agent 2 请先诊断状态")
         room_context = prompt_payload["_transientContext"]
         self.assertIn("<room-context>", room_context)
         self.assertIn("你本轮从“实施者”的角度参与", room_context)
         self.assertNotIn(str(self.root.resolve()), room_context)
-        self.assertNotIn("@澄·初 请先诊断状态", room_context)
+        self.assertNotIn("@Agent 2 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
         self.assertEqual(accepted["retryOfRootId"], "room-turn:prior-failed")
@@ -1661,6 +1681,56 @@ class AgentRoomServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)
+
+    def test_room_retry_recovers_faulted_participant_session_before_dispatch(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "失败后继续同一 Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        session_id = str(target["sessionId"])
+        self.service.sessions.set_status(session_id, "faulted")
+
+        def recover(value: str) -> dict[str, object]:
+            self.assertEqual(value, session_id)
+            self.service.sessions.set_status(value, "idle")
+            return {"reused": True}
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "ensure",
+                side_effect=recover,
+            ) as ensure,
+            patch.object(
+                self.service,
+                "prompt",
+                return_value={"turnId": "turn:recovered-retry"},
+            ) as prompt,
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "继续完成刚才失败的回合",
+                    "clientMessageId": "room-retry-after-fault",
+                    "retryOfRootId": "room-turn:failed",
+                },
+            )
+
+        ensure.assert_called_once_with(session_id)
+        prompt.assert_called_once()
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(accepted["participant"]["id"], target["id"])
+        self.assertEqual(accepted["retryOfRootId"], "room-turn:failed")
 
     def test_room_messages_always_use_participant_sessions_even_with_retired_kernel_mode(self) -> None:
         """A stale install flag must not resurrect the retired Room runtime."""

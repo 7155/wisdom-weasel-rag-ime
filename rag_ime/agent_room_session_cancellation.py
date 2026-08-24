@@ -21,6 +21,7 @@ class RoomSessionCancellationHost(Protocol):
     background_jobs: Any
     room_intercom: Any
     wake_schedules: Any
+    room_partner_application: Any
     room_turns: RoomTurnRegistry
 
     def abort(
@@ -99,14 +100,20 @@ class RoomSessionCancellationService:
                 return None
             return str(participant.get("id") or "")
 
-        # resolve runs inside the registry lock, keeping participant lookup
-        # and mapping traversal one critical section as the inline loops were.
-        for participant_id, session_id, dispatch_id in (
-            self.host.room_turns.turn_targets(
+        cancellation_receipt_id = f"room-cancel:{uuid.uuid4()}"
+        # Cancellation intent and the target snapshot share the same registry
+        # fence. A wake that begins first is captured by the snapshot; a wake
+        # that begins later observes the cancelled root and is rejected.
+        with self.host.room_turns.lock:
+            self.host.room_turns.record_cancellation(
+                room_turn_id,
+                cancellation_receipt_id,
+            )
+            turn_targets = self.host.room_turns.turn_targets(
                 room_turn_id,
                 resolve=_resolve_participant_id,
             )
-        ):
+        for participant_id, session_id, dispatch_id in turn_targets:
             targets.setdefault(
                 participant_id,
                 {
@@ -127,6 +134,11 @@ class RoomSessionCancellationService:
             for target in targets.values()
             if target["participantId"] not in terminal_participant_ids
         ]
+        partner_dispatches = self.host.room_partner_application.cancel_root(
+            room_id=room_id,
+            root_id=room_turn_id,
+            reason=f"Cancelled with Room root {room_turn_id}",
+        )
         if not active_targets:
             return {
                 "schemaVersion": "rag-ime.agent-room-abort.v1",
@@ -134,16 +146,12 @@ class RoomSessionCancellationService:
                 "roomId": room_id,
                 "roomTurnId": room_turn_id,
                 "status": "already_terminal",
-                "cancellationReceiptId": "",
+                "cancellationReceiptId": cancellation_receipt_id,
                 "surfaces": {},
                 "pendingTargets": [],
+                "partnerDispatches": partner_dispatches,
             }
 
-        cancellation_receipt_id = f"room-cancel:{uuid.uuid4()}"
-        self.host.room_turns.record_cancellation(
-            room_turn_id,
-            cancellation_receipt_id,
-        )
         self.host.room_events.publish(
             room_id=room_id,
             event_type="participant_status",
@@ -373,6 +381,12 @@ class RoomSessionCancellationService:
             [room_turn_id],
             [],
         )
+        surfaces["room_partner_dispatch"] = _root_resource_surface(
+            "room_partner_dispatch",
+            "terminated",
+            [str(item.get("childDispatchId") or "") for item in partner_dispatches],
+            [],
+        )
         pending_targets = [
             surface
             for surface, proof in surfaces.items()
@@ -434,6 +448,7 @@ class RoomSessionCancellationService:
             "surfaces": surfaces,
             "pendingTargets": pending_targets,
             "sessionReceipts": session_abort_receipts,
+            "partnerDispatches": partner_dispatches,
             "event": final_event,
         }
 

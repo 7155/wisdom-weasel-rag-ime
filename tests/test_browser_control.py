@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,56 +12,72 @@ from unittest import mock
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.browser_control import BrowserControlError, BrowserControlService
+from rag_ime.paw_browser_runtime import PawBrowserRuntime
 
 
 class BrowserControlServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
-        extension = root / "extension"
-        extension.mkdir()
-        (extension / "manifest.json").write_text("{}", encoding="utf-8")
+        self.runtime = FakePawBrowserRuntime(root / "direct-profile")
         self.service = BrowserControlService(
             root / "rag-ime.sqlite",
-            extension_root=extension,
             app_support_root=root / "support",
+            browser_runtime=self.runtime,
         )
-        self.service.hello(
-            {
-                "deviceId": "chrome-test",
-                "displayName": "测试 Chrome",
-                "clientKind": "user",
-                "extensionVersion": "1.0.0",
-                "browserName": "Chrome",
-                "activeTabId": 7,
-            }
-        )
+        with self.service._connection() as connection:
+            self.service._set_setting(connection, "managed_pid", str(os.getpid()))
 
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_pairing_and_snapshot_are_shared_across_service_instances(self) -> None:
-        token = str(self.service.pairing()["pairingToken"])
-        self.assertTrue(self.service.authenticate(token))
+    def test_snapshot_is_durable_across_service_instances(self) -> None:
         self.service.push_snapshot(
             {
-                "deviceId": "chrome-test",
+                "deviceId": PawBrowserRuntime.DEVICE_ID,
                 "snapshotId": "snap-test",
-                "tabId": 7,
+                "tabId": self.runtime.tab_id,
                 "url": "https://example.com/docs",
                 "title": "Example Docs",
                 "summary": "2 个可交互元素",
-                "markdown": "# Example\n- [0:e1] link \"Read\"",
+                "markdown": '# Example\n- [0:e1] link "Read"',
                 "interactiveCount": 2,
                 "viewport": {"width": 1280, "height": 720},
             }
         )
-        other = BrowserControlService(self.service.db_path, extension_root=self.service.extension_root)
+        other = BrowserControlService(
+            self.service.db_path,
+            app_support_root=Path(self.temp.name) / "support",
+            browser_runtime=self.runtime,
+        )
 
-        snapshot = other.latest_snapshot(device_id="chrome-test", tab_id=7)
+        snapshot = other.latest_snapshot(
+            device_id=PawBrowserRuntime.DEVICE_ID,
+            tab_id=self.runtime.tab_id,
+        )
+
         self.assertEqual(snapshot["snapshotId"], "snap-test")
         self.assertIn("[0:e1]", snapshot["markdown"])
-        self.assertEqual(other.tabs()["items"][0]["title"], "Example Docs")
+
+    def test_status_uses_created_at_index_for_latest_snapshot(self) -> None:
+        with self.service._connection() as connection:
+            indexes = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA index_list(browser_control_snapshots)"
+                ).fetchall()
+            }
+            plan = " ".join(
+                str(row[3])
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN "
+                    "SELECT * FROM browser_control_snapshots "
+                    "ORDER BY created_at_ms DESC LIMIT 1"
+                ).fetchall()
+            )
+
+        self.assertIn("idx_browser_snapshots_created", indexes)
+        self.assertIn("idx_browser_snapshots_created", plan)
 
     def test_snapshot_urls_redact_credentials_fragments_and_sensitive_queries(self) -> None:
         unsafe_url = (
@@ -70,16 +86,20 @@ class BrowserControlServiceTests(unittest.TestCase):
         )
         self.service.push_snapshot(
             {
-                "deviceId": "chrome-test",
+                "deviceId": PawBrowserRuntime.DEVICE_ID,
                 "snapshotId": "snap-private-url",
-                "tabId": 7,
+                "tabId": self.runtime.tab_id,
                 "url": unsafe_url,
                 "title": "Private URL",
                 "markdown": f"# Private URL\nURL: {unsafe_url}",
             }
         )
 
-        snapshot = self.service.latest_snapshot(device_id="chrome-test", tab_id=7)
+        snapshot = self.service.latest_snapshot(
+            device_id=PawBrowserRuntime.DEVICE_ID,
+            tab_id=self.runtime.tab_id,
+        )
+
         self.assertEqual(
             snapshot["url"],
             "https://example.com/docs?query=browser&access_token=%5Bredacted%5D"
@@ -89,163 +109,62 @@ class BrowserControlServiceTests(unittest.TestCase):
         self.assertNotIn("access_token=private", snapshot["markdown"])
         self.assertNotIn("#account", snapshot["markdown"])
 
-    def test_observe_mode_blocks_write_commands(self) -> None:
-        with self.assertRaisesRegex(BrowserControlError, "observe mode"):
+    def test_inventory_contains_only_the_direct_paw_browser(self) -> None:
+        items = self.service.tabs()["items"]
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["deviceId"], PawBrowserRuntime.DEVICE_ID)
+        self.assertEqual(items[0]["clientKind"], "managed")
+        self.assertEqual(items[0]["targetId"], "DIRECTTARGET")
+        status = self.service.status()
+        self.assertEqual(status["mode"], "managed")
+        self.assertNotIn("permissions", status)
+        self.assertNotIn("extensionPath", status)
+
+    def test_browser_rejects_any_device_outside_the_isolated_profile(self) -> None:
+        with self.assertRaisesRegex(BrowserControlError, "only target PAW Browser"):
             self.service.submit_command(
                 "navigate",
-                {"url": "https://example.com"},
-                timeout_seconds=1,
-            )
-
-    def test_command_queue_round_trip_strips_large_snapshot_from_result(self) -> None:
-        self.service.set_mode("codrive")
-
-        def extension_worker() -> None:
-            command = self.service.next_command(
-                device_id="chrome-test",
-                client_id="chrome-test:worker",
-                timeout_seconds=2,
-            )["command"]
-            assert isinstance(command, dict)
-            self.service.complete_command(
                 {
-                    "commandId": command["commandId"],
-                    "result": {
-                        "ok": True,
-                        "summary": "已打开页面",
-                        "tabId": 7,
-                        "url": "https://example.com/next",
-                        "title": "Next",
-                        "markdown": "# Next\n- [0:e1] button \"Continue\"",
-                        "interactiveCount": 1,
-                    },
-                }
+                    "deviceId": "daily-chrome",
+                    "url": "https://example.com/not-allowed",
+                },
             )
 
-        worker = threading.Thread(target=extension_worker)
-        worker.start()
-        result = self.service.submit_command(
-            "navigate",
-            {"url": "https://example.com/next", "tabId": 7},
-            session_id="session-test",
-            timeout_seconds=3,
-        )
-        worker.join(timeout=3)
+    def test_direct_commands_and_trace_share_the_selected_browser(self) -> None:
+        for action in ("back", "forward", "reload"):
+            result = self.service.submit_command(
+                action,
+                {"deviceId": PawBrowserRuntime.DEVICE_ID, "tabId": self.runtime.tab_id},
+                session_id="session-test",
+            )
+            self.assertTrue(result["ok"])
 
-        self.assertTrue(result["ok"])
-        self.assertNotIn("markdown", result["result"])
-        self.assertTrue(result["result"]["snapshotId"].startswith("snap_"))
-        self.assertIn("Next", self.service.latest_snapshot(tab_id=7)["markdown"])
+        self.assertEqual(self.runtime.actions, ["back", "forward", "reload"])
+        traces = self.service.traces()["items"]
+        self.assertEqual([item["action"] for item in traces[:3]], ["reload", "forward", "back"])
+        self.assertTrue(all(item["sourceKind"] == "agent" for item in traces[:3]))
 
     def test_screenshot_is_stored_behind_bounded_binary_route(self) -> None:
-        png = base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode("ascii")
-        self.service.set_mode("codrive")
-
-        def extension_worker() -> None:
-            command = self.service.next_command(
-                device_id="chrome-test",
-                client_id="chrome-test:worker",
-                timeout_seconds=2,
-            )["command"]
-            assert isinstance(command, dict)
-            self.service.complete_command(
-                {
-                    "commandId": command["commandId"],
-                    "result": {
-                        "ok": True,
-                        "tabId": 7,
-                        "url": "https://example.com",
-                        "title": "Example",
-                        "screenshotDataUrl": f"data:image/png;base64,{png}",
-                    },
-                }
-            )
-
-        worker = threading.Thread(target=extension_worker)
-        worker.start()
-        result = self.service.submit_command("screenshot", {"tabId": 7}, timeout_seconds=3)
-        worker.join(timeout=3)
+        result = self.service.submit_command(
+            "screenshot",
+            {"tabId": self.runtime.tab_id},
+            session_id="control-center",
+        )
         snapshot_id = str(result["result"]["snapshotId"])
+
         mime_type, data = self.service.snapshot_image(snapshot_id)
+
         self.assertEqual(mime_type, "image/png")
-        self.assertEqual(data, b"\x89PNG\r\n\x1a\nfixture")
+        self.assertEqual(data, FakePawBrowserRuntime.PNG_BYTES)
+        trace = self.service.traces()["items"][0]
+        self.assertEqual(trace["sourceKind"], "human")
+        self.assertEqual(trace["result"]["snapshotId"], snapshot_id)
 
-    def test_permissions_require_explicit_resolution(self) -> None:
-        prompt = self.service.request_permission(
-            {
-                "deviceId": "chrome-test",
-                "origin": "https://example.com/account",
-                "action": "domain_transition",
-                "reason": "即将进入新的站点",
-            }
-        )
-        prompt_id = str(prompt["promptId"])
-        self.assertEqual(self.service.permission_status(prompt_id)["status"], "pending")
-
-        resolved = self.service.decide_permission(prompt_id, "allow_once")
-        self.assertEqual(resolved["decision"], "allow_once")
-        self.assertEqual(self.service.permission_status(prompt_id)["status"], "resolved")
-
-        reused = self.service.request_permission(
-            {
-                "deviceId": "chrome-test",
-                "origin": "https://example.com/another-page",
-                "action": "domain_transition",
-                "reason": "再次进入同一站点",
-            }
-        )
-        self.assertTrue(reused["authorized"])
-        self.assertEqual(reused["decision"], "allow_once")
-        self.assertEqual(self.service.permission_status(prompt_id)["status"], "consumed")
-
-        next_prompt = self.service.request_permission(
-            {
-                "deviceId": "chrome-test",
-                "origin": "https://example.com/third-page",
-                "action": "domain_transition",
-                "reason": "单次授权已经消费",
-            }
-        )
-        self.assertFalse(next_prompt["authorized"])
-        self.assertNotEqual(next_prompt["promptId"], prompt_id)
-
-    def test_site_permission_is_reused_without_a_new_prompt(self) -> None:
-        prompt = self.service.request_permission(
-            {
-                "deviceId": "chrome-test",
-                "origin": "https://docs.example.com/guide",
-                "action": "domain_transition",
-                "reason": "进入文档站点",
-            }
-        )
-        self.service.decide_permission(str(prompt["promptId"]), "allow_site")
-
-        reused = self.service.request_permission(
-            {
-                "deviceId": "chrome-test",
-                "origin": "https://docs.example.com/reference",
-                "action": "domain_transition",
-                "reason": "再次进入文档站点",
-            }
-        )
-        self.assertTrue(reused["authorized"])
-        self.assertEqual(reused["decision"], "allow_site")
-
-    def test_agent_tool_reads_status_and_invalidates_stale_write_approval(self) -> None:
-        self.service.push_snapshot(
-            {
-                "deviceId": "chrome-test",
-                "snapshotId": "snap-agent",
-                "tabId": 7,
-                "url": "https://example.com",
-                "title": "Agent Page",
-                "markdown": '# Agent Page\n- [0:e1] button "Continue"',
-            }
-        )
-        self.service.set_mode("codrive")
+    def test_agent_browser_action_runs_without_per_action_approval(self) -> None:
         sessions = AgentSessionStore(Path(self.temp.name) / "agent.sqlite")
         sessions.initialize()
-        session = sessions.create(title="browser tool", created_at_ms=1)
+        session = sessions.create(title="managed browser", created_at_ms=1)
         gateway = ControlToolGateway(
             sessions=sessions,
             management=object(),
@@ -253,161 +172,297 @@ class BrowserControlServiceTests(unittest.TestCase):
             project="browser-test",
             browser_control=self.service,
         )
-        call = {
-            "schemaVersion": "rag-ime.agent-tool-call.v1",
-            "sessionId": session["id"],
-            "tool": "browser",
-            "toolCallId": "tool:browser",
-        }
 
-        status = gateway.execute({**call, "args": {"op": "status"}})["result"]
-        self.assertTrue(status["connected"])
-        self.assertNotIn("extensionPath", status)
-
-        prepared = gateway.execute(
+        response = gateway.execute(
             {
-                **call,
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session["id"],
+                "tool": "browser",
+                "toolCallId": "tool:browser:managed-direct",
                 "args": {
-                    "op": "click",
-                    "deviceId": "chrome-test",
-                    "tabId": 7,
-                    "refId": "0:e1",
-                },
-            }
-        )["result"]
-        approval = prepared["approval"]
-        self.assertEqual(approval["preview"]["baseState"]["snapshotId"], "snap-agent")
-        decided = sessions.decide_approval(
-            approval["approvalId"],
-            approved=True,
-            payload_sha256=approval["payloadSha256"],
-        )
-        self.service.push_snapshot(
-            {
-                "deviceId": "chrome-test",
-                "snapshotId": "snap-agent-updated",
-                "tabId": 7,
-                "url": "https://example.com",
-                "title": "Updated Agent Page",
-                "markdown": '# Updated Agent Page\n- [0:e1] button "Continue"',
-            }
-        )
-        with self.assertRaisesRegex(ValueError, "browser page changed"):
-            gateway.apply_approval(decided)
-
-        prepared = gateway.execute(
-            {
-                **call,
-                "toolCallId": "tool:browser:mode",
-                "args": {
-                    "op": "click",
-                    "deviceId": "chrome-test",
-                    "tabId": 7,
-                    "refId": "0:e1",
-                },
-            }
-        )["result"]
-        approval = prepared["approval"]
-        decided = sessions.decide_approval(
-            approval["approvalId"],
-            approved=True,
-            payload_sha256=approval["payloadSha256"],
-        )
-        self.service.set_mode("managed")
-        with self.assertRaisesRegex(ValueError, "browser mode changed"):
-            gateway.apply_approval(decided)
-
-    def test_managed_mode_never_falls_back_to_user_browser(self) -> None:
-        self.service.set_mode("managed")
-
-        with self.assertRaisesRegex(BrowserControlError, "daily browser"):
-            self.service.submit_command(
-                "navigate",
-                {
-                    "deviceId": "chrome-test",
+                    "op": "navigate",
                     "url": "https://example.com/managed",
                 },
-                timeout_seconds=1,
-            )
-
-        with self.assertRaisesRegex(BrowserControlError, "managed browser extension"):
-            self.service.submit_command(
-                "navigate",
-                {"url": "https://example.com/managed"},
-                timeout_seconds=1,
-            )
-
-    def test_managed_client_requires_bootstrap_token(self) -> None:
-        payload = {
-            "deviceId": "chrome-managed",
-            "displayName": "托管 Chrome",
-            "clientKind": "managed",
-            "extensionVersion": "1.0.0",
-            "browserName": "Chrome",
-            "activeTabId": 9,
-        }
-        with self.assertRaisesRegex(BrowserControlError, "bootstrap token"):
-            self.service.hello(payload)
-
-        with self.service._connection() as connection:
-            self.service._set_setting(
-                connection,
-                "managed_bootstrap_token",
-                "managed-test-token",
-            )
-        response = self.service.hello(
-            {
-                **payload,
-                "managedBootstrapToken": "managed-test-token",
             }
-        )
-        self.assertEqual(response["deviceId"], "chrome-managed")
+        )["result"]
 
-        self.service.set_mode("managed")
-        selected = self.service._select_device(
-            requested="chrome-managed",
-            prefer_managed=True,
-        )
-        self.assertEqual(selected, "chrome-managed")
+        self.assertNotIn("approvalRequired", response)
+        self.assertEqual(response["status"], "completed")
+        self.assertEqual(response["action"], "navigate")
+        self.assertEqual(self.runtime.actions, ["navigate"])
+        trace = self.service.traces()["items"][0]
+        self.assertEqual(trace["sessionId"], session["id"])
+        self.assertEqual(trace["sourceKind"], "agent")
+        self.assertEqual(trace["target"], "https://example.com/managed")
 
-    def test_managed_browser_launches_with_isolated_bootstrap(self) -> None:
+    def test_legacy_pairing_and_permission_apis_are_absent(self) -> None:
+        for name in (
+            "pairing",
+            "authenticate",
+            "hello",
+            "set_mode",
+            "next_command",
+            "request_permission",
+            "decide_permission",
+        ):
+            self.assertFalse(hasattr(self.service, name), name)
+
+    def test_ego_script_attaches_to_the_existing_paw_browser(self) -> None:
+        captured: dict[str, object] = {}
+
+        def start_ego(command: list[str], **kwargs: object) -> FakeEgoProcess:
+            captured["command"] = command
+            captured["env"] = kwargs.get("env")
+            environment = kwargs.get("env")
+            assert isinstance(environment, dict)
+            return FakeEgoProcess(Path(str(environment["EGO_PAW_TRACE_PATH"])))
+
+        self.service.ego_process_runner = start_ego
+        with (
+            mock.patch.object(self.service, "_ego_node", return_value=Path("/usr/bin/node")),
+            mock.patch.object(self.service, "_ensure_ego_host") as ensure_host,
+        ):
+            result = self.service.submit_command(
+                "run",
+                {
+                    "script": "const task = await taskSpaces.useOrCreate('test'); console.log(task.id)",
+                    "timeoutMs": 3_000,
+                },
+                session_id="session-ego-test",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["result"]["stdout"], '{"taskSpaceId":2}\n')
+        self.assertFalse(result["result"]["secondBrowserProcess"])
+        self.assertIn("--permission", captured["command"])
+        self.assertFalse(any("allow-child-process" in value for value in captured["command"]))
+        self.assertTrue(any("allow-fs-write" in value for value in captured["command"]))
+        environment = captured["env"]
+        self.assertEqual(environment["EGO_CDP_PORT"], "9222")
+        self.assertEqual(environment["EGO_USER_DATA_DIR"], str(self.runtime.profile_path))
+        ensure_host.assert_called_once()
+        steps = self.service.traces()["items"][0]["steps"]
+        self.assertEqual(
+            [(step["event"], step["action"]) for step in steps],
+            [("started", "click"), ("completed", "click")],
+        )
+
+    def test_ego_host_restarts_when_doctor_owns_a_stale_cdp_port(self) -> None:
+        doctor_calls: list[list[str]] = []
+        responses = iter(
+            [
+                SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "cdpPort": 9111,
+                            "cdpUp": False,
+                            "profileDir": str(self.runtime.profile_path),
+                        }
+                    ),
+                    stderr="",
+                ),
+                SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "cdpPort": 9222,
+                            "cdpUp": True,
+                            "profileDir": str(self.runtime.profile_path),
+                        }
+                    ),
+                    stderr="",
+                ),
+            ]
+        )
+
+        def check(command: list[str], **_kwargs: object) -> SimpleNamespace:
+            doctor_calls.append(command)
+            return next(responses)
+
+        self.service.ego_check_runner = check
+        environment = {
+            "EGO_CDP_PORT": "9222",
+            "EGO_USER_DATA_DIR": str(self.runtime.profile_path),
+        }
+        with (
+            mock.patch.object(self.service, "_ego_runtime_available", return_value=True),
+            mock.patch.object(self.service, "_stop_ego_host", return_value=True) as stop_host,
+        ):
+            self.service._ensure_ego_host(
+                node=Path("/usr/bin/node"),
+                environment=environment,
+            )
+
+        stop_host.assert_called_once_with()
+        self.assertEqual(len(doctor_calls), 2)
+
+    def test_stop_terminates_the_active_ego_script_and_cancels_visible_trace(self) -> None:
+        with self.service._connection() as connection:
+            self.service._set_setting(connection, "ego_runner_pid", "424242")
+            self.service._set_setting(connection, "ego_runner_command_id", "bcmd-active")
+            connection.execute(
+                """
+                INSERT INTO browser_control_commands(
+                    command_id, device_id, session_id, action, payload_json,
+                    status, created_at_ms
+                ) VALUES ('bcmd-active', ?, 'session-test', 'run', '{}', 'claimed', 1)
+                """,
+                (PawBrowserRuntime.DEVICE_ID,),
+            )
+        with (
+            mock.patch.object(self.service, "_pid_running", return_value=True),
+            mock.patch.object(self.service, "_terminate_process_group") as terminate,
+        ):
+            result = self.service.stop()
+
+        self.assertTrue(result["egoRunnerStopped"])
+        self.assertEqual(result["cancelled"], 1)
+        terminate.assert_called_once_with(424242)
+        trace = self.service.traces()["items"][0]
+        self.assertEqual(trace["status"], "cancelled")
+        with self.service._connection() as connection:
+            self.assertEqual(self.service._setting(connection, "ego_runner_pid"), "")
+
+    def test_managed_browser_launches_an_isolated_direct_cdp_profile(self) -> None:
+        root = Path(self.temp.name)
+        runtime = FakePawBrowserRuntime(root / "launch-profile")
+        service = BrowserControlService(
+            root / "launch.sqlite",
+            app_support_root=root / "launch-support",
+            browser_runtime=runtime,
+        )
         captured: list[str] = []
-        self.service.command_runner = lambda command, **_kwargs: (
-            captured.extend(command) or SimpleNamespace(pid=os.getpid())
-        )
-        fake_chrome = Path(self.temp.name) / "Google Chrome"
+
+        def launch(command: list[str], **_kwargs: object) -> SimpleNamespace:
+            captured.extend(command)
+            return SimpleNamespace(pid=os.getpid())
+
+        service.command_runner = launch
+        fake_chrome = root / "Google Chrome"
         fake_chrome.write_text("", encoding="utf-8")
 
-        with mock.patch.object(
-            self.service,
-            "_chrome_executable",
-            return_value=fake_chrome,
-        ):
-            response = self.service.start_managed()
+        with mock.patch.object(service, "_chrome_executable", return_value=fake_chrome):
+            response = service.start_managed()
 
         self.assertTrue(response["running"])
-        self.assertIn(
-            f"--user-data-dir={self.service.app_support_root / 'BrowserCopilot' / 'managed-profile'}",
-            captured,
+        self.assertIn(f"--user-data-dir={runtime.profile_path}", captured)
+        self.assertIn("--remote-debugging-address=127.0.0.1", captured)
+        self.assertIn("--remote-debugging-port=0", captured)
+        self.assertFalse(any("extension" in item for item in captured))
+        self.assertFalse(any("bootstrap" in item for item in captured))
+        self.assertEqual(response["controlProtocol"], "ego-browser")
+        self.assertEqual(response["browserTransport"], "cdp")
+        self.assertFalse(response["egoBrowser"]["secondBrowserProcess"])
+
+    def test_managed_browser_adopts_the_live_electron_host_without_launching_chrome(self) -> None:
+        root = Path(self.temp.name)
+        runtime = FakePawBrowserRuntime(root / "electron-profile")
+        runtime.host_pid_file.parent.mkdir(parents=True, exist_ok=True)
+        runtime.host_pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        service = BrowserControlService(
+            root / "electron.sqlite",
+            app_support_root=root / "electron-support",
+            browser_runtime=runtime,
         )
-        bootstrap_url = next(
-            item
-            for item in captured
-            if item.startswith("http://127.0.0.1:8766/api/browser/managed/bootstrap")
+
+        with mock.patch.object(service, "_chrome_executable") as chrome:
+            response = service.start_managed()
+
+        chrome.assert_not_called()
+        self.assertTrue(response["running"])
+        self.assertTrue(response["connected"])
+        self.assertEqual(response["hostKind"], "electron-webview")
+
+
+class FakePawBrowserRuntime:
+    PNG_BYTES = b"\x89PNG\r\n\x1a\nfixture"
+
+    def __init__(self, profile_path: Path) -> None:
+        self.profile_path = profile_path
+        self.host_pid_file = profile_path / "PAWBrowserHost.pid"
+        self.tab_id = PawBrowserRuntime.tab_id("DIRECTTARGET")
+        self.actions: list[str] = []
+
+    def port(self) -> int:
+        return 9222
+
+    def version(self, _port: int) -> dict[str, object]:
+        return {"Browser": "Chrome/Test"}
+
+    def tabs(self, _port: int) -> list[dict[str, object]]:
+        return [{
+            "deviceId": PawBrowserRuntime.DEVICE_ID,
+            "deviceName": PawBrowserRuntime.DISPLAY_NAME,
+            "clientKind": "managed",
+            "targetId": "DIRECTTARGET",
+            "tabId": self.tab_id,
+            "title": "Direct",
+            "url": "https://example.com",
+            "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/DIRECTTARGET",
+            "active": True,
+            "connected": True,
+        }]
+
+    def execute(self, _port: int, action: str, payload: object) -> dict[str, object]:
+        self.actions.append(action)
+        result: dict[str, object] = {
+            "ok": True,
+            "summary": f"history:{action}" if action in {"back", "forward"} else "已打开页面",
+            "tabId": self.tab_id,
+            "url": "https://example.com/managed",
+            "title": "Managed",
+            "markdown": "# Managed",
+            "interactiveCount": 0,
+            "viewport": {},
+        }
+        if action == "screenshot":
+            encoded = base64.b64encode(self.PNG_BYTES).decode("ascii")
+            result["screenshotDataUrl"] = f"data:image/png;base64,{encoded}"
+        return result
+
+    def prepare_launch(self) -> None:
+        self.profile_path.mkdir(parents=True, exist_ok=True)
+
+    def launch_command(self, executable: Path) -> list[str]:
+        return [
+            str(executable),
+            f"--user-data-dir={self.profile_path}",
+            "--remote-debugging-address=127.0.0.1",
+            "--remote-debugging-port=0",
+        ]
+
+    def wait_for_port(self) -> int:
+        return 9222
+
+
+class FakeEgoProcess:
+    pid = 424243
+    returncode = 0
+
+    def __init__(self, trace_path: Path) -> None:
+        self.trace_path = trace_path
+
+    def communicate(
+        self,
+        *,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[str, str]:
+        del input, timeout
+        self.trace_path.write_text(
+            "\n".join(
+                [
+                    '{"schemaVersion":"paw.ego-browser-step.v1","event":"started","action":"click","target":"getByRole(button): Continue","atMs":10}',
+                    '{"schemaVersion":"paw.ego-browser-step.v1","event":"completed","action":"click","target":"getByRole(button): Continue","atMs":20}',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
         )
-        bootstrap_token = bootstrap_url.split("token=", 1)[1]
-        managed = self.service.hello(
-            {
-                "deviceId": "chrome-managed-launch",
-                "displayName": "托管 Chrome",
-                "clientKind": "managed",
-                "extensionVersion": "1.0.0",
-                "browserName": "Chrome",
-                "activeTabId": 11,
-                "managedBootstrapToken": bootstrap_token,
-            }
-        )
-        self.assertEqual(managed["mode"], "managed")
+        return '{"taskSpaceId":2}\n', ""
 
 
 if __name__ == "__main__":

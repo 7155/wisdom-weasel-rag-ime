@@ -57,6 +57,7 @@ __all__ = [
     "managed_media_content_url",
     "pi_message_id",
     "pi_message_completes_public_turn",
+    "pi_message_continues_public_turn",
     "pi_message_is_public",
     "pi_message_payload",
     "provider_retry_status",
@@ -325,21 +326,27 @@ _TRANSIENT_CONTEXT_PREFIX = "RAG_IME_TRANSIENT_CONTEXT_V1\n"
 _TRANSIENT_CONTEXT_SCHEMA = "rag-ime.runtime-prompt.v1"
 
 
+def _transient_context_message(text: str) -> str | None:
+    if not text.startswith(_TRANSIENT_CONTEXT_PREFIX):
+        return None
+    try:
+        envelope = json.loads(text[len(_TRANSIENT_CONTEXT_PREFIX) :])
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if (
+        not isinstance(envelope, Mapping)
+        or envelope.get("schemaVersion") != _TRANSIENT_CONTEXT_SCHEMA
+        or not isinstance(envelope.get("message"), str)
+    ):
+        return None
+    return str(envelope["message"]).strip()
+
+
 def visible_message_text(role: str, text: str) -> str:
     if role != "user":
         return text
     if text.startswith(_TRANSIENT_CONTEXT_PREFIX):
-        try:
-            envelope = json.loads(text[len(_TRANSIENT_CONTEXT_PREFIX) :])
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return ""
-        if (
-            not isinstance(envelope, Mapping)
-            or envelope.get("schemaVersion") != _TRANSIENT_CONTEXT_SCHEMA
-            or not isinstance(envelope.get("message"), str)
-        ):
-            return ""
-        return str(envelope["message"]).strip()
+        return _transient_context_message(text) or ""
     tagged = re.search(
         r"<(?:agent|rag-ime)-user-query>\s*(.*?)\s*</(?:agent|rag-ime)-user-query>",
         text,
@@ -354,6 +361,39 @@ def visible_message_text(role: str, text: str) -> str:
         if question:
             return question
     return text
+
+
+def pi_message_continues_public_turn(raw: Mapping[str, object]) -> bool:
+    """Whether a durable Pi user entry belongs to the active PAW turn.
+
+    Pi decodes the provider-only context envelope for ``session.prompt`` before
+    writing the initial user entry. Native Steer/follow-up entries are appended
+    while that PAW turn is already active and retain the envelope in Pi's
+    transcript. The versioned schema marker is therefore the durable, non-temporal
+    boundary: keep its public ``message`` in history, but do not open another
+    top-level conversation turn for it.
+    """
+
+    if str(raw.get("role") or "").strip().lower() != "user":
+        return False
+    content = raw.get("content")
+    texts: list[str]
+    if isinstance(content, str):
+        texts = [content]
+    elif isinstance(content, list):
+        texts = [
+            str(item.get("text") or "")
+            for item in content
+            if isinstance(item, Mapping)
+            and str(item.get("type") or "") == "text"
+        ]
+    else:
+        return False
+    return any(
+        text.startswith(_TRANSIENT_CONTEXT_PREFIX)
+        and _transient_context_message(text) is not None
+        for text in texts
+    )
 
 
 def public_file_name(value: str) -> str:

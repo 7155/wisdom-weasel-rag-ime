@@ -1099,7 +1099,8 @@ class AgentSessionStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT event_id, sequence, event_type, created_at_ms
+                SELECT event_id, sequence, event_type, created_at_ms,
+                       redacted_summary
                 FROM agent_runtime_events
                 WHERE session_id = ? AND turn_id = ?
                   AND event_type IN ('turn_completed', 'turn_failed')
@@ -1117,6 +1118,7 @@ class AgentSessionStore:
             "sequence": int(row["sequence"]),
             "eventType": str(row["event_type"]),
             "createdAtMs": int(row["created_at_ms"]),
+            "status": str(row["redacted_summary"] or ""),
         }
 
     def latest_runtime_turn_id(self, session_id: str) -> str:

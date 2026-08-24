@@ -1492,6 +1492,20 @@ class AgentRoomStore:
             projection_key=normalized_key,
         )
 
+    def has_projection(self, projection_key: str) -> bool:
+        normalized_key = str(projection_key or "").strip()
+        if not normalized_key:
+            return False
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM agent_room_public_projection_receipts
+                WHERE projection_key = ? LIMIT 1
+                """,
+                (normalized_key,),
+            ).fetchone()
+        return row is not None
+
     def _append_event(
         self,
         *,
@@ -1919,6 +1933,9 @@ class AgentRoomEventHub:
             self._fanout(event)
         return event
 
+    def has_projection(self, projection_key: str) -> bool:
+        return self.store.has_projection(projection_key)
+
     def _fanout(self, event: dict[str, object]) -> None:
         with self._lock:
             subscribers = tuple(
@@ -1978,23 +1995,24 @@ class AgentRoomEventHub:
             )
             if gap:
                 replay = [
-                    self.store.append_event(
+                    _room_replay_gap_event(
                         room_id=room_id,
-                        event_type="snapshot_required",
-                        payload={
-                            "reason": "room_event_replay_gap",
-                            "afterEventId": after_event_id,
-                        },
+                        after_event_id=after_event_id,
+                        last_sequence=last_sequence,
                     )
                 ]
             else:
                 replay = self.store.list_events(room_id, after_sequence=after_sequence or 0, limit=2000)
             self._subscribers.setdefault(room_id, set()).add(subscriber)
-        delivered_sequence = after_sequence or 0
+        # A replay-gap control is subscriber-local and therefore cannot advance
+        # the durable Room cursor. Anchor live delivery at the shared high-water
+        # mark so even a future client cursor can recover after taking a snapshot.
+        delivered_sequence = last_sequence if gap else after_sequence or 0
         try:
             yield b": connected\n\n"
             for event in replay:
-                delivered_sequence = max(delivered_sequence, int(event["sequence"]))
+                if not gap:
+                    delivered_sequence = max(delivered_sequence, int(event["sequence"]))
                 yield _room_event_sse(event)
             while True:
                 try:
@@ -2191,10 +2209,41 @@ def _room_projection_hash(
 def _room_event_sse(event: Mapping[str, object]) -> bytes:
     body = json.dumps(dict(event), ensure_ascii=False, separators=(",", ":"))
     return (
-        f"id: {event['eventId']}\n"
+        f"id: {event['resumeToken']}\n"
         f"event: {event['eventType']}\n"
         f"data: {body}\n\n"
     ).encode("utf-8")
+
+
+def _room_replay_gap_event(
+    *,
+    room_id: str,
+    after_event_id: str,
+    last_sequence: int,
+) -> dict[str, object]:
+    """Build a transient recovery control without moving shared Room history."""
+
+    cursor = max(0, int(last_sequence))
+    resume_token = f"{room_id}:{cursor}"
+    event = {
+        "schemaVersion": "rag-ime.agent-room-event.v1",
+        "eventId": f"{room_id}:snapshot-required:{uuid.uuid4().hex}",
+        "roomId": room_id,
+        "sequence": cursor + 1,
+        "turnId": "",
+        "eventType": "snapshot_required",
+        "participantId": None,
+        "sourceSessionId": "",
+        "topicId": "",
+        "createdAtMs": _timestamp(None),
+        "payload": {
+            "reason": "room_event_replay_gap",
+            "afterEventId": after_event_id,
+        },
+        "resumeToken": resume_token,
+    }
+    validate_contract(event, "agent-room-event.v1.json")
+    return event
 
 
 def _room_event_sequence(room_id: str, event_id: str) -> int | None:

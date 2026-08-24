@@ -181,6 +181,34 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             ),
             APPROVAL_AUTO,
         )
+        with tempfile.TemporaryDirectory(prefix="paw-background-policy-") as directory:
+            root = Path(directory).resolve()
+            job_roots = [str(root)]
+            job_session = {
+                **session,
+                "mode": "coordinator",
+                "workspaceRoots": job_roots,
+                "workspaceScopeSha256": workspace_scope_sha256(job_roots),
+            }
+            harness = WorkspaceHarness(executor=lambda _prepared: {})
+            prepared_job = harness.prepare_background_command(
+                job_session,
+                {
+                    "command": "python3 -m http.server 4187 -d dist",
+                    "cwd": str(root),
+                    "allowNetwork": False,
+                },
+            )
+            self.assertEqual(
+                approval_strategy(
+                    job_session,
+                    tool="workspace_job",
+                    operation="start",
+                    preview=harness.preview(prepared_job),
+                    risk_level="R2",
+                ),
+                APPROVAL_AUTO,
+            )
         for command in (
             "rm -rf /workspace/project/cache",
             "cat /workspace/project/.env",

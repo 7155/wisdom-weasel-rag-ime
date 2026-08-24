@@ -1,15 +1,17 @@
 ---
 name: plugin-creator
 description: Search for, inspect, acquire, update, roll back, or create a native Pi Package for Personal Agent Workbench. Use when a task needs a reusable extension, Skill, prompt, or theme that is not already available, or when the user asks to install a package from npm, Git, or a local directory. Do not use for ordinary task logic already covered by an existing Tool, Skill, hook, or package; for one-off file edits that do not justify a reusable capability; for secrets; or to bypass the product confirmation that applies a package change.
-when:
-  - 用户要求管理或创建可复用 Pi Package
-  - 缺少可复用 Tool 或 Skill
-does: 搜索、校验并生成安装预览；缺少时创建包。
-input: 能力、来源和验收。
-output: 包、校验与安装提议。
-notFor:
-  - 普通任务或一次性修改
-  - 密钥、不明代码或绕过确认
+metadata:
+  routing:
+    when:
+      - 用户要求管理或创建可复用 Pi Package
+      - 缺少可复用 Tool 或 Skill
+    does: 搜索、校验并生成安装预览；缺少时创建包。
+    input: 能力、来源和验收。
+    output: 包、校验与安装提议。
+    notFor:
+      - 普通任务或一次性修改
+      - 密钥、不明代码或绕过确认
 ---
 
 # Pi Package Creator

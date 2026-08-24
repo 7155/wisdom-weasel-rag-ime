@@ -1,15 +1,17 @@
 ---
 name: memory-curation
 description: Review evidence and prepare governed changes to durable personal memory when the user explicitly asks, a verified task yields reusable knowledge, or the idle curator runs.
-when:
-  - 用户要求管理或回滚记忆
-  - 验收产生复用事实或低频维护
-does: 据授权证据生成待审草案。
-input: 意图、证据、记忆与冲突。
-output: 变更、审批与回滚。
-notFor:
-  - 普通聊天、临时进度或 Room 私有过程
-  - 直写数据库、自动批准或整段保存
+metadata:
+  routing:
+    when:
+      - 用户要求管理或回滚记忆
+      - 验收产生复用事实或低频维护
+    does: 据授权证据生成待审草案。
+    input: 意图、证据、记忆与冲突。
+    output: 变更、审批与回滚。
+    notFor:
+      - 普通聊天、临时进度或 Room 私有过程
+      - 直写数据库、自动批准或整段保存
 ---
 
 # Memory Curation

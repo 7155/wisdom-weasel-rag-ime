@@ -9,18 +9,18 @@ Resolve uncertainty without turning inspectable facts or reversible defaults int
 
 ## Workflow
 
-1. Read the Session-provided request reference, corrections, constraints, and acceptance criteria.
+1. Read the verbatim request evidence, source refs, later corrections, current precise requirement, constraints, and acceptance criteria.
 2. Inspect available source, configuration, documentation, and runtime evidence before asking the user.
 3. Separate facts, reversible defaults within current authority, external blockers, and material user-owned choices.
 4. Apply a reversible default when it preserves the request. Ask only when the answer changes a material boundary.
 5. Present the smallest independent question group in the user's language, with genuinely different options and a recommendation when evidence supports one.
 6. When explicit Grill Mode is requested, challenge one material branch at a time and wait for the answer before continuing.
-7. Record accepted decisions and their source references. Update the owned brief only when the decision materially changes shared understanding.
+7. Record accepted decisions and their source references. Before planning or implementation, make sure the owned brief links the original wording and states the current precise requirement and acceptance; update it when that meaning materially changes.
 
 ## Document Responsibility
 
 - Update the current brief or decision section; do not create a parallel requirements document.
-- Preserve the original request by reference. Append corrections instead of rewriting history.
+- Preserve the original request verbatim or by an exact evidence reference. Append corrections and map them to the current precise requirement instead of rewriting history.
 - Include sources for derived facts and identify unresolved assumptions.
 
 ## Output
@@ -28,6 +28,7 @@ Resolve uncertainty without turning inspectable facts or reversible defaults int
 Return the common `AgentResult` envelope with:
 
 ```text
+source and requirement refs | current precise requirement and acceptance
 decisions | defaults used | remaining questions | inspected evidence
 brief update receipt or proposed delta | residual uncertainty
 ```

@@ -96,7 +96,12 @@ _ALWAYS_MANUAL_EFFECTS = frozenset(
 # server-created preview proves the exact user-authorized workspace scope and
 # excludes network, destructive, sensitive, and R3 effects. The workspace
 # harness remains the authoritative executor-side hard fence.
-_SAFE_FULL_AUTO_EFFECT = ("workspace_shell", "run")
+_SAFE_FULL_AUTO_COMMAND_EFFECTS = frozenset(
+    {
+        ("workspace_shell", "run"),
+        ("workspace_job", "start"),
+    }
+)
 _SAFE_FULL_AUTO_TEXT_MUTATIONS = frozenset(
     {
         ("workspace_edit", "apply"),
@@ -320,7 +325,7 @@ def approval_strategy(
         if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
             return APPROVAL_DENY
         if (
-            effect == _SAFE_FULL_AUTO_EFFECT
+            effect in _SAFE_FULL_AUTO_COMMAND_EFFECTS
             and safe_full_auto_command(
                 session,
                 preview,

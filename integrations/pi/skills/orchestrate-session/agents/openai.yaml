@@ -1,4 +1,4 @@
 interface:
   display_name: "Orchestrate Session"
-  short_description: "Delegate Session subagents and integrate their event results"
-  default_prompt: "Use $orchestrate-session to decide whether bounded subagent work helps, pass exact context and skills, and integrate returned events."
+  short_description: "Supervise concurrent subagents through verified closeout"
+  default_prompt: "Use $orchestrate-session as the Session main Agent: batch-dispatch multiple independent background subagents when delegation helps, choose fresh/new or fork per child without a universal preference, continue the parent lane, integrate events reactively, verify both operability and requirement satisfaction, and reconcile every WorkItem to a truthful closeout."

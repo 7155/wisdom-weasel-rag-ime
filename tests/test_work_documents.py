@@ -641,7 +641,16 @@ class WorkDocumentTests(unittest.TestCase):
                 "artifactRefs": ["docs/drafts/room.md"],
             },
         )
-        room_work.accept(self.session_id, {"workId": item["id"]})
+        room_work.accept(
+            self.session_id,
+            {
+                "workId": item["id"],
+                "expectedRevision": 0,
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["docs/drafts/room.md"],
+            },
+        )
         self.assertEqual(
             self.service.detail(str(room_document["documentId"]))["document"]["state"],
             "archived",

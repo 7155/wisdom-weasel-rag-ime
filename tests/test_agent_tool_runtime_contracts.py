@@ -377,6 +377,14 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             ["op", "url"],
         )
         self.assertEqual(
+            self._branch(tools["browser"], "back")["required"],
+            ["op"],
+        )
+        self.assertEqual(
+            self._branch(tools["browser"], "forward")["required"],
+            ["op"],
+        )
+        self.assertEqual(
             self._branch(tools["browser"], "type")["required"],
             ["op", "refId", "text"],
         )

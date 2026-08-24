@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,7 @@ PROJECT_ROUTING_SKILLS = frozenset(
     {
         "bootstrap-project-context",
         "memory-curation",
+        "pawos-system",
         "plugin-creator",
         "project-maintainer",
     }
@@ -45,28 +47,44 @@ PROJECT_ROUTING_SKILLS = frozenset(
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 200
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "59a71b235dadb4ad0d67557a8abb0aaa093e68b4"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "de1010790c6a11724c99cbf8055a8dd81fbff22b"
 REQUIRED_RUNTIME_METHODS = (
+    "hello",
+    "health",
+    "models.list",
+    "completion.once",
+    "completion.cancel",
+    "tools.list",
+    "tools.sync",
     "session.open",
-    "session.close",
+    "session.control_state",
+    "session.settlement.get",
+    "session.await_settled",
+    "session.snapshot",
+    "session.debug.context",
     "session.commands",
-    "session.command.invoke",
+    "session.fork.candidates",
+    "session.fork",
+    "session.rewind",
     "session.prompt",
     "session.steer",
     "session.follow_up",
     "session.abort",
     "session.compact",
-    "session.debug.context",
-    "session.snapshot",
-    "tools.list",
-    "plugins.catalog",
+    "session.model.set",
+    "session.thinking.set",
+    "session.close",
+    "room.dispatch",
+    "room.cancel",
+    "approval.resolve",
+    "review.resolve",
+    "ui.resolve",
     "plugins.list",
-    "plugins.package.prepare",
-    "plugins.install.preview",
+    "plugins.create",
+    "plugins.validate",
     "plugins.install",
     "plugins.enable",
     "plugins.disable",
-    "plugins.uninstall",
     "plugins.rollback",
 )
 _SESSION_RUNTIME_SOURCE_KEYS = (
@@ -76,8 +94,7 @@ _SESSION_RUNTIME_SOURCE_KEYS = (
     "toolBridge",
     "toolResults",
     "session",
-    "packageCatalog",
-    "packageManager",
+    "pluginManager",
 )
 _OAUTH_RUNTIME_MODULES = {
     "anthropic.ts": (
@@ -317,6 +334,25 @@ def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object]
                 )
     protocol_source = source_texts["protocol"]
     runtime_host_source = source_texts["runtimeHost"]
+    runtime_method_declaration = re.search(
+        r"export\s+type\s+RuntimeMethod\s*=\s*(.*?);",
+        protocol_source,
+        flags=re.DOTALL,
+    )
+    if runtime_method_declaration is None:
+        raise ManagedPiRuntimeError(
+            "Pi Runtime Host protocol method declaration is missing"
+        )
+    declared_methods = tuple(
+        re.findall(
+            r'\|\s*"([a-z][a-z0-9_.]{0,63})"',
+            runtime_method_declaration.group(1),
+        )
+    )
+    if declared_methods != tuple(methods):
+        raise ManagedPiRuntimeError(
+            "Session runtime source contract methods do not match the Pi protocol"
+        )
     for method in methods:
         if f'| "{method}"' not in protocol_source or f'case "{method}"' not in runtime_host_source:
             raise ManagedPiRuntimeError(f"Pi Runtime Host does not implement {method}")
@@ -678,105 +714,6 @@ def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ..
     return tuple(copied)
 
 
-def _copy_bundled_pi_packages(
-    source_root: Path,
-    destination_root: Path,
-    *,
-    esbuild: Path,
-    pi_root: Path,
-) -> tuple[str, ...]:
-    catalog_path = source_root / "catalog.json"
-    try:
-        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ManagedPiRuntimeError(
-            f"bundled Pi Package catalog is invalid: {error}"
-        ) from error
-    entries = catalog.get("packages") if isinstance(catalog, dict) else None
-    if (
-        not isinstance(catalog, dict)
-        or catalog.get("schemaVersion") != 1
-        or not isinstance(entries, list)
-    ):
-        raise ManagedPiRuntimeError("bundled Pi Package catalog schema is unsupported")
-    for item in source_root.rglob("*"):
-        if item.is_symlink():
-            raise ManagedPiRuntimeError(
-                f"bundled Pi Package source contains a symlink: {item}"
-            )
-    shutil.copytree(source_root, destination_root)
-    copied: list[str] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            raise ManagedPiRuntimeError("bundled Pi Package catalog entry is invalid")
-        directory = entry.get("directory")
-        if (
-            not isinstance(directory, str)
-            or not directory
-            or Path(directory).name != directory
-            or directory in {".", ".."}
-        ):
-            raise ManagedPiRuntimeError("bundled Pi Package directory is unsafe")
-        source_package = source_root / directory
-        destination_package = destination_root / directory
-        try:
-            manifest = json.loads(
-                (source_package / "package.json").read_text(encoding="utf-8")
-            )
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise ManagedPiRuntimeError(
-                f"bundled Pi Package manifest is invalid for {directory}: {error}"
-            ) from error
-        pi_manifest = manifest.get("pi") if isinstance(manifest, dict) else None
-        extensions = pi_manifest.get("extensions") if isinstance(pi_manifest, dict) else None
-        if not isinstance(extensions, list) or not extensions:
-            raise ManagedPiRuntimeError(
-                f"bundled Pi Package has no extensions: {directory}"
-            )
-        bundled_extensions: list[str] = []
-        for index, extension in enumerate(extensions):
-            if not isinstance(extension, str) or not extension.startswith("./"):
-                raise ManagedPiRuntimeError(
-                    f"bundled Pi Package extension is unsafe: {directory}"
-                )
-            relative = Path(extension[2:])
-            if relative.is_absolute() or ".." in relative.parts:
-                raise ManagedPiRuntimeError(
-                    f"bundled Pi Package extension is unsafe: {directory}"
-                )
-            source_extension = source_package / relative
-            if not source_extension.is_file():
-                raise ManagedPiRuntimeError(
-                    f"bundled Pi Package extension is missing: {source_extension}"
-                )
-            # Pi 0.84's extension discovery deliberately accepts only .ts and
-            # .js entrypoints.  The staged package is ESM (its package.json has
-            # type=module), so keep the bundle as ESM while using the supported
-            # .js suffix; an .mjs entry is silently excluded before loading.
-            output_name = f"extension-{index}.js"
-            output = destination_package / output_name
-            _run(
-                [
-                    str(esbuild),
-                    str(source_extension),
-                    "--bundle",
-                    "--platform=node",
-                    "--format=esm",
-                    "--target=node22",
-                    f"--outfile={output}",
-                ],
-                cwd=pi_root,
-            )
-            bundled_extensions.append(f"./{output_name}")
-        manifest["pi"] = {**pi_manifest, "extensions": bundled_extensions}
-        (destination_package / "package.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        copied.append(directory)
-    return tuple(copied)
-
-
 def _runtime_host_banner(
     skills_root: Path,
     collision_policy: object | None = None,
@@ -1010,7 +947,6 @@ def main(argv: list[str] | None = None) -> int:
         packager_digest = hashlib.sha256(
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
-            + _hash_tree(package_root / "pi-packages")
             + _hash_tree(product_skills)
             + routing_catalog_bytes
             + SESSION_RUNTIME_CONTRACT.read_bytes()
@@ -1037,12 +973,6 @@ def main(argv: list[str] | None = None) -> int:
             bin_dir = staging / "bin"
             runtime_dir.mkdir(mode=0o700)
             bin_dir.mkdir(mode=0o700)
-            _copy_bundled_pi_packages(
-                package_root / "pi-packages",
-                staging / "pi-packages",
-                esbuild=esbuild,
-                pi_root=pi_root,
-            )
             _copy_product_skills(product_skills, runtime_dir / "skills")
             (runtime_dir / "skill-routing-cards.json").write_bytes(
                 routing_catalog_bytes

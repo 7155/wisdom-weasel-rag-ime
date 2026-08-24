@@ -227,7 +227,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             self.assertTrue(init_prompt.is_file())
             init_prompt_text = init_prompt.read_text(encoding="utf-8")
             self.assertIn("AGENTS.md", init_prompt_text)
-            self.assertIn("不要覆盖", init_prompt_text)
+            self.assertIn("不得把动态 WorkItem", init_prompt_text)
             marker = json.loads((app_dir / "rag-ime-install-marker.json").read_text(encoding="utf-8"))
             with plist_path.open("rb") as fh:
                 payload = plistlib.load(fh)
@@ -406,7 +406,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             env = {
                 **os.environ,
                 "HOME": str(home),
-                "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+                "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
                 "PYTHONPATH": str(stubs),
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_SIDECAR_PORT": "19876",

@@ -377,6 +377,40 @@ class AgentWakeApplicationService:
             },
         )
 
+    def enqueue_room_completion(
+        self,
+        *,
+        claim: Mapping[str, object],
+        dispatch: Mapping[str, object],
+    ) -> None:
+        """Put an internal Partner completion in the existing context inbox."""
+
+        run_id = str(claim.get("runId") or "")
+        child_dispatch_id = str(dispatch.get("childDispatchId") or "")
+        work_item_id = str(dispatch.get("workItemId") or "")
+        self.context_runtime.enqueue(
+            session_id=str(dispatch.get("sourceSessionId") or ""),
+            source_kind="room_partner_completion",
+            source_id=run_id,
+            lane="room",
+            lifecycle="turn",
+            dedupe_key=f"room-partner-wake:{run_id}",
+            title="伙伴交付待验收",
+            summary="伙伴执行已结束，等待 Facilitator 双轴验收",
+            payload={
+                "roomId": str(dispatch.get("roomId") or ""),
+                "rootId": str(dispatch.get("rootId") or ""),
+                "childDispatchId": child_dispatch_id,
+                "workItemId": work_item_id,
+                "dispatchStatus": str(dispatch.get("status") or ""),
+                "instruction": (
+                    "先调用 room_partner collect 读取交付、WorkItem、"
+                    "WorkDocument 与证据。分别判断运行可操作性和需求满足度；"
+                    "只有两轴均通过时显式 accept，否则显式 return 并写明原因。"
+                ),
+            },
+        )
+
     def _wake_scheduler(self) -> None:
         if self.scheduler is not None:
             self.scheduler.wake()

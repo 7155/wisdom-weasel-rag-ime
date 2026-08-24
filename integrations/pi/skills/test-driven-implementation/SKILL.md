@@ -13,9 +13,9 @@ Use one red-green cycle for one observable behavior. Evidence from this Skill is
 2. Trace the public behavior and confirm that the selected seam owns it. Return a planning suggestion if the seam is wrong or missing.
 3. Write the narrowest meaningful check that fails because the requested behavior is absent, not because the environment or fixture is broken.
 4. Implement the smallest coherent production change at the owning boundary.
-5. Run the focused check, then proportional contract, integration, regression, and real-path checks.
+5. Run the focused check, then proportional contract, integration, regression, and real-path checks. Record separately whether the implementation runs and whether the observed result satisfies the current precise requirement.
 6. Preserve unrelated work and report every relevant check that was not run.
-7. Update the owned worker document with changed behavior, files, red-green evidence, compatibility impact, and residual risk.
+7. Update the owned worker document with changed behavior, files, red-green evidence, both verification axes, compatibility impact, and residual risk. Return failed acceptance to the supervising Agent with the responsible seam and next action; do not self-declare the whole Goal complete.
 
 ## Output
 
@@ -23,7 +23,8 @@ Return the common `AgentResult` envelope with:
 
 ```text
 changed behavior and files | red evidence | green evidence
-proportional verification | compatibility impact | unrun checks
+operability verdict | requirement-satisfaction verdict
+proportional verification | compatibility impact | unrun checks | next action
 worker-document update receipt or proposed delta | residual risk
 ```
 

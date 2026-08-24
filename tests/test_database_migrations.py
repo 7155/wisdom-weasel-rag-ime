@@ -18,7 +18,7 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
-POST_0126_MIGRATIONS = tuple(range(127, 159))
+POST_0126_MIGRATIONS = tuple(range(127, 162))
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 158)
+            self.assertEqual(status["currentVersion"], 161)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -149,6 +149,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_command_receipts", tables)
             self.assertIn("agent_room_work_items", tables)
             self.assertIn("agent_room_work_events", tables)
+            self.assertIn("agent_room_partner_dispatches", tables)
             self.assertIn("agent_room_delivery_cursors", tables)
             self.assertIn("agent_role_books", tables)
             self.assertIn("daily_activity_timelines", tables)
@@ -184,6 +185,16 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("routing_mode", room_columns)
             self.assertIn("active_topic_id", room_columns)
             self.assertIn("collaboration_role", participant_columns)
+            partner_dispatch_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_room_partner_dispatches)"
+                )
+            }
+            self.assertIn(
+                "target_session_turn_id",
+                partner_dispatch_columns,
+            )
             self.assertIn("agent_observation_events", tables)
             session_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_sessions)")
@@ -945,7 +956,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn)
 
                 self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
-                self.assertEqual(upgraded.current_version, 158)
+                self.assertEqual(upgraded.current_version, 161)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -1120,7 +1131,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, tuple(range(153, 159)))
+                self.assertEqual(upgraded.applied_versions, tuple(range(153, 162)))
                 self.assertEqual(
                     conn.execute(
                         """
@@ -1188,7 +1199,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 158)
+                self.assertEqual(status["currentVersion"], 161)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -1927,7 +1938,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    tuple(range(135, 159)),
+                    tuple(range(135, 162)),
                 )
                 todo = conn.execute(
                     """
@@ -2022,6 +2033,118 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
+
+    def test_production_0159_history_upgrades_append_only_to_room_review(self) -> None:
+        migration_0159 = (
+            DEFAULT_MIGRATIONS_DIR / "0159_room_work_authority_events.sql"
+        )
+        self.assertEqual(
+            hashlib.sha256(migration_0159.read_bytes()).hexdigest(),
+            "3984cd3c44285707745160001e5d85d06c9d52cc34618c5007fac9047498ac1e",
+        )
+
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-production-0159-"
+        ) as temporary, closing(sqlite3.connect(":memory:")) as conn, conn:
+            migrations_0159 = Path(temporary) / "migrations"
+            migrations_0159.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 159:
+                    shutil.copy2(migration.path, migrations_0159 / migration.path.name)
+
+            applied = apply_database_migrations(
+                conn,
+                migrations_dir=migrations_0159,
+                applied_at_ms=159,
+            )
+            self.assertEqual(applied.current_version, 159)
+            self.assertEqual(
+                conn.execute(
+                    "SELECT name, checksum FROM schema_migrations WHERE version = 159"
+                ).fetchone(),
+                (
+                    "room_work_authority_events",
+                    "3984cd3c44285707745160001e5d85d06c9d52cc34618c5007fac9047498ac1e",
+                ),
+            )
+            conn.execute(
+                "ALTER TABLE agent_room_work_items "
+                "ADD COLUMN review_operability_verdict TEXT NOT NULL DEFAULT '' "
+                "CHECK (review_operability_verdict IN "
+                "('', 'passed', 'failed', 'unverified'))"
+            )
+
+            upgraded = apply_database_migrations(conn, applied_at_ms=161)
+            self.assertEqual(upgraded.applied_versions, (160, 161))
+            self.assertEqual(upgraded.current_version, 161)
+            review_columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_room_work_items)"
+                )
+            }
+            self.assertTrue(
+                {
+                    "review_operability_verdict",
+                    "review_requirement_verdict",
+                    "review_evidence_refs_json",
+                    "review_reason",
+                    "reviewer_participant_id",
+                    "reviewed_at_ms",
+                }.issubset(review_columns)
+            )
+            self.assertIsNotNone(
+                conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'agent_room_partner_dispatches'"
+                ).fetchone()
+            )
+
+    def test_0160_resume_hook_does_not_swallow_other_sql_errors(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-migration-0160-error-"
+        ) as temporary, closing(sqlite3.connect(":memory:")) as conn:
+            migrations = Path(temporary) / "migrations"
+            migrations.mkdir()
+            (migrations / "0160_agent_room_work_item_review_verdicts.sql").write_text(
+                "ALTER TABLE missing_table ADD COLUMN should_fail TEXT;\n",
+                encoding="utf-8",
+            )
+            conn.execute("CREATE TABLE agent_room_work_items(id TEXT PRIMARY KEY)")
+
+            with self.assertRaisesRegex(sqlite3.OperationalError, "missing_table"):
+                apply_database_migrations(conn, migrations_dir=migrations)
+
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version = 160"
+                ).fetchone()
+            )
+            review_columns = [
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_room_work_items)"
+                )
+                if str(row[1]).startswith("review")
+            ]
+            self.assertEqual(
+                review_columns,
+                [
+                    "review_operability_verdict",
+                    "review_requirement_verdict",
+                    "review_evidence_refs_json",
+                    "review_reason",
+                    "reviewer_participant_id",
+                    "reviewed_at_ms",
+                ],
+            )
+            with self.assertRaisesRegex(sqlite3.OperationalError, "missing_table"):
+                apply_database_migrations(conn, migrations_dir=migrations)
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version = 160"
+                ).fetchone()
+            )
 
     def test_checksum_change_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-") as tmp:

@@ -11,10 +11,12 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -399,6 +401,83 @@ class DebugImeServiceTests(unittest.TestCase):
         finally:
             sidecar.close()
             gateway.close()
+
+    def test_passive_sidecar_rejects_room_runtime_writes_before_agent_mutation(
+        self,
+    ) -> None:
+        db_path = Path(self.tmp.name) / "passive-room-writes.sqlite"
+        ManagementSettingsStore(db_path).update_settings(
+            {"agent": {"pi": {"enabled": True}}},
+            updated_by="test",
+        )
+        with patch.dict(
+            os.environ,
+            {"RAG_IME_AGENT_GATEWAY_ENABLED": "1"},
+            clear=False,
+        ):
+            sidecar = DebugImeService(
+                DebugServerConfig(
+                    db_path=db_path,
+                    seed_if_empty=False,
+                    server_name="sidecar server",
+                )
+            )
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = sidecar
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def post(path: str, payload: dict[str, object]) -> tuple[int, dict[str, object]]:
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=5) as response:
+                    return response.status, json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                try:
+                    return exc.code, json.loads(exc.read().decode("utf-8"))
+                finally:
+                    exc.close()
+
+        try:
+            with (
+                patch.object(sidecar.agent, "post_room_message") as room_message,
+                patch.object(sidecar.agent, "steer_room_participant") as participant_steer,
+            ):
+                responses = (
+                    post(
+                        "/api/agent/rooms/room:test/messages",
+                        {"message": "must not reach AgentService"},
+                    ),
+                    post(
+                        "/api/agent/rooms/room:test/steer",
+                        {
+                            "rootId": "room-turn:test",
+                            "clientActionId": "steer:test",
+                        },
+                    ),
+                )
+                room_message.assert_not_called()
+                participant_steer.assert_not_called()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            sidecar.close()
+
+        for status, payload in responses:
+            self.assertEqual(status, HTTPStatus.CONFLICT)
+            self.assertEqual(payload["code"], "AGENT_GATEWAY_REQUIRED")
+            self.assertFalse(payload["ok"])
 
     def test_explicit_memory_prepare_drains_empty_batches_until_one_draft(self) -> None:
         db_path = Path(self.tmp.name) / "manual-curation-drain.sqlite"

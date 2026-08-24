@@ -65,14 +65,13 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         ) as temporary:
             root = Path(temporary)
             relative_sources = {
-                "protocol": Path("integrations/rag-ime-runtime-host/src/protocol.ts"),
-                "runtimeHost": Path("integrations/rag-ime-runtime-host/src/runtime-host.ts"),
-                "contextInspection": Path("integrations/rag-ime-runtime-host/src/debug-context.ts"),
-                "toolBridge": Path("integrations/rag-ime-runtime-host/src/tool-bridge.ts"),
-                "toolResults": Path("integrations/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
-                "session": Path("integrations/rag-ime-runtime-host/src/pi-session.ts"),
-                "packageCatalog": Path("integrations/rag-ime-runtime-host/src/bundled-package-catalog.ts"),
-                "packageManager": Path("integrations/rag-ime-runtime-host/src/native-package-manager.ts"),
+                "protocol": Path("packages/rag-ime-runtime-host/src/protocol.ts"),
+                "runtimeHost": Path("packages/rag-ime-runtime-host/src/runtime-host.ts"),
+                "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
+                "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
+                "toolResults": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
+                "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
+                "pluginManager": Path("packages/rag-ime-runtime-host/src/plugin-manager.ts"),
             }
             self.assertEqual(
                 set(relative_sources),
@@ -176,8 +175,27 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             list(REQUIRED_RUNTIME_METHODS),
         )
         serialized = json.dumps(contract, sort_keys=True)
-        self.assertNotIn("room.dispatch", serialized)
-        self.assertNotIn("room.cancel", serialized)
+        self.assertIn("room.dispatch", contract["requiredMethods"])
+        self.assertIn("room.cancel", contract["requiredMethods"])
+        self.assertIn("session.await_settled", contract["requiredMethods"])
+        self.assertIn("plugins.create", contract["requiredMethods"])
+        self.assertIn("plugins.validate", contract["requiredMethods"])
+        self.assertNotIn("session.command.invoke", serialized)
+        self.assertNotIn("plugins.catalog", serialized)
+        self.assertNotIn("plugins.package.prepare", serialized)
+        self.assertNotIn("plugins.uninstall", serialized)
+        self.assertEqual(
+            contract["handlerSources"],
+            {
+                "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
+                "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
+                "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
+                "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
+                "toolResults": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
+                "session": "packages/rag-ime-runtime-host/src/pi-session.ts",
+                "pluginManager": "packages/rag-ime-runtime-host/src/plugin-manager.ts",
+            },
+        )
 
     def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:
@@ -240,13 +258,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('"productCommit": product_commit', script)
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
         self.assertIn("_verified_session_runtime_contract", script)
-        self.assertIn("_copy_bundled_pi_packages", script)
-        self.assertIn('staging / "pi-packages"', script)
+        self.assertNotIn("_copy_bundled_pi_packages", script)
+        self.assertNotIn('package_root / "pi-packages"', script)
         self.assertIn('bundled_pi_cli = runtime_dir / "pi-cli.mjs"', script)
         self.assertIn('packages" / "coding-agent" / "src" / "cli.ts"', script)
         self.assertIn('bundled_pi_theme_dir = runtime_dir / "dist" / "modes" / "interactive" / "theme"', script)
-        self.assertIn('output_name = f"extension-{index}.js"', script)
-        self.assertNotIn('output_name = f"extension-{index}.mjs"', script)
         self.assertIn(
             "source_contract_sha256=session_runtime_contract_sha256",
             script,
@@ -312,6 +328,12 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('"authorityKind": "room_work_item"', script)
         self.assertIn('"partnerWorkDocumentRevision"', script)
         self.assertIn('"partnerWorkItemState"', script)
+        self.assertIn('"op": "wait"', script)
+        self.assertIn('"op": "accept"', script)
+        self.assertIn('"operabilityVerdict": "passed"', script)
+        self.assertIn('"requirementVerdict": "satisfied"', script)
+        self.assertIn("synced_document['documentId']", script)
+        self.assertNotIn('child_result.get("status") != "completed"', script)
 
     def test_product_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"
@@ -323,6 +345,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             sorted({
                 "alignment-and-decision",
                 "bootstrap-project-context",
+                "ego-browser",
                 "facilitate-room",
                 "implementation-planning",
                 "improve-codebase-architecture",
@@ -331,6 +354,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "memory-curation",
                 "orchestrate-session",
                 "organize-work-documents",
+                "pawos-system",
                 "plugin-creator",
                 "project-maintainer",
                 "systematic-debugging",
@@ -388,7 +412,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             },
         )
         cards = routing_catalog["cards"]
-        self.assertEqual(len(cards), 41)
+        self.assertEqual(len(cards), 40)
         self.assertEqual(len({card["name"] for card in cards}), len(cards))
         self.assertNotIn("structured-result-presentation", {card["name"] for card in cards})
         for card in cards:
@@ -620,17 +644,36 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("material user-owned choices", alignment)
         self.assertIn("Session's native subagent capability", orchestration)
         self.assertIn("does not define another event bus", orchestration)
+        self.assertIn("Batch dispatch", orchestration)
+        self.assertIn("fresh/new", orchestration)
+        self.assertIn("does not rank either mode", orchestration)
+        self.assertIn("A pass on only one axis is not closure", orchestration)
         self.assertIn("AGENTS.md", bootstrap)
         self.assertIn("Partners remain ordinary Sessions", facilitation)
         self.assertIn(
             "Partner assignment exists only after a real delegated dispatch",
             facilitation,
         )
-        self.assertIn("there is no human review step", facilitation)
+        self.assertIn("prerequisites for submission, not acceptance", facilitation)
         self.assertIn("one `delegate_batch` call", facilitation)
         self.assertIn("never describe consecutive `delegate` calls as parallel", facilitation)
         self.assertIn("emit the best evidence-backed partial or blocked final", facilitation)
+        self.assertIn("unfinished, failed, orphaned, partial, and unclosed", facilitation)
+        self.assertIn("does not prove requirement satisfaction", facilitation)
+        self.assertIn("returns an immediate durable dispatch receipt", facilitation)
+        self.assertIn("durable wake", facilitation)
+        self.assertIn("`room_partner collect` or `wait`", facilitation)
+        self.assertIn("A `wait` timeout never cancels", facilitation)
+        self.assertIn("explicitly call `accept` or `return`", facilitation)
+        self.assertIn("Before any requirements, business-code, configuration, or test write", facilitation)
+        self.assertIn("`agent_goal confirm_setup`", facilitation)
+        self.assertIn('workDocument={authorityKind:"session_goal"', facilitation)
+        self.assertIn("successful `workDocumentRegistration`", facilitation)
+        self.assertIn("do not create an unbound requirements file", facilitation)
+        self.assertIn("A plain `docs/agent/requirements.md`, Todo, or Room post is not that binding", facilitation)
+        self.assertNotIn("automatically accepted", facilitation)
         self.assertIn("document gardener", organization)
+        self.assertIn("both verification axes", organization)
         self.assertIn("$orchestrate-session", orchestration_prompt)
         for required in (
             "authorized Evidence -> one Current Atom",

@@ -57,6 +57,7 @@ from .agent_workspace import WorkspaceHarnessError, WorkspaceSnapshotError
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .browser_control import BrowserControlError, BrowserControlService
+from .system_terminal import SystemTerminalService
 from .demo_seed import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
@@ -339,6 +340,23 @@ def _strict_management_revision(value: object) -> int:
     return parsed
 
 
+class AgentGatewayRequired(RuntimeError):
+    """A passive Sidecar cannot start or steer a Pi-owned Room turn."""
+
+    http_status = HTTPStatus.CONFLICT
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Room runtime writes must be sent to the Agent Gateway"
+        )
+
+    def response_payload(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.agent-gateway-required.v1",
+            "code": "AGENT_GATEWAY_REQUIRED",
+        }
+
+
 @dataclass(frozen=True)
 class DebugServerConfig:
     host: str = "127.0.0.1"
@@ -554,9 +572,13 @@ class DebugImeService:
         )
         self.agent_lifecycle_hooks = AgentLifecycleHookService(config.db_path)
         self.agent_lifecycle_hooks.initialize()
-        self.browser_control = BrowserControlService(
-            config.db_path,
-            extension_root=os.environ.get("RAG_IME_BROWSER_EXTENSION_DIR") or None,
+        self.browser_control = BrowserControlService(config.db_path)
+        self.system_terminal = SystemTerminalService(
+            default_cwd=(
+                os.environ.get("RAG_IME_DEFAULT_WORKSPACE")
+                or os.environ.get("RAG_IME_SOURCE_ROOT")
+                or Path.cwd()
+            ),
         )
         self.agent_tools = ControlToolGateway(
             sessions=self.agent.sessions,
@@ -614,6 +636,10 @@ class DebugImeService:
         self._vector_auto_rebuild_report = self._maybe_auto_rebuild_vector_index()
         self.memory_projection_worker = self._create_memory_projection_worker()
 
+    def require_agent_runtime_execution_owner(self) -> None:
+        if not self._agent_runtime_execution_owner:
+            raise AgentGatewayRequired()
+
     def start_background_services(self) -> None:
         """Start non-critical workers after the HTTP listener owns the process."""
 
@@ -647,6 +673,7 @@ class DebugImeService:
                 # remaining executors and provider clients.
                 pass
         resources = (
+            self.system_terminal,
             self.memory_maintenance_jobs,
             self.active_rag,
             self.knowledge_worker,
@@ -6642,28 +6669,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, response)
             return
-        if parsed.path == "/api/browser/extension/next":
-            if not self._browser_extension_authenticated():
-                return
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.browser_control.next_command(
-                    device_id=_query_first(query, "deviceId"),
-                    client_id=_query_first(query, "clientId") or _query_first(query, "deviceId"),
-                    timeout_seconds=float(_query_first(query, "timeoutSeconds") or 20.0),
-                ),
-            )
-            return
-        if parsed.path == "/api/browser/managed/bootstrap":
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "schemaVersion": "rag-ime.browser-control.v1",
-                    "ok": True,
-                    "summary": "托管浏览器正在完成隔离连接",
-                },
-            )
-            return
         if parsed.path == "/api/browser/snapshots/latest":
             tab_value = _query_first(query, "tabId")
             try:
@@ -6706,29 +6711,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self.service.browser_control.traces(
                     limit=int(_query_first(query, "limit") or 50),
                 ),
-            )
-            return
-        if parsed.path == "/api/browser/permissions":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.browser_control.permissions(
-                    limit=int(_query_first(query, "limit") or 100),
-                ),
-            )
-            return
-        if parsed.path.startswith("/api/browser/permissions/"):
-            prompt_id = parsed.path.removeprefix("/api/browser/permissions/").strip("/")
-            try:
-                response = self.service.browser_control.permission_status(prompt_id)
-            except BrowserControlError as exc:
-                self._write_json(
-                    HTTPStatus.NOT_FOUND,
-                    {"ok": False, "error": str(exc), "code": "browser_permission_not_found"},
-                )
-                return
-            self._write_json(
-                HTTPStatus.OK,
-                response,
             )
             return
         if parsed.path in (
@@ -7802,23 +7784,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(HTTPStatus.OK, self.service.agent.approval_result(self._read_json()))
                 return
-            if path.startswith("/api/browser/extension/"):
-                if not self._browser_extension_authenticated():
-                    return
-                payload = self._read_json()
-                if path == "/api/browser/extension/hello":
-                    response = self.service.browser_control.hello(payload)
-                elif path == "/api/browser/extension/snapshot":
-                    response = self.service.browser_control.push_snapshot(payload)
-                elif path == "/api/browser/extension/result":
-                    response = self.service.browser_control.complete_command(payload)
-                elif path == "/api/browser/extension/permission":
-                    response = self.service.browser_control.request_permission(payload)
-                else:
-                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
-                    return
-                self._write_json(HTTPStatus.OK, response)
-                return
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
@@ -7874,9 +7839,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(status, response)
                 return
-            if path == "/api/browser/mode":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.set_mode(payload.get("mode")))
-                return
             if path == "/api/browser/command":
                 action = str(payload.pop("action", ""))
                 self._write_json(
@@ -7887,17 +7849,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         session_id="control-center",
                         timeout_seconds=float(payload.pop("timeoutSeconds", 20.0)),
                     ),
-                )
-                return
-            if path.startswith("/api/browser/permissions/") and path.endswith("/decision"):
-                prompt_id = (
-                    path.removeprefix("/api/browser/permissions/")
-                    .removesuffix("/decision")
-                    .strip("/")
-                )
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.browser_control.decide_permission(prompt_id, payload.get("decision")),
                 )
                 return
             agent_session_id, agent_action = agent_session_route(path)
@@ -8001,12 +7952,22 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 and background_job_id
                 and background_job_action == "cancel"
             ):
+                room_turn_id = str(payload.get("roomTurnId") or "").strip()
                 self._write_json(
                     HTTPStatus.OK,
-                    self.service.agent.background_jobs.cancel(
-                        background_job_session_id,
-                        background_job_id,
-                        reason=payload.get("reason") or "control_center_requested",
+                    (
+                        self.service.agent.background_jobs.cancel_room_owned(
+                            background_job_session_id,
+                            background_job_id,
+                            room_turn_id=room_turn_id,
+                            reason=payload.get("reason") or "control_center_requested",
+                        )
+                        if room_turn_id
+                        else self.service.agent.background_jobs.cancel(
+                            background_job_session_id,
+                            background_job_id,
+                            reason=payload.get("reason") or "control_center_requested",
+                        )
                     ),
                 )
             elif path == "/api/agent/wake-schedules":
@@ -8109,11 +8070,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     ),
                 )
             elif agent_room_id and room_action == "messages":
+                self.service.require_agent_runtime_execution_owner()
                 self._write_json(
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
                 )
             elif agent_room_id and room_action == "steer":
+                self.service.require_agent_runtime_execution_owner()
                 self._write_json(
                     HTTPStatus.ACCEPTED,
                     self.service.agent.steer_room_participant(agent_room_id, payload),
@@ -8636,20 +8599,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if not expected or provided != expected:
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "management token required"}
         return None
-
-    def _browser_extension_authenticated(self) -> bool:
-        provided = self.headers.get("X-RAG-IME-Browser-Token", "")
-        if provided and self.service.browser_control.authenticate(provided):
-            return True
-        self._write_json(
-            HTTPStatus.FORBIDDEN,
-            {
-                "schemaVersion": "rag-ime.browser-control.v1",
-                "ok": False,
-                "error": "browser pairing token required",
-            },
-        )
-        return False
 
     def _knowledge_control(self) -> Any:
         control = self.service.knowledge_control

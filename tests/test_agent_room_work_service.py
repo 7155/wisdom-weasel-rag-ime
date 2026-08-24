@@ -257,7 +257,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             with urlopen(add, timeout=5) as response:
                 added = json.load(response)
             participant_id = str(added["participant"]["id"])
-            self.assertEqual(added["participant"]["displayName"], "澄·远")
+            self.assertEqual(added["participant"]["displayName"], "Agent 3")
 
             remove = Request(
                 f"{base}/participants",

@@ -144,6 +144,79 @@ class AgentWakeScheduleStore:
             )
         return self.get(schedule_id)
 
+    def create_room_wake(
+        self,
+        *,
+        schedule_id: str,
+        target_session_id: str,
+        created_by_session_id: str,
+        title: str,
+        instruction: str,
+        metadata: Mapping[str, object],
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Create one deterministic internal Room wake on the shared ledger.
+
+        Public scheduling continues through ``create`` and its future-time
+        validation. Room completion wakes are Runtime events, so they are due
+        immediately and use a caller-owned idempotency key.
+        """
+
+        timestamp = _now_ms(now_ms)
+        identifier = _required_id(schedule_id)
+        session_id = _required_id(target_session_id)
+        creator = _required_id(created_by_session_id)
+        normalized_title = _text(title, maximum=120)
+        normalized_instruction = _text(instruction, maximum=8_000)
+        if not normalized_title or not normalized_instruction:
+            raise ValueError("Room wake title and instruction must not be empty")
+        metadata_json = json.dumps(
+            dict(metadata),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM agent_wake_schedules WHERE schedule_id = ?",
+                (identifier,),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO agent_wake_schedules(
+                        schedule_id, title, instruction, target_type,
+                        target_session_id, target_role_id, target_role_version,
+                        created_by_session_id, planning_task_id, timezone,
+                        recurrence_kind, recurrence_interval, max_runs, run_count,
+                        status, next_wake_at_ms, created_at_ms, updated_at_ms,
+                        metadata_json
+                    ) VALUES (?, ?, ?, 'session', ?, '', '', ?, '',
+                              'Asia/Shanghai', 'once', 1, 1, 0,
+                              'scheduled', ?, ?, ?, ?)
+                    """,
+                    (
+                        identifier,
+                        normalized_title,
+                        normalized_instruction,
+                        session_id,
+                        creator,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        metadata_json,
+                    ),
+                )
+            else:
+                if (
+                    str(existing["target_session_id"]) != session_id
+                    or str(existing["created_by_session_id"]) != creator
+                    or str(existing["metadata_json"]) != metadata_json
+                ):
+                    raise ValueError(
+                        "Room wake idempotency key was reused for a different dispatch"
+                    )
+        return self.get(identifier)
+
     def get(self, schedule_id: str) -> dict[str, object]:
         with self._connect() as conn:
             row = conn.execute(
@@ -221,6 +294,38 @@ class AgentWakeScheduleStore:
                 (schedule_id, _integer(limit, default=100, minimum=1, maximum=500)),
             ).fetchall()
         return [_run_payload(row) for row in rows]
+
+    def schedule_for_terminal_event(
+        self,
+        event: AgentEventEnvelope,
+    ) -> dict[str, object] | None:
+        """Return the durable wake whose accepted turn emitted ``event``.
+
+        The lookup deliberately includes already-finished runs.  Terminal
+        observers run after the schedule ledger is settled, and recovery must
+        be able to inspect that immutable failed run without reopening it.
+        """
+
+        if event.event_type not in {"turn_completed", "turn_failed"} or not event.turn_id:
+            return None
+        with self._connect() as conn:
+            run = conn.execute(
+                """
+                SELECT * FROM agent_wake_runs
+                WHERE session_id = ? AND turn_id = ?
+                ORDER BY started_at_ms DESC LIMIT 1
+                """,
+                (event.session_id, event.turn_id),
+            ).fetchone()
+            if run is None:
+                return None
+            schedule = conn.execute(
+                "SELECT * FROM agent_wake_schedules WHERE schedule_id = ?",
+                (run["schedule_id"],),
+            ).fetchone()
+            if schedule is None:
+                return None
+        return _schedule_payload(schedule, run)
 
     def action(
         self,
@@ -417,20 +522,37 @@ class AgentWakeScheduleStore:
         run_id: str,
         *,
         reason: str,
+        cause_code: str = "",
         delay_ms: int = 60_000,
         now_ms: int | None = None,
     ) -> None:
         timestamp = _now_ms(now_ms)
+        normalized_cause_code = _text(cause_code, maximum=80)
+        result_json = json.dumps(
+            (
+                {"causeCode": normalized_cause_code}
+                if normalized_cause_code
+                else {}
+            ),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             run = self._active_run_locked(conn, run_id)
             conn.execute(
                 """
                 UPDATE agent_wake_runs
-                SET state = 'deferred', finished_at_ms = ?, error = ?
+                SET state = 'deferred', finished_at_ms = ?, error = ?,
+                    result_json = ?
                 WHERE run_id = ?
                 """,
-                (timestamp, _text(reason, maximum=500), run_id),
+                (
+                    timestamp,
+                    _text(reason, maximum=500),
+                    result_json,
+                    run_id,
+                ),
             )
             conn.execute(
                 """
@@ -497,7 +619,20 @@ class AgentWakeScheduleStore:
             str(row["run_id"]),
             succeeded=event.event_type == "turn_completed",
             error=str(event.payload.get("error") or ""),
-            result={"terminalEvent": event.event_type, "eventId": event.event_id},
+            result={
+                "terminalEvent": event.event_type,
+                "eventId": event.event_id,
+                **(
+                    {"failureKind": str(event.payload.get("failureKind"))}
+                    if event.payload.get("failureKind")
+                    else {}
+                ),
+                **(
+                    {"exitCode": event.payload.get("exitCode")}
+                    if "exitCode" in event.payload
+                    else {}
+                ),
+            },
             now_ms=event.created_at_ms,
         )
         return True
@@ -651,6 +786,9 @@ class AgentWakeScheduler:
         self.max_parallel = max(1, min(int(max_parallel), 4))
         self._stop = Event()
         self._notify = Event()
+        self._terminal_observer: Callable[
+            [AgentEventEnvelope, Mapping[str, object]], None
+        ] | None = None
         self._executor = ThreadPoolExecutor(
             max_workers=self.max_parallel,
             thread_name_prefix="agent-wake",
@@ -664,8 +802,30 @@ class AgentWakeScheduler:
         if self.enabled:
             self._notify.set()
 
+    def bind_terminal_observer(
+        self,
+        observer: Callable[
+            [AgentEventEnvelope, Mapping[str, object]], None
+        ]
+        | None,
+    ) -> None:
+        """Bind one post-ledger terminal observer.
+
+        Ordering matters: the generic wake run is first made terminal, then a
+        product adapter may create a new generation.  This avoids relying on
+        the unordered observer set in ``AgentEventHub``.
+        """
+
+        self._terminal_observer = observer
+
     def observe_event(self, event: AgentEventEnvelope) -> None:
-        if self.store.finish_event(event):
+        if not self.store.finish_event(event):
+            return
+        schedule = self.store.schedule_for_terminal_event(event)
+        try:
+            if schedule is not None and self._terminal_observer is not None:
+                self._terminal_observer(event, schedule)
+        finally:
             self.wake()
 
     def run_due_once(self, *, now_ms: int | None = None) -> int:
@@ -743,6 +903,14 @@ def _schedule_payload(
         run_id_key = "run_id" if "run_id" in keys else "latest_run_id"
         state_key = "state" if "state" in keys else "latest_run_state"
         if latest[run_id_key]:
+            result: dict[str, object] = {}
+            if "result_json" in keys:
+                try:
+                    parsed_result = json.loads(str(latest["result_json"] or "{}"))
+                except json.JSONDecodeError:
+                    parsed_result = {}
+                if isinstance(parsed_result, dict):
+                    result = parsed_result
             latest_payload = {
                 "runId": str(latest[run_id_key]),
                 "state": str(latest[state_key] or ""),
@@ -766,7 +934,12 @@ def _schedule_payload(
                     (latest["finished_at_ms"] if "finished_at_ms" in keys else latest["latest_finished_at_ms"])
                     or 0
                 ),
+                "result": result,
             }
+    try:
+        metadata = json.loads(str(row["metadata_json"] or "{}"))
+    except json.JSONDecodeError:
+        metadata = {}
     return {
         "id": str(row["schedule_id"]),
         "title": str(row["title"]),
@@ -788,6 +961,7 @@ def _schedule_payload(
         "lastError": str(row["last_error"] or ""),
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
+        "metadata": metadata if isinstance(metadata, dict) else {},
         "latestRun": latest_payload,
     }
 
