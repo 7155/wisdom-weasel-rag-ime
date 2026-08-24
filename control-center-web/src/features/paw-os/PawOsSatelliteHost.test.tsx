@@ -277,7 +277,7 @@ describe('PawOsSatelliteHost', () => {
     });
 
     const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: /执行过程 1 项/ }));
     const row = timeline.querySelector('article[data-kind="activity"]');
     expect(row).not.toBeNull();
     expect(row?.querySelector('header')).toBeNull();
@@ -306,7 +306,7 @@ describe('PawOsSatelliteHost', () => {
     });
 
     const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: /执行过程 1 项/ }));
     const row = timeline.querySelector<HTMLElement>('article[data-kind="activity"][data-status="failed"]');
     expect(row).not.toBeNull();
     expect(within(row!).getByRole('img', { name: '执行失败' })).toBeInTheDocument();
