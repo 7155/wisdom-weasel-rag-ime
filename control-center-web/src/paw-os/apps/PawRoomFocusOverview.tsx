@@ -162,6 +162,7 @@ export function PawRoomFocusOverview({
                 <li data-state={handoff.state} key={handoff.id}>
                   <span><strong>{source?.celestialName ?? 'Sol'} → {target?.celestialName ?? '伙伴'}</strong><small>{handoff.task || handoff.artifactOrContract || '工作项交接'}</small></span>
                   <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusHandoffStateLabel(handoff.state)}</span>
+                  {handoff.createdAtMs ? <time dateTime={new Date(handoff.createdAtMs).toISOString()}>{focusClock(handoff.createdAtMs)}</time> : null}
                 </li>
               );
             })}
@@ -242,6 +243,10 @@ function FocusInspector({
       ) : null}
     </section>
   );
+}
+
+function focusClock(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp));
 }
 
 function roomFocusHandoffStateLabel(state: RoomFocusProjection['handoffs'][number]['state']): string {

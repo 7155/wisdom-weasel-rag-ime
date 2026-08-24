@@ -191,11 +191,13 @@
 .paw-desktop-root .paw-room-focus-overview__planet-list > li > button > span:nth-child(2) small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .paw-desktop-root .paw-room-focus-overview__handoffs ol { display: grid; gap: 1px; margin: 0; padding: 5px; list-style: none; }
-/* 第二列曾是 8px 的色点位；DOM 里实际是状态文字，8px 会把文字挤出行外。 */
-.paw-desktop-root .paw-room-focus-overview__handoffs li { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px; border-radius: 8px; }
+/* 第二列曾是 8px 的色点位；DOM 里实际是状态文字，8px 会把文字挤出行外。
+   行尾补一个弱化时刻，交接账本读得出先后。 */
+.paw-desktop-root .paw-room-focus-overview__handoffs li { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 7px; border-radius: 8px; }
 .paw-desktop-root .paw-room-focus-overview__handoffs li > span { min-width: 0; display: grid; gap: 1px; }
 .paw-desktop-root .paw-room-focus-overview__handoffs li strong { font-size: 12px; font-weight: 620; }
 .paw-desktop-root .paw-room-focus-overview__handoffs li small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__handoffs li time { color: #9aa1ab; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .paw-desktop-root .paw-room-focus-overview__inspector { min-width: 0; display: grid; align-content: start; overflow: hidden; border: 1px solid rgb(39 131 222 / .14); border-radius: 13px; background: #fff; box-shadow: 0 10px 28px rgb(42 45 52 / .055); animation: paw-room-focus-inspector-enter 180ms cubic-bezier(.23, 1, .32, 1) both; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy { display: grid; gap: 3px; padding: 10px 11px 8px; }

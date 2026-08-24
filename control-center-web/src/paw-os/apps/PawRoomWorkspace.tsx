@@ -351,6 +351,7 @@ export function PawRoomWorkspace({
   ] as const).filter(([, count]) => count > 0) : [];
   const activeTopic = record?.topics?.find((topic) => topic.id === record.activeTopicId)
     ?? record?.topics?.find((topic) => topic.status === 'active');
+  const goalTitle = focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作';
   const activeRootId = activeTurn?.rootId ?? activeTurn?.id ?? '';
   const abortingActiveTurn = Boolean(activeRootId && abortingTurnIds.has(activeRootId));
   const openParticipant = useCallback((participant: RoomSummary['participants'][number], background = false) => desktop?.openWindow({
@@ -369,6 +370,11 @@ export function PawRoomWorkspace({
     if (!participant) return;
     setPanel('none');
     openParticipant(participant);
+  }, [openParticipant, record?.participants]);
+  /* 从主对话点行星名前置伙伴窗时，保留读者当前的面板布局。 */
+  const openParticipantInline = useCallback((participantId: string) => {
+    const participant = record?.participants.find((candidate) => candidate.id === participantId);
+    if (participant) openParticipant(participant);
   }, [openParticipant, record?.participants]);
   const openProcessActivity = useCallback((activity: RoomActivityProjection) => {
     const request = roomProcessWindowRequest(activity, recordId);
@@ -412,10 +418,11 @@ export function PawRoomWorkspace({
 
       <section aria-label="Room 当前协作" className="paw-room-workspace__signal">
         <div className="paw-room-workspace__objective">
-          <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
+          <div><small>目标</small><strong title={goalTitle}>{goalTitle}</strong></div>
           <span>{activeParticipants.length} 位伙伴 · {focusProjection?.workItems.length ?? 0} 项任务</span>
         </div>
         {signalCounts.length ? <button
+          aria-expanded={panel !== 'none'}
           aria-label={panel === 'none' ? '打开协作态势' : '关闭协作态势面板'}
           className="paw-room-workspace__signal-status"
           onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : 'none'); }}
@@ -445,6 +452,7 @@ export function PawRoomWorkspace({
                 {!loading && !turnOrder.length ? <div className="paw-room-workspace__empty"><Users size={24} /><strong>Room 已准备好</strong><p>发送目标，伙伴会分工、执行并汇合结果。</p></div> : null}
                 {projection && record ? <PawRoomConversation
                   onApprovalDecision={decideApproval}
+                  onOpenParticipant={openParticipantInline}
                   onOpenProcessActivity={openProcessActivity}
                   onRetryTurn={(message, retryOfRootId) => void send(message, { retryOfRootId, preserveDraft: true })}
                   projection={projection}
@@ -571,6 +579,7 @@ type PawRoomChronologyEntry =
  * Turn（UR-085 折叠不丢 trace）；待决审批永不折叠（UR-004 审批在 Room 内）。 */
 export function PawRoomConversation({
   onApprovalDecision,
+  onOpenParticipant,
   onOpenProcessActivity,
   onRetryTurn,
   projection,
@@ -578,6 +587,7 @@ export function PawRoomConversation({
   room,
 }: {
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => Promise<void>;
+  onOpenParticipant?: (participantId: string) => void;
   onOpenProcessActivity?: (activity: RoomActivityProjection) => void;
   onRetryTurn: (message: string, rootId: string) => void;
   projection: RoomProjectionState;
@@ -618,7 +628,20 @@ export function PawRoomConversation({
           return <article className="paw-room-chronology__message" data-role={message.role} data-status={message.status} key={item.id}>
             {message.role === 'user' ? (
               <time className="sr-only" dateTime={new Date(message.createdAtMs).toISOString()}>用户消息，发送于 {pawRoomClock(message.createdAtMs)}</time>
-            ) : <header><strong title={participant?.displayName}>{actor}</strong>{participant ? <small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small> : null}<time>{pawRoomClock(message.createdAtMs)}</time></header>}
+            ) : <header>
+                {/* 主对话里的行星名就是跨窗口的门：点一下把这位伙伴的
+                    卫星窗前置，不用先绕道协作态势面板。 */}
+                {participant && onOpenParticipant ? (
+                  <button
+                    className="paw-room-chronology__actor"
+                    onClick={() => onOpenParticipant(participant.id)}
+                    title={`打开 ${participant.displayName} 的伙伴窗口`}
+                    type="button"
+                  ><strong>{actor}</strong></button>
+                ) : <strong title={participant?.displayName}>{actor}</strong>}
+                {participant ? <small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small> : null}
+                <time>{pawRoomClock(message.createdAtMs)}</time>
+              </header>}
             <div><MarkdownBody text={message.text || '这条公开消息没有正文。'} /></div>
             {message.status === 'streaming' ? <small className="paw-room-chronology__live">正在生成公开回复</small> : null}
           </article>;

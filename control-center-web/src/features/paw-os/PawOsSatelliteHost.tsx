@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { BrainCircuit, CalendarDays, CheckCircle2, ChevronDown, CircleAlert, CircleStop, ExternalLink, FileText, FolderKanban, ListChecks, LoaderCircle, MessageSquare, Network, PackageCheck, PackageOpen, PackageX, Power, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Skeleton } from '@/components/primitives';
 import type { WorkDocumentDetailV1 } from '@/contracts/work-documents';
@@ -453,6 +453,16 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
   useEffect(() => setOlderTimelineEntries(0), [target.id]);
   const timelineStart = Math.max(0, fullTimeline.length - PARTICIPANT_TIMELINE_WINDOW - olderTimelineEntries);
   const timeline = fullTimeline.slice(timelineStart);
+  /* 加载更早一页时旧内容从顶部插入；先记住插入前的内容高度，绘制前把
+     差值加回 scrollTop，读者盯着的那一行纹丝不动（滚动合同的历史侧）。 */
+  const olderAnchorRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const timelineElement = timelineRef.current;
+    if (timelineElement && olderAnchorRef.current !== null) {
+      timelineElement.scrollTop += timelineElement.scrollHeight - olderAnchorRef.current;
+    }
+    olderAnchorRef.current = null;
+  }, [timelineStart]);
   /* UR-056：窗口标题栏已标识伙伴身份，内容区只保留该伙伴的真实公开
      对话与运行轨迹；WorkItem/责任摘要留在 Room 主窗。 */
   const timelineItems = useMemo(() => participantTimelineItems(timeline), [timeline]);
@@ -471,7 +481,10 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
             <ParticipantHistoryBoundary
               hiddenBeforeCount={timelineStart}
               loadedCount={timeline.length}
-              onLoadOlder={() => setOlderTimelineEntries((current) => current + PARTICIPANT_TIMELINE_WINDOW)}
+              onLoadOlder={() => {
+                olderAnchorRef.current = timelineRef.current?.scrollHeight ?? null;
+                setOlderTimelineEntries((current) => current + PARTICIPANT_TIMELINE_WINDOW);
+              }}
               totalCount={fullTimeline.length}
             />
             {timelineItems.map((item) => item.kind === 'activity-group' ? (

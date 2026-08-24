@@ -520,6 +520,11 @@
 .paw-desktop-root .paw-room-chronology__message { display: grid; min-width: 0; gap: 4px; max-width: 76ch; padding: 8px 0; }
 .paw-desktop-root .paw-room-chronology__message > header { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
 .paw-desktop-root .paw-room-chronology__message > header strong { overflow: hidden; color: #6b7686; font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* 行星名即跨窗口入口：静默时和普通署名一样安静，悬停才亮出下划线，
+   点击前置这位伙伴的卫星窗。 */
+.paw-desktop-root .paw-room-chronology__actor { min-width: 0; display: inline-flex; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.paw-desktop-root .paw-room-chronology__actor:hover strong { color: #28313e; text-decoration: underline; text-decoration-color: rgb(39 131 222 / .55); text-underline-offset: 3px; }
+.paw-desktop-root .paw-room-chronology__actor:focus-visible { border-radius: 4px; outline: 2px solid var(--room-blue); outline-offset: 2px; }
 .paw-desktop-root .paw-room-chronology__message > header small { color: var(--room-violet); font-size: 12px; }
 .paw-desktop-root .paw-room-chronology__message > header time { margin-left: auto; color: #9aa3b2; font-size: 12px; font-variant-numeric: tabular-nums; }
 .paw-desktop-root .paw-room-chronology__message > div { min-width: 0; color: #232a35; font-size: 15.5px; line-height: 1.68; overflow-wrap: anywhere; }
