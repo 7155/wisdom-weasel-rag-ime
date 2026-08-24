@@ -515,13 +515,15 @@
   white-space: nowrap;
 }
 
+/* The reading pane stays a true paper-white sheet even when the shell tints
+   the surrounding chrome; that literal is a frozen cross-owner contract. */
 .paw-files-preview {
   display: grid;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  background: var(--color-paper);
+  background: #fff;
 }
 
 .paw-files-preview > header {
