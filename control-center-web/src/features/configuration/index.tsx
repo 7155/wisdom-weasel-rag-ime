@@ -171,16 +171,6 @@ export function ConfigurationFeature() {
       title="设置"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
-        <PiProviderCredentials />
-        <SubagentSettingsPanel highlighted={searchParams.get('section') === 'subagents'} />
-        <ManagementSection title="功能设置">
-          <nav aria-label="功能设置入口" className="configuration-destinations">
-            {settingDestinations.map((destination) => {
-              const Icon = destination.icon;
-              return <button key={destination.path} onClick={() => navigate(destination.path)} type="button"><Icon size={18} /><span><strong>{destination.label}</strong><small>{destination.detail}</small></span><ChevronRight size={15} /></button>;
-            })}
-          </nav>
-        </ManagementSection>
         <ManagementSection title="称呼、对话与上下文" description="这里调整全局称呼和伙伴的工作方式；输入法、语音与知识库的专属选项留在对应页面。">
           {sections.length ? (
             <>
@@ -264,7 +254,7 @@ export function ConfigurationFeature() {
                     runtimeRevision === null
                       ? '当前设置还没有刷新完成，请刷新后再保存。'
                       : hasSensitiveChanges
-                        ? '账号密钥请使用上方的安全入口修改；这里不会发送密钥。'
+                        ? '账号密钥请使用下方「模型账号」的安全入口修改；这里不会发送密钥。'
                       : diffRows.length === 0
                         ? '调整任一设置后，就可以在这里核对并保存。'
                         : '',
@@ -344,6 +334,18 @@ export function ConfigurationFeature() {
               )}
             </>
           ) : <EmptyState description="当前没有可显示的设置分组。" icon={Settings2} title="设置为空" />}
+        </ManagementSection>
+
+        <PiProviderCredentials />
+        <SubagentSettingsPanel highlighted={searchParams.get('section') === 'subagents'} />
+
+        <ManagementSection description="输入法、语音、记忆等功能的专属选项在各自页面调整，从这里直接进入。" title="功能设置">
+          <nav aria-label="功能设置入口" className="configuration-destinations">
+            {settingDestinations.map((destination) => {
+              const Icon = destination.icon;
+              return <button key={destination.path} onClick={() => navigate(destination.path)} type="button"><Icon size={18} /><span><strong>{destination.label}</strong><small>{destination.detail}</small></span><ChevronRight size={15} /></button>;
+            })}
+          </nav>
         </ManagementSection>
 
         <ManagementSection title="迁移与恢复">
@@ -459,7 +461,7 @@ function SettingField({
   }
   if (['string', 'number', 'integer', 'secret', 'password'].includes(type) || secret) {
     if (secret) {
-      return <div className="mgmt-list__row"><Field description="请使用上方模型账号或对应安全功能修改。" htmlFor={id} label={label}><Input disabled id={id} placeholder={configuredLabel(value)} type="password" value="" /></Field></div>;
+      return <div className="mgmt-list__row"><Field description="请使用下方模型账号或对应安全功能修改。" htmlFor={id} label={label}><Input disabled id={id} placeholder={configuredLabel(value)} type="password" value="" /></Field></div>;
     }
     return (
       <div className="mgmt-list__row">

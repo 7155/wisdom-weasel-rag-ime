@@ -7,6 +7,7 @@ import {
   ShieldCheck,
   Wrench,
 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { Button } from '@/components/primitives';
@@ -16,6 +17,11 @@ import { ManagementSection, StatusBadge } from '@/features/overview/management-u
 export function SubagentSettingsPanel({ highlighted = false }: { highlighted?: boolean }) {
   const navigate = useNavigate();
   const transport = useControlTransport();
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (highlighted) panelRef.current?.scrollIntoView({ block: 'start' });
+  }, [highlighted]);
   const templatesQuery = useQuery({
     queryKey: ['configuration', 'subagents', 'templates'],
     queryFn: ({ signal }) => transport.request({
@@ -34,10 +40,11 @@ export function SubagentSettingsPanel({ highlighted = false }: { highlighted?: b
 
   return (
     <div
-      id="configuration-subagents"
+      aria-label="子 Agent 设置"
       className="configuration-subagents"
       data-highlighted={highlighted || undefined}
-      aria-label="子 Agent 设置"
+      id="configuration-subagents"
+      ref={panelRef}
     >
       <ManagementSection
         title="子 Agent"
