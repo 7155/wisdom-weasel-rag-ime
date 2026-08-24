@@ -82,6 +82,26 @@ export function LexiconWorkflow({
     <div className="mgmt-stack">
       <div className="mgmt-toolbar">
         <span className="mgmt-muted">待审 {review.entryCount} 条 · 已选 {selectedEntries.length} 条</span>
+        {stage === 'select' ? (
+          <div className="input-lexicon-review__bulk">
+            <Button
+              disabled={selectedKeys.size === review.entries.length}
+              onClick={() => setSelectedKeys(new Set(review.entries.map((entry) => entry.reviewKey)))}
+              size="small"
+              variant="quiet"
+            >
+              全选
+            </Button>
+            <Button
+              disabled={selectedKeys.size === 0}
+              onClick={() => setSelectedKeys(new Set())}
+              size="small"
+              variant="quiet"
+            >
+              清除
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <InlineNotice title="筛选规则" tone="info">
@@ -105,7 +125,10 @@ export function LexiconWorkflow({
                   <strong title={entry.text}>{entry.text}</strong>
                   <span title={detail}>{detail}</span>
                 </span>
-                <StatusBadge label={reviewSourceLabel(entry.reviewSource)} tone="info" />
+                <StatusBadge
+                  label={reviewSourceLabel(entry.reviewSource)}
+                  tone={entry.reviewSource.includes('dsv4') ? 'warning' : 'info'}
+                />
               </label>
             );
           })}
@@ -136,7 +159,11 @@ export function LexiconWorkflow({
         {stage === 'receipt' && applyReceipt ? (
           <>
             <LexiconReceipt receipt={applyReceipt} rolledBack={false} />
-            <InlineNotice title="尚未生效" tone="warning">词条已经加入用户词库，但输入法尚未重载。请在重载后用实际输入与选词结果确认效果。</InlineNotice>
+            {applyReceipt.requiresRedeploy ? (
+              <InlineNotice title="尚未生效" tone="warning">词条已经加入用户词库，但输入法尚未重载。请在重载后用实际输入与选词结果确认效果。</InlineNotice>
+            ) : (
+              <InlineNotice title="等待实测确认" tone="info">词条已经写入用户词库；请用实际输入与选词结果确认效果。</InlineNotice>
+            )}
             <div className="mgmt-workflow__buttons">
               <Button leadingIcon={<RotateCcw size={14} />} loading={rollbackMutation.isPending} onClick={() => rollbackMutation.mutate(applyReceipt.rollbackId)} size="small">撤销这次更新</Button>
             </div>
@@ -148,7 +175,11 @@ export function LexiconWorkflow({
         {stage === 'rolled-back' && rollbackReceipt ? (
           <>
             <LexiconReceipt receipt={rollbackReceipt} rolledBack />
-            <InlineNotice title="撤销尚未生效" tone="warning">词库已经恢复，但重载输入法尚未完成。请在重载后用实际选词结果确认。</InlineNotice>
+            {rollbackReceipt.requiresRedeploy ? (
+              <InlineNotice title="撤销尚未生效" tone="warning">词库已经恢复，但重载输入法尚未完成。请在重载后用实际选词结果确认。</InlineNotice>
+            ) : (
+              <InlineNotice title="等待实测确认" tone="info">词库已经恢复；请用实际选词结果确认。</InlineNotice>
+            )}
             <div className="mgmt-workflow__buttons">
               <Button onClick={() => setStage('select')} size="small" variant="quiet">返回审阅</Button>
             </div>
@@ -160,12 +191,20 @@ export function LexiconWorkflow({
 }
 
 function LexiconReceipt({ receipt, rolledBack }: { receipt: TimedReceipt; rolledBack: boolean }) {
+  // 回执只复述后端声明的状态：requiresRedeploy 为真才说"等待重载"，
+  // 否则不得凭空承诺已在前台生效。
+  const awaitingReload = receipt.requiresRedeploy;
   return (
     <div className="mgmt-workflow__receipt">
       <div>
-        <StatusBadge label={rolledBack ? '已撤销 · 等待重载' : '已加入 · 等待重载'} tone="warning" />
+        <StatusBadge
+          label={`${rolledBack ? '已撤销' : '已加入'}${awaitingReload ? ' · 等待重载' : ''}`}
+          tone={awaitingReload ? 'warning' : 'success'}
+        />
         <strong>{rolledBack ? '词库更新已撤销' : '词条已加入用户词库'}</strong>
-        <span>{rolledBack ? '重载输入法后恢复生效' : `已加入 ${receipt.entryCount} 条 · 可以撤销`}</span>
+        <span>{rolledBack
+          ? awaitingReload ? '重载输入法后恢复生效' : '词库文件已恢复'
+          : `已加入 ${receipt.entryCount} 条 · 可以撤销`}</span>
         <time>{new Date(receipt.atMs).toLocaleString('zh-CN', { hour12: false })}</time>
       </div>
     </div>
@@ -184,15 +223,29 @@ function toggled(current: Set<string>, key: string, selected: boolean): Set<stri
 }
 
 function selectionPolicyLabel(value?: string): string {
+  const policy = (value ?? '').trim();
+  // 后端会直接给出可读的中文策略原文；有原文就展示原文，而不是替换成近似句子。
+  if (/[\u3400-\u9fff]/u.test(policy) && policy.length <= 120) {
+    return policy.endsWith('。') ? policy : `${policy}。`;
+  }
   return ({
     review_required: '重复使用的常用词才进入审阅；系统建议默认不勾选。',
     repeated_usage: '重复使用的常用词才进入审阅；系统建议默认不勾选。',
     manual_review: '每条建议都需要你审阅后才能加入词库。',
-  } as Record<string, string>)[value ?? ''] ?? '重复使用的常用词才进入审阅；系统建议默认不勾选。';
+  } as Record<string, string>)[policy] ?? '重复使用的常用词才进入审阅；系统建议默认不勾选。';
 }
 
 function reviewSourceLabel(value: string): string {
-  return ({ usage: '输入记录', local_feedback: '本机选词反馈', manual: '手动添加', imported: '已导入' } as Record<string, string>)[value] ?? '待审词条';
+  const names: Record<string, string> = {
+    usage: '输入记录',
+    local_feedback: '本机选词反馈',
+    manual: '手动添加',
+    imported: '已导入',
+    dsv4: '模型整理',
+  };
+  // 合并来源以 + 连接（如 dsv4+usage），逐段翻译保持来源可追溯。
+  const parts = value.split('+').map((part) => names[part]).filter(Boolean);
+  return parts.length ? parts.join('+') : '待审词条';
 }
 
 function reviewEntryDetail(entry: LexiconReview['entries'][number]): string {
