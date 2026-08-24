@@ -22,6 +22,9 @@
   --paw-chat-danger: #cd3c3a;
   --paw-chat-radius-message: 16px;
   --paw-chat-radius-tool: 10px;
+  /* Shared motion voice from the signed-off conversation baseline: disclosure
+     chevrons, reveals and presses all answer with the same gentle spring. */
+  --paw-chat-spring: cubic-bezier(.34, 1.4, .64, 1);
   color: var(--paw-chat-text);
   background: var(--paw-chat-surface);
   grid-template-rows: 48px minmax(0, 1fr);
@@ -544,6 +547,7 @@
   border-radius: 16px;
   background: #fff;
   box-shadow: 0 2px 4px rgb(0 0 0 / 4%), 0 0 0 1px rgb(42 28 0 / 7%);
+  transition: box-shadow 150ms ease;
 }
 
 .paw-desktop-root .paw-session-workspace__composer .agent-composer:focus-within {
@@ -554,8 +558,37 @@
   min-height: 64px;
   padding: 12px 14px 41px;
   color: var(--paw-chat-text);
+  caret-color: var(--paw-chat-accent);
   font-size: 16px;
   line-height: 24px;
+}
+
+/* Send is the composer's one primary action: a filled accent circle
+   (baseline .send-btn), so it never competes with the quiet pickers on the
+   same row. Disabled keeps the quiet outline so an empty draft doesn't shout. */
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__send:not(:disabled) {
+  border-radius: 50%;
+  background: var(--paw-chat-accent);
+  color: #fff;
+  transition:
+    transform 200ms var(--paw-chat-spring),
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__send:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--paw-chat-accent) 88%, #18202b);
+  transform: translateY(-1px);
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer__send:active:not(:disabled) {
+  background: color-mix(in srgb, var(--paw-chat-accent) 80%, #18202b);
+  transform: scale(.94);
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace__composer .agent-composer__send:not(:disabled) {
+  transition: none;
+  transform: none;
 }
 
 .paw-desktop-root .paw-session-workspace__side {
@@ -627,12 +660,31 @@
   color: var(--paw-chat-text-secondary);
   background: #fff;
   font-size: 13px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.paw-agent-trace-v1__filters button:hover {
+  border-color: color-mix(in srgb, var(--paw-chat-text-tertiary) 46%, var(--paw-chat-border));
+  color: var(--paw-chat-text);
+  background: var(--paw-chat-surface-subtle);
+}
+
+.paw-agent-trace-v1__filters button:focus-visible {
+  outline: 2px solid var(--paw-chat-accent);
+  outline-offset: 1px;
 }
 
 .paw-agent-trace-v1__filters button[aria-pressed='true'] {
   border-color: #2c2c2b;
   color: #fff;
   background: #2c2c2b;
+}
+
+.paw-agent-trace-v1__filters button[aria-pressed='true']:hover {
+  border-color: #3d3d3b;
+  color: #fff;
+  background: #3d3d3b;
 }
 
 .paw-agent-trace-v1__filters button span {

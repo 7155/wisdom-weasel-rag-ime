@@ -511,7 +511,8 @@
 @media (prefers-reduced-motion: reduce) { .agent-html-output-placeholder__dot { animation: none; } }
 .agent-code-block { max-width: 100%; margin: 10px 0 13px; border: 1px solid var(--color-code-border); border-radius: var(--radius-2); background: var(--color-code-bg); color: var(--color-code-text); overflow: hidden; }
 .agent-code-block figcaption { display: flex; height: 34px; align-items: center; justify-content: space-between; padding: 0 6px 0 10px; border-bottom: 1px solid var(--color-code-border); color: var(--color-code-muted); font-family: var(--font-mono); font-size: 13px; }
-.agent-code-block figcaption > span { display: flex; align-items: center; gap: 6px; }
+.agent-code-block figcaption > span { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.agent-code-block figcaption > span > small { flex: 0 0 auto; color: var(--color-code-muted); opacity: .72; font-size: 12px; font-variant-numeric: tabular-nums; }
 .agent-code-block pre { max-width: 100%; max-height: min(440px, 64dvh); margin: 0; padding: 13px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; font: 13px/1.55 var(--font-mono); white-space: pre; }
 .agent-code-block pre:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -3px; }
 .agent-code-block__content { display: block; width: max-content; min-width: 100%; padding: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; overflow-wrap: normal; }
@@ -630,14 +631,16 @@
 .agent-activity { display: grid; width: 100%; min-height: 46px; grid-template-columns: 28px minmax(0, 1fr) 18px; align-items: center; gap: 9px; margin: 0; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-surface-subtle) 48%, transparent); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
 .agent-activity:active { box-shadow: var(--shadow-control-press); transform: translateY(1px); }
 .agent-activity > svg { color: var(--color-text-tertiary); }
+/* Height/easing must stay in step with DISCLOSURE_MOTION in
+   SmoothDisclosureReveal.tsx, which bounds the fallback finish timer. */
 .agent-smooth-reveal {
   min-width: 0;
   overflow: hidden;
   overflow: clip;
   opacity: 0;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+    height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
+    opacity 150ms ease;
   will-change: height;
 }
 .agent-smooth-reveal[data-state='opening'],
@@ -3702,18 +3705,29 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
   font-family: var(--font-ui);
   font-size: var(--text-label);
   font-weight: var(--font-weight-medium);
-  animation: agent-jump-latest-enter var(--motion-enter) var(--ease-standard) both;
-  transition: color var(--motion-press) var(--ease-standard), border-color var(--motion-press) var(--ease-standard);
+  /* `backwards` (not `both`): once the entrance settles, the fill must release
+     the transform so the :active press below still lands. */
+  animation: agent-jump-latest-enter 220ms cubic-bezier(.34, 1.4, .64, 1) backwards;
+  transition: color var(--motion-press) var(--ease-standard), border-color var(--motion-press) var(--ease-standard), transform var(--motion-press) var(--ease-standard);
 }
 
 .agent-jump-latest:hover { background: var(--color-surface-hover); color: var(--color-text); }
+.agent-jump-latest:active { transform: translateY(1px); }
 .agent-jump-latest:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .agent-jump-latest > svg { color: var(--color-accent); }
 
 @keyframes agent-jump-latest-enter {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-jump-latest { animation: none; transition: none; }
+  .agent-jump-latest:active { transform: none; }
+}
+
+:root[data-reduce-motion='true'] .agent-jump-latest { animation: none; transition: none; }
+:root[data-reduce-motion='true'] .agent-jump-latest:active { transform: none; }
 
 /* ============================== Agent 轨迹证据 ==============================
    Evidence layout for PawContextTrace: every summary row opens to concrete
