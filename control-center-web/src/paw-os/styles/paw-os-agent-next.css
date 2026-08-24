@@ -54,6 +54,10 @@
 .an-home-title em { color: var(--an-cobalt); font-style: normal; }
 .an-composer { position: relative; z-index: 4; background: var(--an-paper-bright); border: 1px solid var(--an-rule); border-radius: 14px; box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 12px 30px rgba(24, 32, 43, .07); transition: border-color 160ms ease, box-shadow 180ms ease, transform 220ms var(--an-ease-out); animation: an-rise 480ms var(--an-ease-out) 90ms both; }
 .an-composer:focus-within { border-color: color-mix(in srgb, var(--an-cobalt) 42%, var(--an-rule)); box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 16px 36px rgba(24, 32, 43, .09), 0 0 0 4px color-mix(in srgb, var(--an-cobalt) 9%, transparent); transform: translateY(-1px); }
+/* 与 Session composer 同语汇的船坞光环：聚焦时一段静态钴-紫 conic 光
+   贴着边框亮起（Home 不执行任务，光不转动）。 */
+.an-composer::before { content: ''; position: absolute; inset: -1px; z-index: 2; border-radius: 15px; padding: 1.5px; background: conic-gradient(from 210deg, rgb(47 107 255 / 0%) 0%, rgb(47 107 255 / 45%) 12%, rgb(122 77 178 / 32%) 22%, rgb(47 107 255 / 0%) 34%); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
+.an-composer:focus-within::before { opacity: .5; }
 .an-composer textarea { display: block; width: 100%; min-height: 92px; padding: 17px 17px 10px; resize: none; border: 0; outline: 0; background: transparent; color: var(--an-ink); font-size: 15px; line-height: 1.65; }
 .an-composer textarea::placeholder { color: var(--an-ink-3); opacity: 1; }
 .an-composer-foot { display: flex; align-items: center; gap: 8px; min-height: 49px; padding: 8px 10px; border-top: 1px solid var(--an-hairline); }
