@@ -10,59 +10,98 @@ import { ApprovalsFeature } from '.';
 
 afterEach(cleanup);
 
+function renderApprovals(transport = createPreviewTransport()) {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <MemoryRouter><ApprovalsFeature /></MemoryRouter>
+        </TooltipProvider>
+      </ControlTransportProvider>
+    </QueryClientProvider>,
+  );
+  return transport;
+}
+
 describe('ApprovalsFeature', () => {
-  it('shows a cross-Session approval queue and keeps R3 confirmation bound to the exact payload', async () => {
+  it('tells the truth about the queue and mirrors the selected request in the decision panel', async () => {
     const user = userEvent.setup();
-    const transport = createPreviewTransport();
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ControlTransportProvider transport={transport}>
-          <TooltipProvider>
-            <MemoryRouter><ApprovalsFeature /></MemoryRouter>
-          </TooltipProvider>
-        </ControlTransportProvider>
-      </QueryClientProvider>,
-    );
+    renderApprovals();
 
     expect(await screen.findByRole('heading', { name: '审批中心', level: 1 })).toBeInTheDocument();
-    const summary = await screen.findByText('构建并安装 Control Center 开发版本');
-    const card = summary.closest('li');
-    expect(card).not.toBeNull();
-    expect(within(card!).getByText('R3')).toBeVisible();
-    expect(within(card!).getByText('控制中心迁移')).toBeVisible();
-    expect(within(card!).queryByText('保留当前安装包，可按安装回执恢复')).not.toBeInTheDocument();
 
-    await user.click(within(card!).getByText('完整预览'));
-    expect(within(card!).getByText('以下完整预览与本次审批哈希绑定')).toBeInTheDocument();
-    expect(within(card!).getByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).toBeInTheDocument();
-    expect(within(card!).getByText(/"apiToken": "已隐藏"/)).toBeInTheDocument();
-    expect(within(card!).queryByText(/PRIVATE_APPROVAL_TOKEN/)).not.toBeInTheDocument();
-    expect(within(card!).getByText('a'.repeat(64))).toBeInTheDocument();
+    const pulse = await screen.findByRole('region', { name: '审批现状' });
+    expect(within(pulse).getByText('2 项操作在等你决定')).toBeVisible();
+    expect(within(pulse).getByText(/1 项高风险需要二次确认/)).toBeVisible();
+    expect(within(pulse).getByText(/1 项将在 5 分钟内过期/)).toBeVisible();
 
-    const previewDetails = within(card!).getByText('完整预览').closest('details');
-    await user.click(within(card!).getByText('完整预览'));
-    expect(within(card!).getByText('完整预览').closest('summary')).toHaveAttribute('aria-expanded', 'false');
-    expect(previewDetails).toHaveAttribute('open');
-    expect(previewDetails?.querySelector('.approvals-preview__reveal')).toHaveAttribute('aria-hidden', 'true');
-    expect(within(card!).getByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).toBeInTheDocument();
-    await waitFor(() => expect(previewDetails).not.toHaveAttribute('open'));
-    expect(within(card!).queryByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).not.toBeInTheDocument();
+    const queue = screen.getByRole('list', { name: '审批项目' });
+    const releaseRow = within(queue).getByRole('button', { name: /构建并安装 Control Center 开发版本/ });
+    expect(releaseRow).toHaveAttribute('aria-current', 'true');
+
+    const panel = screen.getByRole('region', { name: '审批详情' });
+    expect(within(panel).getByRole('heading', { level: 3, name: '构建并安装 Control Center 开发版本' })).toBeInTheDocument();
+    expect(within(panel).getByText('控制中心迁移')).toBeVisible();
+
+    await user.click(within(queue).getByRole('button', { name: /允许 Room 伙伴使用 Session 子 Agent 模板/ }));
+    expect(within(panel).getByRole('heading', { level: 3, name: '允许 Room 伙伴使用 Session 子 Agent 模板' })).toBeInTheDocument();
+    expect(within(queue).getByRole('button', { name: /允许 Room 伙伴使用 Session 子 Agent 模板/ })).toHaveAttribute('aria-current', 'true');
+    expect(releaseRow).not.toHaveAttribute('aria-current');
+  });
+
+  it('keeps secret preview fields hidden and the R3 decision bound to the exact payload hash', async () => {
+    const user = userEvent.setup();
+    const transport = renderApprovals();
+
+    expect(await screen.findByRole('heading', { name: '审批中心', level: 1 })).toBeInTheDocument();
+    const panel = await screen.findByRole('region', { name: '审批详情' });
+    await within(panel).findByRole('heading', { level: 3, name: '构建并安装 Control Center 开发版本' });
 
     const listRequest = transport.requests.find((call) => call.request.pathId === 'agent.approvals.list');
     expect(listRequest?.request.query).toEqual({ limit: 500 });
 
-    await user.click(within(card!).getByRole('button', { name: '批准' }));
-    expect(within(card!).getByText('确认批准 R3 高风险操作？')).toBeVisible();
-    await user.click(within(card!).getByRole('button', { name: '确认批准' }));
+    // Facts stay readable but never leak secret-named fields.
+    expect(within(panel).getByText('恢复方式')).toBeInTheDocument();
+    expect(within(panel).getByText('保留当前安装包，可按安装回执恢复')).toBeInTheDocument();
+    expect(within(panel).getByText('已隐藏')).toBeInTheDocument();
+    expect(screen.queryByText(/PRIVATE_APPROVAL_TOKEN/)).not.toBeInTheDocument();
+
+    await user.click(within(panel).getByText('完整预览'));
+    expect(within(panel).getByText('以下完整预览与本次审批哈希绑定')).toBeInTheDocument();
+    expect(within(panel).getByText('a'.repeat(64))).toBeInTheDocument();
+    expect(within(panel).getByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).toBeInTheDocument();
+    expect(within(panel).getByText(/"apiToken": "已隐藏"/)).toBeInTheDocument();
+    expect(screen.queryByText(/PRIVATE_APPROVAL_TOKEN/)).not.toBeInTheDocument();
+
+    const previewDetails = within(panel).getByText('完整预览').closest('details');
+    await user.click(within(panel).getByText('完整预览'));
+    expect(within(panel).getByText('完整预览').closest('summary')).toHaveAttribute('aria-expanded', 'false');
+    expect(previewDetails?.querySelector('.approvals-preview__reveal')).toHaveAttribute('aria-hidden', 'true');
+    await waitFor(() => expect(previewDetails).not.toHaveAttribute('open'));
+    expect(within(panel).queryByText(/"rollback": "保留当前安装包，可按安装回执恢复"/)).not.toBeInTheDocument();
+
+    await user.click(within(panel).getByRole('button', { name: '批准' }));
+    expect(within(panel).getByText('确认批准 R3 高风险操作？')).toBeVisible();
+    await user.click(within(panel).getByRole('button', { name: '确认批准' }));
 
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'agent.approval.decide'
       && call.request.params?.approvalId === 'approval:preview-release'
       && (call.request.body as Record<string, unknown> | undefined)?.payloadSha256 === 'a'.repeat(64)
     ))).toBe(true));
-    await waitFor(() => expect(screen.queryByText('构建并安装 Control Center 开发版本')).not.toBeInTheDocument());
+
+    // The decided request leaves the pending queue; the desk moves on to the
+    // next waiting item instead of leaving an empty panel.
+    const queue = screen.getByRole('list', { name: '审批项目' });
+    await waitFor(() => expect(within(queue).queryByRole('button', { name: /构建并安装 Control Center 开发版本/ })).not.toBeInTheDocument());
+    expect(within(panel).getByRole('heading', { level: 3, name: '允许 Room 伙伴使用 Session 子 Agent 模板' })).toBeInTheDocument();
+
+    // The fact record stays readable under 已处理 but offers no second decision.
     await user.click(screen.getByRole('radio', { name: '已处理' }));
-    expect(await screen.findByText('构建并安装 Control Center 开发版本')).toBeVisible();
-    expect(screen.getByText('已批准待执行')).toBeVisible();
+    expect(await within(queue).findByRole('button', { name: /构建并安装 Control Center 开发版本/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('heading', { level: 3, name: '构建并安装 Control Center 开发版本' })).toBeInTheDocument();
+    expect(within(panel).getAllByText('已批准待执行').length).toBeGreaterThan(0);
+    expect(within(panel).queryByRole('button', { name: '批准' })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: '拒绝' })).not.toBeInTheDocument();
   });
 });

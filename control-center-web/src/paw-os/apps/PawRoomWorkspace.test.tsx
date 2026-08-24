@@ -18,7 +18,7 @@ describe('PAWOS Room collaboration tools', () => {
   it('opens one purpose-built Sol collaboration view instead of four duplicate summaries', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
-    const { container } = renderRoom(900, openWindow);
+    const { container, room } = renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
@@ -32,11 +32,12 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getAllByRole('tab')).toHaveLength(2);
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
-    expect(within(tools).getByRole('tree', { name: 'WorkItem 任务流' })).toHaveTextContent('实现 Room 依赖数据投影');
-    const userMessage = screen.getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
+    expect(within(tools).getByRole('tree', { name: '任务树' })).toHaveTextContent('实现 Room 依赖数据投影');
+    const timeline = screen.getByRole('log', { name: '公开对话时间线' });
+    const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
     expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();
-    const earthMessage = screen.getByText('我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。').closest('article');
+    const earthMessage = within(timeline).getByText('我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。').closest('article');
     expect(within(earthMessage!).getByText('Earth')).toBeInTheDocument();
     /* UR-054：进入 Room 只自动展开后台伙伴卫星窗，主 Room 保持焦点，
        不会有任何前台窗口调用。 */
@@ -45,6 +46,13 @@ describe('PAWOS Room collaboration tools', () => {
       expect(request).toMatchObject({ background: true, target: expect.objectContaining({ kind: 'participant' }) });
     }
     expect(new Set(openWindow.mock.calls.map(([request]) => request.target.id)).size).toBe(openWindow.mock.calls.length);
+
+    /* PF-CM-013/PF-CM-020：态势弹出是真实可达的卫星入口，指向 focus 面板。 */
+    await user.click(within(tools).getByRole('button', { name: '在卫星窗中打开协作态势' }));
+    expect(openWindow).toHaveBeenLastCalledWith(expect.objectContaining({
+      appId: 'agent',
+      target: expect.objectContaining({ kind: 'room', id: room.id, panel: 'focus' }),
+    }));
 
     await user.click(within(tools).getByRole('button', { name: '关闭协作态势' }));
 

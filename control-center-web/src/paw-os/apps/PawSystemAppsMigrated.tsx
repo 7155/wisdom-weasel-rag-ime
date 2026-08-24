@@ -3,7 +3,9 @@ import {
   Bot,
   BookOpen,
   CircleAlert,
+  Eye,
   Fingerprint,
+  FolderCog,
   Gauge,
   History,
   Keyboard,
@@ -20,12 +22,14 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, EmptyState, Input, Switch } from '@/components/primitives';
+import { Button, EmptyState, Input, SegmentedControl, Switch } from '@/components/primitives';
 import { ApprovalsFeature } from '@/features/approvals';
 import {
   useAgentPreferencesAuthority,
@@ -75,6 +79,7 @@ type SystemPage = {
   label: string;
   icon: LucideIcon;
   route: string;
+  group?: string;
 };
 
 const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
@@ -90,16 +95,16 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
     { id: 'proposals', label: '建议', icon: Sparkles, route: '/plugins?view=proposals' },
   ],
   'system-monitor': [
-    { id: 'activity', label: '活动', icon: Activity, route: '/observability' },
-    { id: 'context', label: '上下文', icon: Network, route: '/context-debug' },
-    { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics' },
+    { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时' },
+    { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查' },
+    { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics', group: '排查' },
   ],
   'system-settings': [
-    { id: 'agent', label: 'Agent', icon: Bot, route: '/configuration?view=agent' },
-    { id: 'appearance', label: '外观', icon: Palette, route: '/appearance' },
-    { id: 'configuration', label: '配置', icon: Settings2, route: '/configuration' },
-    { id: 'governance', label: '治理', icon: ShieldCheck, route: '/governance' },
-    { id: 'approvals', label: '审批', icon: Fingerprint, route: '/approvals' },
+    { id: 'configuration', label: '配置', icon: Settings2, route: '/configuration', group: '通用' },
+    { id: 'appearance', label: '外观', icon: Palette, route: '/appearance', group: '通用' },
+    { id: 'agent', label: 'Agent', icon: Bot, route: '/configuration?view=agent', group: 'Agent' },
+    { id: 'governance', label: '治理', icon: ShieldCheck, route: '/governance', group: '安全与信任' },
+    { id: 'approvals', label: '审批', icon: Fingerprint, route: '/approvals', group: '安全与信任' },
   ],
 };
 
@@ -125,35 +130,60 @@ export function PawSystemAppsMigrated({
   const pages = systemPages[appId];
   const app = pawApp(appId);
   const desktop = usePawOsDesktop();
+  const transport = useControlTransport();
   const route = initialRoute || app.route || pages[0].route;
   const page = systemPageForRoute(pages, route);
+  // Settings surfaces the human decision queue in its own navigation. The
+  // query key matches the approvals feature so a decision there refreshes
+  // this count without a second request cycle.
+  const approvalsBadge = useQuery({
+    queryKey: ['approvals', 'all'],
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.approvals.list',
+      query: { limit: 500 },
+      signal,
+    }),
+    enabled: appId === 'system-settings',
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const pendingApprovals = appId === 'system-settings' ? pendingApprovalCount(approvalsBadge.data) : 0;
 
   return (
     <div className="paw-system-app" data-page-id={page.id} data-system-app={appId}>
       <aside className="paw-system-app__nav">
         <nav aria-label={`${app.label}页面`}>
-          {pages.map((candidate) => {
+          {pages.map((candidate, index) => {
             const Icon = candidate.icon;
             const current = candidate.id === page.id;
+            const badge = candidate.id === 'approvals' ? pendingApprovals : 0;
+            const name = badge ? `${candidate.label}（${badge} 项待处理）` : candidate.label;
             return (
-              <button
-                aria-current={current ? 'page' : undefined}
-                aria-label={candidate.label}
-                key={candidate.id}
-                onClick={() => openPawOsRoute(desktop, candidate.route)}
-                title={candidate.label}
-                type="button"
-              >
-                <Icon aria-hidden="true" size={16} />
-                <span>{candidate.label}</span>
-              </button>
+              <Fragment key={candidate.id}>
+                {candidate.group && candidate.group !== pages[index - 1]?.group ? (
+                  <span aria-hidden="true" className="paw-system-app__nav-group">{candidate.group}</span>
+                ) : null}
+                <button
+                  aria-current={current ? 'page' : undefined}
+                  aria-label={name}
+                  onClick={() => openPawOsRoute(desktop, candidate.route)}
+                  title={name}
+                  type="button"
+                >
+                  <Icon aria-hidden="true" size={16} />
+                  <span>{candidate.label}</span>
+                  {badge ? <span aria-hidden="true" className="paw-system-app__nav-badge">{badge > 99 ? '99+' : badge}</span> : null}
+                </button>
+              </Fragment>
             );
           })}
         </nav>
       </aside>
 
       <section className="paw-system-app__stage">
-        <span aria-hidden="true" className="paw-system-app__page-title">{page.label}</span>
+        <span aria-hidden="true" className="paw-system-app__page-title">
+          {page.group ? `${page.group} · ${page.label}` : page.label}
+        </span>
         <MemoryRouter initialEntries={[route]} key={route}>
           <PawSystemRouteReporter expectedRoute={route} />
           <div className="paw-system-app__page" key={`${appId}:${page.id}`}>
@@ -210,6 +240,23 @@ function PawAppearanceSettings() {
   );
 }
 
+/**
+ * Execution permission as four honest positions, not a dropdown of jargon.
+ * Whatever is chosen, R2/R3 operations still stop at the approvals desk.
+ */
+const agentExecutionModes: readonly {
+  value: AgentExecutionMode;
+  title: string;
+  detail: string;
+  icon: LucideIcon;
+  recommended?: boolean;
+}[] = [
+  { value: 'per_action', title: '按风险确认', detail: '低风险直接做；高风险先停在审批中心问你。', icon: ShieldCheck, recommended: true },
+  { value: 'read_only', title: '只读', detail: '只查看、只回答，不改动文件和设置。', icon: Eye },
+  { value: 'workspace_managed', title: '工作区托管', detail: '在授权的工作区里自己安排；越界的操作仍会先问你。', icon: FolderCog },
+  { value: 'full_trust', title: '全自动', detail: '不再逐项确认，只受本机保护规则约束。', icon: Zap },
+];
+
 function PawAgentSettings() {
   const resource = useAgentModelResource();
   const authority = useAgentPreferencesAuthority();
@@ -217,6 +264,7 @@ function PawAgentSettings() {
   const catalog = parsePiModelCatalogOptions(resource.data);
   const selectedModel = catalog.models.find((model) => model.reference === preferences.modelReference);
   const thinkingLevels = supportedPiThinkingLevels(selectedModel, { includeOff: true });
+  const controlsDisabled = authority.saving || Boolean(authority.readError);
 
   function selectModel(reference: string): void {
     const model = catalog.models.find((candidate) => candidate.reference === reference);
@@ -230,75 +278,97 @@ function PawAgentSettings() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={resource.loading || authority.isPending} onClick={() => { resource.reload(); authority.reload(); }} size="small">刷新</Button>}
-      description="设置新对话使用的模型、推理强度与执行权限。"
+      description="决定每个新对话默认用哪个模型、想多深、动手之前要不要先问你。改动只影响之后开始的对话。"
+      eyebrow="新对话的起点"
       routeId="agent-settings"
       title="Agent"
     >
-      <ManagementSection
-        description="这些偏好只作为新 Session 的起点；实际能力仍由当前 Runtime 和审批边界决定。"
-        title="新建 Session"
-      >
-        {resource.error ? (
-          <div className="paw-system-resource-state" data-state="error" role="alert">
-            <CircleAlert aria-hidden="true" size={17} />
-            <span>{resource.error}</span>
-            <button onClick={resource.reload} type="button">重试</button>
-          </div>
-        ) : null}
-        {authority.readError ? (
-          <div className="paw-system-resource-state" data-state="error" role="alert">
-            <CircleAlert aria-hidden="true" size={17} />
-            <span>{authority.readError}</span>
-            <button onClick={authority.reload} type="button">重新读取</button>
-          </div>
-        ) : null}
-        {resource.loading || authority.isPending ? (
-          <div className="paw-system-resource-state" data-state="loading" role="status"><LoaderCircle aria-hidden="true" size={17} />正在读取 Agent 默认设置</div>
-        ) : (
-          <div className="paw-system-agent-fields">
-            <label>
-              <span>模型</span>
-              <select aria-label="Agent 模型" disabled={authority.saving || Boolean(authority.readError)} onChange={(event) => selectModel(event.target.value)} value={preferences.modelReference}>
-                <option value="">自动选择</option>
-                {catalog.models.map((model) => <option key={model.reference} value={model.reference}>{model.name} · {model.provider}</option>)}
-              </select>
-              <small>{catalog.models.length ? `${catalog.models.length} 个可用模型` : 'Runtime 没有报告可用模型'}</small>
-            </label>
-            <label>
-              <span>推理强度</span>
-              <select
-                aria-label="Agent 推理强度"
-                disabled={!thinkingLevels.length || authority.saving || Boolean(authority.readError)}
-                onChange={(event) => { void authority.save({ thinking: event.target.value }); }}
-                value={thinkingLevels.includes(preferences.thinking) ? preferences.thinking : thinkingLevels[0] ?? ''}
-              >
-                {thinkingLevels.map((level) => <option key={level} value={level}>{thinkingLabel(level)}</option>)}
-              </select>
-              <small>只显示当前模型明确支持的档位</small>
-            </label>
-            <label>
-              <span>执行权限</span>
-              <select
-                aria-label="Agent 执行权限"
-                disabled={authority.saving || Boolean(authority.readError)}
-                onChange={(event) => { void authority.save({ executionMode: event.target.value as AgentExecutionMode }); }}
-                value={preferences.executionMode}
-              >
-                <option value="per_action">按风险确认</option>
-                <option value="read_only">只读</option>
-                <option value="workspace_managed">工作区托管</option>
-                <option value="full_trust">全自动</option>
-              </select>
-              <small>高风险操作仍以产品审批与 Runtime policy 为准</small>
-            </label>
-          </div>
-        )}
-        {!authority.isPending && !authority.writesSupported ? (
-          <InlineNotice title="当前版本只能读取 Agent 默认设置" tone="warning">本机服务尚未开放安全保存接口；页面不会保留仅存在于前端的修改。</InlineNotice>
-        ) : null}
-        {authority.saving ? <InlineNotice title="正在保存" tone="info">写入本机设置后会立即重新读取确认。</InlineNotice> : null}
-        {authority.saveError ? <InlineNotice title="Agent 默认设置没有保存" tone="danger">{authority.saveError}</InlineNotice> : null}
-      </ManagementSection>
+      {resource.error ? (
+        <div className="paw-system-resource-state" data-state="error" role="alert">
+          <CircleAlert aria-hidden="true" size={17} />
+          <span>{resource.error}</span>
+          <button onClick={resource.reload} type="button">重试</button>
+        </div>
+      ) : null}
+      {authority.readError ? (
+        <div className="paw-system-resource-state" data-state="error" role="alert">
+          <CircleAlert aria-hidden="true" size={17} />
+          <span>{authority.readError}</span>
+          <button onClick={authority.reload} type="button">重新读取</button>
+        </div>
+      ) : null}
+      {resource.loading || authority.isPending ? (
+        <div className="paw-system-resource-state" data-state="loading" role="status"><LoaderCircle aria-hidden="true" size={17} />正在读取 Agent 默认设置</div>
+      ) : (
+        <>
+          <ManagementSection
+            description="清单来自 Runtime 的真实报告，不会显示不可用的选项。"
+            title="用哪个模型，想多深"
+          >
+            <div className="paw-agent-model">
+              <label className="paw-agent-model__field">
+                <span>模型</span>
+                <select aria-label="Agent 模型" disabled={controlsDisabled} onChange={(event) => selectModel(event.target.value)} value={preferences.modelReference}>
+                  <option value="">自动选择</option>
+                  {catalog.models.map((model) => <option key={model.reference} value={model.reference}>{model.name} · {model.provider}</option>)}
+                </select>
+                <small>{catalog.models.length ? `${catalog.models.length} 个可用模型` : 'Runtime 没有报告可用模型'}</small>
+              </label>
+              <div className="paw-agent-model__thinking">
+                <span>推理强度</span>
+                {selectedModel && thinkingLevels.length ? (
+                  <>
+                    <SegmentedControl
+                      aria-label="Agent 推理强度"
+                      disabled={controlsDisabled}
+                      items={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))}
+                      onValueChange={(level) => { void authority.save({ thinking: level }); }}
+                      value={thinkingLevels.includes(preferences.thinking) ? preferences.thinking : thinkingLevels[0]}
+                    />
+                    <small>只显示当前模型明确支持的档位</small>
+                  </>
+                ) : (
+                  <small>选择具体模型后，这里会列出它支持的档位。</small>
+                )}
+              </div>
+            </div>
+          </ManagementSection>
+
+          <ManagementSection
+            description="无论选哪一档，高风险操作都会先停在审批中心，逐项问过你。"
+            title="动手之前，问不问你"
+          >
+            <div aria-label="Agent 执行权限" className="paw-agent-modes" role="radiogroup">
+              {agentExecutionModes.map((mode) => {
+                const Icon = mode.icon;
+                return (
+                  <label className="paw-agent-mode" key={mode.value}>
+                    <input
+                      aria-label={mode.title}
+                      checked={preferences.executionMode === mode.value}
+                      disabled={controlsDisabled}
+                      name="paw-agent-execution-mode"
+                      onChange={() => { void authority.save({ executionMode: mode.value }); }}
+                      type="radio"
+                      value={mode.value}
+                    />
+                    <span aria-hidden="true" className="paw-agent-mode__icon"><Icon size={16} /></span>
+                    <span className="paw-agent-mode__copy">
+                      <strong>{mode.title}{mode.recommended ? <em>推荐</em> : null}</strong>
+                      <small>{mode.detail}</small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </ManagementSection>
+        </>
+      )}
+      {!authority.isPending && !authority.writesSupported ? (
+        <InlineNotice title="当前版本只能读取 Agent 默认设置" tone="warning">本机服务尚未开放安全保存接口；页面不会保留仅存在于前端的修改。</InlineNotice>
+      ) : null}
+      {authority.saving ? <InlineNotice title="正在保存" tone="info">写入本机设置后会立即重新读取确认。</InlineNotice> : null}
+      {authority.saveError ? <InlineNotice title="Agent 默认设置没有保存" tone="danger">{authority.saveError}</InlineNotice> : null}
     </ManagementPage>
   );
 }
@@ -469,6 +539,15 @@ function useAgentModelResource() {
   return { data, error, loading, reload };
 }
 
+function pendingApprovalCount(value: unknown): number {
+  const items = asRecord(value).items;
+  if (!Array.isArray(items)) return 0;
+  return items.filter((item) => {
+    const approval = asRecord(item);
+    return approval.schemaVersion === 'rag-ime.agent-approval.v1' && approval.state === 'pending';
+  }).length;
+}
+
 function systemPageForRoute(pages: readonly SystemPage[], route: string): SystemPage {
   const exact = pages.find((page) => page.route === route);
   if (exact) return exact;
@@ -482,7 +561,7 @@ function systemPageForRoute(pages: readonly SystemPage[], route: string): System
 }
 
 function thinkingLabel(value: string): string {
-  return ({ off: '关闭', minimal: '极简', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max' } as Record<string, string>)[value] ?? value;
+  return ({ off: '关闭', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高' } as Record<string, string>)[value] ?? value;
 }
 
 function packageCatalogBadge(item: Record<string, unknown>): { label: string; tone: 'success' | 'warning' | 'neutral' } {

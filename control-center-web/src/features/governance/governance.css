@@ -1,175 +1,494 @@
+/* ============================ 安全与治理 ============================
+   IA: verdict board (honest headline + four stats) → view switcher →
+   overview / rules-and-audit / memory-and-knowledge. Raw identifiers stay
+   behind per-record「原始记录」disclosures. Cool slate palette, rounded
+   surfaces, hover-only transitions (no ambient animation, no flicker). */
+
 .shell-route-stage > main[data-route-id='governance'] { width: 100%; }
-.governance-filter-disclosure { border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); }
-.governance-filter-disclosure > summary { cursor: pointer; padding: 11px var(--space-3); color: var(--color-text-secondary); font-size: 14px; font-weight: 700; }
-.governance-filter-disclosure > .ui-disclosure__reveal > div > p { margin: 0; padding: 0 var(--space-3) var(--space-3); color: var(--color-text-tertiary); font-size: 13px; }
-.governance-filter-disclosure[open] > summary { border-bottom: 1px solid var(--color-border); }
-.governance-filters { display: grid; gap: var(--space-3); grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.governance-filter-disclosure .governance-filters { padding: var(--space-3); }
-.governance-columns { display: grid; gap: var(--space-3); grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.governance-columns--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.governance-list { min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); }
-.governance-list > h3 { margin: 0; padding: 10px var(--space-3); border-bottom: 1px solid var(--color-border); font-size: 14px; }
-.governance-list article, .governance-timeline article { min-width: 0; padding: var(--space-3); border-bottom: 1px solid var(--color-border); }
-.governance-list article:last-child { border-bottom: 0; }
-.governance-list article header, .governance-timeline article header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
-.governance-list article strong, .governance-timeline article strong { min-width: 0; overflow-wrap: anywhere; }
-.governance-list article p, .governance-timeline article p { margin: 8px 0; overflow-wrap: anywhere; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
-.governance-list article code, .governance-timeline article code { display: block; min-width: 0; margin-top: 7px; overflow-wrap: anywhere; color: var(--color-text-tertiary); font-size: 12px; white-space: normal; }
-.governance-list pre, .governance-timeline pre { max-height: 180px; margin: 9px 0 0; overflow: auto; padding: 8px; border-radius: var(--radius-1); background: var(--color-surface-subtle); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.governance-badges { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
-.governance-refs { display: grid; gap: 3px; margin: 8px 0 0; padding: 0; list-style: none; }
-.governance-timeline { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.governance-timeline article { border: 1px solid var(--color-border); border-radius: var(--radius-2); }
-.governance-empty { margin: 0; padding: var(--space-4); color: var(--color-text-tertiary); font-size: 13px; }
-.governance-error { color: var(--color-danger) !important; }
-.governance-record-summary,
-.governance-record-version {
+
+/* ------------------------------ verdict board ------------------------------ */
+main[data-route-id='governance'] .governance-board {
+  display: grid;
+  align-items: center;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid color-mix(in srgb, #64748b 22%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #38bdf8 7%, transparent), transparent 55%),
+    color-mix(in srgb, #f8fafc 88%, #dbeafe 12%);
+}
+main[data-route-id='governance'] .governance-board[data-tone='warning'] {
+  border-color: color-mix(in srgb, var(--color-warning) 34%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 9%, transparent), transparent 55%),
+    color-mix(in srgb, #f8fafc 92%, #fde68a 8%);
+}
+main[data-route-id='governance'] .governance-verdict {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
+main[data-route-id='governance'] .governance-verdict__icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: none;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, #475569 12%, transparent);
+  color: #475569;
+}
+main[data-route-id='governance'] .governance-board[data-tone='success'] .governance-verdict__icon {
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+}
+main[data-route-id='governance'] .governance-board[data-tone='warning'] .governance-verdict__icon {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+main[data-route-id='governance'] .governance-verdict__copy { display: grid; min-width: 0; gap: 3px; }
+main[data-route-id='governance'] .governance-verdict__copy strong {
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+main[data-route-id='governance'] .governance-verdict__copy p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+main[data-route-id='governance'] .governance-stats {
+  display: grid;
+  margin: 0;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+main[data-route-id='governance'] .governance-stats > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #64748b 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 72%, transparent);
+}
+main[data-route-id='governance'] .governance-stats dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+main[data-route-id='governance'] .governance-stats dd {
+  margin: 0;
+  color: #0f172a;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+main[data-route-id='governance'] .governance-stats > div[data-tone='success'] dd { color: var(--color-success); }
+main[data-route-id='governance'] .governance-stats > div[data-tone='warning'] dd { color: var(--color-warning); }
+main[data-route-id='governance'] .governance-stats > div[data-tone='danger'] dd { color: var(--color-danger); }
+main[data-route-id='governance'] .governance-stats > div[data-tone='info'] dd { color: var(--color-accent); }
+
+/* ------------------------------ view switcher ------------------------------ */
+main[data-route-id='governance'] .governance-viewbar {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 2px;
+}
+
+/* ------------------------------ overview view ------------------------------ */
+main[data-route-id='governance'] .governance-attention {
+  display: grid;
+  margin: 0;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+main[data-route-id='governance'] .governance-attention button {
+  display: grid;
+  width: 100%;
+  min-height: 54px;
+  align-items: center;
+  gap: 11px;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, #64748b 20%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 84%, transparent);
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+  transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+}
+main[data-route-id='governance'] .governance-attention button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+main[data-route-id='governance'] .governance-attention__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-warning);
+}
+main[data-route-id='governance'] .governance-attention li[data-tone='danger'] .governance-attention__dot { background: var(--color-danger); }
+main[data-route-id='governance'] .governance-attention__copy { display: grid; min-width: 0; gap: 1px; }
+main[data-route-id='governance'] .governance-attention__copy strong { color: #0f172a; font-size: 13.5px; }
+main[data-route-id='governance'] .governance-attention__copy small { color: #64748b; font-size: 12px; }
+main[data-route-id='governance'] .governance-attention__go { display: grid; color: #94a3b8; place-items: center; }
+main[data-route-id='governance'] .governance-active-grid {
+  display: grid;
+  margin: 0;
+  gap: 9px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  padding: 0;
+  list-style: none;
+}
+main[data-route-id='governance'] .governance-active-grid li {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, #64748b 18%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 82%, transparent);
+}
+main[data-route-id='governance'] .governance-active-grid li[data-state='on'] {
+  border-color: color-mix(in srgb, var(--color-success) 34%, transparent);
+  background: color-mix(in srgb, var(--color-success) 5%, #fff 82%);
+}
+main[data-route-id='governance'] .governance-active-grid__icon { color: #94a3b8; }
+main[data-route-id='governance'] .governance-active-grid li[data-state='on'] .governance-active-grid__icon { color: var(--color-success); }
+main[data-route-id='governance'] .governance-active-grid strong { color: #0f172a; font-size: 13.5px; }
+main[data-route-id='governance'] .governance-active-grid span:not(.governance-active-grid__icon) { color: #64748b; font-size: 12.5px; }
+main[data-route-id='governance'] .governance-active-grid small { color: #94a3b8; font-size: 12px; font-variant-numeric: tabular-nums; }
+main[data-route-id='governance'] .governance-empty-line {
+  margin: 0;
+  padding: 13px 14px;
+  border: 1px dashed color-mix(in srgb, #64748b 26%, transparent);
+  border-radius: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+/* ------------------------------ scope filter ------------------------------ */
+main[data-route-id='governance'] .governance-filter-disclosure {
+  border: 1px solid color-mix(in srgb, #64748b 18%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 72%, transparent);
+}
+main[data-route-id='governance'] .governance-filter-disclosure > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+main[data-route-id='governance'] .governance-filter-disclosure > summary::-webkit-details-marker { display: none; }
+main[data-route-id='governance'] .governance-filter-disclosure > summary::before {
+  color: var(--color-text-tertiary);
+  content: '›';
+  font-size: 17px;
+  line-height: 1;
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+main[data-route-id='governance'] .governance-filter-disclosure[open] > summary::before { transform: rotate(90deg); }
+main[data-route-id='governance'] .governance-filter-disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+main[data-route-id='governance'] .governance-filter-disclosure > .ui-disclosure__reveal > div > p {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+}
+main[data-route-id='governance'] .governance-filters {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/* ------------------------------ record lists ------------------------------ */
+main[data-route-id='governance'] .governance-columns {
+  display: grid;
+  gap: var(--space-5) var(--space-6);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+main[data-route-id='governance'] .governance-columns--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+main[data-route-id='governance'] .governance-list { min-width: 0; }
+main[data-route-id='governance'] .governance-list > h3 {
+  margin: 0;
+  padding: 0 0 7px;
+  border-bottom: 1px solid color-mix(in srgb, #64748b 22%, transparent);
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+main[data-route-id='governance'] .governance-empty {
+  margin: 0;
+  padding: 10px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+main[data-route-id='governance'] .governance-record {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, #64748b 13%, transparent);
+}
+main[data-route-id='governance'] .governance-record:last-child { border-bottom: 0; }
+main[data-route-id='governance'] .governance-record__icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, #64748b 11%, transparent);
+  color: #64748b;
+}
+main[data-route-id='governance'] .governance-record[data-tone='success'] .governance-record__icon {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+main[data-route-id='governance'] .governance-record[data-tone='warning'] .governance-record__icon {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+}
+main[data-route-id='governance'] .governance-record[data-tone='danger'] .governance-record__icon {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+main[data-route-id='governance'] .governance-record__body { display: grid; min-width: 0; gap: 5px; }
+main[data-route-id='governance'] .governance-record__body > header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+main[data-route-id='governance'] .governance-record__body > header strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+main[data-route-id='governance'] .governance-record__body > p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+main[data-route-id='governance'] .governance-record__meta {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
-.governance-record-version { display: block; margin-top: 7px; }
-.governance-record-details {
-  margin-top: var(--space-2);
-  border-top: 1px solid var(--color-border-soft);
+main[data-route-id='governance'] .governance-badges {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
 }
-.governance-record-details > summary {
-  min-height: 44px;
+
+/* ------------------------------ audit trail ------------------------------ */
+main[data-route-id='governance'] .governance-trail {
+  position: relative;
+  display: grid;
+  margin: 0;
+  gap: 4px;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+main[data-route-id='governance'] .governance-trail::before {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 27px;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, #64748b 18%, transparent);
+  content: '';
+}
+main[data-route-id='governance'] .governance-trail > li {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  grid-template-columns: 28px minmax(0, 1fr);
   padding: 8px 0;
+}
+main[data-route-id='governance'] .governance-trail__node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, #64748b 22%, transparent);
+  border-radius: 50%;
+  background: #fff;
+  color: #64748b;
+}
+main[data-route-id='governance'] .governance-trail > li[data-kind='activation'] .governance-trail__node {
+  border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
+  color: var(--color-success);
+}
+main[data-route-id='governance'] .governance-trail > li[data-kind='rollback'] .governance-trail__node {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  color: var(--color-warning);
+}
+main[data-route-id='governance'] .governance-trail > li[data-kind='eval'] .governance-trail__node {
+  border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
+  color: var(--color-accent);
+}
+main[data-route-id='governance'] .governance-trail article {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, #64748b 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #fff 82%, transparent);
+}
+main[data-route-id='governance'] .governance-trail article > header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+main[data-route-id='governance'] .governance-trail article strong { color: #0f172a; font-size: 13.5px; }
+main[data-route-id='governance'] .governance-trail article > p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------ raw record details ------------------------------ */
+main[data-route-id='governance'] .governance-record-details {
+  margin-top: 3px;
+  border-top: 1px solid color-mix(in srgb, #64748b 12%, transparent);
+}
+main[data-route-id='governance'] .governance-record-details > summary {
+  min-height: 40px;
+  padding: 9px 0;
   color: var(--color-text-tertiary);
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
   list-style-position: inside;
 }
-.governance-record-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-.governance-record-details > .ui-disclosure__reveal > div > dl { display: grid; gap: 7px; margin: 2px 0 8px; }
-.governance-record-details > .ui-disclosure__reveal > div > dl > div { min-width: 0; }
-.governance-record-details dt {
+main[data-route-id='governance'] .governance-record-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+main[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > dl { display: grid; gap: 7px; margin: 2px 0 8px; }
+main[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > dl > div { min-width: 0; }
+main[data-route-id='governance'] .governance-record-details dt {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
-.governance-record-details dd { margin: 2px 0 0; }
-.governance-record-details > .ui-disclosure__reveal > div > section > h4 {
+main[data-route-id='governance'] .governance-record-details dd { margin: 2px 0 0; }
+main[data-route-id='governance'] .governance-record-details code {
+  display: block;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+main[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > section > h4 {
   margin: 10px 0 0;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
-.governance-loading__skeletons {
+main[data-route-id='governance'] .governance-record-details pre {
+  max-height: 180px;
+  margin: 8px 0 0;
+  overflow: auto;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #0f172a 5%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* ------------------------------ loading and errors ------------------------------ */
+main[data-route-id='governance'] .governance-loading__skeletons {
   display: grid;
   gap: var(--space-3);
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
-.governance-loading__skeletons .ui-skeleton { min-height: 72px; }
-.governance-load-error {
+main[data-route-id='governance'] .governance-loading__skeletons .ui-skeleton { min-height: 72px; }
+main[data-route-id='governance'] .governance-load-error {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
 }
-.governance-load-error > .mgmt-notice { flex: 1 1 auto; }
-.governance-load-error > .ui-button { min-height: 44px; }
+main[data-route-id='governance'] .governance-load-error > .mgmt-notice { flex: 1 1 auto; }
+main[data-route-id='governance'] .governance-load-error > .ui-button { min-height: 44px; }
 
+/* ------------------------------ interaction states ------------------------------ */
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='governance'] .governance-attention button:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 5%, #fff 84%);
+  }
+  main[data-route-id='governance'] .governance-filter-disclosure > summary:hover { background: var(--color-surface-hover); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='governance'] .governance-attention button,
+  main[data-route-id='governance'] .governance-filter-disclosure > summary,
+  main[data-route-id='governance'] .governance-filter-disclosure > summary::before { transition: none; }
+}
+
+/* ------------------------------ responsive: classic shell ------------------------------ */
 @media (max-width: 980px) {
-  .governance-filters, .governance-columns, .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main[data-route-id='governance'] .governance-board { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='governance'] .governance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main[data-route-id='governance'] .governance-filters,
+  main[data-route-id='governance'] .governance-columns,
+  main[data-route-id='governance'] .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
-  .governance-filters, .governance-columns, .governance-columns--two, .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
-  .governance-list article header, .governance-timeline article header { align-items: flex-start; flex-direction: column; }
-  .governance-load-error { align-items: stretch; flex-direction: column; }
+  main[data-route-id='governance'] .governance-filters,
+  main[data-route-id='governance'] .governance-columns,
+  main[data-route-id='governance'] .governance-columns--two,
+  main[data-route-id='governance'] .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='governance'] .governance-load-error { align-items: stretch; flex-direction: column; }
+  main[data-route-id='governance'] .governance-filter-disclosure input.ui-input,
+  main[data-route-id='governance'] .governance-filter-disclosure input { min-height: 44px; }
 }
 
+/* ------------------------------ responsive: PAWOS window ------------------------------ */
 @container paw-window (max-width: 900px) {
+  main[data-route-id='governance'][data-paw-os-app] .governance-board { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='governance'][data-paw-os-app] .governance-filters,
   main[data-route-id='governance'][data-paw-os-app] .governance-columns,
   main[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-
 @container paw-window (max-width: 560px) {
+  main[data-route-id='governance'][data-paw-os-app] .governance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   main[data-route-id='governance'][data-paw-os-app] .governance-filters,
   main[data-route-id='governance'][data-paw-os-app] .governance-columns,
   main[data-route-id='governance'][data-paw-os-app] .governance-columns--two,
   main[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='governance'][data-paw-os-app] .governance-list article header,
-  main[data-route-id='governance'][data-paw-os-app] .governance-timeline article header,
   main[data-route-id='governance'][data-paw-os-app] .governance-load-error { align-items: stretch; flex-direction: column; }
-}
-
-/* ============== governance adopts the editorial page grammar ==============
-   Five bordered panels each holding one "nothing yet" line was clutter around
-   emptiness. Sections now hang under a quiet label with a hairline, so an
-   absence costs one line instead of a whole card. */
-.governance-columns { gap: var(--space-6) var(--space-8); }
-.governance-list {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-.governance-list > h3 {
-  padding: 0 0 6px;
-  border-bottom: 1px solid var(--color-border-soft);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: .04em;
-}
-.governance-list article,
-.governance-timeline article {
-  padding: 10px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border-soft) 55%, transparent);
-}
-.governance-list__empty,
-.governance-list > p {
-  margin: 0;
-  padding: 9px 0 0;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-ui);
-}
-
-/* The audit is occasional, so its disclosure earns a short state cue. The
-   records themselves stay still: people read these rather than watch them. */
-.governance-advanced,
-.governance-filter-disclosure {
-  border-block: 1px solid var(--color-border-soft);
-}
-.governance-advanced > summary,
-.governance-filter-disclosure > summary {
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 10px 2px;
-  list-style: none;
-  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
-}
-.governance-advanced > summary::-webkit-details-marker,
-.governance-filter-disclosure > summary::-webkit-details-marker { display: none; }
-.governance-advanced > summary::before,
-.governance-filter-disclosure > summary::before {
-  color: var(--color-text-tertiary);
-  content: '›';
-  font-size: 18px;
-  line-height: 1;
-  transition: transform var(--motion-disclose) var(--ease-standard);
-}
-.governance-advanced[open] > summary::before,
-.governance-filter-disclosure[open] > summary::before { transform: rotate(90deg); }
-.governance-advanced > summary:focus-visible,
-.governance-filter-disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-
-@media (hover: hover) and (pointer: fine) {
-  .governance-advanced > summary:hover,
-  .governance-filter-disclosure > summary:hover { background: var(--color-surface-hover); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .governance-advanced > summary,
-  .governance-filter-disclosure > summary,
-  .governance-advanced > summary::before,
-  .governance-filter-disclosure > summary::before { transition: none; }
-}
-
-@media (max-width: 620px) {
-  .governance-filter-disclosure input.ui-input,
-  .governance-filter-disclosure input { min-height: 44px; }
 }

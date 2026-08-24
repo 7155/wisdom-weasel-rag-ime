@@ -48,22 +48,22 @@ export function SubagentSettingsPanel({ highlighted = false }: { highlighted?: b
     >
       <ManagementSection
         title="子 Agent"
-        description="Session 是唯一运行时所有者；Room 伙伴调用同一套子 Agent 能力，只投影启动收据和运行图。"
+        description="对话可以临时分出小帮手，各自领一块任务、做完汇报回来。这里是它们的模板目录和运行边界；启动与监督都在对话的工作台里进行。"
       >
         <div className="configuration-subagents__summary">
           <div>
             <span><Network size={18} /></span>
-            <p><strong>Session 运行树</strong><small>最多并行 {maxParallel} 个节点 · Pattern 深度 {maxDepth} 层</small></p>
+            <p><strong>同时能有多少帮手</strong><small>最多同时 {maxParallel} 个 · 嵌套不超过 {maxDepth} 层</small></p>
           </div>
           <StatusBadge label={templatesQuery.error ? '目录读取失败' : templatesQuery.isPending ? '正在读取' : `${templates.length} 个模板可用`} tone={templatesQuery.error ? 'danger' : templatesQuery.isPending ? 'neutral' : 'success'} />
           <Button leadingIcon={<Network size={15} />} onClick={() => navigate('/agent?subagents=open')} size="small">打开子 Agent 工作台</Button>
         </div>
 
         <div className="configuration-subagents__rules" aria-label="子 Agent 运行边界">
-          <article><GitFork size={17} /><span><strong>Fresh / Fork</strong><small>启动时选择新上下文，或从父 Session 的明确锚点分支。</small></span></article>
-          <article><Wrench size={17} /><span><strong>工具随模板收窄</strong><small>可以进一步缩小工具集合；子节点不能扩大父 Session 的能力。</small></span></article>
-          <article><ShieldCheck size={17} /><span><strong>目录与写权限分离</strong><small>只读模板继承可读取目录，但写文件、命令与外部操作仍由运行策略拦截。</small></span></article>
-          <article><Braces size={17} /><span><strong>结构化终止</strong><small>返回结果必须通过 Schema；合同无效只标记该节点，等待修复或改派。</small></span></article>
+          <article><GitFork size={17} /><span><strong>从零开始，或接着看</strong><small>帮手可以拿全新的上下文，也可以从当前对话的指定位置接着看。</small></span></article>
+          <article><Wrench size={17} /><span><strong>工具只减不增</strong><small>帮手能用的工具只会比对话本身更少，不会更多。</small></span></article>
+          <article><ShieldCheck size={17} /><span><strong>看得到，改不了</strong><small>只读帮手能看到同样的目录；写文件、执行命令这类操作会被拦下。</small></span></article>
+          <article><Braces size={17} /><span><strong>结果要交得清楚</strong><small>汇报必须符合约定格式；不合格只标记这个帮手，不影响其他工作。</small></span></article>
         </div>
 
         {templatesQuery.error ? <p className="configuration-subagents__error" role="alert">模板目录暂时不可用；不会用空目录覆盖当前配置。</p> : null}

@@ -77,9 +77,25 @@
   scrollbar-width: thin;
 }
 
+/* Group labels carve the Settings rail into 通用 / Agent / 安全与信任 and
+   the Monitor rail into 实时 / 排查, so the eleven-page system area reads
+   as a table of contents instead of a flat list. */
+.paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group {
+  margin: 13px 10px 3px;
+  color: color-mix(in srgb, var(--paw-system-muted) 78%, transparent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  user-select: none;
+}
+
+.paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group:first-child {
+  margin-top: 2px;
+}
+
 .paw-desktop-root .paw-system-app__nav nav button {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   min-height: 36px;
@@ -94,6 +110,21 @@
   text-align: left;
   cursor: pointer;
   transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+/* The human decision queue announces itself from the rail; everything else
+   stays quiet. */
+.paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--paw-system-accent);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .paw-desktop-root .paw-system-app__nav nav button > span {
@@ -618,24 +649,25 @@
 
 /* System Settings ---------------------------------------------------------- */
 
-.paw-desktop-root .paw-system-agent-fields {
+/* Agent defaults: one calm row for model + thinking, then four permission
+   positions as cards. The radio input stretches across its card so the whole
+   surface is the control; checked state borrows the app accent. */
+.paw-desktop-root .paw-agent-model {
   display: grid;
-  gap: 0;
+  grid-template-columns: minmax(240px, .52fr) minmax(0, .48fr);
+  gap: 20px;
+  align-items: start;
 }
 
-.paw-desktop-root .paw-system-agent-fields > label {
+.paw-desktop-root .paw-agent-model__field,
+.paw-desktop-root .paw-agent-model__thinking {
   display: grid;
-  grid-template-columns: minmax(130px, .42fr) minmax(220px, .58fr);
-  align-items: center;
-  gap: 3px 16px;
-  min-height: 66px;
-  padding: 9px 1px;
-  border-bottom: 1px dashed var(--paw-system-line);
+  gap: 7px;
+  align-content: start;
+  min-width: 0;
 }
 
-.paw-desktop-root .paw-system-agent-fields > label:last-child { border-bottom: 0; }
-
-.paw-desktop-root .paw-system-agent-fields > label > span {
+.paw-desktop-root :is(.paw-agent-model__field, .paw-agent-model__thinking) > span {
   color: var(--paw-system-ink);
   font-size: 14px;
   font-weight: 620;
@@ -644,24 +676,123 @@
 /* Field skin comes from the shared control language; this rule keeps only the
    grid-local sizing. A background shorthand here would erase the shared
    chevron, so never reintroduce one. */
-.paw-desktop-root .paw-system-agent-fields select {
+.paw-desktop-root .paw-agent-model__field select {
   width: 100%;
   font-size: 14px;
 }
 
-.paw-desktop-root .paw-system-agent-fields small {
-  grid-column: 2;
+.paw-desktop-root :is(.paw-agent-model__field, .paw-agent-model__thinking) small {
+  color: var(--paw-system-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.paw-desktop-root .paw-agent-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.paw-desktop-root .paw-agent-mode {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+  padding: 13px 14px;
+  border: 1px solid var(--paw-system-line);
+  border-radius: 12px;
+  background: var(--paw-system-surface);
+  cursor: pointer;
+  transition: border-color 140ms ease-out, background-color 140ms ease-out;
+}
+
+.paw-desktop-root .paw-agent-mode:hover {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 30%, var(--paw-system-line));
+}
+
+.paw-desktop-root .paw-agent-mode:has(input:checked) {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 52%, var(--paw-system-line));
+  background: var(--paw-system-accent-soft);
+}
+
+.paw-desktop-root .paw-agent-mode:has(input:disabled) {
+  cursor: default;
+  opacity: .72;
+}
+
+.paw-desktop-root .paw-agent-mode:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--paw-system-accent) 72%, white);
+  outline-offset: 2px;
+}
+
+.paw-desktop-root .paw-agent-mode input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.paw-desktop-root .paw-agent-mode__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--paw-system-fill);
+  color: var(--paw-system-muted);
+}
+
+.paw-desktop-root .paw-agent-mode:has(input:checked) .paw-agent-mode__icon {
+  background: color-mix(in srgb, var(--paw-system-accent) 16%, #fff);
+  color: var(--paw-system-accent);
+}
+
+.paw-desktop-root .paw-agent-mode__copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.paw-desktop-root .paw-agent-mode__copy strong {
+  display: flex;
+  gap: 7px;
+  align-items: center;
   font-size: 14px;
-  line-height: 1.45;
+  font-weight: 640;
 }
 
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.configuration-destinations, .configuration-editor, .governance-columns, .approvals-list) {
+.paw-desktop-root .paw-agent-mode__copy strong em {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paw-system-accent) 14%, #fff);
+  color: var(--paw-system-accent);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.paw-desktop-root .paw-agent-mode__copy small {
+  color: var(--paw-system-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.configuration-destinations, .configuration-editor, .governance-columns) {
   border-color: var(--paw-system-line);
 }
 
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .approvals-list > li {
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] :is(.approvals-queue__list > li > button, .approvals-decision__card) {
   border-color: var(--paw-system-line);
-  border-radius: 11px;
+}
+
+.paw-desktop-root .paw-system-app[data-system-app='system-settings'] .approvals-queue__list > li[data-active] > button {
+  border-color: color-mix(in srgb, var(--paw-system-accent) 42%, var(--paw-system-line));
+  background: var(--paw-system-accent-soft);
 }
 
 /* Responsive composition -------------------------------------------------- */
@@ -680,6 +811,14 @@
   }
 
   .paw-desktop-root .paw-system-app__nav nav { padding-inline: 7px; }
+
+  .paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group {
+    height: 9px;
+    margin: 4px 8px;
+    overflow: hidden;
+    border-top: 1px solid var(--paw-system-line);
+    color: transparent;
+  }
 
   .paw-desktop-root .paw-system-app__nav nav button {
     display: grid;
@@ -705,8 +844,8 @@
 
 @container paw-window (max-width: 520px) {
   .paw-desktop-root .paw-system-app .mgmt-metrics { grid-template-columns: minmax(0, 1fr); }
-  .paw-desktop-root .paw-system-agent-fields > label { grid-template-columns: minmax(0, 1fr); }
-  .paw-desktop-root .paw-system-agent-fields small { grid-column: 1; }
+  .paw-desktop-root .paw-agent-model { grid-template-columns: minmax(0, 1fr); }
+  .paw-desktop-root .paw-agent-modes { grid-template-columns: minmax(0, 1fr); }
   .paw-desktop-root .paw-system-package > header { grid-template-columns: 34px minmax(0, 1fr); }
   .paw-desktop-root .paw-system-package > header .mgmt-status { grid-column: 2; justify-self: start; }
 }
@@ -717,5 +856,6 @@
   .paw-desktop-root .paw-system-resource-state[data-state='loading'] svg { animation: none; }
   .paw-desktop-root .paw-system-app__nav nav button,
   .paw-desktop-root .paw-system-package,
+  .paw-desktop-root .paw-agent-mode,
   .paw-desktop-root .paw-system-app :is(.ui-button, button) { transition: none; }
 }

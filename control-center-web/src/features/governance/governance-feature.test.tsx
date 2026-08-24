@@ -10,7 +10,7 @@ const hash = 'a'.repeat(64);
 describe('GovernanceCenter', () => {
   afterEach(cleanup);
 
-  it('shows a truthful loading state and waits for both protection projections before rendering metrics', async () => {
+  it('shows a truthful loading state and waits for both protection projections before rendering the board', async () => {
     const pendingGovernance = deferred<{ governance: GovernanceProjection }>();
     const pendingKnowledge = deferred<{ knowledge: KnowledgeGovernanceProjection }>();
     const transport = new StubControlTransport('native', {
@@ -27,21 +27,21 @@ describe('GovernanceCenter', () => {
     expect(screen.getByText('正在核对本机保护')).toBeInTheDocument();
     expect(screen.queryByText('安全记录暂时只读')).not.toBeInTheDocument();
     expect(screen.queryByText('异常事件', { selector: 'dt' })).not.toBeInTheDocument();
-    expect(screen.queryByText('当前保护结果')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '当前保护结果' })).not.toBeInTheDocument();
 
     await act(async () => {
       pendingGovernance.resolve({ governance: governance() });
       pendingKnowledge.resolve({ knowledge: knowledge() });
     });
 
-    expect(await screen.findByText('当前保护结果')).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: '当前保护结果' })).toBeInTheDocument();
     const incidentMetric = screen.getByText('异常事件', { selector: 'dt' }).parentElement;
     expect(incidentMetric).not.toBeNull();
     expect(within(incidentMetric!).getByText('1')).toBeInTheDocument();
     expect(screen.queryByText('正在核对本机保护')).not.toBeInTheDocument();
   });
 
-  it('keeps failed reads out of the metrics and retries without changing any rule', async () => {
+  it('keeps failed reads out of the board and retries without changing any rule', async () => {
     let unavailable = true;
     const transport = new StubControlTransport('native', {
       'agent.governance.read': () => {
@@ -59,12 +59,12 @@ describe('GovernanceCenter', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法读取安全记录');
     expect(screen.queryByText('异常事件', { selector: 'dt' })).not.toBeInTheDocument();
-    expect(screen.queryByText('当前保护结果')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '当前保护结果' })).not.toBeInTheDocument();
 
     unavailable = false;
     fireEvent.click(screen.getByRole('button', { name: '重新检查' }));
 
-    expect(await screen.findByText('当前保护结果')).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: '当前保护结果' })).toBeInTheDocument();
     expect(transport.requests.filter((request) => request.pathId === 'agent.governance.read')).toHaveLength(2);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -72,7 +72,7 @@ describe('GovernanceCenter', () => {
   it('is strictly read-only while formal backend routes are missing', () => {
     render(<GovernanceCenter governance={governance()} knowledge={knowledge()} />);
     expect(screen.getByText('本机保护记录', { selector: '.mgmt-page__eyebrow' })).toBeInTheDocument();
-    expect(screen.getByText('当前保护结果')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '当前保护结果' })).toBeInTheDocument();
     expect(screen.getByText('安全记录暂时只读')).toBeInTheDocument();
     expect(screen.getByText('当前为查看模式；规则变更会在具备完整审计与授权边界后开放。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /批准|激活|回滚|撤销/ })).not.toBeInTheDocument();
@@ -83,11 +83,12 @@ describe('GovernanceCenter', () => {
     projection.activePointers = [];
     expect(activeGuards(projection)).toEqual([]);
     render(<GovernanceCenter governance={projection} knowledge={knowledge()} />);
-    fireEvent.click(screen.getByText('高级：规则管理与审计'));
-    expect(screen.getByText('规则已启用')).toBeVisible();
+    expect(screen.getByText('当前没有生效中的保护规则。')).toBeVisible();
     const activeMetric = screen.getByText('正在生效', { selector: 'dt' }).parentElement;
     expect(activeMetric).not.toBeNull();
     expect(within(activeMetric!).getByText('0')).toBeVisible();
+    fireEvent.click(screen.getByRole('radio', { name: '规则与审计' }));
+    expect(screen.getByText('规则已启用')).toBeVisible();
     expect(screen.queryByText('活动指针', { selector: '.mgmt-status' })).not.toBeInTheDocument();
   });
 
@@ -96,16 +97,17 @@ describe('GovernanceCenter', () => {
     projection.approvals[0]!.candidateHash = 'b'.repeat(64);
     projection.materializations[0]!.guardEpoch = 6;
     render(<GovernanceCenter governance={projection} knowledge={knowledge()} />);
-    fireEvent.click(screen.getByText('高级：规则管理与审计'));
+    fireEvent.click(screen.getByRole('radio', { name: '规则与审计' }));
     expect(screen.getByText('完整性异常')).toBeInTheDocument();
     expect(screen.getByText('版本已过期')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: '记忆与知识' }));
     expect(screen.getByText('仅报告')).toBeInTheDocument();
     const qualityCheck = screen.getByText('引用质量检查').closest('article');
     const qualityStandard = screen.getByText('引用质量标准').closest('article');
     expect(qualityCheck).not.toBeNull();
     expect(qualityStandard).not.toBeNull();
-    fireEvent.click(within(qualityCheck!).getByText('高级：记录详情'));
-    fireEvent.click(within(qualityStandard!).getByText('高级：记录详情'));
+    fireEvent.click(within(qualityCheck!).getByText('原始记录'));
+    fireEvent.click(within(qualityStandard!).getByText('原始记录'));
     expect(within(qualityCheck!).getByText(/authorizationLeakageCount/)).toBeVisible();
     expect(within(qualityStandard!).getByText(/minUsedCitationRate/)).toBeVisible();
   });
@@ -113,14 +115,17 @@ describe('GovernanceCenter', () => {
   it('keeps internal identifiers and raw enums behind per-record technical disclosure', () => {
     render(<GovernanceCenter governance={governance()} knowledge={knowledge()} />);
 
-    const outerDisclosure = screen.getByText('高级：规则管理与审计').closest('details');
-    expect(outerDisclosure).not.toBeNull();
-    expect(outerDisclosure).not.toHaveAttribute('open');
+    expect(screen.queryByText('owner-a')).not.toBeInTheDocument();
+    expect(screen.queryByText('room-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('session-1')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: '对话' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('高级：规则管理与审计'));
+    fireEvent.click(screen.getByRole('radio', { name: '规则与审计' }));
     expect(screen.getByText('重复路由')).toBeVisible();
     expect(screen.getByText('高风险')).toBeVisible();
+    expect(screen.queryByText('owner-a')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: '记忆与知识' }));
     expect(screen.getByText('协作范围可见')).toBeVisible();
     expect(screen.getByText('指定责任方 · 协作空间范围')).toBeVisible();
     expect(screen.getByText('已退出检索')).toBeVisible();
@@ -129,16 +134,16 @@ describe('GovernanceCenter', () => {
     expect(confirmed).not.toBeNull();
     expect(within(confirmed!).queryByText('owner-a')).not.toBeInTheDocument();
     expect(within(confirmed!).queryByText('room-1')).not.toBeInTheDocument();
-    expect(within(confirmed!).getByText('高级：记录详情').closest('details')).not.toHaveAttribute('open');
+    expect(within(confirmed!).getByText('原始记录').closest('details')).not.toHaveAttribute('open');
 
-    fireEvent.click(within(confirmed!).getByText('高级：记录详情'));
+    fireEvent.click(within(confirmed!).getByText('原始记录'));
     expect(within(confirmed!).getByText('owner-a')).toBeVisible();
     expect(within(confirmed!).getByText('room-1')).toBeVisible();
 
     const tombstone = screen.getByText('已退出检索').closest('article');
     expect(tombstone).not.toBeNull();
     expect(within(tombstone!).queryByText('session-1')).not.toBeInTheDocument();
-    fireEvent.click(within(tombstone!).getByText('高级：记录详情'));
+    fireEvent.click(within(tombstone!).getByText('原始记录'));
     expect(within(tombstone!).getByText('session-1')).toBeVisible();
   });
 
@@ -148,7 +153,9 @@ describe('GovernanceCenter', () => {
     render(<GovernanceCenter governance={governance()} knowledge={data} />);
     expect(screen.queryByText('DO_NOT_RENDER_EXTERNAL')).not.toBeInTheDocument();
     expect(screen.queryByText('DO_NOT_RENDER_SECRET')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText('高级：规则管理与审计'));
+    fireEvent.click(screen.getByRole('radio', { name: '记忆与知识' }));
+    expect(screen.queryByText('DO_NOT_RENDER_EXTERNAL')).not.toBeInTheDocument();
+    expect(screen.queryByText('DO_NOT_RENDER_SECRET')).not.toBeInTheDocument();
     expect(screen.getAllByText('[外部内容仅作为数据引用，不展示原文]')).toHaveLength(2);
     expect(screen.getByText('[秘密内容已隐藏]')).toBeInTheDocument();
     expect(safeDisplay({ apiKey: 'RAW_KEY', nested: { password: 'RAW_PASSWORD', ok: 1 } })).toBe('{\n  "apiKey": "[已隐藏]",\n  "nested": {\n    "password": "[已隐藏]",\n    "ok": 1\n  }\n}');
@@ -156,7 +163,7 @@ describe('GovernanceCenter', () => {
     fireEvent.change(screen.getByLabelText('对话'), { target: { value: 'session-secret' } });
     const secretRecord = screen.getByText('[秘密内容已隐藏]').closest('article');
     expect(secretRecord).not.toBeNull();
-    fireEvent.click(within(secretRecord!).getByText('高级：记录详情'));
+    fireEvent.click(within(secretRecord!).getByText('原始记录'));
     expect(within(secretRecord!).getByText('secret-key')).toBeInTheDocument();
     expect(screen.queryByText('external-key')).not.toBeInTheDocument();
   });
@@ -165,7 +172,7 @@ describe('GovernanceCenter', () => {
     const projection = governance();
     projection.incidents[0]!.failureSignature = 'failure/'.repeat(80);
     const { container } = render(<GovernanceCenter governance={projection} knowledge={knowledge()} />);
-    fireEvent.click(screen.getByText('高级：规则管理与审计'));
+    fireEvent.click(screen.getByRole('radio', { name: '规则与审计' }));
     fireEvent.click(screen.getByText('精确查找特定记录'));
     expect(screen.getByRole('region', { name: '安全记录范围筛选' })).toBeInTheDocument();
     for (const label of ['整项任务', '责任方', '协作空间', '对话']) expect(screen.getByLabelText(label)).toBeInTheDocument();
@@ -173,8 +180,17 @@ describe('GovernanceCenter', () => {
     const incident = screen.getByText('重复路由').closest('article');
     expect(incident).not.toBeNull();
     expect(within(incident!).queryByText('failure/'.repeat(80))).not.toBeInTheDocument();
-    fireEvent.click(within(incident!).getByText('高级：记录详情'));
+    fireEvent.click(within(incident!).getByText('原始记录'));
     expect(within(incident!).getByText('failure/'.repeat(80))).toBeVisible();
+  });
+
+  it('routes overview attention items to the matching records view', () => {
+    render(<GovernanceCenter governance={governance()} knowledge={knowledge()} />);
+    const attentionRow = screen.getByText('多次尝试后仍未完成').closest('button');
+    expect(attentionRow).not.toBeNull();
+    fireEvent.click(attentionRow!);
+    expect(screen.getByText('等待人工处理')).toBeVisible();
+    expect(screen.getByRole('radio', { name: '规则与审计' })).toHaveAttribute('aria-checked', 'true');
   });
 });
 

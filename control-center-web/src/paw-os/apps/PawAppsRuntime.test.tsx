@@ -61,11 +61,11 @@ describe('PAWOS App runtime', () => {
     rerender(
       <PawAppBody
         appId="agent"
-        target={{ kind: 'room', id: 'room-42', title: '产品协作室', panel: 'flow' }}
+        target={{ kind: 'room', id: 'room-42', title: '产品协作室', panel: 'focus' }}
       />,
     );
 
-    expect(await screen.findByTestId('satellite-host')).toHaveTextContent('room:flow');
+    expect(await screen.findByTestId('satellite-host')).toHaveTextContent('room:focus');
     expect(screen.queryByTestId('agent-app')).not.toBeInTheDocument();
   });
 
