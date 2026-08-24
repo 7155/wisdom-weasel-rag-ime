@@ -1029,7 +1029,11 @@
   }
   .paw-desktop-root .paw-browser-agent-mark { width: 22px; height: 22px; }
   .paw-desktop-root .paw-browser-agent-capsule-actions > button { padding-inline: 8px; }
-  .paw-desktop-root .paw-browser-surface-card { border-radius: 13px; }
+  /* Narrow windows: History and Settings become full-height sheets and the
+     page keeps its full width underneath. */
+  .paw-desktop-root .paw-browser-history,
+  .paw-desktop-root .paw-browser-settings { padding: 8px; }
+  .paw-desktop-root .paw-browser-surface-card { width: 100%; max-height: 100%; border-radius: 13px; }
   .paw-desktop-root .paw-browser-menu-narrow-only { display: flex; }
   .paw-desktop-root .paw-browser-start-halo { width: 62px; height: 62px; }
   .paw-desktop-root .paw-browser-start > strong { font-size: 17px; }
