@@ -77,9 +77,25 @@
   scrollbar-width: thin;
 }
 
+/* Group labels carve the Settings rail into 通用 / Agent / 安全与信任 and
+   the Monitor rail into 实时 / 排查, so the eleven-page system area reads
+   as a table of contents instead of a flat list. */
+.paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group {
+  margin: 13px 10px 3px;
+  color: color-mix(in srgb, var(--paw-system-muted) 78%, transparent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  user-select: none;
+}
+
+.paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group:first-child {
+  margin-top: 2px;
+}
+
 .paw-desktop-root .paw-system-app__nav nav button {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   min-height: 36px;
@@ -94,6 +110,21 @@
   text-align: left;
   cursor: pointer;
   transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+/* The human decision queue announces itself from the rail; everything else
+   stays quiet. */
+.paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--paw-system-accent);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .paw-desktop-root .paw-system-app__nav nav button > span {
@@ -684,6 +715,14 @@
   }
 
   .paw-desktop-root .paw-system-app__nav nav { padding-inline: 7px; }
+
+  .paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group {
+    height: 9px;
+    margin: 4px 8px;
+    overflow: hidden;
+    border-top: 1px solid var(--paw-system-line);
+    color: transparent;
+  }
 
   .paw-desktop-root .paw-system-app__nav nav button {
     display: grid;
