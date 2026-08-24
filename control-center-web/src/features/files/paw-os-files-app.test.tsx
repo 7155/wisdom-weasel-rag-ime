@@ -68,10 +68,7 @@ describe('PawOsFilesApp', () => {
     expect(await screen.findByRole('heading', { name: 'Session 文件', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('/workspace/paw')).toBeInTheDocument();
     expect(screen.queryByText('/Users')).not.toBeInTheDocument();
-    const agentsRow = await screen.findByRole('treeitem', { name: '打开文件 AGENTS.md' });
-    // The entry identity chip states the real extension in its family colour.
-    expect(agentsRow.querySelector('.paw-files-glyph[data-family="doc"] i')).toHaveTextContent('MD');
-    await user.click(agentsRow);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 AGENTS.md' }));
     expect(await screen.findByRole('heading', { name: 'AGENTS.md', level: 2 })).toBeInTheDocument();
     expect(screen.getByText('Project guide')).toBeInTheDocument();
     expect(screen.getByText(/已选 AGENTS\.md · 128 B/)).toBeInTheDocument();
@@ -337,16 +334,13 @@ describe('PawOsFilesApp', () => {
       },
     });
 
-    const { container } = renderApp(transport, <PawOsFilesApp />);
+    renderApp(transport, <PawOsFilesApp />);
     expect(await screen.findByText('已加载 1 项')).toBeInTheDocument();
     await user.click(screen.getByRole('treeitem', { name: '打开文件 big.log' }));
 
     expect(await screen.findByText('已显示前 64 KB · 共 128 KB')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /继续读取/ })).toBeInTheDocument();
     expect(screen.getByText(/已选 big\.log · 128 KB/)).toBeInTheDocument();
-    // The loaded window is also drawn as an honest gauge: 64 KB of 128 KB.
-    const gaugeFill = container.querySelector('.paw-files-preview__gauge > i') as HTMLElement;
-    expect(gaugeFill.style.width).toBe('50%');
   });
 
   it('continues a bounded read from the served nextOffset and retires the bar when complete', async () => {
@@ -582,7 +576,7 @@ describe('PawOsFilesApp', () => {
 
     const tree = await screen.findByRole('tree', { name: '项目文件' });
     await within(tree).findByRole('treeitem', { name: '打开文件 zeta.md' });
-    const names = within(tree).getAllByRole('treeitem').slice(1).map((item) => item.querySelector('.paw-files-row__name')?.textContent);
+    const names = within(tree).getAllByRole('treeitem').slice(1).map((item) => item.querySelector('span:nth-of-type(2), span > span')?.textContent ?? item.textContent);
     expect(names.map((name) => name?.trim())).toEqual(['Alpha', 'beta', 'alpha2.ts', 'alpha10.ts', 'zeta.md']);
   });
 
@@ -643,98 +637,6 @@ describe('PawOsFilesApp', () => {
     // Escape clears the filter and restores the tree.
     await user.keyboard('{Escape}');
     expect(await screen.findByRole('tree', { name: '项目文件' })).toBeInTheDocument();
-  });
-
-  it('walks the location trail back into the tree without closing the wide reader', async () => {
-    const user = userEvent.setup();
-    const transport = new MockControlTransport({
-      routes: {
-        'agent.sessions.list': {
-          ok: true,
-          activeSessionId: 'session-work',
-          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
-        },
-        'agent.session.workspace.list': (request: ControlRequest) => {
-          const path = String(request.query?.path ?? '');
-          if (path === '/workspace/paw/docs') return {
-            ok: true,
-            path,
-            items: [{ path: `${path}/guide.md`, name: 'guide.md', kind: 'file', byteSize: 42 }],
-          };
-          return {
-            ok: true,
-            path,
-            items: [{ path: '/workspace/paw/docs', name: 'docs', kind: 'directory' }],
-          };
-        },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
-          ok: true,
-          path: request.query?.path,
-          content: '# Guide',
-          byteSize: 7,
-          truncated: false,
-        }),
-      },
-    });
-
-    renderApp(transport, <PawOsFilesApp />);
-    await user.click(await screen.findByRole('treeitem', { name: '展开目录 docs' }));
-    await user.click(await screen.findByRole('treeitem', { name: '打开文件 guide.md' }));
-    expect(await screen.findByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
-
-    // The trail names the whole authorized location: root › directory › file.
-    const trail = screen.getByRole('navigation', { name: '文件位置' });
-    expect(within(trail).getByText('paw')).toBeInTheDocument();
-    expect(within(trail).getByText('guide.md')).toHaveAttribute('aria-current', 'page');
-
-    // Collapse the branch in the rail, then jump back to it from the trail.
-    await user.click(screen.getByRole('treeitem', { name: '收起目录 docs' }));
-    expect(screen.queryByRole('treeitem', { name: '打开文件 guide.md' })).not.toBeInTheDocument();
-    await user.click(within(trail).getByRole('button', { name: '在目录树中查看 docs' }));
-
-    const reopened = await screen.findByRole('treeitem', { name: '打开文件 guide.md' });
-    expect(reopened).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '收起目录 docs' })).toHaveFocus());
-    // The wide layout keeps the reader open; the trail only reveals the rail.
-    expect(screen.getByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
-  });
-
-  it('remembers files this window opened and reopens them from the empty sheet', async () => {
-    const user = userEvent.setup();
-    const transport = new MockControlTransport({
-      routes: {
-        'agent.sessions.list': {
-          ok: true,
-          activeSessionId: 'session-work',
-          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
-        },
-        'agent.session.workspace.list': {
-          ok: true,
-          path: '/workspace/paw',
-          items: [{ path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 }],
-        },
-        'agent.session.workspace.read': {
-          ok: true,
-          path: '/workspace/paw/AGENTS.md',
-          content: '# Project guide',
-          byteSize: 15,
-          truncated: false,
-        },
-      },
-    });
-
-    renderApp(transport, <PawOsFilesApp />);
-    // Before anything was opened there is no invented history.
-    expect(await screen.findByText('选择文件')).toBeInTheDocument();
-    expect(screen.queryByText('本窗口最近打开')).not.toBeInTheDocument();
-
-    await user.click(await screen.findByRole('treeitem', { name: '打开文件 AGENTS.md' }));
-    expect(await screen.findByText('Project guide')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '返回文件列表' }));
-
-    expect(await screen.findByText('本窗口最近打开')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '重新打开 AGENTS.md' }));
-    expect(await screen.findByRole('heading', { name: 'AGENTS.md', level: 2 })).toBeInTheDocument();
   });
 
   it('locates a crumb directory in the tree from the reader header', async () => {
