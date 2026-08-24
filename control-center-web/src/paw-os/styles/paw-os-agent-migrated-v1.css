@@ -485,13 +485,18 @@
 
 /* Installed Agent code surfaces keep their text/background pair after the
    separated-message paper rule above. Raw JSON, code, and terminal output are
-   bounded readers rather than prose cards. */
+   bounded readers rather than prose cards. Conversation code blocks belong to
+   the same pair: the paper rule's :not() guard sits on the pre element while
+   the content class sits on code, so without these two entries fenced markdown
+   code rendered light-on-light in the installed separated flow. */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] :is(
   .agent-tool-raw-result__body > pre,
   .agent-tool-raw-result__virtual-scroll,
   .agent-tool-raw-result__virtual-scroll pre,
   .agent-tool-code-result > pre,
-  .agent-tool-terminal-result > pre
+  .agent-tool-terminal-result > pre,
+  .agent-code-block pre,
+  .agent-code-block__highlight pre
 ) {
   background: var(--color-code-bg);
   color: var(--color-code-text);

@@ -515,6 +515,12 @@
 .agent-code-block pre { max-width: 100%; max-height: min(440px, 64dvh); margin: 0; padding: 13px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; font: 13px/1.55 var(--font-mono); white-space: pre; }
 .agent-code-block pre:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -3px; }
 .agent-code-block__content { display: block; width: max-content; min-width: 100%; padding: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; overflow-wrap: normal; }
+/* Highlighted settled reader: same bounded scroll box as the plain pre; the
+   surface stays on the paired code tokens while shiki only colours tokens. */
+.agent-code-block__highlight { max-width: 100%; max-height: min(440px, 64dvh); margin: 0; padding: 13px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; font: 13px/1.55 var(--font-mono); }
+.agent-code-block__highlight:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -3px; }
+.agent-code-block__highlight pre { width: max-content; min-width: 100%; margin: 0; padding: 0; background: transparent; color: inherit; font: inherit; white-space: pre; }
+.agent-code-block__highlight code { display: block; padding: 0; border-radius: 0; background: transparent; font: inherit; overflow-wrap: normal; }
 .agent-citation, .agent-inline-notice, .agent-audio-block { display: flex; width: min(100%, 620px); max-width: 620px; box-sizing: border-box; align-items: center; gap: 10px; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-2); overflow: hidden; background: var(--color-surface-subtle); text-decoration: none; }
 .agent-citation > span:nth-child(2) { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .agent-citation strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
