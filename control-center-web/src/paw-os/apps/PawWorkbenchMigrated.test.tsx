@@ -24,6 +24,49 @@ describe('PawWorkbenchMigrated', () => {
     expect(screen.queryByText('今晚发布 v0.3')).not.toBeInTheDocument();
   });
 
+  it('leads the overview with the next unresolved task and truthful pulse facts', async () => {
+    const active = { id: 'active-task', title: '继续迁移', status: 'active' };
+    const review = { id: 'review-task', title: '验收视觉回归', status: 'review' };
+    const blocked = { id: 'blocked-task', title: '修复发布门禁', status: 'blocked', owner: '前端' };
+    const onOpenTask = vi.fn();
+    const { rerender } = renderWorkbench({
+      pageId: 'overview',
+      planning: { tasks: [active, review, blocked] },
+      documents: [{ ...workDocument(), updatedAtMs: 1_700_000_000_000 }],
+      onOpenTask,
+    });
+
+    const band = screen.getByLabelText('当前最需要处理的工作');
+    expect(within(band).getByRole('heading', { level: 2, name: '修复发布门禁' })).toBeInTheDocument();
+    const pulse = within(screen.getByLabelText('未完成工作脉搏'));
+    expect(pulse.getByText('受阻').nextElementSibling).toHaveTextContent('1');
+    expect(pulse.getByText('待验收').nextElementSibling).toHaveTextContent('1');
+    expect(pulse.getByText('进行中').nextElementSibling).toHaveTextContent('1');
+    expect(pulse.getByText('证据更新').nextElementSibling).not.toHaveTextContent('暂无文档');
+    await userEvent.click(within(band).getByRole('button', { name: '打开任务窗口' }));
+    expect(onOpenTask).toHaveBeenCalledWith(blocked);
+
+    rerender(<PawWorkbenchMigrated {...baseProps({
+      pageId: 'overview',
+      planning: { tasks: [active] },
+      resourceStates: { planning: { loading: true } },
+    })} />);
+    expect(screen.queryByLabelText('当前最需要处理的工作')).not.toBeInTheDocument();
+  });
+
+  it('keeps repository facts secondary behind an explicit disclosure', () => {
+    renderWorkbench({
+      pageId: 'overview',
+      overview: { project: { name: 'personal-agent-workbench', path: '/work/paw', branch: 'main', revision: 'abc1234' } },
+    });
+
+    const disclosure = screen.getByText('仓库与运行事实').closest('details');
+    expect(disclosure).not.toBeNull();
+    expect(disclosure).not.toHaveAttribute('open');
+    expect(within(disclosure as HTMLElement).getByText('main')).toBeInTheDocument();
+    expect(within(disclosure as HTMLElement).getByText('abc1234')).toBeInTheDocument();
+  });
+
   it('derives project identity from real planning or WorkDocument fields when overview lacks it', () => {
     renderWorkbench({
       overview: { ok: true },
@@ -66,6 +109,42 @@ describe('PawWorkbenchMigrated', () => {
     fireEvent.click(screen.getByRole('button', { name: '打开任务窗口' }));
     expect(onOpenTask).toHaveBeenLastCalledWith(target);
     expect(screen.getAllByText('53%').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('labels only populated dependency lanes and keeps the graph free of empty columns', () => {
+    const { container } = renderWorkbench({
+      pageId: 'planning',
+      planning: { tasks: [
+        { id: 'lane-a', title: '构建校验', status: 'done' },
+        { id: 'lane-b', title: '视觉回归', status: 'active' },
+      ] },
+    });
+
+    const lanes = [...container.querySelectorAll('.paw-wb-graph__lane')];
+    expect(lanes.map((lane) => lane.getAttribute('data-lane'))).toEqual(['done', 'active']);
+    expect(lanes[0]).toHaveTextContent('已完成');
+    expect(lanes[1]).toHaveTextContent('进行中');
+    expect(lanes[1]).toHaveTextContent('1');
+  });
+
+  it('filters the planning outline without hiding graph dependencies', async () => {
+    const tasks = [
+      ...Array.from({ length: 5 }, (_, index) => ({ id: `routine-${index}`, title: `例行任务 ${index + 1}`, status: 'todo' })),
+      { id: 'special', title: '专项验证', status: 'active' },
+    ];
+    const { container } = renderWorkbench({ pageId: 'planning', planning: { tasks } });
+
+    const filter = screen.getByRole('searchbox', { name: '筛选任务' });
+    await userEvent.type(filter, '专项');
+    const outline = container.querySelector('.paw-wb-outline') as HTMLElement;
+    expect(within(outline).getAllByRole('button', { name: /在任务列表中选择/ })).toHaveLength(1);
+    expect(within(outline).getByRole('button', { name: '在任务列表中选择：专项验证' })).toBeInTheDocument();
+    expect(container.querySelectorAll('.paw-wb-task-node')).toHaveLength(6);
+
+    await userEvent.clear(filter);
+    await userEvent.type(filter, '不存在的任务');
+    expect(within(outline).getByText('没有匹配的任务。')).toBeInTheDocument();
+    expect(container.querySelectorAll('.paw-wb-task-node')).toHaveLength(6);
   });
 
   it('keeps a dependency-free dataset free of invented edges', () => {
@@ -156,6 +235,32 @@ describe('PawWorkbenchMigrated', () => {
     expect(screen.getByText('bbbbbbbbbbbb…bbbb')).toHaveAttribute('title', 'b'.repeat(64));
     await userEvent.click(screen.getByRole('button', { name: '返回文档列表' }));
     expect(onCloseDocument).toHaveBeenCalledOnce();
+  });
+
+  it('filters loaded current documents locally and reports a filter-empty state honestly', async () => {
+    const documents = Array.from({ length: 6 }, (_, index) => ({ ...workDocument(), documentId: `doc-${index}`, title: `工作记录 ${index + 1}` }));
+    renderWorkbench({ pageId: 'documents', documents });
+
+    const filter = screen.getByRole('searchbox', { name: '筛选当前文档' });
+    await userEvent.type(filter, '工作记录 3');
+    expect(screen.getByRole('button', { name: /工作记录 3/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /工作记录 1/ })).not.toBeInTheDocument();
+
+    await userEvent.clear(filter);
+    await userEvent.type(filter, '不存在的文档');
+    expect(screen.getByText('没有匹配的文档')).toBeInTheDocument();
+    expect(screen.queryByText('暂无工作文档')).not.toBeInTheDocument();
+  });
+
+  it('moves identity facts into the reader and retires the static truth rail', () => {
+    const document = workDocument();
+    const { container } = renderWorkbench({ pageId: 'documents', documents: [document], selectedDocument: document });
+
+    expect(screen.queryByText('事实边界')).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-wb-document-truth')).toBeNull();
+    const facts = screen.getByText('Document ID').closest('dl') as HTMLElement;
+    expect(within(facts).getByText(`workdoc_${'a'.repeat(32)}`)).toBeInTheDocument();
+    expect(within(facts).getByText('session_todo:session-1:3')).toBeInTheDocument();
   });
 
   it('makes an overview WorkDocument click enter the reader with that document visible', async () => {
