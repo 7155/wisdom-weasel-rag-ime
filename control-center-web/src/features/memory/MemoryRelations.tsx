@@ -14,6 +14,7 @@ import {
   stringValue,
 } from '@/features/overview/management-ui';
 import { useMemoryEntityQuery, useMemoryGraphQueries } from './api';
+import { publicMemorySourceLabel } from './public-copy';
 import { MemoryRelationCanvas } from './MemoryRelationCanvas';
 import {
   buildGroupBookGraph,
@@ -142,7 +143,7 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
               onValueChange={setSource}
               options={[
                 { value: '', label: '全部来源' },
-                ...sources.map((item) => ({ value: item, label: formatSource(item) })),
+                ...sources.map((item) => ({ value: item, label: item })),
               ]}
               value={source}
             />
@@ -920,24 +921,15 @@ function formatTimestamp(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(value);
 }
 
+// The relation views use the same public provenance vocabulary as the
+// catalog; the shared label doubles as the source-filter key so the same
+// record can never carry two different origins across Memory pages.
 function formatSource(source: string): string {
-  return {
-    local: '本地记忆',
-    smart: '智能整理',
-    user: '用户编辑',
-    import: '导入',
-    other: '其他来源',
-  }[publicSourceKey(source)] ?? '其他来源';
+  return publicMemorySourceLabel(source);
 }
 
-function publicSourceKey(source: string): 'local' | 'smart' | 'user' | 'import' | 'other' {
-  const normalized = source.toLocaleLowerCase('en-US');
-  if (!normalized || normalized === 'local') return 'local';
-  if (normalized === 'smart' || normalized.includes('dsv4') || normalized.includes('deepseek')) return 'smart';
-  if (normalized === 'user' || normalized.includes('user')) return 'user';
-  if (normalized === 'import' || normalized.includes('import')) return 'import';
-  if (normalized.includes('sqlite') || normalized.includes('memory_')) return 'local';
-  return 'other';
+function publicSourceKey(source: string): string {
+  return publicMemorySourceLabel(source);
 }
 
 function formatStatus(status: string): string {

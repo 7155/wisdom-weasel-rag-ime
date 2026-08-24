@@ -3,9 +3,9 @@ import {
   ArrowRight,
   BookOpen,
   CalendarClock,
-  GitBranch,
   Network,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Tags,
 } from 'lucide-react';
@@ -19,6 +19,7 @@ interface MemorySystemOverviewProps {
   activeLayer: MemoryLayer;
   onOpenLayer: (layer: MemoryLayer) => void;
   onOpenOrganize: () => void;
+  onOpenPreferences: () => void;
   onOpenRelations: () => void;
   onOpenTimeline: () => void;
   summary: Record<string, unknown>;
@@ -28,6 +29,7 @@ export function MemorySystemOverview({
   activeLayer,
   onOpenLayer,
   onOpenOrganize,
+  onOpenPreferences,
   onOpenRelations,
   onOpenTimeline,
   summary,
@@ -146,9 +148,14 @@ export function MemorySystemOverview({
           <strong>主题不会替代原始记录</strong>
           <span>从任一主题都能继续查看整理过的记忆和来源；历史状态也会保留。</span>
         </div>
-        <Button leadingIcon={<CalendarClock size={14} />} onClick={onOpenTimeline} size="small" variant="quiet">
-          查看时间线
-        </Button>
+        <div className="memory-system-overview__trust-actions">
+          <Button leadingIcon={<CalendarClock size={14} />} onClick={onOpenTimeline} size="small" variant="quiet">
+            查看时间线
+          </Button>
+          <Button leadingIcon={<SlidersHorizontal size={14} />} onClick={onOpenPreferences} size="small" variant="quiet">
+            记忆偏好
+          </Button>
+        </div>
       </div>
     </section>
   );

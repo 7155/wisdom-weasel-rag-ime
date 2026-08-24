@@ -5,6 +5,23 @@ export function publicMemoryText(value: string): string {
     .replace(/召回/gu, '联想');
 }
 
+// One provenance vocabulary for every Memory surface. The catalog and the
+// relation views must never disagree about where the same record came from.
+export function publicMemorySourceLabel(source: string, assistantName = ''): string {
+  const normalized = source.toLocaleLowerCase('en-US');
+  if (!normalized || normalized === 'local') return '本地记忆';
+  if (normalized.includes('input_app')) return '应用上下文';
+  if (normalized === 'smart' || normalized.includes('dsv4') || normalized.includes('deepseek')) return '智能整理';
+  if (normalized.includes('user')) return '用户编辑';
+  if (normalized.includes('import')) return '导入';
+  if (normalized.includes('notion')) return 'Notion';
+  if (normalized.includes('rime') || normalized.includes('input')) return '输入记录';
+  if (normalized.includes('agent') || normalized.includes('pi')) return `${assistantName || '伙伴'}整理`;
+  if (normalized.includes('manual')) return '手动整理';
+  if (normalized.includes('sqlite') || normalized.includes('memory_')) return '本地记忆';
+  return '其他来源';
+}
+
 export function publicMemoryOwnerLabel(
   ownerKind: string,
   ownerId: string,
