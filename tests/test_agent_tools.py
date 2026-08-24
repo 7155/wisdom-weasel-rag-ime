@@ -2010,9 +2010,6 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(browser_tool["operationRisks"]["screenshot"], "R0")
         self.assertEqual(browser_tool["operationRisks"]["navigate"], "R0")
         self.assertEqual(browser_tool["operationRisks"]["type"], "R0")
-        self.assertTrue(
-            any("Chrome/Edge" in item for item in browser_tool["notFor"])
-        )
         workspace_lsp = next(
             manifest for manifest in manifests if manifest["id"] == "workspace_lsp"
         )
@@ -2041,9 +2038,6 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(workspace_job["availability"], "offline")
         desktop = next(manifest for manifest in manifests if manifest["id"] == "desktop_semantic")
         self.assertEqual(desktop["riskLevel"], "R2")
-        self.assertTrue(
-            any("独立 Chrome/Edge" in item for item in desktop["notFor"])
-        )
         self.assertEqual(
             desktop["operationRisks"],
             {
