@@ -26,7 +26,7 @@ describe('GovernanceCenter', () => {
 
     expect(screen.getByText('正在核对本机保护')).toBeInTheDocument();
     expect(screen.queryByText('安全记录暂时只读')).not.toBeInTheDocument();
-    expect(screen.queryByText('异常事件', { selector: 'dt' })).not.toBeInTheDocument();
+    expect(screen.queryByText('异常事件', { selector: '.governance-stats__label' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: '当前保护结果' })).not.toBeInTheDocument();
 
     await act(async () => {
@@ -35,7 +35,7 @@ describe('GovernanceCenter', () => {
     });
 
     expect(await screen.findByRole('region', { name: '当前保护结果' })).toBeInTheDocument();
-    const incidentMetric = screen.getByText('异常事件', { selector: 'dt' }).parentElement;
+    const incidentMetric = screen.getByText('异常事件', { selector: '.governance-stats__label' }).parentElement;
     expect(incidentMetric).not.toBeNull();
     expect(within(incidentMetric!).getByText('1')).toBeInTheDocument();
     expect(screen.queryByText('正在核对本机保护')).not.toBeInTheDocument();
@@ -58,7 +58,7 @@ describe('GovernanceCenter', () => {
     );
 
     expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法读取安全记录');
-    expect(screen.queryByText('异常事件', { selector: 'dt' })).not.toBeInTheDocument();
+    expect(screen.queryByText('异常事件', { selector: '.governance-stats__label' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: '当前保护结果' })).not.toBeInTheDocument();
 
     unavailable = false;
@@ -84,7 +84,7 @@ describe('GovernanceCenter', () => {
     expect(activeGuards(projection)).toEqual([]);
     render(<GovernanceCenter governance={projection} knowledge={knowledge()} />);
     expect(screen.getByText('当前没有生效中的保护规则。')).toBeVisible();
-    const activeMetric = screen.getByText('正在生效', { selector: 'dt' }).parentElement;
+    const activeMetric = screen.getByText('正在生效', { selector: '.governance-stats__label' }).parentElement;
     expect(activeMetric).not.toBeNull();
     expect(within(activeMetric!).getByText('0')).toBeVisible();
     fireEvent.click(screen.getByRole('radio', { name: '规则与审计' }));
@@ -191,6 +191,22 @@ describe('GovernanceCenter', () => {
     fireEvent.click(attentionRow!);
     expect(screen.getByText('等待人工处理')).toBeVisible();
     expect(screen.getByRole('radio', { name: '规则与审计' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('jumps from a verdict stat straight to the records view that owns it', () => {
+    render(<GovernanceCenter governance={governance()} knowledge={knowledge()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '索引失败 1 项，查看记忆与知识' }));
+    expect(screen.getByRole('radio', { name: '记忆与知识' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('导入隔离与索引队列')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: '异常事件 1 项，查看规则与审计' }));
+    expect(screen.getByRole('radio', { name: '规则与审计' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('异常与保护建议')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: '正在生效 1 项，查看概况' }));
+    expect(screen.getByRole('radio', { name: '概况' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('生效中的保护')).toBeVisible();
   });
 });
 

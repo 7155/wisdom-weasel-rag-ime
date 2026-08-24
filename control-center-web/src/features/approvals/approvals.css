@@ -164,6 +164,19 @@ main[data-route-id='approvals'] .approvals-queue__meta time {
   font-variant-numeric: tabular-nums;
 }
 
+/* Requests inside the five-minute expiry window announce the remaining time
+   where the request timestamp usually sits; the row border warms up unless
+   the accent of the active selection already owns it. */
+main[data-route-id='approvals'] .approvals-queue__urgency {
+  color: var(--color-warning);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+main[data-route-id='approvals'] .approvals-queue__list > li[data-urgent]:not([data-active]) > button {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, transparent);
+}
+
 /* Risk chip shared by queue rows and the decision head. */
 main[data-route-id='approvals'] .approvals-risk {
   display: grid;

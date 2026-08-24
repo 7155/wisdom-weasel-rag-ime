@@ -147,24 +147,27 @@ export function GovernanceCenter({
                 <p>{verdictHint(attentionCount, activeCount, governance.guardCandidates.length)}</p>
               </div>
             </div>
-            <dl className="governance-stats">
-              <div data-tone={governance.incidents.length ? 'warning' : 'neutral'}>
-                <dt>异常事件</dt>
-                <dd>{governance.incidents.length}</dd>
-              </div>
-              <div data-tone={governance.guardCandidates.length ? 'info' : 'neutral'}>
-                <dt>待确认规则</dt>
-                <dd>{governance.guardCandidates.length}</dd>
-              </div>
-              <div data-tone={activeCount ? 'success' : 'neutral'}>
-                <dt>正在生效</dt>
-                <dd>{activeCount}</dd>
-              </div>
-              <div data-tone={deadOutbox.length ? 'danger' : 'neutral'}>
-                <dt>索引失败</dt>
-                <dd>{deadOutbox.length}</dd>
-              </div>
-            </dl>
+            {/* Each count doubles as a shortcut into the view that owns those
+                records, so the board is a place to act from, not a scoreboard. */}
+            <div aria-label="保护记录直达" className="governance-stats" role="group">
+              {([
+                { label: '异常事件', count: governance.incidents.length, tone: governance.incidents.length ? 'warning' : 'neutral', target: 'rules' },
+                { label: '待确认规则', count: governance.guardCandidates.length, tone: governance.guardCandidates.length ? 'info' : 'neutral', target: 'rules' },
+                { label: '正在生效', count: activeCount, tone: activeCount ? 'success' : 'neutral', target: 'overview' },
+                { label: '索引失败', count: deadOutbox.length, tone: deadOutbox.length ? 'danger' : 'neutral', target: 'knowledge' },
+              ] as const).map((stat) => (
+                <button
+                  aria-label={`${stat.label} ${stat.count} 项，查看${viewName(stat.target)}`}
+                  data-tone={stat.tone}
+                  key={stat.label}
+                  onClick={() => setView(stat.target)}
+                  type="button"
+                >
+                  <span className="governance-stats__label">{stat.label}</span>
+                  <strong className="governance-stats__value">{stat.count}</strong>
+                </button>
+              ))}
+            </div>
           </section>
 
           <div className="governance-viewbar">
@@ -210,6 +213,10 @@ export function GovernanceCenter({
       ) : null}
     </ManagementPage>
   );
+}
+
+function viewName(view: GovernanceView): string {
+  return ({ overview: '概况', rules: '规则与审计', knowledge: '记忆与知识' })[view];
 }
 
 function VerdictIcon({ activeCount, attentionCount }: { activeCount: number; attentionCount: number }) {

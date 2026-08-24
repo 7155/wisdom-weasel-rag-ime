@@ -87,7 +87,28 @@ describe('PawSystemAppsMigrated', () => {
     renderSystemApp('system-settings', '/configuration', transport);
 
     const approvalsButton = await screen.findByRole('button', { name: '审批（2 项待处理）' });
-    expect(approvalsButton.querySelector('.paw-system-app__nav-badge')?.textContent).toBe('2');
+    const badge = approvalsButton.querySelector('.paw-system-app__nav-badge');
+    expect(badge?.textContent).toBe('2');
+    expect(badge).not.toHaveAttribute('data-tone');
+  });
+
+  it('escalates the Settings rail badge when a waiting approval is high risk', async () => {
+    const transport = baseTransport({
+      'agent.approvals.list': {
+        ok: true,
+        items: [
+          previewApprovalStub('approval:calm', 'pending'),
+          previewApprovalStub('approval:hot', 'pending', 'R3'),
+          previewApprovalStub('approval:done', 'applied', 'R3'),
+        ],
+      },
+    });
+    renderSystemApp('system-settings', '/configuration', transport);
+
+    const approvalsButton = await screen.findByRole('button', { name: '审批（2 项待处理，含 1 项高风险）' });
+    const badge = approvalsButton.querySelector('.paw-system-app__nav-badge');
+    expect(badge?.textContent).toBe('2');
+    expect(badge).toHaveAttribute('data-tone', 'danger');
   });
 
   it('keeps the Settings rail quiet when the approvals route is unavailable', async () => {
@@ -260,7 +281,11 @@ function groupLabels(): string[] {
   return [...document.querySelectorAll('.paw-system-app__nav-group')].map((node) => node.textContent?.trim() ?? '');
 }
 
-function previewApprovalStub(approvalId: string, state: 'pending' | 'applied') {
+function previewApprovalStub(
+  approvalId: string,
+  state: 'pending' | 'applied',
+  riskLevel: 'R1' | 'R2' | 'R3' = 'R2',
+) {
   return {
     schemaVersion: 'rag-ime.agent-approval.v1',
     approvalId,
@@ -270,7 +295,7 @@ function previewApprovalStub(approvalId: string, state: 'pending' | 'applied') {
     operation: 'run',
     payloadSha256: 'a'.repeat(64),
     preview: { summary: '示例请求' },
-    riskLevel: 'R2',
+    riskLevel,
     state,
     requestedAtMs: Date.now() - 1_000,
     expiresAtMs: Date.now() + 60_000,
