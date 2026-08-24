@@ -54,6 +54,10 @@
 .an-home-title em { color: var(--an-cobalt); font-style: normal; }
 .an-composer { position: relative; z-index: 4; background: var(--an-paper-bright); border: 1px solid var(--an-rule); border-radius: 14px; box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 12px 30px rgba(24, 32, 43, .07); transition: border-color 160ms ease, box-shadow 180ms ease, transform 220ms var(--an-ease-out); animation: an-rise 480ms var(--an-ease-out) 90ms both; }
 .an-composer:focus-within { border-color: color-mix(in srgb, var(--an-cobalt) 42%, var(--an-rule)); box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 16px 36px rgba(24, 32, 43, .09), 0 0 0 4px color-mix(in srgb, var(--an-cobalt) 9%, transparent); transform: translateY(-1px); }
+/* 与 Session composer 同语汇的船坞光环：聚焦时一段静态钴-紫 conic 光
+   贴着边框亮起（Home 不执行任务，光不转动）。 */
+.an-composer::before { content: ''; position: absolute; inset: -1px; z-index: 2; border-radius: 15px; padding: 1.5px; background: conic-gradient(from 210deg, rgb(47 107 255 / 0%) 0%, rgb(47 107 255 / 45%) 12%, rgb(122 77 178 / 32%) 22%, rgb(47 107 255 / 0%) 34%); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
+.an-composer:focus-within::before { opacity: .5; }
 .an-composer textarea { display: block; width: 100%; min-height: 92px; padding: 17px 17px 10px; resize: none; border: 0; outline: 0; background: transparent; color: var(--an-ink); font-size: 15px; line-height: 1.65; }
 .an-composer textarea::placeholder { color: var(--an-ink-3); opacity: 1; }
 .an-composer-foot { display: flex; align-items: center; gap: 8px; min-height: 49px; padding: 8px 10px; border-top: 1px solid var(--an-hairline); }
@@ -150,9 +154,18 @@
 .an-trace-rail > header strong { display: block; font-size: 13px; }
 .an-trace-rail > header small { display: block; margin-top: 2px; color: var(--an-ink-3); font-size: 12px; line-height: 1.45; }
 .an-turn-list { padding: 8px; overflow: auto; }
-.an-turn-item { display: block; width: 100%; margin-bottom: 4px; padding: 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; transition: background 140ms ease, border-color 140ms ease, transform 180ms var(--an-ease-out); }
+.an-turn-item { position: relative; display: block; width: 100%; margin-bottom: 4px; padding: 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; transition: background 140ms ease, border-color 140ms ease, transform 180ms var(--an-ease-out); }
+/* 时间树轨道：每个轮次拖一段轨道线，穿过条目间距连成整条时间线；
+   首尾在节点处收笔。节点打一圈纸底，像轨道图上的站点。 */
+.an-turn-item::before { content: ''; position: absolute; top: -4px; bottom: -4px; left: 13px; width: 1px; background: var(--an-hairline); pointer-events: none; }
+.an-turn-item:first-child::before { top: 17px; }
+.an-turn-item:last-child::before { bottom: calc(100% - 17px); }
+.an-turn-item:only-child::before { display: none; }
+.an-turn-item .an-dot { position: relative; z-index: 1; box-shadow: 0 0 0 3px var(--an-paper-bright); }
 .an-turn-item:hover { background: var(--an-paper-soft); transform: translateX(1px); }
-.an-turn-item[aria-current="true"] { border-color: var(--an-rule); background: var(--an-paper); box-shadow: inset 3px 0 var(--an-cobalt); }
+.an-turn-item[aria-current="true"] { border-color: var(--an-rule); background: var(--an-paper); box-shadow: 0 1px 2px rgb(31 27 22 / 6%); }
+.an-turn-item[aria-current="true"] .ti-no { color: var(--an-cobalt); }
+.an-turn-item[aria-current="true"] .an-dot { box-shadow: 0 0 0 2px var(--an-paper), 0 0 0 3.5px var(--an-cobalt); }
 .an-turn-item .ti-top { display: flex; align-items: center; gap: 7px; }
 .an-turn-item .ti-no { color: var(--an-ink-2); font-family: var(--an-mono); font-size: 12px; font-weight: 750; }
 .an-turn-item .ti-time { margin-left: auto; color: var(--an-ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -286,6 +299,8 @@
   .an-trace-rail > header { border-right: 1px solid var(--an-hairline); border-bottom: 0; }
   .an-turn-list { display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; }
   .an-turn-item { width: 188px; min-width: 188px; margin-bottom: 0; scroll-snap-align: start; }
+  /* 横向轮播模式没有纵向轨道可挂。 */
+  .an-turn-item::before { display: none; }
   .an-trace-center { padding: 13px; }
   .an-ev { grid-template-columns: 58px minmax(0, 1fr); }
   .an-ev .ev-body,

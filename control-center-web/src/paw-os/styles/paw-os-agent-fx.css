@@ -569,6 +569,28 @@
 .paw-desktop-root .paw-chatfx .fx-approval[data-state='approved']::before { background: var(--paw-chat-ok); }
 .paw-desktop-root .paw-chatfx .fx-approval[data-state='rejected']::before { background: var(--paw-chat-danger); }
 
+/* 等待审批：左侧警戒条安静呼吸、卡面铺一层极浅暖底。
+   用光提请注意，不用弹跳打断阅读。 */
+.paw-desktop-root .paw-chatfx .fx-approval[data-state='pending'] {
+  border-color: color-mix(in srgb, var(--paw-chat-warn) 30%, var(--paw-chat-border));
+  background: color-mix(in srgb, var(--paw-chat-warn) 3%, var(--paw-chat-surface));
+}
+
+.paw-desktop-root .paw-chatfx .fx-approval[data-state='pending']::before {
+  animation: paw-fx-approval-breathe 2.2s ease-in-out infinite;
+}
+
+@keyframes paw-fx-approval-breathe {
+  0%, 100% { opacity: 1; box-shadow: 4px 0 12px -2px color-mix(in srgb, var(--paw-chat-warn) 38%, transparent); }
+  50% { opacity: .55; box-shadow: none; }
+}
+
+/* 真实进行中的进度卡：钴色描边随状态点亮，与 composer 光环同源。 */
+.paw-desktop-root .paw-chatfx .fx-progress-card[data-state='running'] {
+  border-color: color-mix(in srgb, var(--paw-chat-accent) 26%, var(--paw-chat-border));
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 6px 18px rgb(47 107 255 / 7%);
+}
+
 .paw-desktop-root .paw-chatfx .fx-approval .bd {
   padding: 12px 16px 13px;
   color: var(--paw-chat-text-secondary);
@@ -942,7 +964,8 @@
   }
 
   .paw-desktop-root .paw-chatfx .fx-pill.run i,
-  .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after {
+  .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after,
+  .paw-desktop-root .paw-chatfx .fx-approval[data-state='pending']::before {
     animation: none;
   }
 
@@ -989,7 +1012,8 @@
   transform: none;
 }
 
-:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after {
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after,
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .fx-approval[data-state='pending']::before {
   animation: none;
 }
 
