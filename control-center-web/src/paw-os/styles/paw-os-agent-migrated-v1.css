@@ -1035,6 +1035,7 @@
   list-style: none;
 }
 
+/* 时间树脊线：两端渐隐，像一条被灯光扫过的轨道，而不是生硬的分隔线。 */
 .paw-agent-trace-v1__turn ol::before {
   content: '';
   position: absolute;
@@ -1042,7 +1043,14 @@
   bottom: 20px;
   left: 75px;
   width: 1px;
-  background: var(--paw-chat-border);
+  background:
+    linear-gradient(
+      180deg,
+      transparent,
+      var(--paw-chat-border) 16px,
+      var(--paw-chat-border) calc(100% - 16px),
+      transparent
+    );
 }
 
 .paw-agent-trace-v1__turn li {
@@ -1315,6 +1323,75 @@
   color: var(--paw-chat-text-tertiary);
   font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
+}
+
+/* ===== 时间树状态工艺 =====
+   轮次卡沿左缘挂一根状态色条（与 Home recent-card 同语汇 inset 3px），
+   活动中的节点带一圈呼吸光——状态在扫视距离上即可读，无需读字。 */
+.paw-agent-trace-v1__turn[data-status='running'] {
+  border-color: rgb(39 131 222 / 32%);
+  box-shadow:
+    inset 3px 0 var(--paw-chat-accent),
+    0 1px 2px rgb(0 0 0 / 2%);
+}
+
+.paw-agent-trace-v1__turn[data-status='waiting'] {
+  box-shadow:
+    inset 3px 0 var(--paw-chat-warn),
+    0 1px 2px rgb(0 0 0 / 2%);
+}
+
+.paw-agent-trace-v1__turn[data-status='failed'] {
+  border-color: rgb(205 60 58 / 30%);
+  box-shadow:
+    inset 3px 0 var(--paw-chat-danger),
+    0 1px 2px rgb(0 0 0 / 2%);
+}
+
+/* 运行/流式节点：圆点由内向外泛一圈钴色呼吸光，落在脊线上。 */
+.paw-agent-trace-v1__turn li[data-status='running'] .paw-agent-trace-v1__node,
+.paw-agent-trace-v1__turn li[data-status='streaming'] .paw-agent-trace-v1__node {
+  border-color: var(--paw-chat-accent);
+  background: var(--paw-chat-accent);
+  animation: paw-trace-node-ping 1.7s cubic-bezier(.2, .6, .36, 1) infinite;
+}
+
+@keyframes paw-trace-node-ping {
+  0% { box-shadow: 0 0 0 0 rgb(39 131 222 / 32%); }
+  70%, 100% { box-shadow: 0 0 0 7px rgb(39 131 222 / 0%); }
+}
+
+.paw-agent-trace-v1__turn li[data-status='waiting'] .paw-agent-trace-v1__node {
+  border-color: var(--paw-chat-warn);
+  background: rgb(178 106 0 / 16%);
+  box-shadow: 0 0 0 3px rgb(178 106 0 / 10%);
+}
+
+.paw-agent-trace-v1__turn li[data-status='failed'] .paw-agent-trace-v1__node {
+  border-color: var(--paw-chat-danger);
+  background: rgb(205 60 58 / 16%);
+  box-shadow: 0 0 0 3px rgb(205 60 58 / 10%);
+}
+
+/* 活尾指示点同一套呼吸，让"还在走"从卡片一路延续到队尾。 */
+.paw-agent-trace-v1__tail-dot {
+  animation: paw-trace-node-ping 1.7s cubic-bezier(.2, .6, .36, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-agent-trace-v1__turn li[data-status='running'] .paw-agent-trace-v1__node,
+  .paw-agent-trace-v1__turn li[data-status='streaming'] .paw-agent-trace-v1__node,
+  .paw-agent-trace-v1__tail-dot {
+    animation: none;
+    box-shadow: 0 0 0 3px rgb(39 131 222 / 16%);
+  }
+}
+
+:root[data-reduce-motion='true'] .paw-agent-trace-v1__turn li[data-status='running'] .paw-agent-trace-v1__node,
+:root[data-reduce-motion='true'] .paw-agent-trace-v1__turn li[data-status='streaming'] .paw-agent-trace-v1__node,
+:root[data-reduce-motion='true'] .paw-agent-trace-v1__tail-dot {
+  animation: none;
+  box-shadow: 0 0 0 3px rgb(39 131 222 / 16%);
 }
 
 @container paw-window (max-width: 900px) {
