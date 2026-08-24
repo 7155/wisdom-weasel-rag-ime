@@ -81,14 +81,16 @@
 .paw-workbench-migrated :is(.paw-wb-overview, .paw-wb-outline, .paw-wb-graph__viewport, .paw-wb-detail, .paw-wb-document-index, .paw-wb-document-reader)::-webkit-scrollbar { width: 9px; height: 9px; }
 .paw-workbench-migrated :is(.paw-wb-overview, .paw-wb-outline, .paw-wb-graph__viewport, .paw-wb-detail, .paw-wb-document-index, .paw-wb-document-reader)::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: rgb(37 58 92 / 22%); background-clip: padding-box; }
 
-/* ---------- shared chrome ---------- */
+/* ---------- shared chrome: the project command deck ---------- */
 
+/* Purpose first: the deck opens with what the current page answers, then the
+   cross-page commands with truthful counts, and keeps project identity as a
+   quiet anchor on the right instead of leading the bar. */
 .paw-workbench-migrated .paw-wb-chrome {
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(40px, 1fr);
+  display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   padding: 0 14px;
   border-bottom: 1px solid var(--paw-wb-line);
   background: rgb(255 255 255 / 88%);
@@ -97,9 +99,85 @@
   z-index: 4;
 }
 
+.paw-workbench-migrated .paw-wb-chrome__purpose {
+  min-width: 0;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: 9px;
+  white-space: nowrap;
+}
+
+.paw-workbench-migrated .paw-wb-chrome__purpose h1 {
+  color: var(--paw-wb-ink);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+
+.paw-workbench-migrated .paw-wb-chrome__purpose p {
+  overflow: hidden;
+  color: var(--paw-wb-faint);
+  font-size: 13px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
+.paw-workbench-migrated .paw-wb-chrome__commands {
+  min-width: 0;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.paw-workbench-migrated .paw-wb-chrome__commands::-webkit-scrollbar { display: none; }
+
+.paw-workbench-migrated .paw-wb-chrome__commands button {
+  min-height: 30px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--paw-wb-line-strong);
+  border-radius: 9px;
+  background: var(--paw-wb-surface);
+  color: var(--paw-wb-muted);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out;
+}
+
+.paw-workbench-migrated .paw-wb-chrome__commands button:hover { background: var(--paw-wb-fill); color: var(--paw-wb-ink); }
+.paw-workbench-migrated .paw-wb-chrome__commands button > svg { color: var(--paw-wb-accent); }
+
+.paw-workbench-migrated .paw-wb-chrome__commands em {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--paw-wb-accent-soft);
+  color: var(--paw-wb-accent);
+  font-size: 12px;
+  line-height: 1.4;
+  font-style: normal;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-workbench-migrated .paw-wb-chrome__spacer { flex: 1 1 0; min-width: 8px; }
+
 .paw-workbench-migrated .paw-wb-chrome__identity {
   min-width: 0;
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
 }
 
@@ -116,25 +194,12 @@
 }
 
 .paw-workbench-migrated .paw-wb-chrome__identity strong { font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
-.paw-workbench-migrated .paw-wb-chrome__identity small { color: var(--paw-wb-muted); font-size: 13px; line-height: 1.4; }
-
-.paw-workbench-migrated .paw-wb-chrome__location {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--paw-wb-muted);
-  font-size: 13px;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.paw-workbench-migrated .paw-wb-chrome__location h1 { margin: 0; color: var(--paw-wb-ink); font: inherit; font-weight: 700; }
-.paw-workbench-migrated .paw-wb-chrome__spacer { justify-self: end; }
+.paw-workbench-migrated .paw-wb-chrome__identity small { color: var(--paw-wb-muted); font-size: 12px; line-height: 1.4; }
 
 .paw-workbench-migrated .paw-wb-primary {
   min-height: 32px;
-  justify-self: end;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   padding: 0 13px;
@@ -265,25 +330,6 @@
 
 .paw-workbench-migrated .paw-wb-now__primary:hover { background: #e3ecfb; box-shadow: 0 8px 22px rgb(5 10 22 / 42%); }
 .paw-workbench-migrated .paw-wb-now__primary:active { transform: scale(.97); }
-
-.paw-workbench-migrated .paw-wb-now__secondary {
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 13px;
-  border: 1px solid rgb(255 255 255 / 26%);
-  border-radius: 10px;
-  background: rgb(255 255 255 / 6%);
-  color: rgb(236 243 253 / 88%);
-  font-size: 13px;
-  line-height: 1.4;
-  font-weight: 650;
-  cursor: pointer;
-  transition: background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out;
-}
-
-.paw-workbench-migrated .paw-wb-now__secondary:hover { border-color: rgb(255 255 255 / 44%); background: rgb(255 255 255 / 12%); color: #fff; }
 
 /* Completion ring: the done share of real tasks, drawn as instrument optics. */
 .paw-workbench-migrated .paw-wb-now__gauge {
@@ -1193,7 +1239,8 @@
 }
 
 @container paw-native-stage (max-width: 760px) {
-  .paw-workbench-migrated .paw-wb-chrome { grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; }
+  .paw-workbench-migrated .paw-wb-chrome { gap: 9px; }
+  .paw-workbench-migrated .paw-wb-chrome__purpose p { display: none; }
   .paw-workbench-migrated .paw-wb-planning-tools {
     min-height: 82px;
     display: grid;
@@ -1231,6 +1278,9 @@
   .paw-workbench-migrated { grid-template-rows: 44px minmax(0, 1fr); }
   .paw-workbench-migrated .paw-wb-chrome { padding-inline: 10px; }
   .paw-workbench-migrated .paw-wb-chrome__identity small { display: none; }
+  /* Deck commands collapse to icon + truthful count; names stay on aria-label. */
+  .paw-workbench-migrated .paw-wb-chrome__commands button { padding: 0 8px; }
+  .paw-workbench-migrated .paw-wb-chrome__commands button > span { display: none; }
   .paw-workbench-migrated .paw-wb-primary { width: 32px; min-height: 32px; padding: 0; justify-content: center; }
   .paw-workbench-migrated .paw-wb-primary > span { display: none; }
   .paw-workbench-migrated .paw-wb-planning-tools {
