@@ -387,6 +387,21 @@ class AgentRoomPartnerDispatchStore:
             ).fetchall()
         return [_payload(row) for row in rows]
 
+    def failed_wakes(self, *, limit: int = 200) -> list[dict[str, object]]:
+        """Return terminal dispatches whose projected wake is failed."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_room_partner_dispatches
+                WHERE status IN ('review', 'blocked', 'failed', 'aborted', 'accepted')
+                  AND wake_state = 'failed'
+                ORDER BY updated_at_ms ASC LIMIT ?
+                """,
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+        return [_payload(row) for row in rows]
+
     def terminal_result_candidates(
         self,
         *,
@@ -551,6 +566,66 @@ class AgentRoomPartnerDispatchStore:
                     child_dispatch_id,
                     expected_generation,
                     expected_schedule,
+                    bounded_max_generation,
+                ),
+            )
+            row = self._row(conn, child_dispatch_id)
+        self._notify()
+        return _payload(row)
+
+    def requeue_failed_wake(
+        self,
+        child_dispatch_id: str,
+        *,
+        generation: int,
+        expected_schedule_id: str,
+        expected_error: str,
+        max_generation: int,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Atomically allocate one bounded retry for one exact failed wake.
+
+        The caller must independently prove that the failed command is safe to
+        retry.  This compare-and-set only fences the dispatch projection; the
+        prior schedule and run remain immutable in the wake ledger.
+        """
+
+        timestamp = _now_ms(now_ms)
+        expected_generation = int(generation)
+        expected_schedule = _required(expected_schedule_id)
+        bounded_error = str(expected_error or "")[:2_000]
+        bounded_max_generation = max(0, int(max_generation))
+        with self._connect(immediate=True) as conn:
+            row = self._row(conn, child_dispatch_id)
+            if (
+                str(row["status"]) not in _WAKEABLE_TERMINAL_STATES
+                or str(row["wake_state"]) != "failed"
+                or int(row["wake_generation"]) != expected_generation
+                or str(row["wake_schedule_id"]) != expected_schedule
+                or str(row["error"]) != bounded_error
+                or expected_generation >= bounded_max_generation
+            ):
+                return _payload(row)
+            conn.execute(
+                """
+                UPDATE agent_room_partner_dispatches
+                SET wake_generation = wake_generation + 1,
+                    wake_schedule_id = '', wake_state = 'pending', error = '',
+                    updated_at_ms = ?
+                WHERE child_dispatch_id = ?
+                  AND status IN ('review', 'blocked', 'failed', 'aborted', 'accepted')
+                  AND wake_state = 'failed'
+                  AND wake_generation = ?
+                  AND wake_schedule_id = ?
+                  AND error = ?
+                  AND wake_generation < ?
+                """,
+                (
+                    timestamp,
+                    child_dispatch_id,
+                    expected_generation,
+                    expected_schedule,
+                    bounded_error,
                     bounded_max_generation,
                 ),
             )

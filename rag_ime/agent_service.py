@@ -84,7 +84,10 @@ from .collaboration_profile_control import CollaborationProfileControl
 from .agent_task_context import AgentTaskContextResolver
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_work_application import RoomWorkApplicationService
-from .agent_room_turn_registry import RoomTurnRegistry
+from .agent_room_turn_registry import (
+    RoomSessionBusyError,
+    RoomTurnRegistry,
+)
 from .agent_governance_projection import GovernanceProjectionStore
 from .agent_knowledge_promotion import KNOWLEDGE_ROUTE_HASH, KnowledgePromotionStore
 from .knowledge_scope import bound_session_knowledge_caller
@@ -565,6 +568,13 @@ class AgentService:
             dispatch_facilitator_wake=self._dispatch_room_partner_wake,
             command_acceptance_evidence=lambda session_id, client_message_id: (
                 self.command_receipts.acceptance_evidence_for_exact_command(
+                    command_scope="session_prompt",
+                    scope_id=session_id,
+                    client_message_id=client_message_id,
+                )
+            ),
+            command_failure_evidence=lambda session_id, client_message_id: (
+                self.command_receipts.failure_evidence_for_exact_command(
                     command_scope="session_prompt",
                     scope_id=session_id,
                     client_message_id=client_message_id,
@@ -3373,100 +3383,138 @@ class AgentService:
         root_id = str(dispatch.get("rootId") or "")
         child_dispatch_id = str(dispatch.get("childDispatchId") or "")
         self._recover_faulted_room_session(session_id)
-        session = self.sessions.get(session_id)
-        session_status = str(session.get("status") or "")
-        if session_status == "busy":
-            self.wake_schedules.defer(
-                run_id,
-                reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
-                delay_ms=5_000,
-            )
-            return False
-        if session_status not in {"idle", "active"}:
-            raise ValueError("Facilitator Session is unavailable for Room wake")
-        if not self._room_target_idle(session_id):
-            self.wake_schedules.defer(
-                run_id,
-                reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
-                delay_ms=5_000,
-            )
-            return False
-        participant = self.rooms.participant_for_session(
-            session_id,
-            active_only=True,
-        )
-        if participant is None or str(participant.get("id") or "") != str(
-            dispatch.get("sourceParticipantId") or ""
-        ):
-            raise ValueError("Facilitator is no longer active in this Room")
-        room = self.rooms.get(str(dispatch.get("roomId") or ""))
-        topic_id = self._room_topic_for_turn(root_id) or str(
-            room.get("activeTopicId") or ""
-        )
-        self.wake_application.enqueue_room_completion(
-            claim=claim,
-            dispatch=dispatch,
-        )
-        wake_dispatch_id = (
-            f"room-wake-dispatch:{child_dispatch_id}:"
-            f"{int((dispatch.get('wake') or {}).get('generation') or 0)}"
-            if isinstance(dispatch.get("wake"), Mapping)
-            else f"room-wake-dispatch:{child_dispatch_id}"
-        )
-        self._begin_room_turn(
-            session_id,
-            root_id,
-            topic_id,
-            dispatch_id=wake_dispatch_id,
-            child=False,
-        )
         try:
-            accepted = self.prompt(
-                session_id,
-                {
-                    "message": "伙伴交付已到达，请检查并完成双轴验收。",
-                    "clientMessageId": run_id,
-                    "_contextSourceToken": self._context_source_token,
-                    "_contextSource": "room",
-                    "_checkpointText": "伙伴交付已到达，请检查并完成双轴验收。",
-                },
+            self.room_turns.hold_priority_if_idle((session_id,))
+        except RoomSessionBusyError:
+            self.wake_schedules.defer(
+                run_id,
+                reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                cause_code="AGENT_TURN_CONFLICT",
+                delay_ms=5_000,
             )
-        except Exception:
-            self._cancel_room_turn(session_id, root_id)
-            if str(self.sessions.get(session_id).get("status") or "") == "busy":
+            return False
+        try:
+            session = self.sessions.get(session_id)
+            session_status = str(session.get("status") or "")
+            if session_status == "busy":
                 self.wake_schedules.defer(
                     run_id,
-                    reason="Facilitator 刚刚开始其他回合，伙伴交付稍后重试",
+                    reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                    cause_code="AGENT_TURN_CONFLICT",
                     delay_ms=5_000,
                 )
                 return False
-            raise
-        turn_id = str(accepted.get("turnId") or "")
-        self._accept_room_turn(session_id, turn_id, root_id)
-        self.wake_schedules.accept(
-            run_id,
-            session_id=session_id,
-            turn_id=turn_id,
-        )
-        replayed, _gap = self.events.replay(session_id)
-        for event in replayed:
-            if (
-                event.turn_id == turn_id
-                and event.event_type in {"turn_completed", "turn_failed"}
+            if session_status not in {"idle", "active"}:
+                raise ValueError("Facilitator Session is unavailable for Room wake")
+            if not self._room_target_idle(
+                session_id,
+                allow_user_priority=True,
             ):
-                self.wake_scheduler.observe_event(event)
-                break
-        return True
+                self.wake_schedules.defer(
+                    run_id,
+                    reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                    cause_code="AGENT_TURN_CONFLICT",
+                    delay_ms=5_000,
+                )
+                return False
+            participant = self.rooms.participant_for_session(
+                session_id,
+                active_only=True,
+            )
+            if participant is None or str(participant.get("id") or "") != str(
+                dispatch.get("sourceParticipantId") or ""
+            ):
+                raise ValueError("Facilitator is no longer active in this Room")
+            room = self.rooms.get(str(dispatch.get("roomId") or ""))
+            topic_id = self._room_topic_for_turn(root_id) or str(
+                room.get("activeTopicId") or ""
+            )
+            self.wake_application.enqueue_room_completion(
+                claim=claim,
+                dispatch=dispatch,
+            )
+            wake_dispatch_id = (
+                f"room-wake-dispatch:{child_dispatch_id}:"
+                f"{int((dispatch.get('wake') or {}).get('generation') or 0)}"
+                if isinstance(dispatch.get("wake"), Mapping)
+                else f"room-wake-dispatch:{child_dispatch_id}"
+            )
+            self._begin_room_turn(
+                session_id,
+                root_id,
+                topic_id,
+                dispatch_id=wake_dispatch_id,
+                child=False,
+            )
+            try:
+                accepted = self.prompt(
+                    session_id,
+                    {
+                        "message": "伙伴交付已到达，请检查并完成双轴验收。",
+                        "clientMessageId": run_id,
+                        "_contextSourceToken": self._context_source_token,
+                        "_contextSource": "room",
+                        "_checkpointText": "伙伴交付已到达，请检查并完成双轴验收。",
+                    },
+                )
+            except Exception as exc:
+                self._cancel_room_turn(session_id, root_id)
+                cause_code = _room_wake_failure_cause_code(exc)
+                if cause_code in {
+                    "SESSION_BUSY",
+                    "AGENT_TURN_CONFLICT",
+                }:
+                    self.wake_schedules.defer(
+                        run_id,
+                        reason="Facilitator 刚刚开始其他回合，伙伴交付稍后重试",
+                        cause_code=cause_code,
+                        delay_ms=5_000,
+                    )
+                    return False
+                if str(self.sessions.get(session_id).get("status") or "") == "busy":
+                    self.wake_schedules.defer(
+                        run_id,
+                        reason="Facilitator 刚刚开始其他回合，伙伴交付稍后重试",
+                        cause_code="AGENT_TURN_CONFLICT",
+                        delay_ms=5_000,
+                    )
+                    return False
+                raise
+            turn_id = str(accepted.get("turnId") or "")
+            self._accept_room_turn(session_id, turn_id, root_id)
+            self.wake_schedules.accept(
+                run_id,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            replayed, _gap = self.events.replay(session_id)
+            for event in replayed:
+                if (
+                    event.turn_id == turn_id
+                    and event.event_type in {"turn_completed", "turn_failed"}
+                ):
+                    self.wake_scheduler.observe_event(event)
+                    break
+            return True
+        finally:
+            self.room_turns.release_priority_session(session_id)
 
     def _recover_faulted_room_session(self, session_id: str) -> None:
-        """Re-open one faulted Pi Session without replacing Room identity."""
+        """Re-open one recoverable Pi Session without replacing Room identity."""
 
         session = self.sessions.get(session_id)
-        if str(session.get("status") or "") != "faulted":
+        session_status = str(session.get("status") or "")
+        if session_status not in {"faulted", "idle", "active"}:
             return
-        # A terminal Provider/Host failure is not a live competing turn. Re-open
-        # the same Pi Session once so its durable transcript and Room Root stay
-        # authoritative for both durable wakes and explicit user retries.
+        if (
+            session_status != "faulted"
+            and self.sessions.runtime_binding(session_id) is None
+        ):
+            return
+        # PAW can already project the Session as idle while a restarted Pi Host
+        # restores the interrupted durable turn from JSONL. Re-open the same Pi
+        # Session and retire only that exact turn when Pi proves it is idle; a
+        # genuinely running turn reports isIdle=false and remains untouched.
         ensured = self.runtime.ensure(session_id)
         state = ensured.get("state")
         state = state if isinstance(state, Mapping) else {}
@@ -3484,7 +3532,11 @@ class AgentService:
                     "Pi Runtime cannot retire the recovered Room Session turn"
                 )
             retire_recovered_turn(session_id, recovered_turn_id)
-        if str(self.sessions.get(session_id).get("status") or "") == "faulted":
+        if (
+            session_status == "faulted"
+            and str(self.sessions.get(session_id).get("status") or "")
+            == "faulted"
+        ):
             raise RuntimeError(
                 "Room participant Session remained faulted after Pi recovery"
             )
@@ -3739,6 +3791,17 @@ class AgentService:
             phase=phase,
             actor=actor,
         )
+
+
+def _room_wake_failure_cause_code(error: BaseException) -> str:
+    return " ".join(
+        str(
+            getattr(error, "cause_code", "")
+            or getattr(error, "host_error_code", "")
+            or getattr(error, "error_code", "")
+            or ""
+        ).split()
+    ).upper()[:80]
 
 
 def agent_service_from_environment(

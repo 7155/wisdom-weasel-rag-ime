@@ -9,6 +9,7 @@ from unittest.mock import patch
 from rag_ime.agent_command_receipts import AgentCommandReceiptFailed
 from rag_ime.agent_service import AgentService
 from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi_runtime_values import PiRuntimeCommandRejected
 
 
 class AgentServiceRoomPartnerWakeTest(unittest.TestCase):
@@ -162,6 +163,49 @@ class AgentServiceRoomPartnerWakeTest(unittest.TestCase):
         )
         self.assertEqual(projected["wake"]["state"], "scheduled")
 
+    def test_host_busy_rejection_persists_typed_receipt_and_defers_wake(
+        self,
+    ) -> None:
+        claim, facilitator, dispatch = self._room_completion_claim()
+        facilitator_session_id = str(facilitator["sessionId"])
+        run_id = str(claim["runId"])
+
+        with (
+            patch.object(
+                self.service.sessions,
+                "require_goal_execution",
+            ),
+            patch.object(
+                self.service.prompt_application,
+                "dispatch_checkpoint",
+                side_effect=PiRuntimeCommandRejected(
+                    "Session already has an active turn",
+                    host_error_code="SESSION_BUSY",
+                ),
+            ),
+        ):
+            self.service.wake_scheduler._dispatch_safely(claim)
+
+        receipt = self.service.command_receipts.failure_evidence_for_exact_command(
+            command_scope="session_prompt",
+            scope_id=facilitator_session_id,
+            client_message_id=run_id,
+        )
+        self.assertIsNotNone(receipt)
+        self.assertEqual(receipt["causeCode"], "SESSION_BUSY")
+        schedule = self.service.get_wake_schedule(str(claim["id"]))
+        self.assertEqual(schedule["status"], "scheduled")
+        self.assertEqual(schedule["runCount"], 0)
+        self.assertEqual(schedule["latestRun"]["state"], "deferred")
+        self.assertEqual(
+            schedule["latestRun"]["result"]["causeCode"],
+            "SESSION_BUSY",
+        )
+        projected = self.service.room_partner_dispatches.get(
+            str(dispatch["childDispatchId"])
+        )
+        self.assertEqual(projected["wake"]["state"], "scheduled")
+
     def test_competing_room_wake_priority_reservation_defers_before_prompt(
         self,
     ) -> None:
@@ -263,6 +307,95 @@ class AgentServiceRoomPartnerWakeTest(unittest.TestCase):
             interrupted_turn_id,
         )
         self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
+
+    def test_idle_room_session_retires_recovered_turn_before_wake(self) -> None:
+        claim, facilitator, dispatch = self._room_completion_claim()
+        session_id = str(facilitator["sessionId"])
+        interrupted_turn_id = "turn:idle-projection-stale-host-turn"
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
+        self.service.sessions.bind_pi_session(
+            session_id,
+            pi_session_id=session_id,
+            session_file=str(self.root / "sessions" / "facilitator.jsonl"),
+        )
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "ensure",
+                return_value={
+                    "state": {
+                        "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                        "sessionId": session_id,
+                        "isIdle": True,
+                        "activeTurn": {"turnId": interrupted_turn_id},
+                    },
+                    "reused": False,
+                },
+            ) as ensure,
+            patch.object(
+                self.service.runtime,
+                "retire_recovered_turn",
+                create=True,
+                return_value={"retired": True},
+            ) as retire_recovered_turn,
+            patch.object(
+                self.service,
+                "prompt",
+                return_value={"accepted": True, "turnId": "turn:wake-after-retire"},
+            ) as prompt,
+        ):
+            self.service._dispatch_wake_claim(claim)
+
+        ensure.assert_called_once_with(session_id)
+        retire_recovered_turn.assert_called_once_with(
+            session_id,
+            interrupted_turn_id,
+        )
+        prompt.assert_called_once()
+        schedule = self.service.get_wake_schedule(str(claim["id"]))
+        self.assertEqual(schedule["latestRun"]["state"], "accepted")
+        self.assertEqual(
+            self.service.room_partner_dispatches.get(
+                str(dispatch["childDispatchId"])
+            )["wake"]["state"],
+            "delivered",
+        )
+
+    def test_idle_projection_never_retires_a_genuinely_running_turn(self) -> None:
+        _claim, facilitator, _dispatch = self._room_completion_claim()
+        session_id = str(facilitator["sessionId"])
+        running_turn_id = "turn:still-running"
+        self.service.sessions.bind_pi_session(
+            session_id,
+            pi_session_id=session_id,
+            session_file=str(self.root / "sessions" / "facilitator.jsonl"),
+        )
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "ensure",
+                return_value={
+                    "state": {
+                        "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                        "sessionId": session_id,
+                        "isIdle": False,
+                        "activeTurn": {"turnId": running_turn_id},
+                    },
+                    "reused": True,
+                },
+            ) as ensure,
+            patch.object(
+                self.service.runtime,
+                "retire_recovered_turn",
+                create=True,
+            ) as retire_recovered_turn,
+        ):
+            self.service._recover_faulted_room_session(session_id)
+
+        ensure.assert_called_once_with(session_id)
+        retire_recovered_turn.assert_not_called()
 
     def test_faulted_facilitator_recovery_failure_converges_without_defer_loop(
         self,
@@ -477,7 +610,191 @@ class AgentServiceRoomPartnerWakeTest(unittest.TestCase):
         self.assertEqual(failed_dispatch["wake"]["scheduleId"], claim["id"])
         self.assertIn("unproven", failed_dispatch["error"])
 
-    def test_restart_reconcile_repairs_legacy_failed_wake_projection(
+    def _record_exact_preacceptance_failure(
+        self,
+        claim: dict[str, object],
+        facilitator: dict[str, object],
+        *,
+        cause_code: str,
+        receipt_scope_id: str = "",
+    ) -> None:
+        session_id = str(facilitator["sessionId"])
+        receipt_session_id = receipt_scope_id or session_id
+        run_id = str(claim["runId"])
+        receipt = self.service.command_receipts.begin(
+            command_scope="session_prompt",
+            scope_id=receipt_session_id,
+            client_message_id=run_id,
+            payload={"message": "伙伴交付已到达，请检查并完成双轴验收。"},
+        )
+        failure = AgentCommandReceiptFailed(
+            "The Agent command failed before acceptance",
+            client_message_id=run_id,
+            cause_code=cause_code,
+        )
+        self.service.command_receipts.fail(
+            receipt,
+            command_scope="session_prompt",
+            scope_id=receipt_session_id,
+            client_message_id=run_id,
+            error=failure,
+            cause_code=cause_code,
+        )
+        self.service.room_partner_application.record_wake_failure(
+            claim,
+            failure,
+        )
+        self.service.wake_schedules.fail_dispatch(
+            run_id,
+            error=str(failure),
+        )
+
+    def test_restart_reconcile_requeues_legacy_session_busy_once(
+        self,
+    ) -> None:
+        claim, facilitator, dispatch = self._room_completion_claim()
+        child_dispatch_id = str(dispatch["childDispatchId"])
+        self._record_exact_preacceptance_failure(
+            claim,
+            facilitator,
+            cause_code="SESSION_BUSY",
+        )
+        old_runs = self.service.wake_schedules.runs(str(claim["id"]))
+
+        self.service.room_partner_application.reconcile()
+
+        recovered = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(recovered["wake"]["generation"], 2)
+        self.assertEqual(recovered["wake"]["state"], "scheduled")
+        self.assertEqual(
+            recovered["wake"]["scheduleId"],
+            f"room-wake:{child_dispatch_id}:2",
+        )
+        self.assertEqual(
+            self.service.wake_schedules.runs(str(claim["id"])),
+            old_runs,
+        )
+
+        self.service.room_partner_application.reconcile()
+        replay = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(replay["wake"]["generation"], 2)
+        self.assertEqual(
+            replay["wake"]["scheduleId"],
+            recovered["wake"]["scheduleId"],
+        )
+
+    def test_restart_reconcile_requeues_failed_second_generation_once(
+        self,
+    ) -> None:
+        first_claim, facilitator, dispatch = self._room_completion_claim()
+        child_dispatch_id = str(dispatch["childDispatchId"])
+        self._record_exact_preacceptance_failure(
+            first_claim,
+            facilitator,
+            cause_code="SESSION_BUSY",
+        )
+        self.service.room_partner_application.reconcile()
+
+        second_claims = self.service.wake_schedules.claim_due(
+            now_ms=int(time.time() * 1000) + 1_000,
+        )
+        self.assertEqual(len(second_claims), 1)
+        second_claim = second_claims[0]
+        self.assertEqual(
+            second_claim["id"],
+            f"room-wake:{child_dispatch_id}:2",
+        )
+        self._record_exact_preacceptance_failure(
+            second_claim,
+            facilitator,
+            cause_code="SESSION_BUSY",
+        )
+
+        self.service.room_partner_application.reconcile()
+
+        recovered = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(recovered["wake"]["generation"], 3)
+        self.assertEqual(recovered["wake"]["state"], "scheduled")
+        self.assertEqual(
+            recovered["wake"]["scheduleId"],
+            f"room-wake:{child_dispatch_id}:3",
+        )
+        third_claims = self.service.wake_schedules.claim_due(
+            now_ms=int(time.time() * 1000) + 1_000,
+        )
+        self.assertEqual(len(third_claims), 1)
+        self._record_exact_preacceptance_failure(
+            third_claims[0],
+            facilitator,
+            cause_code="SESSION_BUSY",
+        )
+        self.service.room_partner_application.reconcile()
+        stopped = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(stopped["wake"]["generation"], 3)
+        self.assertEqual(stopped["wake"]["state"], "failed")
+        self.assertEqual(
+            stopped["wake"]["scheduleId"],
+            recovered["wake"]["scheduleId"],
+        )
+        self.service.room_partner_application.reconcile()
+        replay = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(replay["wake"], stopped["wake"])
+
+    def test_restart_reconcile_requeues_legacy_turn_conflict_once(
+        self,
+    ) -> None:
+        claim, facilitator, dispatch = self._room_completion_claim()
+        child_dispatch_id = str(dispatch["childDispatchId"])
+        self._record_exact_preacceptance_failure(
+            claim,
+            facilitator,
+            cause_code="AGENT_TURN_CONFLICT",
+        )
+
+        self.service.room_partner_application.reconcile()
+
+        recovered = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(recovered["wake"]["generation"], 2)
+        self.assertEqual(recovered["wake"]["state"], "scheduled")
+
+    def test_restart_reconcile_does_not_requeue_provider_failure(
+        self,
+    ) -> None:
+        claim, facilitator, dispatch = self._room_completion_claim()
+        child_dispatch_id = str(dispatch["childDispatchId"])
+        self._record_exact_preacceptance_failure(
+            claim,
+            facilitator,
+            cause_code="PROVIDER_ERROR",
+        )
+
+        self.service.room_partner_application.reconcile()
+
+        failed = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(failed["wake"]["generation"], 1)
+        self.assertEqual(failed["wake"]["state"], "failed")
+        self.assertEqual(failed["wake"]["scheduleId"], claim["id"])
+
+    def test_restart_reconcile_requires_exact_source_session_receipt(
+        self,
+    ) -> None:
+        claim, facilitator, dispatch = self._room_completion_claim()
+        child_dispatch_id = str(dispatch["childDispatchId"])
+        self._record_exact_preacceptance_failure(
+            claim,
+            facilitator,
+            cause_code="SESSION_BUSY",
+            receipt_scope_id="session:unrelated",
+        )
+
+        self.service.room_partner_application.reconcile()
+
+        failed = self.service.room_partner_dispatches.get(child_dispatch_id)
+        self.assertEqual(failed["wake"]["generation"], 1)
+        self.assertEqual(failed["wake"]["state"], "failed")
+        self.assertEqual(failed["wake"]["scheduleId"], claim["id"])
+
+    def test_restart_reconcile_preserves_unknown_legacy_failure(
         self,
     ) -> None:
         claim, _facilitator, dispatch = self._room_completion_claim()

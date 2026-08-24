@@ -12,6 +12,7 @@ from .contracts.json_schema import validate_contract
 
 
 _MAX_AUTONOMOUS_COMPLETION_WAKE_GENERATION = 2
+_MAX_LEGACY_PREACCEPTANCE_WAKE_GENERATION = 3
 _MAX_LEGACY_STALE_WAKE_GENERATION = 3
 _MAX_MISSING_TYPED_RESULT_WAKE_GENERATION = 4
 _LEGACY_STALE_WAKE_ERROR = "Stale Room Partner completion wake"
@@ -64,6 +65,10 @@ class RoomPartnerApplicationService:
             [str, str], Mapping[str, object] | None
         ]
         | None = None,
+        command_failure_evidence: Callable[
+            [str, str], Mapping[str, object] | None
+        ]
+        | None = None,
         accept_room_work: Callable[
             [str, Mapping[str, object]], Mapping[str, object]
         ]
@@ -95,6 +100,7 @@ class RoomPartnerApplicationService:
         self.notify_wake_scheduler = notify_wake_scheduler
         self.dispatch_facilitator_wake = dispatch_facilitator_wake
         self.command_acceptance_evidence = command_acceptance_evidence
+        self.command_failure_evidence = command_failure_evidence
         self.accept_room_work = accept_room_work
         self.return_room_work = return_room_work
         self.recover_faulted_session = recover_faulted_session
@@ -689,6 +695,7 @@ class RoomPartnerApplicationService:
         for record in self.dispatch_store.pending_wakes():
             self._schedule_completion_wake(record)
         if self.wake_schedules is not None:
+            self._requeue_legacy_preacceptance_conflict_wakes()
             self._requeue_completed_wakes_missing_typed_result()
             self._requeue_legacy_stale_facilitator_wakes()
             self._requeue_recoverable_facilitator_wakes(terminal_lookup)
@@ -719,6 +726,105 @@ class RoomPartnerApplicationService:
                     schedule_id=schedule_id,
                     error=str(schedule.get("lastError") or ""),
                 )
+
+    def _requeue_legacy_preacceptance_conflict_wakes(self) -> None:
+        """Repair a bounded legacy wake whose typed conflict was lost."""
+
+        if (
+            self.dispatch_store is None
+            or self.wake_schedules is None
+            or not callable(self.command_failure_evidence)
+        ):
+            return
+        for record in self.dispatch_store.failed_wakes():
+            wake = record.get("wake")
+            wake = wake if isinstance(wake, Mapping) else {}
+            generation = int(wake.get("generation") or 0)
+            schedule_id = str(wake.get("scheduleId") or "")
+            if (
+                generation < 1
+                or generation >= _MAX_LEGACY_PREACCEPTANCE_WAKE_GENERATION
+                or not schedule_id
+            ):
+                continue
+            try:
+                schedule = self.wake_schedules.get(schedule_id)
+            except KeyError:
+                continue
+            metadata = schedule.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            latest_run = schedule.get("latestRun")
+            latest_run = (
+                latest_run if isinstance(latest_run, Mapping) else {}
+            )
+            run_id = str(latest_run.get("runId") or "")
+            source_session_id = str(record.get("sourceSessionId") or "")
+            target_session_id = str(record.get("targetSessionId") or "")
+            if (
+                str(record.get("status") or "")
+                not in {"review", "blocked", "failed", "aborted", "accepted"}
+                or str(wake.get("state") or "") != "failed"
+                or str(schedule.get("status") or "") != "failed"
+                or str(latest_run.get("state") or "") != "failed"
+                or str(latest_run.get("turnId") or "")
+                or not run_id
+                or not source_session_id
+                or str(schedule.get("id") or "") != schedule_id
+                or str(schedule.get("targetSessionId") or "")
+                != source_session_id
+                or str(schedule.get("createdBySessionId") or "")
+                != target_session_id
+                or str(metadata.get("kind") or "")
+                != "room_partner_completion"
+                or str(metadata.get("childDispatchId") or "")
+                != str(record.get("childDispatchId") or "")
+                or int(metadata.get("generation") or 0) != generation
+                or str(metadata.get("roomId") or "")
+                != str(record.get("roomId") or "")
+                or str(metadata.get("rootId") or "")
+                != str(record.get("rootId") or "")
+                or str(metadata.get("workItemId") or "")
+                != str(record.get("workItemId") or "")
+            ):
+                continue
+            evidence = self.command_failure_evidence(
+                source_session_id,
+                run_id,
+            )
+            evidence = evidence if isinstance(evidence, Mapping) else {}
+            cause_code = str(evidence.get("causeCode") or "").strip().upper()
+            if cause_code not in {
+                "SESSION_BUSY",
+                "AGENT_TURN_CONFLICT",
+            }:
+                continue
+            projected_result = latest_run.get("result")
+            projected_result = (
+                projected_result
+                if isinstance(projected_result, Mapping)
+                else {}
+            )
+            projected_cause = str(
+                projected_result.get("causeCode") or ""
+            ).strip().upper()
+            if projected_cause and projected_cause != cause_code:
+                continue
+            requeued = self.dispatch_store.requeue_failed_wake(
+                str(record["childDispatchId"]),
+                generation=generation,
+                expected_schedule_id=schedule_id,
+                expected_error=str(record.get("error") or ""),
+                max_generation=_MAX_LEGACY_PREACCEPTANCE_WAKE_GENERATION,
+            )
+            requeued_wake = requeued.get("wake")
+            requeued_wake = (
+                requeued_wake if isinstance(requeued_wake, Mapping) else {}
+            )
+            if (
+                int(requeued_wake.get("generation") or 0) == generation + 1
+                and str(requeued_wake.get("state") or "") == "pending"
+            ):
+                self._schedule_completion_wake(requeued)
 
     def _requeue_completed_wakes_missing_typed_result(self) -> None:
         if self.dispatch_store is None or self.wake_schedules is None:
