@@ -713,7 +713,7 @@ function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKn
             {hits.map((hit) => (
               <button aria-selected={selected?.id === hit.id} data-selected={selected?.id === hit.id || undefined} key={hit.id} onClick={() => setSelectedId(hit.id)} role="option" type="button">
                 <span><strong>{publicKnowledgeText(hit.documentName)}</strong><small>{publicKnowledgeText(hit.title)} · {citationLabel(hit)}{hit.diagnostics.graphRank === null ? '' : ' · 图谱关联'}</small><small>{publicKnowledgeText(hit.excerpt) || '没有可显示的摘录'}</small></span>
-                <b>{relevanceLabel(hit.score)}</b>
+                <b data-level={relevanceLevel(hit.score)}>{relevanceLabel(hit.score)}</b>
               </button>
             ))}
           </div>
@@ -781,6 +781,13 @@ function relevanceLabel(score: number | null, detailed = true): string {
   return '较低';
 }
 
+function relevanceLevel(score: number | null): 'high' | 'mid' | 'low' | 'unknown' {
+  if (score === null) return 'unknown';
+  if (score >= 0.75) return 'high';
+  if (score >= 0.45) return 'mid';
+  return 'low';
+}
+
 interface SettingsDraftChange {
   label: string;
   current: string;
@@ -812,10 +819,13 @@ function SettingsDraftDiff({ changes, effect }: { changes: readonly SettingsDraf
   );
 }
 
+// Filter on the raw values, then fall back to a readable placeholder for
+// display: an empty description must never look identical to the literal
+// text a user typed, or the draft panel and the save button would disagree.
 function settingsDraftChanges(entries: readonly [string, string, string][]): SettingsDraftChange[] {
   return entries
     .filter(([, current, proposed]) => current !== proposed)
-    .map(([label, current, proposed]) => ({ label, current, proposed }));
+    .map(([label, current, proposed]) => ({ label, current: current || '（未填写）', proposed: proposed || '（未填写）' }));
 }
 
 function yesNoLabel(value: boolean): string {
@@ -885,18 +895,20 @@ function KnowledgeSettingsPanel({
         ? '自定义分隔符不能为空。'
       : '';
   const retrievalError = retrieval.topK < 1 || retrieval.topK > 100
-    ? 'Top K 必须在 1–100 之间。'
+    ? '返回数量必须在 1–100 之间。'
     : retrieval.threshold < 0 || retrieval.threshold > 1
-      ? '阈值必须在 0–1 之间。'
+      ? '最低相关度必须在 0–1 之间。'
       : retrieval.lexicalWeight < 0 || retrieval.lexicalWeight > 10 || retrieval.denseWeight < 0 || retrieval.denseWeight > 10
         ? '检索权重必须在 0–10 之间。'
         : retrieval.graphWeight < 0 || retrieval.graphWeight > 10
-          ? '图谱权重必须在 0–10 之间。'
+          ? '关系权重必须在 0–10 之间。'
         : retrieval.lexicalWeight + retrieval.denseWeight <= 0
           ? '关键词权重和向量权重不能同时为 0。'
-          : retrieval.rrfK < 1 || retrieval.rrfK > 1_000 || retrieval.candidateMultiplier < 1 || retrieval.candidateMultiplier > 20
-            ? 'RRF K 或候选倍数超出允许范围。'
-            : '';
+          : retrieval.rrfK < 1 || retrieval.rrfK > 1_000
+            ? '融合系数必须在 1–1000 之间。'
+            : retrieval.candidateMultiplier < 1 || retrieval.candidateMultiplier > 20
+              ? '候选范围必须在 1–20 之间。'
+              : '';
   useEffect(() => {
     if (!documents.some((document) => document.id === previewDocumentId)) {
       setPreviewDocumentId(documents[0]?.id ?? '');
@@ -905,7 +917,7 @@ function KnowledgeSettingsPanel({
   const visibleChunkPreview = chunkPreview?.documentId === previewDocumentId ? chunkPreview : null;
   const infoChanges = settingsDraftChanges([
     ['名称', base.name, name.trim()],
-    ['说明', base.description || '无', description.trim() || '无'],
+    ['说明', base.description, description.trim()],
   ]);
   const chunkingChanges = settingsDraftChanges([
     ['策略', chunkingStrategyLabel(base.chunkingConfig.strategy), chunkingStrategyLabel(chunking.strategy)],
@@ -940,7 +952,7 @@ function KnowledgeSettingsPanel({
         <SettingsDraftDiff changes={infoChanges} effect="保存后立即生效，不影响已导入的材料与索引。" />
         <div className="knowledge-settings__actions">
           {name !== base.name || description !== base.description ? <Button aria-label="放弃基本信息更改" disabled={pending} onClick={() => { setName(base.name); setDescription(base.description); }} size="small" variant="quiet">放弃更改</Button> : null}
-          <Button disabled={pending || !name.trim() || (name.trim() === base.name && description.trim() === base.description)} loading={pending} onClick={() => onSaveInfo(name.trim(), description.trim())} size="small" variant="primary">保存基本信息</Button>
+          <Button disabled={pending || !name.trim() || !infoChanges.length} loading={pending} onClick={() => onSaveInfo(name.trim(), description.trim())} size="small" variant="primary">保存基本信息</Button>
         </div>
       </section>
       <div className="knowledge-settings-grid">
@@ -976,8 +988,8 @@ function KnowledgeSettingsPanel({
         {visibleChunkPreview ? <div className="knowledge-chunk-preview"><header><strong>{visibleChunkPreview.total} 个段落</strong><span>显示前 {visibleChunkPreview.chunks.length} 个</span></header><div>{visibleChunkPreview.chunks.map((chunk) => <article key={chunk.id}><b>#{chunk.ordinal + 1}{chunk.page ? ` · 第 ${chunk.page} 页` : ''}</b><p>{publicKnowledgeText(chunk.content)}</p></article>)}</div></div> : null}
         <SettingsDraftDiff changes={chunkingChanges} effect="保存后，新导入的材料按新切分处理；已有材料进入待重建，重建完成前检索仍使用现有段落。" />
         <div className="knowledge-settings__actions">
-          {!equalConfig(chunking, base.chunkingConfig) ? <Button aria-label="放弃切分更改" disabled={pending} onClick={() => setChunking(base.chunkingConfig)} size="small" variant="quiet">放弃更改</Button> : null}
-          <Button disabled={pending || Boolean(chunkingError) || equalConfig(chunking, base.chunkingConfig)} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button>
+          {chunkingChanges.length ? <Button aria-label="放弃切分更改" disabled={pending} onClick={() => setChunking(base.chunkingConfig)} size="small" variant="quiet">放弃更改</Button> : null}
+          <Button disabled={pending || Boolean(chunkingError) || !chunkingChanges.length} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button>
         </div>
       </section>
       <section>
@@ -1004,8 +1016,8 @@ function KnowledgeSettingsPanel({
         {retrievalError ? <p className="knowledge-inline-error" role="alert">{retrievalError}</p> : null}
         <SettingsDraftDiff changes={retrievalChanges} effect="保存后从下一次检索开始生效，不需要重建索引。" />
         <div className="knowledge-settings__actions">
-          {!equalConfig(retrieval, base.retrievalConfig) ? <Button aria-label="放弃检索更改" disabled={pending} onClick={() => setRetrieval(base.retrievalConfig)} size="small" variant="quiet">放弃更改</Button> : null}
-          <Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button>
+          {retrievalChanges.length ? <Button aria-label="放弃检索更改" disabled={pending} onClick={() => setRetrieval(base.retrievalConfig)} size="small" variant="quiet">放弃更改</Button> : null}
+          <Button disabled={pending || Boolean(retrievalError) || !retrievalChanges.length} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button>
         </div>
       </section>
       <KnowledgeEmbeddingSettings
@@ -1169,7 +1181,7 @@ function KnowledgeEmbeddingSettings({
         >
         <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
           <Field htmlFor="knowledge-embedding-backend" label="向量索引方式">
-            <Select disabled={['environment', 'none'].includes(candidate.provider)} id="knowledge-embedding-backend" onValueChange={(value) => updateCandidate({ denseBackend: value === 'usearch' ? 'usearch' : 'sqlite-exact' })} options={[{ value: 'sqlite-exact', label: 'SQLite exact' }, { value: 'usearch', label: 'USearch ANN' }]} value={candidate.denseBackend} />
+            <Select disabled={['environment', 'none'].includes(candidate.provider)} id="knowledge-embedding-backend" onValueChange={(value) => updateCandidate({ denseBackend: value === 'usearch' ? 'usearch' : 'sqlite-exact' })} options={[{ value: 'sqlite-exact', label: '精确匹配（SQLite）' }, { value: 'usearch', label: '近似加速（USearch）' }]} value={candidate.denseBackend} />
           </Field>
           <Field htmlFor="knowledge-embedding-query-prefix" label="查询前缀">
             <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-query-prefix" maxLength={500} onChange={(event) => updateCandidate({ queryPrefix: event.target.value })} value={candidate.queryPrefix} />
@@ -1427,7 +1439,6 @@ function chunkingStrategyLabel(value: KnowledgeChunkingConfig['strategy']): stri
 }
 function asRetrievalMode(value: string): KnowledgeRetrievalConfig['mode'] { return value === 'dense' || value === 'lexical' ? value : 'hybrid'; }
 function retrievalModeLabel(value: KnowledgeRetrievalConfig['mode']): string { return value === 'dense' ? '向量检索' : value === 'lexical' ? '关键词检索' : '混合检索'; }
-function equalConfig(left: object, right: object): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 function parserLabel(value: KnowledgeParserMode): string { return value === 'builtin' ? '内置' : value === 'mineru' ? 'MinerU' : '自动'; }
 function scorePoints(value: number | null): string { return value === null ? '未提供' : String(Math.round(value <= 1 ? value * 100 : value)); }
 function retrievalEvidenceLabel(hit: KnowledgeSearchHit): string {
