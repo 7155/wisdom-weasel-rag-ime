@@ -401,7 +401,10 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "PAW Browser",
         "description": "读取 PAW 内置 Chromium，并通过开放 ego-browser 控制内核执行可追踪的网页任务",
         "when": ("任务需要读取或操作 PAW Browser 的真实页面",),
-        "notFor": ("已有 API 或连接器，或只需一般网页知识",),
+        "notFor": (
+            "已有 API 或连接器，或只需一般网页知识",
+            "操作用户日常 Chrome/Edge，或通过 desktop_semantic 打开第二个浏览器",
+        ),
         "input": "ego-browser JavaScript、标签页、快照 ref、URL、文本或滚动参数",
         "output": "页面快照、截图、轨迹或带回执的操作结果",
         "does": "在同一 PAW Chromium 和 Task Space 上观察并受控操作网页。",
@@ -465,6 +468,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "notFor": (
             "用 Goal 代替普通执行清单",
             "用户尚未确认目标内容时擅自配置，或删除既有 Goal 审计记录",
+            "把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息",
         ),
         "input": "Goal 生命周期动作、目标、验收标准、证据预期、可选预算及完成证据",
         "output": "权威 Goal 状态、预算、完成或取消审计与工作流投影",
@@ -536,7 +540,10 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "桌面语义操作",
         "description": "通过 macOS Accessibility 读取目标窗口语义树和差分，并在原生批准后按语义节点操作；不截屏、不做 OCR",
         "when": ("任务必须读取或操作本机 Mac 应用的可访问性语义树",),
-        "notFor": ("浏览器有专用工具、需要截图 OCR 或存在直接 API",),
+        "notFor": (
+            "浏览器有专用工具、需要截图 OCR 或存在直接 API",
+            "PAW Browser / ego-browser 任务，或打开独立 Chrome/Edge 作为网页验收",
+        ),
         "input": "应用或窗口目标、语义节点与动作",
         "output": "可访问性树、差分、状态或操作回执",
         "does": "通过可访问性语义读取并受控操作桌面应用。",

@@ -96,6 +96,10 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
         self.assertIn("伙伴完成后由持久 wake 唤醒你", prompt)
         self.assertIn("显式 accept 或 return", prompt)
         self.assertIn("携带原 workItemId", prompt)
+        self.assertIn("不得写成 passed/satisfied", prompt)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停", prompt)
+        self.assertIn("网页验收只用 product browser", prompt)
+        self.assertIn("live authorityRevision", prompt)
         self.assertIn("op=post、kind=progress", prompt)
         self.assertIn("progress 是非终态", prompt)
         self.assertIn("不得根据 content 前缀", prompt)
@@ -121,6 +125,8 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
         self.assertIn("`op=post`, `kind=result`", skill)
         self.assertIn("exactly once", skill)
         self.assertIn("ordinary `turn_completed`", skill)
+        self.assertIn("Do not pause a live Room Goal to wait", skill)
+        self.assertIn("If a reviewer reported `unverified`", skill)
         self.assertEqual(skill.count("`op=post`, `kind=result`"), 1)
         self.assertLess(
             skill.index("`op=post`, `kind=result`"),

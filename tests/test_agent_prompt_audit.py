@@ -205,6 +205,8 @@ class AgentPromptAuditTests(unittest.TestCase):
         self.assertIn("父 Agent 同时继续自己的工作", prompt)
         self.assertIn("两者都支持，没有固定偏好", prompt)
         self.assertIn("真实路径能否跑通、结果是否满足当前精确需求", prompt)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停", prompt)
+        self.assertIn("审查报告 unverified", prompt)
         self.assertNotIn("room_state", prompt)
         self.assertNotIn("room_commit", prompt)
 

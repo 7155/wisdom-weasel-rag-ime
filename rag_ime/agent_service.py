@@ -1537,8 +1537,10 @@ class AgentService:
                 "当前 Goal 仍处于 active，Todo 中有正在执行的任务，且预算允许继续。"
                 "一次回答结束不代表 Goal 完成；立即完成 Todo 中当前正在执行、"
                 "能够产生新验收证据的下一步。不要只汇报进度或复述 Todo。"
-                "先同步更新 Todo 状态；若已经没有可继续的下一步，再把 Goal 更新为"
-                "完成、暂停或取消，而不是继续空转。"
+                "先同步更新 Todo 状态。没有可继续的下一步时：已有完整验收证据则完成 Goal；"
+                "Room 受阻则发出 blocked/partial 终态，保持 Goal active。"
+                "不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息；"
+                "暂停只用于用户明确要求停止，不是等待继续的手段。"
                 "</managed-goal-follow-up>"
             )
         validate_contract(result, "agent-goal-settle-result.v1.json")

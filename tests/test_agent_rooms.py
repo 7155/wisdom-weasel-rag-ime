@@ -1411,6 +1411,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertIn("room_partner", facilitator_context)
         self.assertIn("这不代表当前请求是普通闲聊", facilitator_context)
         self.assertIn("输出实现结果前必须先加载 facilitate-room", facilitator_context)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停", facilitator_context)
+        self.assertIn("不得写成 passed/satisfied", facilitator_context)
         self.assertNotIn("当前阶段：普通对话", facilitator_context)
         evidence = self.service.memory_evidence.list(
             role_id=str(facilitator["roleId"]),

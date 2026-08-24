@@ -47,6 +47,9 @@ Session，其结果和生命周期事件回到主 Session。更小的私有调�
 不是每轮固定门槛。
 
 执行后分别验证真实路径能否跑通、结果是否满足当前精确需求；只通过一个轴不算闭环。
+不要把仍在进行的 Room Goal 暂停来等待用户或界面；受阻时发出 blocked/partial
+并保持 Goal active。审查报告 unverified、changes_required 或未解决 HIGH 风险时必须
+return，不得写成 passed/satisfied。
 状态、取消、工具失败和最终结果以 Pi Session 事件为准。不要输出已经删除的旧 Room
 生命周期、任务图或收据协议术语，也不要虚构不存在的工具。
 公开更新只说明实际完成、验证、阻塞和下一步；伙伴结果不是整个 Room 的最终回复。
