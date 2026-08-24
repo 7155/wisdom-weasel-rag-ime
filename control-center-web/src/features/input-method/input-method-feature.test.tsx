@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,14 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { InputLexiconFeature, InputMethodFeature } from './index';
-import { inferInputMode, modeSettingLabel } from './input-method-presentation';
+import {
+  completionLaneFacts,
+  inferInputMode,
+  modeSettingLabel,
+  recallLaneFacts,
+  secondsLabel,
+  suggestionPanel,
+} from './input-method-presentation';
 import inputMethodCss from './input-method.css?raw';
 
 const settings = {
@@ -150,7 +157,7 @@ describe('InputMethodFeature', () => {
     expect(document.body).not.toHaveTextContent('pathId');
     expect(document.body).not.toHaveTextContent('provider_internal_v3');
     expect(document.body).not.toHaveTextContent('/api/internal/schema');
-    expect(modeSettingLabel('rag.lanes.timeDailyBook')).toBe('时间与日记联想');
+    expect(modeSettingLabel('rag.lanes.timeDailyBook')).toBe('时间与日记召回');
   });
 
   it('groups settings by backend schema responsibility and keeps controls disabled without the write contract', async () => {
@@ -252,15 +259,15 @@ describe('InputMethodFeature', () => {
     await user.click(interactionTrigger);
     expect(document.querySelector('.input-settings-save')?.compareDocumentPosition(document.querySelector('.input-settings-grid')!))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(screen.getByRole('list', { name: '输入法运行链状态' }).children).toHaveLength(4);
+    expect(screen.getByRole('list', { name: '输入链路状态' }).children).toHaveLength(2);
     expect(screen.getByText('本机模型已加载')).toBeInTheDocument();
     expect(screen.getByText('降级')).toBeInTheDocument();
-    expect(screen.getByLabelText('生成结果停留时间')).toHaveValue(4000);
-    expect(screen.getByLabelText('续写候选数量')).toHaveValue(5);
+    expect(screen.getByLabelText('联想候选停留时间')).toHaveValue(4000);
+    expect(screen.getByLabelText('联想候选数量')).toHaveValue(5);
     expect(screen.getByLabelText('生成框最长等待')).toHaveValue(8000);
-    expect(screen.getByLabelText('续写候选数量').closest('.input-setting-editor-row')).not.toBeNull();
+    expect(screen.getByLabelText('联想候选数量').closest('.input-setting-editor-row')).not.toBeNull();
     expect(screen.getByText(/需重新载入/)).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: '提交后预测' })).toBeDisabled();
+    expect(screen.getByRole('switch', { name: '上屏后联想' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
   });
 
@@ -287,7 +294,7 @@ describe('InputMethodFeature', () => {
       },
     }));
 
-    const modelsTrigger = await screen.findByRole('button', { name: /^本机补全/ });
+    const modelsTrigger = await screen.findByRole('button', { name: /^本机联想/ });
     expect(modelsTrigger).toHaveAttribute('aria-expanded', 'false');
     await user.click(modelsTrigger);
     const advancedTrigger = screen.getByRole('button', { name: '高级：模型文件位置' });
@@ -547,7 +554,7 @@ describe('InputMethodFeature', () => {
     await user.click(await screen.findByRole('combobox', { name: 'Option+数字行为' }));
     await user.click(await screen.findByRole('option', { name: '关闭' }));
     await user.click(screen.getByRole('button', { name: /^候选界面/ }));
-    const candidateCount = screen.getByLabelText('续写候选数量');
+    const candidateCount = screen.getByLabelText('联想候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');
     await user.click(screen.getByRole('button', { name: '保存输入体验设置' }));
@@ -678,11 +685,11 @@ describe('InputMethodFeature', () => {
     expect(await screen.findByText('配置已生效')).toBeInTheDocument();
     expect(screen.getAllByText('minimind-ime-v2').length).toBeGreaterThan(0);
     expect(screen.queryByLabelText('普通数字键')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /^本机补全/ }));
-    await user.click(screen.getByRole('combobox', { name: '本机补全模型' }));
+    await user.click(screen.getByRole('button', { name: /^本机联想/ }));
+    await user.click(screen.getByRole('combobox', { name: '本机联想模型' }));
     await user.click(screen.getByRole('option', { name: 'minimind-ime-v2' }));
     expect(screen.getByLabelText('本机模型目录')).toHaveValue('/tmp/minimind-ime-v2');
-    const maxTokens = screen.getByLabelText('单次补全长度');
+    const maxTokens = screen.getByLabelText('单次联想长度');
     await user.clear(maxTokens);
     await user.type(maxTokens, '12');
     const modelBudget = screen.getByLabelText('本机模型最长等待');
@@ -742,7 +749,7 @@ describe('InputMethodFeature', () => {
     const panel = document.getElementById(trigger.getAttribute('aria-controls')!)!;
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await user.click(trigger);
-    const candidateCount = screen.getByLabelText('续写候选数量');
+    const candidateCount = screen.getByLabelText('联想候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '12');
 
@@ -827,8 +834,8 @@ describe('InputMethodFeature', () => {
     }));
 
     expect(await screen.findByText('读取失败')).toBeInTheDocument();
-    expect(screen.getByText('提交后预测')).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: '提交后预测' })).toBeChecked();
+    expect(screen.getByText('上屏后联想')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: '上屏后联想' })).toBeChecked();
   });
 
   it('refreshes the input page queries without pulling the separate lexicon page', async () => {
@@ -844,7 +851,7 @@ describe('InputMethodFeature', () => {
     });
     renderFeature(transport);
 
-    await screen.findByText('提交后预测');
+    await screen.findByText('上屏后联想');
     const before = new Map(
       ['input.source.get', 'overview.get', 'configuration.settings', 'configuration.schema']
         .map((pathId) => [pathId, transport.requests.filter((call) => call.request.pathId === pathId).length]),
@@ -1084,6 +1091,128 @@ describe('InputMethodFeature', () => {
     expect(screen.getByText('等待实测确认')).toBeInTheDocument();
   });
 
+  it('presents the generation stage as a native-suggestion schematic plus three real-setting lanes', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': {
+          ok: true,
+          profile: '记忆增强',
+          components: {
+            sidecar: { ok: true, status: 'ready', detail: '后台服务已连接' },
+            predictor: { ok: true, status: 'ready', detail: '本机模型已载入' },
+            foregroundContext: { ok: true, status: 'ready', detail: '前台上下文按授权读取' },
+          },
+        },
+        'diagnostics.models': {
+          ok: true,
+          schemaVersion: 'rag-ime.models-status.v4',
+          configurationPending: false,
+          activeConfig: { modelId: 'minimind-ime-v2', profileId: 'minimind_ime_v2', promptMode: 'base-completion', maxTokens: 8 },
+          availableModels: [],
+          healthAgreement: { ok: true },
+        },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 3,
+          settings: {
+            interaction: {
+              postCommit: {
+                enabled: true,
+                idleTriggerMs: 220,
+                panelTtlMs: 4000,
+                tabAction: 'accept_top_prediction',
+                optionNumber: 'select_prediction_by_ordinal',
+              },
+            },
+            display: { maxPostCommitCandidates: 5, panelStyle: 'compact' },
+            memory: { enabled: true, recall: { detailLevel: 'detailed', timelineEnabled: true } },
+            rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+            context: { recentInputBaseline: 20, temporalRecall: true },
+          },
+        },
+        'configuration.schema': { ok: true, sections: [] },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    // 面板示意只按真实设置绘制：候选数量、紧凑样式、采纳方式与停留时长。
+    const figure = await screen.findByRole('figure', { name: '上屏后智能候选面板示意' });
+    expect(figure).toHaveAttribute('data-enabled', 'true');
+    expect(figure).toHaveAttribute('data-panel', 'compact');
+    expect(figure.querySelectorAll('.input-suggest-preview__slot')).toHaveLength(5);
+    expect(figure).toHaveTextContent('与输入法原生候选并排出现、样式可见区分');
+    const hints = within(figure).getByRole('list', { name: '采纳方式' });
+    expect(within(hints).getByText('Tab 采纳第 1 条')).toBeInTheDocument();
+    expect(within(hints).getByText('Option+数字 选对应候选')).toBeInTheDocument();
+    expect(within(hints).getByText('约 4 秒后自动收起')).toBeInTheDocument();
+
+    // 三条车道按管线顺序展示：上下文获取 → 记忆召回 → 本机联想。
+    const steps = screen.getByRole('list', { name: '智能候选的生成步骤' });
+    const lanes = Array.from(steps.children);
+    expect(lanes).toHaveLength(3);
+    const [contextLane, recallLane, completionLane] = lanes;
+    expect(contextLane).toHaveTextContent('上下文获取');
+    expect(contextLane).toHaveTextContent('最近 20 段输入作基线');
+    expect(contextLane).toHaveTextContent('前台上下文按授权读取');
+    expect(recallLane).toHaveTextContent('记忆召回');
+    expect(recallLane).toHaveTextContent('标签记忆');
+    expect(recallLane).toHaveTextContent('时间与日记');
+    expect(recallLane).toHaveTextContent('详尽召回');
+    expect(recallLane).toHaveTextContent('按需展开时间线');
+    expect(completionLane).toHaveTextContent('本机联想');
+    expect(completionLane).toHaveTextContent('minimind-ime-v2');
+    expect(completionLane).toHaveTextContent('每次最多 5 条');
+    expect(completionLane).toHaveTextContent('停顿 0.2 秒后生成');
+    expect(completionLane).toHaveTextContent('配置已生效');
+    expect(completionLane).toHaveTextContent('本机模型已载入');
+
+    // 展示层不得泄露实现字段或配置键名。
+    expect(document.body).not.toHaveTextContent('postCommit');
+    expect(document.body).not.toHaveTextContent('panelStyle');
+    expect(document.body).not.toHaveTextContent('maxPostCommitCandidates');
+    expect(document.body).not.toHaveTextContent('base-completion');
+    // 模型配置健康时不出现多余的应用控件。
+    expect(screen.queryByText('应用联想模型')).not.toBeInTheDocument();
+  });
+
+  it('keeps the generation stage honest when completion and recall are switched off', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '安全模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 6,
+          settings: {
+            interaction: { postCommit: { enabled: false, panelTtlMs: 4000 } },
+            memory: { enabled: false },
+            activeRag: { allowRemoteModel: false },
+          },
+        },
+        'configuration.schema': { ok: true, sections: [] },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    const figure = await screen.findByRole('figure', { name: '上屏后智能候选面板示意' });
+    expect(figure).toHaveAttribute('data-enabled', 'false');
+    expect(figure).toHaveTextContent('已关闭：上屏后不出现智能候选，输入完全交回系统输入法。');
+    expect(figure.querySelectorAll('.input-suggest-preview__slot')).toHaveLength(0);
+    expect(within(figure).queryByRole('list', { name: '采纳方式' })).not.toBeInTheDocument();
+
+    const steps = screen.getByRole('list', { name: '智能候选的生成步骤' });
+    const lanes = Array.from(steps.children);
+    expect(lanes).toHaveLength(3);
+    expect(lanes[1]).toHaveTextContent('不查找个人记忆，候选只依据眼前的上下文。');
+    expect(lanes[1]).toHaveAttribute('data-dimmed');
+    expect(lanes[2]).toHaveTextContent('上屏后不再生成智能候选，输入完全交回系统输入法。');
+    expect(lanes[2]).toHaveAttribute('data-dimmed');
+    // 联想关闭时不出现模型应用控件，也不展示健康徽章。
+    expect(screen.queryByText('配置已生效')).not.toBeInTheDocument();
+    expect(screen.queryByText('应用联想模型')).not.toBeInTheDocument();
+  });
+
   it('presents the four input modes as described cards instead of a segmented strip', async () => {
     renderFeature(new MockControlTransport({
       routes: {
@@ -1197,6 +1326,58 @@ describe('inferInputMode', () => {
       diagnostics: { liveTrace: true, candidateExplain: true },
       display: { showDiagnosticsInline: true },
     })).toBe('调试模式');
+  });
+});
+
+describe('generation stage presentation', () => {
+  it('derives the suggestion panel schematic only from real settings', () => {
+    // 没有配置时不假装知道数量或采纳方式；开关默认沿用产品默认（开启）。
+    expect(suggestionPanel({})).toEqual({ enabled: true, candidateCount: 0, expanded: false, hints: [] });
+    expect(suggestionPanel({
+      interaction: {
+        postCommit: {
+          enabled: true,
+          tabAction: 'accept_top_prediction',
+          optionNumber: 'select_prediction_by_ordinal',
+          panelTtlMs: 1500,
+        },
+      },
+      display: { maxPostCommitCandidates: 6, panelStyle: 'expanded' },
+    })).toEqual({
+      enabled: true,
+      candidateCount: 6,
+      expanded: true,
+      hints: ['Tab 采纳第 1 条', 'Option+数字 选对应候选', '约 1.5 秒后自动收起'],
+    });
+    // 关闭后不再宣称任何采纳方式。
+    expect(suggestionPanel({ interaction: { postCommit: { enabled: false, panelTtlMs: 4000 } } })).toEqual({
+      enabled: false,
+      candidateCount: 0,
+      expanded: false,
+      hints: [],
+    });
+    // 超界数量不进入示意，避免画出并不存在的候选。
+    expect(suggestionPanel({ display: { maxPostCommitCandidates: 40 } }).candidateCount).toBe(0);
+    expect(secondsLabel(220)).toBe('0.2 秒');
+    expect(secondsLabel(4000)).toBe('4 秒');
+  });
+
+  it('keeps recall and completion lanes honest about disabled and partial settings', () => {
+    const recallOff = recallLaneFacts({ memory: { enabled: false } });
+    expect(recallOff.enabled).toBe(false);
+    expect(recallOff.facts).toEqual([]);
+    expect(recallLaneFacts({
+      memory: { enabled: true, recall: { detailLevel: 'compact' } },
+      rag: { lanes: { tagMemo: true, timeDailyBook: false } },
+    }).facts).toEqual(['标签记忆', '紧凑召回']);
+
+    expect(completionLaneFacts({
+      interaction: { postCommit: { enabled: true, idleTriggerMs: 220 } },
+      display: { maxPostCommitCandidates: 5 },
+    }, 'minimind-ime-v2').facts).toEqual(['minimind-ime-v2', '每次最多 5 条', '停顿 0.2 秒后生成']);
+    const completionOff = completionLaneFacts({ interaction: { postCommit: { enabled: false } } }, 'minimind-ime-v2');
+    expect(completionOff.enabled).toBe(false);
+    expect(completionOff.facts).toEqual([]);
   });
 });
 
