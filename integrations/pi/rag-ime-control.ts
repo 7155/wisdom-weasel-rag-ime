@@ -2015,6 +2015,20 @@ async function callGateway(
       { errorCode, retryable, httpStatus: response.status },
     );
   }
+  if (payload.result.failureCode === "automatic_approval_bridge_failed") {
+    throw new GatewayToolError(
+      String(
+        payload.result.terminalReason
+          ?? payload.result.summary
+          ?? "自动审批执行失败，原操作没有执行",
+      ),
+      {
+        errorCode: "automatic_approval_bridge_failed",
+        retryable: false,
+        httpStatus: response.status,
+      },
+    );
+  }
   return payload.result;
 }
 

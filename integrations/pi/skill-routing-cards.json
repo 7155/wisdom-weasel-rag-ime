@@ -1,9 +1,9 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 14,
-    "projectedBundledCards": 4,
-    "canonicalCards": 41
+    "bundledSkillEntries": 16,
+    "projectedBundledCards": 5,
+    "canonicalCards": 40
   },
   "collisionPolicy": {
     "default": "reject",
@@ -12,6 +12,7 @@
       "pi-installed": [
         "alignment-and-decision",
         "bootstrap-project-context",
+        "ego-browser",
         "facilitate-room",
         "implementation-planning",
         "improve-codebase-architecture",
@@ -19,6 +20,7 @@
         "memory-curation",
         "orchestrate-session",
         "organize-work-documents",
+        "pawos-system",
         "plugin-creator",
         "project-maintainer",
         "rag-retrieval-optimization",
@@ -28,7 +30,7 @@
     }
   },
   "coverage": {
-    "representedSourceEntries": 50,
+    "representedSourceEntries": 49,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -105,6 +107,20 @@
       "output": "变更、回执、验证与风险。"
     },
     {
+      "name": "pawos-system",
+      "when": [
+        "询问 PAW/PAWOS 用法",
+        "跨 App、窗口或主题改造"
+      ],
+      "notFor": [
+        "单 App 操作",
+        "绕过权限、安装或前台验收"
+      ],
+      "does": "读取最小上下文并路由现有 owner。",
+      "input": "目标、工作区、期望结果。",
+      "output": "说明或变更、验证与边界。"
+    },
+    {
       "name": "review-agent",
       "when": [
         "另一个 Agent 委派只读代码审查",
@@ -136,27 +152,15 @@
       ]
     },
     {
-      "name": "browser:control-in-app-browser",
+      "name": "ego-browser",
       "when": [
-        "任务需要操作应用内 Browser 的页面或登录态",
-        "需要导航、点击、输入、截图或本地 Web 测试"
+        "操作 PAW Browser 页面、标签或登录态",
+        "导航、点击、输入、截图或 Web 测试"
       ],
-      "does": "读取和操作应用内 Browser 的真实交互状态。",
+      "does": "用 PAW browser 工具和 ego 内核控制受管 Chromium。",
       "notFor": [
-        "已有连接器、API 或 CLI 可直接完成",
-        "明确依赖用户 Chrome 状态"
-      ]
-    },
-    {
-      "name": "chrome:control-chrome",
-      "when": [
-        "任务依赖用户现有 Chrome 标签页、登录会话或扩展状态",
-        "用户明确要求在其 Chrome 中读取或执行操作"
-      ],
-      "does": "控制用户 Chrome 的真实浏览器状态。",
-      "notFor": [
-        "已有专用连接器、API 或 CLI 可直接完成的任务",
-        "不应接触用户日常 Chrome 状态的隔离浏览任务"
+        "连接器/API 可直接完成",
+        "操作用户日常 Chrome"
       ]
     },
     {
@@ -325,14 +329,6 @@
         "PDF 的实际页面布局需要通过逐页渲染进行视觉验证"
       ],
       "does": "使用 Poppler 和 PDF Python 工具完成 PDF 处理、渲染与版式验证。"
-    },
-    {
-      "name": "playwright",
-      "when": [
-        "任务需要从终端自动化真实浏览器",
-        "需要导航、表单填写、快照、截图、数据提取或 UI 流程调试"
-      ],
-      "does": "通过 playwright-cli 或包装脚本执行可重复的浏览器自动化。"
     },
     {
       "name": "presentations:presentations",
