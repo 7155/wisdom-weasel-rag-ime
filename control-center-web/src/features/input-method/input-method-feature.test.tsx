@@ -1084,6 +1084,23 @@ describe('InputMethodFeature', () => {
     expect(screen.getByText('等待实测确认')).toBeInTheDocument();
   });
 
+  it('presents the four input modes as described cards instead of a segmented strip', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+      },
+    }));
+
+    expect(await screen.findByRole('radiogroup', { name: '希望怎样输入' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '记忆增强' })).toBeInTheDocument();
+    expect(screen.getByText('在标准之上使用详尽记忆召回，并按需展开时间线。')).toBeInTheDocument();
+    expect(document.querySelectorAll('.input-mode-card')).toHaveLength(4);
+    expect(document.querySelector('.input-mode-choice .ui-segmented')).toBeNull();
+  });
+
   it('keeps lexicon review rows and the first app viewport readable at wide and narrow widths', async () => {
     const transport = new MockControlTransport({
       routes: {

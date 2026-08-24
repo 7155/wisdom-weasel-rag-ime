@@ -1,3 +1,4 @@
+import * as RadioGroup from '@radix-ui/react-radio-group';
 import {
   ChevronDown,
   Cpu,
@@ -8,7 +9,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
-import { Button, EmptyState, Field, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
+import { Button, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
 import {
   inputSettingsMutationPathIds,
   useInputMethodQueries,
@@ -61,11 +62,13 @@ import {
 import './input-method.css';
 
 
+/* 每个模式卡片的描述必须与 inputModeChanges 里真实写入的键一致，
+ * 不许把没有配置差异的宣传语放进选择器。 */
 const inputModes = [
-  { value: '安全模式', label: '安全' },
-  { value: '标准模式', label: '标准' },
-  { value: '记忆增强', label: '记忆增强' },
-  { value: '调试模式', label: '调试' },
+  { value: '安全模式', label: '安全', description: '关闭续写、记忆与远程生成，输入完全交回系统输入法。' },
+  { value: '标准模式', label: '标准', description: '输入完成后提供本机续写，记忆按紧凑方式召回。' },
+  { value: '记忆增强', label: '记忆增强', description: '在标准之上使用详尽记忆召回，并按需展开时间线。' },
+  { value: '调试模式', label: '调试', description: '显示实时诊断与候选解释，用于排查输入问题。' },
 ] as const;
 
 /* 标准 与 记忆增强 曾经共用同一份变更（选“记忆增强”保存后仍推断为标准模式），
@@ -342,13 +345,28 @@ export function InputMethodFeature() {
         <div className="input-mode-layout">
           <div className="input-mode-choice">
             <strong>希望怎样输入</strong>
-            <SegmentedControl
+            <RadioGroup.Root
               aria-label="希望怎样输入"
+              className="input-mode-cards"
               disabled={settingsWriteAvailability.state !== 'available'}
-              items={inputModes}
-              onValueChange={setModeDraft}
+              onValueChange={(next) => setModeDraft(next as InputMode)}
               value={displayedMode as InputMode}
-            />
+            >
+              {inputModes.map((mode) => (
+                <RadioGroup.Item
+                  aria-label={mode.label}
+                  className="input-mode-card"
+                  key={mode.value}
+                  value={mode.value}
+                >
+                  <span aria-hidden="true" className="input-mode-card__dot" />
+                  <span className="input-mode-card__copy">
+                    <strong>{mode.label}</strong>
+                    <small>{mode.description}</small>
+                  </span>
+                </RadioGroup.Item>
+              ))}
+            </RadioGroup.Root>
             <span>{modeDraft ? `${modeDiffItems.length} 项设置将发生变化` : inferredMode ? '当前设置与此模式一致' : '当前设置不是预设模式'}</span>
           </div>
           <ManagementMutationWorkflow
