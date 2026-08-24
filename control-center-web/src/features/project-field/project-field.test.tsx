@@ -367,4 +367,116 @@ describe('Project Field prototype', () => {
     await user.click(screen.getByRole('button', { name: /个人助手工作台/ }));
     expect(screen.getByRole('article', { name: '协作导航与项目图谱协作目标工作区' })).toBeInTheDocument();
   });
+
+  it('opens the work-document contracts as a master-detail reader with authority facts', async () => {
+    const user = userEvent.setup();
+    render(<ProjectFieldFeature />);
+
+    const toggle = screen.getByRole('button', { name: '打开项目工作文档' });
+    await user.click(toggle);
+
+    const dialog = screen.getByRole('dialog', { name: '项目工作文档' });
+    expect(within(dialog).getByText('11 份有契约的文档')).toBeInTheDocument();
+    const index = within(dialog).getByRole('navigation', { name: '文档目录' });
+    expect(within(index).getAllByRole('button')).toHaveLength(11);
+    expect(within(index).getByText('项目章程')).toBeInTheDocument();
+    expect(within(index).getByText('协作目标文档')).toBeInTheDocument();
+
+    const currentEntry = within(index).getByRole('button', { name: /协作导航与项目图谱/ });
+    expect(currentEntry).toHaveAttribute('aria-current', 'true');
+
+    const reader = within(dialog).getByRole('article', { name: '文档内容' });
+    expect(within(reader).getByRole('region', { name: '整理后的需求' })).toHaveTextContent('八个正确的结果型协作目标');
+    expect(within(reader).getByRole('region', { name: '可观察验收' })).toHaveTextContent('5/6 已核验');
+    expect(within(reader).getByRole('region', { name: '阶段文档' })).toHaveTextContent('需求对齐记录');
+
+    const authority = within(reader).getByRole('region', { name: '契约与来源' });
+    expect(authority).toHaveTextContent('文档路径');
+    expect(authority).toHaveTextContent('rooms/project-field.md');
+    expect(authority).toHaveTextContent('SHA-256');
+    expect(authority).toHaveTextContent('Codex');
+    expect(dialog).toHaveTextContent('资料快照');
+    expect(dialog).toHaveTextContent('git 8a50a6b21c');
+    expect(dialog).toHaveTextContent('35 项来源回执');
+    expect(dialog).not.toHaveTextContent('/Users/');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '项目工作文档' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开项目工作文档' })).toHaveFocus());
+  });
+
+  it('reads charter documents from the validated projection without a fake goal route', async () => {
+    const user = userEvent.setup();
+    render(<ProjectFieldFeature />);
+
+    await user.click(screen.getByRole('button', { name: '打开项目工作文档' }));
+    const dialog = screen.getByRole('dialog', { name: '项目工作文档' });
+    const index = within(dialog).getByRole('navigation', { name: '文档目录' });
+
+    await user.click(within(index).getByRole('button', { name: /可靠的 macOS AI 输入辅助/ }));
+    const reader = within(dialog).getByRole('article', { name: '文档内容' });
+    expect(within(reader).getByRole('region', { name: '愿景陈述' })).toHaveTextContent('保留 Rime / Squirrel 输入权威');
+    expect(within(reader).getByRole('region', { name: '可观察锚点' })).toBeInTheDocument();
+    expect(within(reader).queryByRole('button', { name: /在项目场查看该目标/ })).not.toBeInTheDocument();
+
+    await user.click(within(index).getByRole('button', { name: /可持续交付的个人助手工作台/ }));
+    expect(within(reader).getByRole('region', { name: '验收观察' })).toHaveTextContent('目的地尚未抵达');
+
+    await user.click(within(index).getByRole('button', { name: /个人助手工作台 Wayfinder/ }));
+    expect(within(reader).getByRole('region', { name: '演化阶段' })).toHaveTextContent('7 月 1 日');
+  });
+
+  it('routes a focused goal into its work document and back to the field', async () => {
+    const user = userEvent.setup();
+    render(<ProjectFieldFeature />);
+
+    await user.click(screen.getByRole('button', { name: '协作导航与项目图谱，当前协作目标' }));
+    const workspace = screen.getByRole('article', { name: '协作导航与项目图谱协作目标工作区' });
+    const documentsSection = within(workspace).getByRole('region', { name: '交付文档' });
+    expect(documentsSection).toHaveTextContent('当前交付说明');
+
+    await user.click(within(documentsSection).getByRole('button', { name: /项目图谱说明/ }));
+    const dialog = screen.getByRole('dialog', { name: '项目工作文档' });
+    const index = within(dialog).getByRole('navigation', { name: '文档目录' });
+    expect(within(index).getByRole('button', { name: /协作导航与项目图谱/ })).toHaveAttribute('aria-current', 'true');
+
+    await user.click(within(index).getByRole('button', { name: /真实使用与发布/ }));
+    await user.click(within(dialog).getByRole('button', { name: /在项目场查看该目标/ }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '项目工作文档' })).not.toBeInTheDocument());
+    expect(screen.getByRole('article', { name: '真实使用与发布协作目标工作区' })).toBeInTheDocument();
+  });
+
+  it('offers the real Project Workbench window as the route for actually arranging work', async () => {
+    const user = userEvent.setup();
+    const requests: unknown[] = [];
+    render(
+      <PawOsDesktopProvider openWindow={(request) => requests.push(request)}>
+        <ProjectFieldFeature />
+      </PawOsDesktopProvider>,
+    );
+
+    fireEvent.change(screen.getByLabelText('想继续推进什么？'), { target: { value: '删除后旧候选偶尔还会回来' } });
+    await user.click(screen.getByRole('button', { name: '预览合适目标' }));
+
+    const proposal = screen.getByRole('region', { name: '推荐处理位置' });
+    await user.click(within(proposal).getByRole('button', { name: /打开项目工作台/ }));
+
+    expect(requests).toEqual([{
+      appId: 'project-workbench',
+      target: expect.objectContaining({ kind: 'project', id: 'personal-agent-workbench' }),
+    }]);
+    expect(screen.queryByRole('region', { name: '推荐处理位置' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the proposal preview-only when no desktop window authority exists', async () => {
+    const user = userEvent.setup();
+    render(<ProjectFieldFeature />);
+
+    fireEvent.change(screen.getByLabelText('想继续推进什么？'), { target: { value: '删除后旧候选偶尔还会回来' } });
+    await user.click(screen.getByRole('button', { name: '预览合适目标' }));
+
+    const proposal = screen.getByRole('region', { name: '推荐处理位置' });
+    expect(within(proposal).queryByRole('button', { name: /打开项目工作台/ })).not.toBeInTheDocument();
+  });
 });
