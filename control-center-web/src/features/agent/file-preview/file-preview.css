@@ -174,6 +174,45 @@
   color: var(--color-code-muted);
   font-size: 12px;
 }
+.agent-file-preview-inline__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+/* One shared copy affordance for rich results and trace evidence. It inherits
+   the surrounding surface colour, so the same control stays readable on the
+   dark code sheet and the light trace panel alike. */
+.agent-copy-text {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, currentcolor 30%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+.agent-copy-text:hover:not(:disabled) { background: color-mix(in srgb, currentcolor 9%, transparent); }
+.agent-copy-text:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.agent-copy-text:disabled { cursor: default; opacity: .55; }
+.agent-copy-text[data-state='copied'] {
+  border-color: color-mix(in srgb, var(--color-success) 55%, transparent);
+  color: var(--color-success);
+}
+.agent-copy-text[data-state='failed'] {
+  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent);
+  color: var(--color-danger);
+}
+:root[data-reduce-motion='true'] .agent-copy-text { transition: none; }
 .agent-file-preview-inline__body {
   max-height: min(620px, 68dvh);
   min-height: 120px;
@@ -288,17 +327,25 @@
 .agent-file-preview-dialog .ui-dialog__header {
   display: grid;
   min-width: 0;
-  grid-template-columns: 38px minmax(0, 1fr) 34px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
   gap: 1px 10px;
   align-items: center;
   padding: 12px 52px 11px 14px;
   border-bottom: 1px solid var(--color-border);
 }
+.agent-file-preview-dialog__actions {
+  display: inline-flex;
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-items: center;
+  gap: 7px;
+  justify-self: end;
+}
 .agent-file-preview-dialog__icon { display: grid; width: 36px; height: 36px; grid-row: 1 / span 2; place-items: center; border-radius: var(--radius-2); background: var(--color-accent-soft); color: var(--color-accent); }
 .agent-file-preview-dialog .ui-dialog__title { min-width: 0; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-file-preview-dialog .ui-dialog__description { min-width: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.agent-file-preview-dialog__download { grid-column: 3; grid-row: 1 / span 2; }
+.agent-file-preview-dialog__download { flex: 0 0 auto; }
 .agent-file-preview-dialog__notice { padding: 7px 14px; border-bottom: 1px solid var(--color-warning); background: var(--color-warning-soft); color: var(--color-text-secondary); font-size: 13px; }
 .agent-file-preview-dialog__body { min-width: 0; min-height: 0; overflow: auto; background: var(--color-surface); }
 .agent-file-preview-dialog__state { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 9px; padding: 24px; color: var(--color-text-secondary); font-size: 13px; }
@@ -329,7 +376,8 @@
 
 .agent-diff-preview { display: grid; min-width: 0; min-height: 100%; grid-template-rows: auto minmax(0, 1fr); background: var(--color-code-bg); color: var(--color-code-text); }
 .agent-diff-preview > header { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 10px 5px 14px; border-bottom: 1px solid var(--color-code-border); }
-.agent-diff-preview > header small { color: var(--color-code-muted); font: 12px/18px var(--font-ui); }
+.agent-diff-preview > header small { color: var(--color-code-muted); font: 12px/18px var(--font-ui); font-variant-numeric: tabular-nums; }
+.agent-diff-preview__actions { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; color: var(--color-code-muted); }
 .agent-diff-preview__mode.ui-segmented {
   min-height: 28px;
   padding: 1px;
