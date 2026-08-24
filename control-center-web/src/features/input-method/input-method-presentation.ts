@@ -10,6 +10,87 @@ export type StatusTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 export type DraftValue = string | number | boolean;
 export type InputMode = '安全模式' | '标准模式' | '记忆增强' | '调试模式';
 
+export const presetInputModes: readonly InputMode[] = ['安全模式', '标准模式', '记忆增强', '调试模式'];
+
+/* 每种使用方式只等于它真实写入的键值。卡片事实、差异列表和保存请求都
+ * 从这一份数据派生，宣传语没有独立生存空间。
+ *
+ * 标准 与 记忆增强 曾经共用同一份变更（选“记忆增强”保存后仍推断为标准
+ * 模式），是一个说谎的死选项。两个模式通过真实的 memory.recall 键区分：
+ * 标准保持紧凑召回，记忆增强启用详尽召回与按需时间线。 */
+export const inputModeChanges: Record<InputMode, Record<string, DraftValue>> = {
+  安全模式: {
+    'interaction.postCommit.enabled': false,
+    'memory.enabled': false,
+    'activeRag.allowRemoteModel': false,
+  },
+  标准模式: {
+    'interaction.postCommit.enabled': true,
+    'memory.enabled': true,
+    'rag.lanes.tagMemo': true,
+    'rag.lanes.timeDailyBook': true,
+    'memory.recall.detailLevel': 'compact',
+  },
+  记忆增强: {
+    'interaction.postCommit.enabled': true,
+    'memory.enabled': true,
+    'rag.lanes.tagMemo': true,
+    'rag.lanes.timeDailyBook': true,
+    'memory.recall.detailLevel': 'detailed',
+    'memory.recall.timelineEnabled': true,
+  },
+  调试模式: {
+    'interaction.postCommit.enabled': true,
+    'diagnostics.liveTrace': true,
+    'diagnostics.candidateExplain': true,
+    'display.showDiagnosticsInline': true,
+  },
+};
+
+/* 标准 与 记忆增强 的真实分界键，机械求差而不是手写清单。 */
+const memorySplitKeys = new Set(
+  [...new Set([
+    ...Object.keys(inputModeChanges.标准模式),
+    ...Object.keys(inputModeChanges.记忆增强),
+  ])].filter((key) => !Object.is(inputModeChanges.标准模式[key], inputModeChanges.记忆增强[key])),
+);
+
+export type ModeFactChip = {
+  key: string;
+  label: string;
+  /** 这条事实关闭了某项能力，视觉上降权。 */
+  off: boolean;
+  /** 这条事实是 标准/记忆增强 之间的真实差异，视觉上强调。 */
+  highlight: boolean;
+};
+
+const modeFactLabels: Record<string, string> = {
+  'interaction.postCommit.enabled=true': '本机联想',
+  'interaction.postCommit.enabled=false': '联想关闭',
+  'memory.enabled=true': '记忆召回',
+  'memory.enabled=false': '记忆关闭',
+  'activeRag.allowRemoteModel=false': '远程生成关闭',
+  'rag.lanes.tagMemo=true': '标签记忆',
+  'rag.lanes.timeDailyBook=true': '时间与日记',
+  'memory.recall.detailLevel=compact': '紧凑召回',
+  'memory.recall.detailLevel=detailed': '详尽召回',
+  'memory.recall.timelineEnabled=true': '按需时间线',
+  'diagnostics.liveTrace=true': '实时诊断',
+  'diagnostics.candidateExplain=true': '候选解释',
+  'display.showDiagnosticsInline=true': '行内诊断',
+};
+
+/** 模式卡片上的事实签名：逐键翻译真实写入，一键一枚，不可多也不可少。 */
+export function modeFactChips(mode: InputMode): readonly ModeFactChip[] {
+  return Object.entries(inputModeChanges[mode]).map(([key, value]) => ({
+    key,
+    label: modeFactLabels[`${key}=${String(value)}`]
+      ?? `${modeSettingLabel(key)}：${formatSetting(value, key)}`,
+    off: value === false,
+    highlight: memorySplitKeys.has(key) && (mode === '标准模式' || mode === '记忆增强'),
+  }));
+}
+
 export function componentStatus(
   status: Record<string, unknown>,
   label: string,
@@ -101,7 +182,7 @@ export function contextLaneFacts(settings: Record<string, unknown>): GenerationL
   }
   return {
     enabled: true,
-    summary: '读取当前输入位置附近的文本，让候选贴合你正在写的内容。',
+    summary: '读取光标附近的文本，让候选贴合正在写的内容。',
     facts,
   };
 }
@@ -348,5 +429,5 @@ export function applyModeLabel(value: string): string {
 
 export function profileLabel(value: string): string {
   if (!value) return '尚未读取到运行模式';
-  return ['安全模式', '标准模式', '记忆增强', '调试模式'].includes(value) ? value : '自定义模式';
+  return (presetInputModes as readonly string[]).includes(value) ? value : '自定义模式';
 }

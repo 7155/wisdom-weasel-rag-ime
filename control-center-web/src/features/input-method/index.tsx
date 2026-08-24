@@ -1,10 +1,13 @@
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import {
   BookMarked,
+  Bug,
+  Check,
   ChevronDown,
   Keyboard,
   Network,
   RefreshCw,
+  Shield,
   Sparkles,
   TextCursorInput,
   type LucideIcon,
@@ -24,12 +27,15 @@ import {
   formatSetting,
   inferInputMode,
   inputFieldFallback,
+  inputModeChanges,
   inputOptionLabel,
   inputSourceDetail,
   inputSourceMessage,
+  modeFactChips,
   modeSettingLabel,
   modelConfigValue,
   numericDraftValue,
+  presetInputModes,
   profileLabel,
   publicInputText,
   readinessLabel,
@@ -67,46 +73,19 @@ import {
 import './input-method.css';
 
 
-/* 每个模式卡片的描述必须与 inputModeChanges 里真实写入的键一致，
- * 不许把没有配置差异的宣传语放进选择器。 */
-const inputModes = [
-  { value: '安全模式', label: '安全', description: '关闭联想、记忆与远程生成，输入完全交回系统输入法。' },
-  { value: '标准模式', label: '标准', description: '上屏后提供本机联想，记忆按紧凑方式召回。' },
-  { value: '记忆增强', label: '记忆增强', description: '在标准之上使用详尽记忆召回，并按需展开时间线。' },
-  { value: '调试模式', label: '调试', description: '显示实时诊断与候选解释，用于排查输入问题。' },
-] as const;
-
-/* 标准 与 记忆增强 曾经共用同一份变更（选“记忆增强”保存后仍推断为标准模式），
- * 是一个说谎的死选项。两个模式现在通过真实的 memory.recall 键区分：
- * 标准保持紧凑召回，记忆增强启用详尽召回与按需时间线。 */
-const inputModeChanges: Record<InputMode, Record<string, DraftValue>> = {
-  安全模式: {
-    'interaction.postCommit.enabled': false,
-    'memory.enabled': false,
-    'activeRag.allowRemoteModel': false,
-  },
-  标准模式: {
-    'interaction.postCommit.enabled': true,
-    'memory.enabled': true,
-    'rag.lanes.tagMemo': true,
-    'rag.lanes.timeDailyBook': true,
-    'memory.recall.detailLevel': 'compact',
-  },
-  记忆增强: {
-    'interaction.postCommit.enabled': true,
-    'memory.enabled': true,
-    'rag.lanes.tagMemo': true,
-    'rag.lanes.timeDailyBook': true,
-    'memory.recall.detailLevel': 'detailed',
-    'memory.recall.timelineEnabled': true,
-  },
-  调试模式: {
-    'interaction.postCommit.enabled': true,
-    'diagnostics.liveTrace': true,
-    'diagnostics.candidateExplain': true,
-    'display.showDiagnosticsInline': true,
-  },
-};
+/* 卡片描述只补充一句话；每张卡片的事实签名由 modeFactChips 从真实写入
+ * 逐键派生，宣传语没有独立生存空间。 */
+const inputModes: readonly {
+  value: InputMode;
+  label: string;
+  icon: LucideIcon;
+  description: string;
+}[] = [
+  { value: '安全模式', label: '安全', icon: Shield, description: '全部关闭，输入交回系统输入法。' },
+  { value: '标准模式', label: '标准', icon: Sparkles, description: '本机联想，记忆按紧凑方式召回。' },
+  { value: '记忆增强', label: '记忆增强', icon: BookMarked, description: '召回更详尽、可展开时间线，其余与标准一致。' },
+  { value: '调试模式', label: '调试', icon: Bug, description: '露出实时诊断与候选解释，用于排查。' },
+];
 
 const commonInputSettingKeys = new Set([
   'interaction.postCommit.enabled',
@@ -224,6 +203,14 @@ export function InputMethodFeature() {
     `${modeSettingLabel(key)}：${formatSetting(valueAt(settings, key), key)} → ${formatSetting(value, key)}`
   ));
   const reportedProfile = stringValue(overview.profile);
+  /* 运行端报告的模式与设置推断的模式是两个真相来源；都落在已知预设且
+   * 不一致时如实提示，不把“已保存”偷换成“已生效”。 */
+  const runtimeProfileMode = (presetInputModes as readonly string[]).includes(reportedProfile)
+    ? reportedProfile as InputMode
+    : '';
+  const runtimeModeMismatch = Boolean(
+    inferredMode && runtimeProfileMode && runtimeProfileMode !== inferredMode,
+  );
   const nativeExternalActions = Boolean(
     queries.capabilities.data?.native.approvedExternalActions
       && queries.transport.runApprovedExternalAction,
@@ -298,13 +285,13 @@ export function InputMethodFeature() {
           刷新
         </Button>
       )}
-      description="看清上屏后智能候选是怎么生成的，并管理它的每一项设置。普通拼音输入仍由系统输入法负责。"
+      description="上屏后的智能候选在这里配置。拼音解码与选字仍由系统输入法负责。"
       eyebrow="输入体验"
       routeId="input"
       title="输入法"
     >
       <ManagementSection
-        description="上屏后按三步生成智能候选：读取上下文、召回记忆、本机联想；结果与原生候选并排出现。"
+        description="上下文、记忆、本机联想三步生成，与原生候选并排出现。"
         title="智能候选"
         trailing={(
           <StatusBadge
@@ -355,7 +342,7 @@ export function InputMethodFeature() {
           {modelStatusUnavailable ? (
             <div className="input-inline-action">
               <InlineNotice title="模型状态暂不可用" tone="warning">
-                已保存的选择不会改变；重新检查成功前不会把它当作已生效。
+                已保存的选择保持不变；检查成功前不视为已生效。
               </InlineNotice>
               <Button loading={queries.models.isFetching} onClick={() => void queries.models.refetch()} size="small">重试模型检查</Button>
             </div>
@@ -364,11 +351,11 @@ export function InputMethodFeature() {
             runtimeRevision === null ? (
               <InlineNotice title="正在等待运行版本" tone="warning">运行版本返回后才能安全应用联想模型。</InlineNotice>
             ) : !nativeExternalActions ? (
-              <InlineNotice title="请在已安装的应用中操作" tone="warning">网页端可以查看和保存选择；应用到本机联想服务需要在已安装的应用中完成。</InlineNotice>
+              <InlineNotice title="请在已安装的应用中操作" tone="warning">网页端只能查看与保存；应用到本机联想服务需在已安装的应用中进行。</InlineNotice>
             ) : (
               <DiagnosticsRuntimeWorkflow
                 action="restart_predictor"
-                description="应用已保存的联想模型并重启本机服务；完成后会检查候选是否能正常使用。"
+                description="应用已保存的联想模型并重启本机服务，完成后重新检查模型状态。"
                 nativeExternalActions={nativeExternalActions}
                 onApplied={refresh}
                 risk="R2"
@@ -431,7 +418,7 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="选择更适合你的输入方式；选择后不会立刻改变现在的设置。"
+        description="每张卡片列出它真实写入的设置；核对差异后保存。"
         title="使用方式"
         trailing={(
           <StatusBadge
@@ -440,11 +427,15 @@ export function InputMethodFeature() {
           />
         )}
       >
+        {runtimeModeMismatch ? (
+          <InlineNotice title="运行端与已保存设置不一致" tone="warning">
+            运行端仍报告「{runtimeProfileMode}」，已保存设置对应「{inferredMode}」。刷新核对，必要时重新载入输入法设置。
+          </InlineNotice>
+        ) : null}
         <div className="input-mode-layout">
           <div className="input-mode-choice">
-            <strong>希望怎样输入</strong>
             <RadioGroup.Root
-              aria-label="希望怎样输入"
+              aria-label="使用方式"
               className="input-mode-cards"
               disabled={settingsWriteAvailability.state !== 'available'}
               onValueChange={(next) => setModeDraft(next as InputMode)}
@@ -454,30 +445,63 @@ export function InputMethodFeature() {
                 <RadioGroup.Item
                   aria-label={mode.label}
                   className="input-mode-card"
+                  data-current={mode.value === inferredMode || undefined}
                   key={mode.value}
                   value={mode.value}
                 >
-                  <span aria-hidden="true" className="input-mode-card__dot" />
-                  <span className="input-mode-card__copy">
+                  <span className="input-mode-card__head">
+                    <span aria-hidden="true" className="input-mode-card__glyph"><mode.icon size={15} /></span>
                     <strong>{mode.label}</strong>
-                    <small>{mode.description}</small>
+                    {mode.value === inferredMode ? <span className="input-mode-card__current">当前</span> : null}
+                    <RadioGroup.Indicator className="input-mode-card__check">
+                      <Check aria-hidden="true" size={13} />
+                    </RadioGroup.Indicator>
+                  </span>
+                  <small className="input-mode-card__note">{mode.description}</small>
+                  <span className="input-mode-card__facts">
+                    {modeFactChips(mode.value).map((chip) => (
+                      <span
+                        data-highlight={chip.highlight || undefined}
+                        data-off={chip.off || undefined}
+                        key={chip.key}
+                      >
+                        {chip.label}
+                      </span>
+                    ))}
                   </span>
                 </RadioGroup.Item>
               ))}
             </RadioGroup.Root>
-            <span>{modeDraft ? `${modeDiffItems.length} 项设置将发生变化` : inferredMode ? '当前设置与此模式一致' : '当前设置不是预设模式'}</span>
+            <div aria-live="polite" className="input-mode-delta">
+              {modeDraft && modeDiffItems.length ? (
+                <>
+                  <strong>改用{modeDraft}将改动 {modeDiffItems.length} 项</strong>
+                  <ul>
+                    {modeDiffItems.map((item) => <li key={item}>{item}</li>)}
+                  </ul>
+                </>
+              ) : modeDraft ? (
+                <span>所选方式与当前设置一致，无需保存。</span>
+              ) : inferredMode ? (
+                <span>当前设置与「{inferredMode}」一致。</span>
+              ) : (
+                <span>当前设置不属于任何预设。</span>
+              )}
+            </div>
           </div>
           <ManagementMutationWorkflow
             availability={queries.settingsMutationAvailability(
               runtimeRevision === null
                 ? '当前设置状态尚未同步，刷新后才能继续。'
                   : !modeDraft
-                  ? '请选择一种使用方式后再继续。'
+                  ? inferredMode
+                    ? `正在使用${inferredMode}；选择其他方式后可保存。`
+                    : '选择一种使用方式后可保存。'
                   : modeDiffItems.length === 0
-                    ? '当前设置已经符合所选模式，无需重复应用。'
+                    ? '当前设置已符合所选模式。'
                     : '',
             )}
-            description="只保存这次选择带来的设置变化，不会改写其他自定义项。"
+            description="只写入左侧列出的差异，其余设置不动。"
             draftKey={JSON.stringify({ mode: modeDraft, changes: pendingModeChanges, runtimeRevision })}
             mutationKey={['input-method', 'mutation', 'mode']}
             onApply={async (preview) => parseManagementWorkReceipt(
@@ -494,7 +518,12 @@ export function InputMethodFeature() {
               inputSettingsMutationPathIds.apply,
               preview.payloadSha256,
             )}
-            onApplied={() => void Promise.all([queries.settings.refetch(), queries.overview.refetch()])}
+            onApplied={() => {
+              // 保存成功后清空草稿：勾选状态回到“真实生效的模式”，
+              // 回执与撤销入口仍由工作流自身保留。
+              setModeDraft('');
+              void Promise.all([queries.settings.refetch(), queries.overview.refetch()]);
+            }}
             onPreview={async () => {
               if (!modeDraft || runtimeRevision === null || modeDiffItems.length === 0) {
                 throw new Error('运行模式或当前设置版本已失效，请刷新后重试。');
@@ -541,7 +570,7 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="调整候选数量、触发时机和本机补全方式；保存时只会处理这次改动。"
+        description="候选数量、触发时机与本机联想参数，只保存本次改动。"
         title="输入体验设置"
         trailing={(
           <StatusBadge
@@ -562,7 +591,7 @@ export function InputMethodFeature() {
                 <div className="input-settings-save__heading">
                   <div>
                     <h3 className="input-settings-diff-title">待保存更改</h3>
-                    <p>{diffRows.length ? `已修改 ${diffRows.length} 项设置，请核对后保存。` : '修改下方设置后，可在这里核对并保存。'}</p>
+                    <p>{diffRows.length ? '核对下表后保存。' : '下方的修改会先在这里列出。'}</p>
                   </div>
                   <StatusBadge
                     label={hasInvalidChanges ? '需要修正' : diffRows.length ? `${diffRows.length} 项待保存` : '尚未修改'}
@@ -591,7 +620,7 @@ export function InputMethodFeature() {
                         ? '修改至少一个输入设置后才能保存。'
                         : '',
                   )}
-                  description="只保存上方列出的改动，并按每项设置的生效方式处理。"
+                  description="只提交上表改动，按各项的生效方式处理。"
                   draftKey={JSON.stringify({ changes: pendingChanges, runtimeRevision })}
                   mutationKey={['input-method', 'mutation', 'settings']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -680,7 +709,7 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="将候选数量和触发时机应用到输入法。只会更新应用管理的设置，不会修改你的词库或其他自定义输入法配置。"
+        description="把已保存的候选与触发设置应用到输入法；词库与个人配置不受影响。"
         title="重新载入输入法设置"
       >
         {!nativeExternalActions ? (
@@ -692,7 +721,7 @@ export function InputMethodFeature() {
         ) : (
           <DiagnosticsRuntimeWorkflow
             action="redeploy_rime"
-            description="重新载入应用管理的候选数量和触发时机。此操作会重载当前输入法，请在完成后用实际输入和选词确认效果。"
+            description="重载当前输入法并应用已保存设置；完成后用实际输入与选词确认。"
             nativeExternalActions={nativeExternalActions}
             onApplied={refresh}
             risk="R3"
@@ -738,18 +767,18 @@ export function InputLexiconFeature() {
           刷新审阅
         </Button>
       )}
-      description="审阅本机选词反馈整理出的常用词建议。只有你勾选并确认的词条才会写入，写入后仍可撤销。"
+      description="审阅本机整理出的常用词建议；只写入你勾选的词条，写入后可撤销。"
       eyebrow="输入体验"
       routeId="input-lexicon"
       title="个人词库"
     >
       <ManagementSection
-        description="逐条核对建议、来源与采用记录；本页不会静默改写 Rime 的解码与排序。"
+        description="逐条核对来源与采用记录；解码与排序仍归 Rime。"
         title="常用词建议"
         trailing={<StatusBadge label={lexiconState.label} tone={lexiconState.tone} />}
       >
         {queries.capabilities.isPending ? (
-          <InlineNotice title="正在确认可用能力" tone="info">正在确认当前版本是否支持完整的词库审阅与撤销。</InlineNotice>
+          <InlineNotice title="正在确认可用能力" tone="info">正在确认审阅与撤销能力。</InlineNotice>
         ) : queries.capabilities.error ? (
           <div className="input-inline-action">
             <InlineNotice title="无法确认词库能力" tone="danger">
@@ -759,7 +788,7 @@ export function InputLexiconFeature() {
           </div>
         ) : !queries.lexiconAvailable ? (
           <div className="input-inline-action">
-            <InlineNotice title="词库管理不可用" tone="warning">当前版本没有提供完整的审阅、写入与撤销能力。为避免误操作，本页不会执行任何更改。</InlineNotice>
+            <InlineNotice title="词库管理不可用" tone="warning">当前版本缺少完整的审阅、写入与撤销能力，本页不会执行任何更改。</InlineNotice>
             <Button leadingIcon={<TextCursorInput size={14} />} onClick={openDiagnostics} size="small">打开问题排查</Button>
           </div>
         ) : queries.lexiconReview.isPending ? (
@@ -943,13 +972,13 @@ function InputSettingsDisclosure({
 
 function inputSettingsGroupDescription(id: string): string {
   return ({
-    interaction: '预测何时出现，以及键盘如何接纳建议。',
-    display: '控制建议数量和候选面板样式。',
-    activeRag: '控制知识结果的位置与等待时长。',
-    pinyin: '选择适合你的模糊音习惯。',
-    models: '选择本机模型及补全参数。',
-    lexiconOrganization: '设置本机整理常用词的频率。',
-  } as Record<string, string>)[id] ?? '查看和调整这一组输入设置。';
+    interaction: '联想的触发时机与按键接纳。',
+    display: '候选数量与面板样式。',
+    activeRag: '知识结果的插入位置与等待。',
+    pinyin: '模糊音方案。',
+    models: '本机模型与生成参数。',
+    lexiconOrganization: '常用词整理频率。',
+  } as Record<string, string>)[id] ?? '这一组输入设置。';
 }
 
 function LexiconOrganizationState({
@@ -970,16 +999,14 @@ function LexiconOrganizationState({
         <dd>{organization.enabled && organization.nextRunAtMs !== null ? formatLexiconRunTime(organization.nextRunAtMs, '等待下一次本机整理') : '已停用'}</dd>
         <dt>本次结果</dt>
         <dd>{lastRun.status === 'succeeded' ? `已整理 ${lastRun.candidateCount} 条待审阅建议` : lastRun.status === 'running' ? '正在本机整理' : failure ? '运行失败' : '等待首次运行'}</dd>
-        <dt>自动整理</dt>
-        <dd>{organization.enabled ? '已启用，结果会先交给你审阅。' : '已停用'}</dd>
       </dl>
       {failure ? (
         <InlineNotice title="上次定期整理失败" tone="danger">
           {publicErrorText(lastRun.error, '本机任务没有返回成功结果。')}
         </InlineNotice>
       ) : (
-        <InlineNotice title="只在本机整理，先审阅再写入" tone="info">
-          定期整理只根据本机实际选词反馈生成待审阅建议。你保存前，不会改动词库。
+        <InlineNotice title="本机整理，先审阅再写入" tone="info">
+          建议只来自本机选词反馈；你保存前，词库不变。
         </InlineNotice>
       )}
     </div>
@@ -1177,7 +1204,7 @@ function SuggestionPanelPreview({ panel }: { panel: SuggestionPanel }) {
       <figcaption>
         <span className="input-suggest-preview__note">
           {panel.enabled
-            ? '与输入法原生候选并排出现、样式可见区分；拼音解码与选字仍由输入法负责。'
+            ? '与原生候选并排出现、样式可见区分；解码与选字仍归输入法。'
             : '已关闭：上屏后不出现智能候选，输入完全交回系统输入法。'}
         </span>
         {panel.hints.length ? (
