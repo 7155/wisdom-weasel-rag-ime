@@ -606,6 +606,71 @@
     0 0 0 4px color-mix(in srgb, var(--paw-chat-accent) 9%, transparent);
 }
 
+/* 船坞光环（基线 composer.running 签名）：一圈钴-紫 conic 光沿边框行进，
+   只在真实执行中转动；聚焦时静态微亮。光画在 mask 出来的 1.5px 环上，
+   不加背景层、不碰 backdrop（流式性能红线）。 */
+@property --paw-glow-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer {
+  position: relative;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: 2;
+  /* agent.css 的 busy 发丝线声明了 height:2px，这里显式恢复整环高度。 */
+  height: auto;
+  border-radius: 19px;
+  padding: 1.5px;
+  background:
+    conic-gradient(
+      from var(--paw-glow-angle),
+      rgb(47 107 255 / 0%) 0%,
+      rgb(47 107 255 / 55%) 12%,
+      rgb(137 68 171 / 40%) 22%,
+      rgb(47 107 255 / 0%) 34%
+    );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer:focus-within::before {
+  opacity: .45;
+}
+
+.paw-desktop-root .paw-session-workspace__composer .agent-composer[data-busy]::before {
+  opacity: .9;
+  animation: paw-composer-glow 3.2s linear infinite;
+}
+
+@keyframes paw-composer-glow {
+  to { --paw-glow-angle: 360deg; }
+}
+
+/* 减少动效：光环不转但仍在——busy 状态保持可读（PF-CM-011）。 */
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root .paw-session-workspace__composer .agent-composer[data-busy]::before {
+    animation: none;
+    opacity: .6;
+  }
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace__composer .agent-composer[data-busy]::before {
+  animation: none;
+  opacity: .6;
+}
+
 .paw-desktop-root .paw-session-workspace__composer .agent-composer textarea {
   min-height: 64px;
   padding: 13px 15px 41px;
@@ -727,15 +792,69 @@
   color: var(--paw-chat-accent);
 }
 
+/* 详情栏（基线 rail）：悬浮在对话之上，按需披露，不挤压正文。
+   对话列保持满宽，工具面板是一张圆角浮卡，右缘弹入、Esc/关闭即退。
+   body 设为包含块，浮卡定位在 44px 头部之下，不遮标题。 */
+.paw-desktop-root .paw-session-workspace__body {
+  position: relative;
+}
+
+.paw-desktop-root .paw-session-workspace[data-panel='status'] .paw-session-workspace__body,
+.paw-desktop-root .paw-session-workspace[data-panel='subagents'] .paw-session-workspace__body,
+.paw-desktop-root .paw-session-workspace[data-panel='files'] .paw-session-workspace__body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .paw-desktop-root .paw-session-workspace__side {
-  width: 320px;
-  border-left: 1px solid var(--paw-chat-border);
+  position: absolute;
+  z-index: 12;
+  top: 10px;
+  right: 12px;
+  bottom: 10px;
+  width: min(340px, calc(100% - 24px));
+  border: 1px solid var(--paw-chat-border-translucent);
+  border-left: 1px solid var(--paw-chat-border-translucent);
+  border-radius: 16px;
   background: #fff;
+  box-shadow:
+    0 1px 2px rgb(24 32 43 / 4%),
+    0 8px 18px rgb(24 32 43 / 6%),
+    0 24px 60px rgb(24 32 43 / 13%);
+  animation: paw-session-rail-in 200ms var(--paw-chat-spring) both;
+}
+
+@keyframes paw-session-rail-in {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0);
+  }
+}
+
+@keyframes paw-session-sheet-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0);
+  }
 }
 
 .paw-desktop-root .paw-session-workspace__side > :is(.agent-status-panel, .session-subagent-panel, .agent-files-panel) {
   min-width: 0;
   max-width: 100%;
+}
+
+.paw-desktop-root .paw-session-workspace__side > :is(.agent-status-panel, .session-subagent-panel, .agent-files-panel) > header {
+  border-bottom: 1px solid var(--paw-chat-border);
+  background: rgb(255 255 255 / 97%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root .paw-session-workspace__side {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace__side {
+  animation: none;
 }
 
 /* Turn-grouped event inspector from pawos-agent-trace-v1. */
@@ -1257,13 +1376,16 @@
 
 @container paw-session-workspace (max-width: 960px) {
   .paw-desktop-root .paw-session-workspace__side {
-    top: 0;
-    width: min(320px, 46%);
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: min(320px, 56%);
     min-width: 250px;
   }
 }
 
 @container paw-session-workspace (max-width: 520px) {
+  /* 窄窗退化为底部抽屉：同一张浮卡换个停靠边，动效改为自下而上。 */
   .paw-desktop-root .paw-session-workspace__side {
     top: auto;
     right: 0;
@@ -1272,9 +1394,12 @@
     width: 100%;
     min-width: 0;
     height: min(52%, 340px);
+    border: 0;
+    border-radius: 16px 16px 0 0;
     border-top: 1px solid var(--paw-chat-border);
     border-left: 0;
     box-shadow: 0 -12px 30px rgb(36 31 27 / 12%);
+    animation-name: paw-session-sheet-in;
   }
 
   .paw-desktop-root .paw-session-workspace__composer .agent-composer__toolbar {
