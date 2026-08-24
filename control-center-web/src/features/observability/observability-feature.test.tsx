@@ -75,6 +75,34 @@ describe('ObservabilityFeature', () => {
     expect((await screen.findAllByText('记忆工具 已完成')).length).toBeGreaterThan(0);
   });
 
+  it('stays truthful about connection state, status tones, and step timing', async () => {
+    const transport = observationTransport();
+    renderFeature(transport);
+
+    const timeline = await screen.findByRole('list', { name: '运行记录事件' });
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(1));
+
+    const pulse = document.querySelector('.observation-pulse') as HTMLElement;
+    expect(pulse).toHaveAttribute('data-connection', 'live');
+    expect(screen.getByText('实时')).toBeInTheDocument();
+    expect(screen.queryByText(/快照生成于/)).not.toBeInTheDocument();
+
+    const runningBadge = screen.getByText('运行中', { selector: '.mgmt-status' });
+    expect(runningBadge).toHaveAttribute('data-tone', 'info');
+    const runningRow = within(timeline).getByText('伙伴 正在分析').closest('li');
+    expect(runningRow).toHaveAttribute('data-status', 'running');
+
+    const stepTimes = document.querySelectorAll('.observation-trace__summary > time');
+    expect(stepTimes).toHaveLength(2);
+    expect(stepTimes[0]).toHaveAttribute('datetime', new Date(1_001).toISOString());
+
+    expect(transport.fail('observability.events', new Error('stream down'))).toBe(1);
+    await waitFor(() => expect(pulse).toHaveAttribute('data-connection', 'offline'));
+    expect(screen.getByText('快照模式')).toBeInTheDocument();
+    expect(screen.getByText(/快照生成于/)).toBeInTheDocument();
+    expect(screen.getByText('实时事件暂时不可用，正在保留当前快照并尝试重连。')).toBeInTheDocument();
+  });
+
   it('names a truncated snapshot and progressively reveals complete facts and real tool progress', async () => {
     const user = userEvent.setup();
     const item = observationEvent({

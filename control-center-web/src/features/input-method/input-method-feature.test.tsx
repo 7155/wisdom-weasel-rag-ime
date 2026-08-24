@@ -1001,6 +1001,106 @@ describe('InputMethodFeature', () => {
     expect(rollbackRequest?.body).toEqual({ rollbackId: 'rollback-lexicon-1' });
   });
 
+  it('surfaces the backend risk verdict per entry and reviews in bulk with 全选/清除', async () => {
+    const user = userEvent.setup();
+    renderLexiconFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+        'input.lexicon.review': {
+          ...emptyReview,
+          entryCount: 2,
+          selectionPolicy: '只默认选择有至少 3 次真实反馈的常用词；模型整理词必须人工勾选',
+          entries: [
+            { ...review.entries[0], defaultSelected: true, riskLabel: '真实选词反馈' },
+            {
+              reviewKey: '知识蒸馏\tzhi shi zheng liu',
+              text: '知识蒸馏',
+              pinyin: 'zhi shi zheng liu',
+              weight: 60,
+              positiveCount: 0,
+              negativeCount: 0,
+              reasons: ['dsv4_offline_review'],
+              reviewSource: 'dsv4',
+              reviewReason: 'DSV4 根据历史证据整理',
+              selected: false,
+              defaultSelected: false,
+              riskLabel: '模型建议，需人工确认',
+            },
+          ],
+        },
+      },
+    }));
+
+    // 真实的风险归类与后端策略原文都要到达用户，而不是统一的"待你判断"。
+    expect(await screen.findByText('待审 2 条 · 已选 1 条')).toBeInTheDocument();
+    expect(screen.getByText(/模型建议，需人工确认/)).toBeInTheDocument();
+    expect(screen.getByText(/真实选词反馈/)).toBeInTheDocument();
+    expect(screen.getByText('模型整理')).toBeInTheDocument();
+    expect(screen.getByText(/只默认选择有至少 3 次真实反馈的常用词/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '选择 知识蒸馏' })).not.toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: '全选' }));
+    expect(screen.getByText('待审 2 条 · 已选 2 条')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '全选' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '清除' }));
+    expect(screen.getByText('待审 2 条 · 已选 0 条')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '清除' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '加入所选词条' })).toBeDisabled();
+  });
+
+  it('drops the reload claim from the receipt when the backend says no redeploy is required', async () => {
+    const user = userEvent.setup();
+    renderLexiconFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+        'input.lexicon.review': review,
+        'input.lexicon.apply': {
+          schemaVersion: 'rag-ime.rime-lexicon-review.v1',
+          ok: true,
+          applied: true,
+          entryCount: 1,
+          rollbackId: 'rollback-lexicon-2',
+          requiresRedeploy: false,
+        },
+        'input.lexicon.rollback': {},
+      },
+    }));
+
+    await screen.findByRole('checkbox', { name: '选择 表情包' });
+    await user.click(screen.getByRole('button', { name: '加入所选词条' }));
+
+    expect(await screen.findByText('词条已加入用户词库')).toBeInTheDocument();
+    expect(screen.getByText('已加入')).toBeInTheDocument();
+    expect(screen.queryByText('已加入 · 等待重载')).not.toBeInTheDocument();
+    expect(screen.queryByText('尚未生效')).not.toBeInTheDocument();
+    // 不宣称前台已生效：仍要求用实际输入确认。
+    expect(screen.getByText('等待实测确认')).toBeInTheDocument();
+  });
+
+  it('presents the four input modes as described cards instead of a segmented strip', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+      },
+    }));
+
+    expect(await screen.findByRole('radiogroup', { name: '希望怎样输入' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '记忆增强' })).toBeInTheDocument();
+    expect(screen.getByText('在标准之上使用详尽记忆召回，并按需展开时间线。')).toBeInTheDocument();
+    expect(document.querySelectorAll('.input-mode-card')).toHaveLength(4);
+    expect(document.querySelector('.input-mode-choice .ui-segmented')).toBeNull();
+  });
+
   it('keeps lexicon review rows and the first app viewport readable at wide and narrow widths', async () => {
     const transport = new MockControlTransport({
       routes: {

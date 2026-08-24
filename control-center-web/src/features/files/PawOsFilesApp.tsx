@@ -10,11 +10,10 @@ import {
   FileSymlink,
   Folder,
   FolderOpen,
-  ListFilter,
   LoaderCircle,
   RefreshCw,
+  Search,
   TriangleAlert,
-  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
@@ -85,7 +84,7 @@ export function PawOsFilesApp() {
   const [previewMoreLoading, setPreviewMoreLoading] = useState(false);
   const [previewMoreError, setPreviewMoreError] = useState('');
   const [treeFocusPath, setTreeFocusPath] = useState('');
-  const [filter, setFilter] = useState('');
+  const [filterQuery, setFilterQuery] = useState('');
   const [copiedAction, setCopiedAction] = useState<'' | 'path' | 'content'>('');
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const treeRef = useRef<HTMLElement | null>(null);
@@ -105,22 +104,24 @@ export function PawOsFilesApp() {
     }
     return paths.size;
   }, [entries]);
-  const filterQuery = filter.trim().toLowerCase();
+  // The filter only sees directories that have already been read; the result
+  // meta states that coverage truthfully instead of implying a full-disk find.
+  const normalizedFilter = filterQuery.trim().toLocaleLowerCase();
   const filterMatches = useMemo(() => {
-    if (!filterQuery) return [];
+    if (!normalizedFilter) return [];
     const seen = new Set<string>();
-    const matches: Array<{ entry: WorkspaceEntry; parentPath: string }> = [];
-    for (const [parentPath, listing] of Object.entries(entries)) {
+    const matches: WorkspaceEntry[] = [];
+    for (const listing of Object.values(entries)) {
       for (const entry of listing.items) {
-        if (seen.has(entry.path) || !entry.name.toLowerCase().includes(filterQuery)) continue;
+        if (seen.has(entry.path) || !entry.name.toLocaleLowerCase().includes(normalizedFilter)) continue;
         seen.add(entry.path);
-        matches.push({ entry, parentPath });
+        matches.push(entry);
       }
     }
-    matches.sort((left, right) => left.entry.path.localeCompare(right.entry.path));
-    return matches;
-  }, [entries, filterQuery]);
+    return matches.sort((first, second) => first.path.localeCompare(second.path, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [entries, normalizedFilter]);
   const shownMatches = filterMatches.slice(0, FILTER_MATCH_LIMIT);
+  const filterActive = Boolean(normalizedFilter);
   const previewIsBinary = preview ? isProbablyBinary(preview.content) : false;
   const previewCapped = Boolean(preview?.truncated && preview.loadedBytes >= PREVIEW_MAX_BYTES);
 
@@ -182,7 +183,7 @@ export function PawOsFilesApp() {
     setPreview(null);
     setPreviewError('');
     setPreviewMoreError('');
-    setFilter('');
+    setFilterQuery('');
     for (const root of roots) void loadDirectory(root);
     // Directory state is intentionally reset whenever Session authority changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -297,33 +298,20 @@ export function PawOsFilesApp() {
     setSelectedFile(null);
   }
 
-  function expandAncestors(path: string): void {
+  function openFilterMatch(entry: WorkspaceEntry): void {
+    if (entry.kind !== 'directory') {
+      setSelectedFile(entry);
+      return;
+    }
     setExpanded((current) => {
       const next = new Set(current);
-      for (const root of roots) {
-        if (path === root || !path.startsWith(`${root}/`)) continue;
-        next.add(root);
-        const segments = path.slice(root.length + 1).split('/');
-        let ancestor = root;
-        for (const segment of segments.slice(0, -1)) {
-          ancestor = `${ancestor}/${segment}`;
-          next.add(ancestor);
-        }
-      }
+      for (const ancestor of ancestorDirectories(entry.path, roots)) next.add(ancestor);
+      next.add(entry.path);
       return next;
     });
-  }
-
-  function openFilterMatch(entry: WorkspaceEntry): void {
-    expandAncestors(entry.path);
-    if (entry.kind === 'directory') {
-      setExpanded((current) => new Set(current).add(entry.path));
-      void loadDirectory(entry.path);
-    } else {
-      setSelectedFile(entry);
-    }
+    void loadDirectory(entry.path);
+    setFilterQuery('');
     pendingFocusPathRef.current = entry.path;
-    setFilter('');
   }
 
   async function copyPreviewText(action: 'path' | 'content'): Promise<void> {
@@ -473,11 +461,24 @@ export function PawOsFilesApp() {
           ))}
         </select>
       </label>
+      <label className="paw-files-filter">
+        <Search aria-hidden="true" size={13} />
+        <input
+          aria-label="筛选已加载的文件"
+          disabled={!roots.length}
+          onChange={(event) => setFilterQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setFilterQuery('');
+          }}
+          placeholder="筛选已加载的文件"
+          spellCheck={false}
+          type="search"
+          value={filterQuery}
+        />
+      </label>
       <button aria-busy={loadingPaths.size ? true : undefined} aria-label="刷新文件" disabled={!selectedSessionId || loadingPaths.size > 0} onClick={refresh} type="button"><RefreshCw className={loadingPaths.size ? 'ui-spin' : undefined} size={15} /><span>刷新</span></button>
     </div>
   );
-
-  const filterActive = Boolean(filterQuery);
 
   return (
     <>
@@ -488,57 +489,43 @@ export function PawOsFilesApp() {
         {sessionError ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionError}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}
         <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined}>
         <aside className="paw-files-tree" aria-label="Session 授权工作区" ref={treeRef}>
-          {roots.length ? (
-            <div className="paw-files-tree__filter">
-              <ListFilter aria-hidden size={14} />
-              <input
-                aria-label="筛选已加载的文件和目录"
-                onChange={(event) => setFilter(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape' && filter) {
-                    event.stopPropagation();
-                    setFilter('');
-                  }
-                }}
-                placeholder="筛选已加载条目"
-                type="search"
-                value={filter}
-              />
-              {filter ? <button aria-label="清除筛选" onClick={() => setFilter('')} type="button"><X size={13} /></button> : null}
-            </div>
-          ) : null}
           <div className="paw-files-tree__scroll">
             {sessionsLoading ? <TreeState loading>正在读取 Session…</TreeState> : null}
             {!sessionsLoading && !sessionError && !sessions.length ? <TreeState>还没有可浏览的 Session。</TreeState> : null}
             {!sessionsLoading && sessions.length > 0 && !roots.length ? <TreeState>这个 Session 还没有绑定工作区。</TreeState> : null}
             {roots.length && filterActive ? (
-              <div className="paw-files-filter-results" aria-label="筛选结果" role="region">
-                <p className="paw-files-filter-results__meta" role="status">
+              <div className="paw-files-filter-results">
+                <p aria-live="polite" className="paw-files-filter-results__meta">
                   在已加载的 {visibleEntryCount} 项中匹配 {filterMatches.length} 项
                   {filterMatches.length > shownMatches.length ? `，仅显示前 ${shownMatches.length} 项` : ''}
                 </p>
                 {shownMatches.length ? (
-                  <ul>
-                    {shownMatches.map(({ entry, parentPath }) => (
-                      <li key={entry.path}>
-                        <button
-                          aria-label={`${entry.kind === 'directory' ? '定位目录' : '打开匹配文件'} ${entry.name}`}
-                          data-ext={entry.kind === 'directory' ? undefined : fileExtension(entry.name) || undefined}
-                          onClick={() => openFilterMatch(entry)}
-                          title={entry.path}
-                          type="button"
-                        >
-                          {entry.kind === 'directory' ? <Folder size={15} /> : entry.kind === 'symlink' ? <FileSymlink size={15} /> : fileIcon(entry.name, 15)}
-                          <span>
-                            <strong>{highlightMatch(entry.name, filterQuery)}</strong>
-                            <small>{displayParent(parentPath, roots)}</small>
-                          </span>
-                          {entry.byteSize !== undefined ? <small>{formatBytes(entry.byteSize)}</small> : null}
-                        </button>
-                      </li>
-                    ))}
+                  <ul aria-label="筛选结果">
+                    {shownMatches.map((entry) => {
+                      const directory = entry.kind === 'directory';
+                      const symlink = entry.kind === 'symlink';
+                      return (
+                        <li key={entry.path}>
+                          <button
+                            aria-label={directory ? `在目录树中展开 ${entry.name}` : `打开文件 ${entry.name}`}
+                            className="paw-files-tree__row"
+                            data-ext={directory ? undefined : fileExtension(entry.name) || undefined}
+                            data-kind={symlink ? 'symlink' : undefined}
+                            data-selected={!directory && entry.path === selectedFile?.path || undefined}
+                            onClick={() => openFilterMatch(entry)}
+                            title={entry.path}
+                            type="button"
+                          >
+                            <span />
+                            {directory ? <Folder size={16} /> : symlink ? <FileSymlink size={16} /> : fileIcon(entry.name)}
+                            <span>{highlightMatch(entry.name, normalizedFilter)}</span>
+                            <small>{rootRelativeParent(entry.path, roots)}</small>
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
-                ) : <TreeState>没有匹配的已加载条目。</TreeState>}
+                ) : <TreeState>没有匹配已加载的条目。</TreeState>}
               </div>
             ) : null}
             {roots.length && !filterActive ? (
@@ -589,18 +576,17 @@ export function PawOsFilesApp() {
                   <small title={selectedFile.path}>{fileExtension(selectedFile.name).toUpperCase() || '文件'}{selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''} · {selectedFile.path}</small>
                 </div>
                 <div className="paw-files-preview__actions">
-                  {preview && !previewLoading && !previewError && preview.content && !previewIsBinary ? (
-                    <button
-                      aria-label={copiedAction === 'content' ? '已复制文件内容' : preview.truncated ? '复制已加载内容' : '复制文件内容'}
-                      className="paw-files-preview__action"
-                      data-copied={copiedAction === 'content' || undefined}
-                      onClick={() => void copyPreviewText('content')}
-                      title={copiedAction === 'content' ? '已复制' : preview.truncated ? '复制已加载的内容' : '复制文件内容'}
-                      type="button"
-                    >
-                      {copiedAction === 'content' ? <Check size={14} /> : <ClipboardCopy size={14} />}
-                    </button>
-                  ) : null}
+                  <button
+                    aria-label={copiedAction === 'content' ? '已复制文件内容' : '复制文件内容'}
+                    className="paw-files-preview__action"
+                    data-copied={copiedAction === 'content' || undefined}
+                    disabled={!copyableContent(preview, previewLoading, previewError)}
+                    onClick={() => void copyPreviewText('content')}
+                    title={copyContentTitle(preview, previewLoading, previewError, copiedAction === 'content')}
+                    type="button"
+                  >
+                    {copiedAction === 'content' ? <Check size={14} /> : <ClipboardCopy size={14} />}
+                  </button>
                   <button
                     aria-label={copiedAction === 'path' ? '已复制文件路径' : '复制文件路径'}
                     className="paw-files-preview__action"
@@ -664,8 +650,8 @@ function renderPreview(file: WorkspacePreview): ReactNode {
 }
 
 function highlightMatch(name: string, query: string): ReactNode {
-  const index = name.toLowerCase().indexOf(query);
-  if (index < 0) return name;
+  const index = name.toLocaleLowerCase().indexOf(query);
+  if (index < 0 || !query) return name;
   return (
     <>
       {name.slice(0, index)}
@@ -675,16 +661,54 @@ function highlightMatch(name: string, query: string): ReactNode {
   );
 }
 
-function displayParent(parentPath: string, roots: string[]): string {
-  for (const root of roots) {
-    if (parentPath === root) return pathName(root);
-    if (parentPath.startsWith(`${root}/`)) return `${pathName(root)}/${parentPath.slice(root.length + 1)}`;
-  }
-  return parentPath;
-}
-
 function authorizedRoots(session: SessionSummary | null): string[] {
   return (session?.workspaceRoots ?? []).filter((path, index, roots) => path.startsWith('/') && roots.indexOf(path) === index);
+}
+
+// Directory listings arrive in service order; Files presents them the way a
+// file browser reads: directories first, then names in natural order.
+function sortedEntries(items: WorkspaceEntry[]): WorkspaceEntry[] {
+  return [...items].sort((first, second) => {
+    const firstRank = first.kind === 'directory' ? 0 : 1;
+    const secondRank = second.kind === 'directory' ? 0 : 1;
+    if (firstRank !== secondRank) return firstRank - secondRank;
+    return first.name.localeCompare(second.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
+}
+
+function ancestorDirectories(path: string, roots: string[]): string[] {
+  const root = roots.find((candidate) => path === candidate || path.startsWith(`${candidate}/`));
+  if (!root) return [];
+  const chain = [root];
+  const segments = path.slice(root.length).split('/').filter(Boolean);
+  segments.pop();
+  let current = root;
+  for (const segment of segments) {
+    current = `${current}/${segment}`;
+    chain.push(current);
+  }
+  return chain;
+}
+
+function rootRelativeParent(path: string, roots: string[]): string {
+  const root = roots.find((candidate) => path.startsWith(`${candidate}/`));
+  const parent = path.split('/').slice(0, -1).join('/');
+  if (!root) return parent || '/';
+  const relative = parent.slice(root.length).replace(/^\//, '');
+  return relative ? `${pathName(root)}/${relative}` : pathName(root);
+}
+
+function copyableContent(preview: WorkspacePreview | null, loading: boolean, error: string): boolean {
+  if (!preview || loading || error) return false;
+  return preview.content !== '' && !isProbablyBinary(preview.content);
+}
+
+function copyContentTitle(preview: WorkspacePreview | null, loading: boolean, error: string, copied: boolean): string {
+  if (copied) return '已复制文件内容';
+  if (loading || error || !preview) return '内容尚未读取';
+  if (preview.content === '') return '文件没有文本内容';
+  if (isProbablyBinary(preview.content)) return '二进制内容不能复制为文本';
+  return preview.truncated ? `复制已加载的前 ${formatBytes(preview.loadedBytes)} 内容` : '复制文件内容';
 }
 
 function workspaceListing(value: unknown): WorkspaceListing {
@@ -697,7 +721,7 @@ function workspaceListing(value: unknown): WorkspaceListing {
     if (!path.startsWith('/') || !name || !['directory', 'file', 'symlink'].includes(kind)) return [];
     return [{ path, name, kind: kind as WorkspaceEntry['kind'], ...(typeof item.byteSize === 'number' ? { byteSize: item.byteSize } : {}) }];
   });
-  return { items, limited: value.truncated === true };
+  return { items: sortedEntries(items), limited: value.truncated === true };
 }
 
 function workspaceFileChunk(value: unknown, path: string): { content: string; byteSize: number; nextOffset: number; truncated: boolean } {

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { ControlRequest } from '@/platform/transport';
@@ -419,57 +419,6 @@ describe('PawOsFilesApp', () => {
     expect(await screen.findByText('目录条目已达显示上限，仅列出前 2 项。')).toBeInTheDocument();
   });
 
-  it('filters only loaded entries, opens a match, and returns to an intact tree', async () => {
-    const user = userEvent.setup();
-    const transport = new MockControlTransport({
-      routes: {
-        'agent.sessions.list': {
-          ok: true,
-          activeSessionId: 'session-work',
-          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
-        },
-        'agent.session.workspace.list': (request: ControlRequest) => {
-          const path = String(request.query?.path ?? '');
-          if (path === '/workspace/paw/docs') return {
-            ok: true,
-            path,
-            items: [{ path: `${path}/guide.md`, name: 'guide.md', kind: 'file', byteSize: 42 }],
-          };
-          return {
-            ok: true,
-            path,
-            items: [
-              { path: '/workspace/paw/docs', name: 'docs', kind: 'directory' },
-              { path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 },
-            ],
-          };
-        },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
-          ok: true,
-          path: request.query?.path,
-          content: '# Guide',
-          byteSize: 7,
-          truncated: false,
-        }),
-      },
-    });
-
-    renderApp(transport, <PawOsFilesApp />);
-    await user.click(await screen.findByRole('treeitem', { name: '展开目录 docs' }));
-    await screen.findByRole('treeitem', { name: '打开文件 guide.md' });
-
-    const filterInput = screen.getByRole('searchbox', { name: '筛选已加载的文件和目录' });
-    await user.type(filterInput, 'gui');
-    expect(screen.getByText(/在已加载的 3 项中匹配 1 项/)).toBeInTheDocument();
-    expect(screen.queryByRole('tree', { name: '项目文件' })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: '打开匹配文件 guide.md' }));
-    expect(await screen.findByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
-    expect(filterInput).toHaveValue('');
-    expect(screen.getByRole('treeitem', { name: '收起目录 docs' })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('treeitem', { name: '打开文件 guide.md' })).toHaveFocus();
-  });
-
   it('renders a complete SVG as a safe image with a source toggle', async () => {
     const user = userEvent.setup();
     const svgContent = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
@@ -599,6 +548,170 @@ describe('PawOsFilesApp', () => {
     } finally {
       narrowEmulation.remove();
     }
+  });
+
+  it('presents directories first with natural name order regardless of service order', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [
+            { path: '/workspace/paw/zeta.md', name: 'zeta.md', kind: 'file', byteSize: 1 },
+            { path: '/workspace/paw/beta', name: 'beta', kind: 'directory' },
+            { path: '/workspace/paw/alpha10.ts', name: 'alpha10.ts', kind: 'file', byteSize: 1 },
+            { path: '/workspace/paw/alpha2.ts', name: 'alpha2.ts', kind: 'file', byteSize: 1 },
+            { path: '/workspace/paw/Alpha', name: 'Alpha', kind: 'directory' },
+          ],
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+
+    const tree = await screen.findByRole('tree', { name: '项目文件' });
+    await within(tree).findByRole('treeitem', { name: '打开文件 zeta.md' });
+    const names = within(tree).getAllByRole('treeitem').slice(1).map((item) => item.querySelector('span:nth-of-type(2), span > span')?.textContent ?? item.textContent);
+    expect(names.map((name) => name?.trim())).toEqual(['Alpha', 'beta', 'alpha2.ts', 'alpha10.ts', 'zeta.md']);
+  });
+
+  it('filters loaded entries with truthful coverage and opens a match directly', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': (request: ControlRequest) => {
+          const path = String(request.query?.path ?? '');
+          if (path === '/workspace/paw/docs') return {
+            ok: true,
+            path,
+            items: [{ path: `${path}/guide.md`, name: 'guide.md', kind: 'file', byteSize: 42 }],
+          };
+          return {
+            ok: true,
+            path,
+            items: [
+              { path: '/workspace/paw/docs', name: 'docs', kind: 'directory' },
+              { path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 },
+            ],
+          };
+        },
+        'agent.session.workspace.read': (request: ControlRequest) => ({
+          ok: true,
+          path: request.query?.path,
+          content: '# Guide',
+          byteSize: 7,
+          truncated: false,
+        }),
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+
+    await user.click(await screen.findByRole('treeitem', { name: '展开目录 docs' }));
+    await screen.findByRole('treeitem', { name: '打开文件 guide.md' });
+
+    const filter = screen.getByRole('searchbox', { name: '筛选已加载的文件' });
+    await user.type(filter, 'gui');
+    // The filter names its coverage: it only searches already-loaded entries.
+    expect(screen.getByText('在已加载的 3 项中匹配 1 项')).toBeInTheDocument();
+    expect(screen.queryByRole('tree', { name: '项目文件' })).not.toBeInTheDocument();
+
+    await user.click(within(screen.getByRole('list', { name: '筛选结果' })).getByRole('button', { name: '打开文件 guide.md' }));
+    expect(await screen.findByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
+
+    await user.clear(filter);
+    await user.type(filter, 'no-such-entry');
+    expect(screen.getByText('在已加载的 3 项中匹配 0 项')).toBeInTheDocument();
+    expect(screen.getByText('没有匹配已加载的条目。')).toBeInTheDocument();
+
+    // Escape clears the filter and restores the tree.
+    await user.keyboard('{Escape}');
+    expect(await screen.findByRole('tree', { name: '项目文件' })).toBeInTheDocument();
+  });
+
+  it('copies loaded file content and states the truncation boundary truthfully', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => undefined);
+    const hadClipboard = 'clipboard' in navigator;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/big.log', name: 'big.log', kind: 'file', byteSize: 131_072 }],
+        },
+        'agent.session.workspace.read': {
+          ok: true,
+          path: '/workspace/paw/big.log',
+          content: 'line 1\nline 2\n',
+          byteSize: 131_072,
+          offset: 0,
+          nextOffset: 65_536,
+          truncated: true,
+        },
+      },
+    });
+
+    try {
+      renderApp(transport, <PawOsFilesApp />);
+      await user.click(await screen.findByRole('treeitem', { name: '打开文件 big.log' }));
+      const copyContent = await screen.findByRole('button', { name: '复制文件内容' });
+      expect(copyContent).toHaveAttribute('title', '复制已加载的前 64 KB 内容');
+      await user.click(copyContent);
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith('line 1\nline 2\n'));
+      expect(await screen.findByRole('button', { name: '已复制文件内容' })).toBeInTheDocument();
+    } finally {
+      if (!hadClipboard) delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it('refuses to copy binary payloads as text', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/image.png', name: 'image.png', kind: 'file', byteSize: 900 }],
+        },
+        'agent.session.workspace.read': {
+          ok: true,
+          path: '/workspace/paw/image.png',
+          content: '\u0000PNG\r\n\u001a\n',
+          byteSize: 900,
+          truncated: false,
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 image.png' }));
+
+    expect(await screen.findByText('二进制文件不能作为文本预览。')).toBeInTheDocument();
+    const copyContent = screen.getByRole('button', { name: '复制文件内容' });
+    expect(copyContent).toBeDisabled();
+    expect(copyContent).toHaveAttribute('title', '二进制内容不能复制为文本');
   });
 
   it('distinguishes a missing Session from an unbound workspace', async () => {

@@ -1249,7 +1249,8 @@
   background: color-mix(in srgb, var(--room-lane-tone) 8%, var(--color-paper));
 }
 .room-agent-lane__state[data-active='true'] { background: color-mix(in srgb, var(--room-lane-tone) 14%, var(--color-paper)); }
-.room-agent-lane__route { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; color: var(--color-accent); }
+/* Routing marker shares the dispatch violet of the flow palette (UR-057). */
+.room-agent-lane__route { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; color: var(--room-flow-dispatch, #7956e8); }
 .room-agent-lane__work { display: grid; min-width: 0; gap: 2px; }
 .room-agent-lane__identity { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
 .room-agent-lane__identity strong { overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
@@ -1388,6 +1389,9 @@
 .room-agent-activity__wait-details b,
 .room-agent-lane__wait-details b { color: var(--color-text); font-weight: var(--font-weight-semibold); }
 .room-activity-provenance { color: var(--color-text-secondary); font-size: 10px; font-weight: var(--font-weight-semibold); letter-spacing: 0.02em; }
+/* PF-CM-012/UR-057: real dispatch entries wear the same violet as dispatch
+ * paths and the flow ledger, so the Room ledger and the window flow agree. */
+.room-activity-provenance[data-dispatch] { color: var(--room-flow-dispatch, #7956e8); }
 .room-agent-activity--reasoning > svg { color: var(--color-accent); }
 .room-agent-activity--reasoning strong { line-height: 1.5; overflow-wrap: anywhere; }
 .room-agent-activity--reasoning[data-pinned='true'] {

@@ -68,7 +68,7 @@
 .paw-files-app__toolbar {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 300px) auto;
+  grid-template-columns: minmax(0, 240px) minmax(110px, 260px) auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -112,6 +112,50 @@
   outline: none;
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+/* The filter narrows what is already loaded from the authorized roots; it is
+   a projection of local state, never a workspace-wide server search. */
+.paw-files-app__toolbar .paw-files-filter {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-paper);
+  color: var(--color-text-tertiary);
+  transition: border-color 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+}
+
+.paw-files-app__toolbar .paw-files-filter:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.paw-files-filter input {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+}
+
+.paw-files-filter input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.paw-files-filter input:disabled {
+  cursor: not-allowed;
+}
+
+.paw-files-filter input::-webkit-search-cancel-button,
+.paw-files-filter input::-webkit-search-decoration {
+  appearance: none;
 }
 
 .paw-files-app__toolbar > button,
@@ -189,72 +233,9 @@
 .paw-files-tree__scroll {
   min-height: 0;
   flex: 1 1 auto;
-  padding: 6px 6px 18px;
+  padding: 8px 6px 18px;
   overflow: auto;
   scrollbar-color: rgb(29 29 31 / 18%) transparent;
-}
-
-/* The filter narrows what is already loaded from the authorized roots; it is
-   a projection of local state, never a workspace-wide server search. */
-.paw-files-tree__filter {
-  display: grid;
-  min-height: 30px;
-  flex: 0 0 auto;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  margin: 8px 8px 2px;
-  padding: 0 5px 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-paper);
-  color: var(--color-text-tertiary);
-  transition: border-color 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 150ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
-}
-
-.paw-files-tree__filter:focus-within {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
-}
-
-.paw-files-tree__filter input {
-  min-width: 0;
-  height: 28px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.paw-files-tree__filter input:focus-visible {
-  outline: none;
-}
-
-.paw-files-tree__filter input::-webkit-search-cancel-button,
-.paw-files-tree__filter input::-webkit-search-decoration {
-  appearance: none;
-}
-
-.paw-files-tree__filter > button {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition: background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
-}
-
-.paw-files-tree__filter > button:focus-visible {
-  outline: none;
-  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-  color: var(--color-text);
 }
 
 .paw-files-tree nav,
@@ -443,15 +424,15 @@
   display: grid;
   min-width: 0;
   align-content: start;
-  gap: 1px;
+  gap: 2px;
 }
 
 .paw-files-filter-results__meta {
   margin: 0;
-  padding: 6px 10px 8px;
+  padding: 6px 10px 4px;
   color: var(--color-text-tertiary);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .paw-files-filter-results ul {
@@ -459,60 +440,22 @@
   gap: 1px;
 }
 
-.paw-files-filter-results li > button {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  min-height: 40px;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  border-radius: 8px;
-  padding: 4px 8px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  text-align: left;
-  transition: color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), box-shadow 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
+.paw-files-filter-results .paw-files-tree__row {
+  min-height: 34px;
 }
 
-.paw-files-filter-results li > button:focus-visible {
-  outline: none;
-  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 48%, transparent);
-}
-
-.paw-files-filter-results li > button > span {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
-.paw-files-filter-results li > button strong {
+.paw-files-filter-results .paw-files-tree__row small {
+  max-width: 45%;
   overflow: hidden;
-  color: var(--color-text);
-  font-size: 13.5px;
-  line-height: 1.4;
-  font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.paw-files-filter-results li > button strong mark {
+.paw-files-filter-results .paw-files-tree__row mark {
   border-radius: 3px;
   padding: 0 1px;
   background: color-mix(in srgb, var(--color-accent) 22%, transparent);
   color: inherit;
-}
-
-.paw-files-filter-results li > button span small,
-.paw-files-filter-results li > button > small {
-  overflow: hidden;
-  color: var(--color-text-tertiary);
-  font: 12px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* The reading pane stays a true paper-white sheet even when the shell tints
@@ -603,8 +546,13 @@
   transition: transform 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), border-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), background-color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1)), color 140ms var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
 }
 
-.paw-files-preview__action:active {
+.paw-files-preview__action:active:not(:disabled) {
   transform: scale(.94);
+}
+
+.paw-files-preview__action:disabled {
+  cursor: not-allowed;
+  opacity: .45;
 }
 
 .paw-files-preview__action[data-copied] {
@@ -617,7 +565,7 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: var(--color-paper);
+  background: #fff;
   scrollbar-color: rgb(29 29 31 / 18%) transparent;
 }
 
@@ -905,7 +853,7 @@
   }
 
   .paw-files-app__toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(80px, 1fr) auto;
   }
 
   .paw-files-tree__root-button small {
@@ -965,7 +913,7 @@
   .paw-files-tree__state button:hover,
   .paw-files-preview__state button:hover,
   .paw-files-preview__more > button:hover:not(:disabled),
-  .paw-files-preview__action:hover {
+  .paw-files-preview__action:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
     background: color-mix(in srgb, var(--color-accent) 7%, transparent);
     color: var(--color-text);
@@ -974,11 +922,6 @@
   .paw-files-preview__action[data-copied]:hover {
     background: color-mix(in srgb, var(--color-accent) 12%, transparent);
     color: var(--color-accent);
-  }
-
-  .paw-files-tree__filter > button:hover {
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    color: var(--color-text);
   }
 
   .paw-files-svg__bar button:hover {
@@ -991,14 +934,9 @@
   }
 
   .paw-files-tree__root-button:hover,
-  .paw-files-tree__row:hover,
-  .paw-files-filter-results li > button:hover {
+  .paw-files-tree__row:hover {
     background: color-mix(in srgb, var(--color-accent) 8%, transparent);
     color: var(--color-text);
-  }
-
-  .paw-files-tree__root-button:hover,
-  .paw-files-tree__row:hover {
     transform: translate3d(2px, 0, 0);
   }
 }
@@ -1015,7 +953,6 @@
 
   .paw-files-tree__root-button,
   .paw-files-tree__row,
-  .paw-files-filter-results li > button,
   .paw-files-app__toolbar > button,
   .paw-native-app__error button,
   .paw-files-tree__state button,
@@ -1024,8 +961,7 @@
   .paw-files-preview__back,
   .paw-files-preview__action,
   .paw-files-svg__bar button,
-  .paw-files-tree__filter,
-  .paw-files-tree__filter > button {
+  .paw-files-filter {
     transition-property: color, background-color, border-color, box-shadow;
   }
 
@@ -1045,7 +981,7 @@
   .paw-files-preview__state button:active,
   .paw-files-preview__more > button:active:not(:disabled),
   .paw-files-preview__back:active,
-  .paw-files-preview__action:active {
+  .paw-files-preview__action:active:not(:disabled) {
     transform: none;
   }
 }

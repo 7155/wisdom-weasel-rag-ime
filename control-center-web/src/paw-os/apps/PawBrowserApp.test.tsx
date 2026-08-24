@@ -329,7 +329,7 @@ describe('PAW Browser App', () => {
       onOpenUrl: () => () => undefined,
       onSelectTab: () => () => undefined,
     };
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, 'confirm');
     const transport = browserTransport();
     render(<ControlTransportProvider transport={transport}><PawBrowserApp /></ControlTransportProvider>);
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'browser.tabs')).toBe(true));
@@ -346,8 +346,12 @@ describe('PAW Browser App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Browser 设置' }));
     expect(await screen.findByText('/Users/example/Downloads')).toBeInTheDocument();
+    // Destructive clears confirm in place instead of a blocking dialog.
     await user.click(screen.getByRole('button', { name: '清除缓存' }));
+    expect(clearBrowsingData).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole('group', { name: '确认清除缓存' })).getByRole('button', { name: '确认清除' }));
     await waitFor(() => expect(clearBrowsingData).toHaveBeenCalledWith('cache'));
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(await screen.findByText(/缓存已清除/)).toBeInTheDocument();
     expect(screen.queryByText('Ego 轨迹')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '显示 Agent 浏览器轨迹' })).toBeInTheDocument();
@@ -364,11 +368,117 @@ describe('PAW Browser App', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByRole('menuitem', { name: '浏览历史' })).toHaveClass('paw-browser-menu-narrow-only');
     expect(within(menu).getByRole('menuitem', { name: '浏览器设置' })).toHaveClass('paw-browser-menu-narrow-only');
+    // The settings surface has exactly one wide entry point; the old
+    // "清除浏览数据" item opened the same surface and is gone.
+    expect(within(menu).queryByRole('menuitem', { name: '清除浏览数据' })).toBeNull();
     expect(screen.getByRole('button', { name: '浏览历史' })).toHaveClass('paw-browser-history-toggle');
     expect(screen.getByRole('button', { name: 'Browser 设置' })).toHaveClass('paw-browser-settings-toggle');
   });
 
-  it('clears History only through the persistent Browser host authority', async () => {
+  it('reports the real find-in-page match position from the guest and clears on close', async () => {
+    const user = userEvent.setup();
+    window.pawBrowserHost = electronBrowserHost();
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    const findInPage = vi.fn(() => 1);
+    const stopFindInPage = vi.fn();
+    Object.assign(guest, { findInPage, stopFindInPage });
+
+    await user.click(await screen.findByRole('button', { name: 'Browser 菜单' }));
+    await user.click(screen.getByRole('menuitem', { name: '页内查找' }));
+    const findInput = await screen.findByRole('textbox', { name: '页内查找' });
+    expect(findInput).toHaveFocus();
+
+    await user.type(findInput, 'paw');
+    expect(findInPage).toHaveBeenLastCalledWith('paw', { findNext: false, forward: true });
+    // No count is invented before the guest reports one.
+    expect(screen.queryByText(/^\d+\/\d+$/)).toBeNull();
+
+    fireEvent(guest, Object.assign(new Event('found-in-page'), {
+      result: { activeMatchOrdinal: 2, matches: 8, finalUpdate: true },
+    }));
+    expect(await screen.findByText('2/8')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '下一个匹配项' }));
+    expect(findInPage).toHaveBeenLastCalledWith('paw', { findNext: true, forward: true });
+    await user.click(screen.getByRole('button', { name: '上一个匹配项' }));
+    expect(findInPage).toHaveBeenLastCalledWith('paw', { findNext: true, forward: false });
+
+    fireEvent(guest, Object.assign(new Event('found-in-page'), {
+      result: { activeMatchOrdinal: 0, matches: 0, finalUpdate: true },
+    }));
+    expect(await screen.findByText('无匹配')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '关闭页内查找' }));
+    expect(stopFindInPage).toHaveBeenCalledWith('clearSelection');
+    expect(screen.queryByRole('textbox', { name: '页内查找' })).toBeNull();
+  });
+
+  it('reads the real guest zoom and resets it through the percent readout', async () => {
+    const user = userEvent.setup();
+    window.pawBrowserHost = electronBrowserHost();
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    let zoomFactor = 1.2;
+    const setZoomFactor = vi.fn((value: number) => { zoomFactor = value; });
+    Object.assign(guest, { getZoomFactor: () => zoomFactor, setZoomFactor });
+
+    await user.click(await screen.findByRole('button', { name: 'Browser 菜单' }));
+    const reset = screen.getByRole('button', { name: '恢复默认缩放' });
+    expect(reset).toHaveTextContent('120%');
+    expect(reset).toBeEnabled();
+
+    await user.click(reset);
+    expect(setZoomFactor).toHaveBeenCalledWith(1);
+    expect(reset).toHaveTextContent('100%');
+    expect(reset).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '放大网页' }));
+    expect(setZoomFactor).toHaveBeenLastCalledWith(1.1);
+    expect(reset).toHaveTextContent('110%');
+  });
+
+  it('navigates Home to the configured start page instead of a hardcoded blank page', async () => {
+    const user = userEvent.setup();
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'https://start.example/' }),
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    const loadURL = vi.fn(async () => undefined);
+    Object.assign(guest, { loadURL });
+
+    const home = await screen.findByRole('button', { name: '打开启动页' });
+    expect(home).toHaveAttribute('title', '打开启动页 https://start.example/');
+    loadURL.mockClear();
+    await user.click(home);
+    expect(loadURL).toHaveBeenCalledWith('https://start.example/');
+  });
+
+  it('groups browsing history by day with truthful day headings', async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getHistory: async () => [
+        { id: 'h-today', title: 'Today doc', url: 'https://today.example/', visitedAt: now },
+        { id: 'h-yesterday', title: 'Yesterday doc', url: 'https://yesterday.example/', visitedAt: now - 86_400_000 },
+      ],
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '浏览历史' }));
+    const historyRegion = await screen.findByRole('region', { name: '浏览历史' });
+    await within(historyRegion).findByText('Today doc');
+    const headings = within(historyRegion).getAllByRole('heading', { level: 3 });
+    expect(headings.map((heading) => heading.textContent)).toEqual(['今天', '昨天']);
+    expect(within(historyRegion).getByText('Yesterday doc')).toBeInTheDocument();
+  });
+
+  it('clears History only through the persistent Browser host authority after an in-App confirmation', async () => {
     const user = userEvent.setup();
     const clearHistory = vi.fn(async () => []);
     window.pawBrowserHost = {
@@ -376,15 +486,28 @@ describe('PAW Browser App', () => {
       clearHistory,
       getHistory: async () => [{ id: 'history-one', title: 'Example', url: 'https://example.com/', visitedAt: 1 }],
     };
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, 'confirm');
 
     render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
     await user.click(await screen.findByRole('button', { name: '浏览历史' }));
     const historyRegion = await screen.findByRole('region', { name: '浏览历史' });
     expect(within(historyRegion).getByText('Example')).toBeInTheDocument();
     await user.click(within(historyRegion).getByRole('button', { name: '清空' }));
+    // The first activation only arms the confirmation; nothing is cleared yet.
+    expect(clearHistory).not.toHaveBeenCalled();
+    const confirmGroup = within(historyRegion).getByRole('group', { name: '确认清空浏览历史' });
+    expect(within(confirmGroup).getByText('清空全部浏览历史？')).toBeInTheDocument();
+
+    // Cancelling disarms without touching the host.
+    await user.click(within(confirmGroup).getByRole('button', { name: '取消' }));
+    expect(clearHistory).not.toHaveBeenCalled();
+    expect(within(historyRegion).queryByRole('group', { name: '确认清空浏览历史' })).toBeNull();
+
+    await user.click(within(historyRegion).getByRole('button', { name: '清空' }));
+    await user.click(within(historyRegion).getByRole('button', { name: '确认清空' }));
     await waitFor(() => expect(clearHistory).toHaveBeenCalledTimes(1));
     expect(screen.getByText('还没有浏览记录')).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(localStorage.getItem('paw.browser.history.v1')).toBeNull();
   });
 

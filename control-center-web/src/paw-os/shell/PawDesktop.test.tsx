@@ -81,6 +81,41 @@ describe('PAWOS desktop', () => {
     expect(current.querySelector('[data-lucide], .paw-os-app-icon, .paw-app-glyph')).toBeNull();
   });
 
+  it('names the menu bar 桌面 when no window is focused instead of borrowing Workbench', () => {
+    renderDesktop();
+    const current = document.querySelector('.paw-menu-app') as HTMLElement;
+    expect(current).toHaveAttribute('data-idle');
+    expect(current).toHaveTextContent('桌面');
+    expect(current.querySelector('[data-paw-app-icon]')).toBeNull();
+  });
+
+  it('opens hide and overview commands from the menu bar App name', () => {
+    renderDesktop('agent');
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 菜单' }));
+    expect(screen.getByRole('menu', { name: 'Agent 菜单' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: '隐藏窗口' }));
+    expect(document.querySelector('[data-paw-window-id="agent"]')).toBeNull();
+    const agentDock = within(screen.getByRole('navigation', { name: 'PAWOS 工具架' })).getByRole('button', { name: 'Agent' });
+    expect(agentDock).toHaveAttribute('data-open');
+    expect(agentDock).toHaveAttribute('data-minimized');
+  });
+
+  it('filters Launchpad Apps from the archive search field', () => {
+    renderDesktop();
+    fireEvent.click(screen.getByRole('button', { name: '全部 App' }));
+    const launcher = screen.getByRole('dialog', { name: '全部 App' });
+    fireEvent.change(within(launcher).getByRole('searchbox', { name: '搜索 App' }), { target: { value: 'Terminal' } });
+    expect(within(launcher).getByRole('button', { name: /Terminal/ })).toBeInTheDocument();
+    expect(within(launcher).queryByRole('button', { name: /Agent/ })).not.toBeInTheDocument();
+    expect(within(launcher).getByRole('heading', { name: '工具' })).toBeInTheDocument();
+  });
+
+  it('opens System Settings from the advertised keyboard shortcut', () => {
+    renderDesktop();
+    fireEvent.keyDown(window, { key: ',', metaKey: true });
+    expect(document.querySelector('[data-paw-window-id="system-settings"]')).toBeInTheDocument();
+  });
+
   it('replaces the browser context menu with desktop and App commands', () => {
     renderDesktop();
 
@@ -109,6 +144,34 @@ describe('PAWOS desktop', () => {
     expect(screen.getByRole('menu', { name: 'Agent 菜单' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: '关闭 Agent 的全部窗口' }));
     expect(document.querySelector('[data-paw-window-id="agent"]')).toBeNull();
+  });
+
+  it('marks a Dock App that only has minimized windows and restores it on click', () => {
+    // Prefer reduced-motion so minimize completes synchronously for Dock state.
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    renderDesktop('agent');
+    const dock = screen.getByRole('navigation', { name: 'PAWOS 工具架' });
+    const agentDockButton = within(dock).getByRole('button', { name: 'Agent' });
+    expect(agentDockButton).toHaveAttribute('data-open');
+    expect(agentDockButton).not.toHaveAttribute('data-minimized');
+
+    fireEvent.click(screen.getByRole('button', { name: '最小化窗口' }));
+    expect(agentDockButton).toHaveAttribute('data-open');
+    expect(agentDockButton).toHaveAttribute('data-minimized');
+    expect(agentDockButton).toHaveAttribute('title', 'Agent 已最小化，点击恢复');
+
+    fireEvent.click(agentDockButton);
+    expect(agentDockButton).not.toHaveAttribute('data-minimized');
+    expect(document.querySelector('[data-paw-window-id="agent"]')).toBeInTheDocument();
   });
 
   it('closes all PAWOS windows from the desktop menu in one projection-only action', () => {

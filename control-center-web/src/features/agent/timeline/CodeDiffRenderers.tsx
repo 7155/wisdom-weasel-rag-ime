@@ -94,6 +94,7 @@ export function CodeContentBlock({
         <span>
           <Code2 size={14} />
           {fileName || language}
+          {!streamingTail && lineCount > 1 ? <small>{lineCount} 行</small> : null}
         </span>
         <IconButton
           size="small"

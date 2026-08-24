@@ -135,7 +135,7 @@ describe('PAWOS semantic type roles', () => {
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{/);
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-menu-bar\s*\{/);
     expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);/s);
-    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*background:\s*rgb\(255 255 255 \/ \.5\);/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*background:\s*#fff;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock button::before\s*\{\s*content:\s*none;/s);

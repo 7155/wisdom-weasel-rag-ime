@@ -305,6 +305,14 @@ describe('RoomTurn public activity detail', () => {
     expect(view.container).not.toHaveTextContent('由用户直接邀请发言');
   });
 
+  it('files a real dispatch in the ledger as 任务分派, not a generic run record', () => {
+    const view = render(roomTurn(roomProjection()));
+    const dispatchProvenance = view.container.querySelector('.room-activity-provenance[data-dispatch]');
+
+    expect(dispatchProvenance).toHaveTextContent('任务分派');
+    expect(dispatchProvenance?.closest('.room-agent-activity')).toHaveTextContent('已接手');
+  });
+
   it('keeps a recovered tool miss in the feed without promoting it to the whole task headline', () => {
     const projection = roomProjection();
     projection.activitiesById['read-failed'] = {

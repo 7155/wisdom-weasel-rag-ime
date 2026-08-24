@@ -41,10 +41,10 @@ describe('SmoothDisclosureReveal', () => {
     vi.useRealTimers();
   });
 
-  it('uses the bounded strong ease-out motion contract', () => {
+  it('uses the bounded spring motion contract shared with the conversation baseline', () => {
     expect(DISCLOSURE_MOTION).toEqual({
-      durationMs: 180,
-      easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+      durationMs: 220,
+      easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)',
     });
   });
 

@@ -11,12 +11,14 @@ export type PawContextMenuItem = {
 };
 
 export function PawContextMenu({
+  anchor,
   ariaLabel,
   items,
   onClose,
   x,
   y,
 }: {
+  anchor?: { readonly current: HTMLElement | null };
   ariaLabel: string;
   items: readonly PawContextMenuItem[];
   onClose: () => void;
@@ -33,7 +35,9 @@ export function PawContextMenu({
     const menu = menuRef.current;
     menu?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     const dismiss = (event: PointerEvent) => {
-      if (!menu?.contains(event.target as Node)) onClose();
+      const target = event.target as Node;
+      if (menu?.contains(target) || anchor?.current?.contains(target)) return;
+      onClose();
     };
     const blur = () => onClose();
     window.addEventListener('pointerdown', dismiss);
@@ -42,7 +46,7 @@ export function PawContextMenu({
       window.removeEventListener('pointerdown', dismiss);
       window.removeEventListener('blur', blur);
     };
-  }, [onClose]);
+  }, [anchor, onClose]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     const enabled = Array.from(
