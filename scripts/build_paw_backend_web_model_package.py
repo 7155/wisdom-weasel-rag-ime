@@ -28,7 +28,7 @@ PAW_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TUTTI_ROOT = PAW_ROOT.parent / "tutti"
 DEFAULT_PI_ROOT = PAW_ROOT.parent / "pi"
 DEFAULT_SKILLS_ROOT = PAW_ROOT.parent / "pi-skills"
-DEFAULT_OUTPUT = Path("/Volumes/undo 4t/MyGlobalDownloads/paw-backend-web-model-review-20260823.zip")
+DEFAULT_OUTPUT = PAW_ROOT / "output" / "model-review" / "paw-backend-web-model-review.zip"
 
 GUIDE_FILES = (
     "docs/handoffs/model-bundles/README_FOR_BACKEND_WEB_MODEL.md",
