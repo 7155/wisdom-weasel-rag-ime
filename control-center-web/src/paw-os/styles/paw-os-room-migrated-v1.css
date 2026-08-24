@@ -6,6 +6,32 @@
  * alternate Room state.
  */
 
+/* Shared Room colour tokens. These names were already consumed across the
+ * chronology, work strip, work tree and flow surfaces but never defined, so
+ * every status accent silently fell back to inherited text colour. Declared on
+ * the desktop root so the window-flow overlay and its ledger — which live
+ * outside the Room workspace window — resolve the same hues. */
+.paw-desktop-root {
+  --room-blue: #1677d2;
+  --room-green: #168c58;
+  --room-amber: #b56808;
+  --room-red: #c53d46;
+  --room-violet: #7956e8;
+  --room-violet-soft: rgb(121 86 232 / .12);
+
+  /* UR-057: one hue per packet kind, shared by SVG paths, packet list and
+   * ledger dots — request magenta, question amber, answer blue, result green,
+   * context teal, dispatch violet, approval red. No two kinds share a hue, so
+   * a real dispatch is never mistaken for a request or a context handoff. */
+  --room-flow-request: #b9509c;
+  --room-flow-question: var(--room-amber);
+  --room-flow-answer: var(--room-blue);
+  --room-flow-result: var(--room-green);
+  --room-flow-context: #0f8c8c;
+  --room-flow-dispatch: var(--room-violet);
+  --room-flow-approval: var(--room-red);
+}
+
 .paw-desktop-root .paw-room-workspace--migrated-v1 {
   /* Sol identity accent, then the shared Room status language: queued
    * grey-blue, running blue, waiting amber, review violet, complete green,
@@ -742,11 +768,13 @@
 }
 
 .paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button > span { color: var(--room-violet); }
-.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='answer'] > span,
-.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='result'] > span { color: var(--room-green); }
-.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='question'] > span { color: var(--room-amber); }
-.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='approval'] > span { color: var(--room-red); }
-.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='context'] > span,
+.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='request'] > span { color: var(--room-flow-request); }
+.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='question'] > span { color: var(--room-flow-question); }
+.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='answer'] > span { color: var(--room-flow-answer); }
+.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='result'] > span { color: var(--room-flow-result); }
+.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='context'] > span { color: var(--room-flow-context); }
+.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='dispatch'] > span { color: var(--room-flow-dispatch); }
+.paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='approval'] > span { color: var(--room-flow-approval); }
 .paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button[data-kind='document'] > span { color: var(--room-blue); }
 .paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets button > div { min-width: 0; }
 .paw-desktop-root .paw-room-flow--migrated-v1 .paw-room-flow__packets strong { font-size: 14px; }
@@ -1033,13 +1061,13 @@
   animation: paw-room-flow-label 920ms cubic-bezier(.2, .8, .2, 1) both;
 }
 
-.paw-desktop-root .paw-room-window-flow g[data-kind='dispatch'] { --paw-accent: #7956e8; }
-.paw-desktop-root .paw-room-window-flow g[data-kind='request'] { --paw-accent: #7956e8; }
-.paw-desktop-root .paw-room-window-flow g[data-kind='context'] { --paw-accent: #d07a0a; }
-.paw-desktop-root .paw-room-window-flow g[data-kind='question'] { --paw-accent: #b56808; }
-.paw-desktop-root .paw-room-window-flow g[data-kind='answer'] { --paw-accent: #1677d2; }
-.paw-desktop-root .paw-room-window-flow g[data-kind='result'] { --paw-accent: #168c58; }
-.paw-desktop-root .paw-room-window-flow g[data-kind='approval'] { --paw-accent: #c53d46; }
+.paw-desktop-root .paw-room-window-flow g[data-kind='request'] { --paw-accent: var(--room-flow-request); }
+.paw-desktop-root .paw-room-window-flow g[data-kind='question'] { --paw-accent: var(--room-flow-question); }
+.paw-desktop-root .paw-room-window-flow g[data-kind='answer'] { --paw-accent: var(--room-flow-answer); }
+.paw-desktop-root .paw-room-window-flow g[data-kind='result'] { --paw-accent: var(--room-flow-result); }
+.paw-desktop-root .paw-room-window-flow g[data-kind='context'] { --paw-accent: var(--room-flow-context); }
+.paw-desktop-root .paw-room-window-flow g[data-kind='dispatch'] { --paw-accent: var(--room-flow-dispatch); }
+.paw-desktop-root .paw-room-window-flow g[data-kind='approval'] { --paw-accent: var(--room-flow-approval); }
 
 @keyframes paw-room-flow-label {
   0%, 12%, 100% { opacity: 0; transform: translateY(3px); }
@@ -1111,13 +1139,13 @@
   font-size: 12px;
 }
 
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='request'] i,
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='dispatch'] i { background: #7956e8; }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='answer'] i { background: #1677d2; }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='question'] i,
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='context'] i { background: #b56808; }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='result'] i { background: #168c58; }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='approval'] i { background: #c53d46; }
+.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='request'] i { background: var(--room-flow-request); }
+.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='question'] i { background: var(--room-flow-question); }
+.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='answer'] i { background: var(--room-flow-answer); }
+.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='result'] i { background: var(--room-flow-result); }
+.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='context'] i { background: var(--room-flow-context); }
+.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='dispatch'] i { background: var(--room-flow-dispatch); }
+.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='approval'] i { background: var(--room-flow-approval); }
 .paw-desktop-root .paw-room-window-flow-ledger small { color: #758092; font-size: 12px; font-weight: 700; }
 .paw-desktop-root .paw-room-window-flow-ledger b { overflow: hidden; color: #28313e; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .paw-desktop-root .paw-room-window-flow-ledger time { color: #8a94a3; font-variant-numeric: tabular-nums; white-space: nowrap; }
