@@ -16,7 +16,7 @@ Review a fixed scope without relying on the author's conclusion and without modi
 5. Verify two closeout axes separately: whether the implementation or real path runs, and whether the observed result satisfies the current precise requirement. Review code or artifact quality as a third, non-substituting concern.
 6. Reproduce material evidence and probe risk-shaped negative paths proportional to the change. A pass on one verification axis never implies a pass on the other.
 7. Report only actionable, evidence-backed findings. Keep optional improvements separate from defects.
-8. Write the review document when one is assigned, or return a proposed review delta.
+8. Write the review document when one is assigned, or return a proposed review delta. If material evidence was not reproduced, the verdict is `changes_required` or stop without a pass; never emit `clear`/`passed` for unverified work.
 
 ## Output
 
@@ -32,6 +32,6 @@ review-document update receipt or proposed delta
 
 ## Not For
 
-Do not modify reviewed work, self-review authored changes, manufacture a defect from preference, allocate repair work, or emit the caller's final result. Return failures to the supervising Agent with evidence and the owning seam; the reviewer does not own Goal closure.
+Do not modify reviewed work, self-review authored changes, manufacture a defect from preference, allocate repair work, emit the caller's final result, or rewrite unverified work as `clear`/`passed`. Return failures to the supervising Agent with evidence and the owning seam; the reviewer does not own Goal closure.
 
 Example: the Agent that authored a change may verify it, but a genuinely independent verdict must come from a different fixed-scope reviewer.

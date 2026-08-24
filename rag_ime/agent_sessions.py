@@ -37,6 +37,19 @@ class AgentApprovalNotFound(KeyError):
     pass
 
 
+class AgentGoalExecutionBlocked(ValueError):
+    """Configured Goal cannot incur new model or delegation work.
+
+    ``error_code`` stays lowercase (`goal_paused`, …) so Session receipts and
+    the workflow actGate share one spelling. Room event projection may
+    uppercase when publishing durable causeCode fields.
+    """
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(f"Goal execution blocked ({reason}): {message}")
+        self.error_code = reason
+
+
 _SESSION_SELECT = """
 SELECT
     s.*,
@@ -1938,16 +1951,19 @@ class AgentSessionStore:
             return state
         status = str(goal.get("status") or "")
         if status == "paused":
-            raise ValueError(
-                "Goal execution blocked (goal_paused): 当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。"
+            raise AgentGoalExecutionBlocked(
+                "goal_paused",
+                "当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。",
             )
         if status == "cancelled":
-            raise ValueError(
-                "Goal execution blocked (goal_cancelled): 当前 Goal 已取消，不能继续调用模型或委派任务。"
+            raise AgentGoalExecutionBlocked(
+                "goal_cancelled",
+                "当前 Goal 已取消，不能继续调用模型或委派任务。",
             )
         if goal.get("budgetExceeded") is True:
-            raise ValueError(
-                "Goal execution blocked (goal_budget_exhausted): Goal 的 Token 或时间预算已经耗尽。"
+            raise AgentGoalExecutionBlocked(
+                "goal_budget_exhausted",
+                "Goal 的 Token 或时间预算已经耗尽。",
             )
         return state
 

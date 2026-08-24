@@ -300,6 +300,13 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             )
         )
         self.assertIn("work_documents", {manifest["name"] for manifest in manifests})
+        by_name = {manifest["name"]: manifest for manifest in manifests}
+        self.assertTrue(
+            any("Chrome/Edge" in item for item in by_name["browser"]["notFor"])
+        )
+        self.assertTrue(
+            any("独立 Chrome/Edge" in item for item in by_name["desktop_semantic"]["notFor"])
+        )
         self.assertNotIn("todo", {manifest["name"] for manifest in manifests})
         self.assertNotIn("agent_goal", {manifest["name"] for manifest in manifests})
 

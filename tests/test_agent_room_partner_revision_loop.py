@@ -410,6 +410,7 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:revision-green", "workdoc:revision-loop@2"],
+                "reason": "修订后的真实路径与需求验收均通过。",
             },
             tool_call_id="tool:accept-revision",
         )
@@ -458,6 +459,7 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:prior-root-green"],
+                "reason": "旧 Root 交付的真实路径与需求验收均通过。",
             },
             tool_call_id="tool:accept-prior-root",
         )
@@ -479,6 +481,7 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:prior-root-green"],
+                "reason": "旧 Root 交付的真实路径与需求验收均通过。",
             })],
         )
 
@@ -499,6 +502,7 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
             "operabilityVerdict": "passed",
             "requirementVerdict": "satisfied",
             "evidenceRefs": ["test:must-not-accept"],
+            "reason": "越权验收必须被拒绝。",
         }
 
         for session_id in (

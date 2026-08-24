@@ -42,10 +42,12 @@ context; it is not a second task database, transcript, or Runtime projection.
    the default and create it only when there is an actual requirement to
    preserve. Do not create empty ceremony during bootstrap.
 6. Keep active task documents anywhere below the project's existing `docs/`
-   convention and register them through `work_documents` to the real
-   `session_goal` or `room_work_item`. The guide should tell Agents to discover
-   them with `work_documents list/get`, then read only referenced sections with
-   `workspace_read`.
+   convention and register them to the real `session_goal` or `room_work_item`
+   through the write's `workDocument` field, or `work_documents` when that Tool
+   is in the current profile. Bound writes must copy the live
+   `authorityRevision` from the current workboard or document projection. The
+   guide should tell Agents to discover them with `work_documents list/get`,
+   then read only referenced sections with `workspace_read`.
 7. Never copy live owner, running, completion, approval, WorkItem, or Session
    state into `AGENTS.md`. Resolve current ownership through Runtime. Resolve a
    document's Session through `WorkDocument -> authorityKey -> WorkItem ->

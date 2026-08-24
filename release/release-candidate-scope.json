@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 428,
+    "pathCount": 521,
     "dispositionCounts": {
-      "keep_release": 408,
-      "delete_old_implementation": 20
+      "delete_old_implementation": 20,
+      "keep_release": 501
     },
     "groupCounts": {
-      "project_harness": 11,
-      "control_center_release_ui": 247,
-      "session_room_skill_flow": 130,
-      "memory_curation": 14,
+      "control_center_release_ui": 269,
       "desktop_semantic_accessibility": 12,
-      "release_scope": 3,
       "installation_reliability": 9,
-      "room_kernel_cleanup": 2
+      "memory_curation": 14,
+      "project_harness": 11,
+      "release_scope": 3,
+      "room_kernel_cleanup": 2,
+      "session_room_skill_flow": 201
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -330,6 +330,13 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/app/App.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
       "path": "control-center-web/src/app/AppErrorBoundary.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -353,6 +360,34 @@
     {
       "path": "control-center-web/src/app/control-connection-monitor.tsx",
       "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/frontend-product.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/frontend-product.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/FrontendShell.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/FrontendShell.tsx",
+      "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
@@ -491,6 +526,34 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/components/paw-os/index.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/paw-os/paw-os-shell.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/paw-os/PawOsShell.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/paw-os/PawOsShell.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
       "path": "control-center-web/src/components/primitives/Dialog.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -615,6 +678,20 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the generated native Pi Package contracts used by the ability market."
+    },
+    {
+      "path": "control-center-web/src/design/paw-os-themes.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/design/paw-os-themes.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
       "path": "control-center-web/src/design/tokens.css",
@@ -925,6 +1002,20 @@
       "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
     },
     {
+      "path": "control-center-web/src/features/agent/surface-layout.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/surface-layout.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
       "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1060,6 +1151,20 @@
     {
       "path": "control-center-web/src/features/configuration/management-writes.test.tsx",
       "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.tsx",
+      "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
@@ -1480,6 +1585,55 @@
     {
       "path": "control-center-web/src/features/overview/management.css",
       "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/app-icons.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/app-registry.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/app-registry.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/desktop.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/desktop.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/surface-context.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/surface-context.tsx",
+      "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
@@ -1912,6 +2066,118 @@
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
+      "path": "integrations/pi/skills/ego-browser/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/assets/composer-icon.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/assets/logo.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/google/browser-tools/autocomplete.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/google/manifest.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/google/notes/overview.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/google/tools/search-extract.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/x-com/browser-tools/extract-post.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/x-com/manifest.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/x-com/notes/overview.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/x-com/notes/timeline.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/x-com/tools/search-users.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/learnings/x-com/tools/timeline.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/references/install.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/references/video.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/ego-browser/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
       "path": "integrations/pi/skills/facilitate-room/agents/openai.yaml",
       "status": "added",
       "disposition": "keep_release",
@@ -1961,6 +2227,13 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
+      "path": "integrations/pi/skills/improve-codebase-architecture/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
       "path": "integrations/pi/skills/independent-review/agents/openai.yaml",
       "status": "added",
       "disposition": "keep_release",
@@ -2004,6 +2277,20 @@
     },
     {
       "path": "integrations/pi/skills/organize-work-documents/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-system/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-system/SKILL.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -2171,6 +2458,13 @@
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
+      "path": "rag_ime/agent_command_receipts.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "rag_ime/agent_configuration.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2207,6 +2501,13 @@
     },
     {
       "path": "rag_ime/agent_event_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_execution_policy.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -2304,6 +2605,13 @@
       "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
     },
     {
+      "path": "rag_ime/agent_room_partner_dispatch_store.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "rag_ime/agent_room_prompt_context.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2326,6 +2634,13 @@
     },
     {
       "path": "rag_ime/agent_room_turn_registry.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_room_work.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -2423,11 +2738,32 @@
       "reason": "Keep the unified Package market Tool operations exposed to Pi Sessions."
     },
     {
+      "path": "rag_ime/agent_wake_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_wake_scheduler.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "rag_ime/agent_workspace.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
+    },
+    {
+      "path": "rag_ime/browser_control.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "rag_ime/contracts/json/agent-configuration.v1.json",
@@ -2449,6 +2785,13 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-room-work-item.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "rag_ime/contracts/json/agent-subagent-run.v1.json",
@@ -2479,11 +2822,39 @@
       "reason": "Keep the authoritative Package creation Tool-result contract."
     },
     {
+      "path": "rag_ime/contracts/json/room-post.v2.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/contracts/json_schema.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "rag_ime/control_api/route_policy.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep Package draft and validation inputs aligned at the HTTP boundary."
+    },
+    {
+      "path": "rag_ime/control_api/route_table.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Package draft and validation inputs aligned at the HTTP boundary."
+    },
+    {
+      "path": "rag_ime/db/migration_runner.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "rag_ime/db/migrations/0152_room_participant_steer_receipts.sql",
@@ -2535,6 +2906,27 @@
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
+      "path": "rag_ime/db/migrations/0159_room_work_authority_events.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0160_agent_room_work_item_review_verdicts.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0161_room_partner_async_dispatches.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "rag_ime/debug_server.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2556,6 +2948,20 @@
       "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
     },
     {
+      "path": "rag_ime/managed_pi_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/management_service.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "rag_ime/memory_model_executor.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2568,6 +2974,13 @@
       "disposition": "keep_release",
       "group": "memory_curation",
       "reason": "Keep owner-memory curation, capture provenance, and pagination updates."
+    },
+    {
+      "path": "rag_ime/paw_browser_runtime.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "rag_ime/pi_runtime_public.py",
@@ -2596,6 +3009,34 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep legacy local Session idle rejection semantics aligned with the managed Pi Host."
+    },
+    {
+      "path": "rag_ime/public_release.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/session_memory_recall.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/settings_schema.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/system_terminal.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "rag_ime/tui.py",
@@ -2668,6 +3109,27 @@
       "reason": "Keep Squirrel dependency installation working when the selected full Xcode Developer directory contains spaces."
     },
     {
+      "path": "scripts/build_paw_backend_model_bundle.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
+    },
+    {
+      "path": "scripts/build_paw_backend_web_model_package.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
+    },
+    {
+      "path": "scripts/build_paw_pi_runtime_model_bundle.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
+    },
+    {
       "path": "scripts/build_voice_input.sh",
       "status": "modified",
       "disposition": "keep_release",
@@ -2724,6 +3186,13 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
+      "path": "scripts/manage_codex_skills.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
+    },
+    {
       "path": "scripts/run_swe_bench_agent_eval.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2773,11 +3242,25 @@
       "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
     },
     {
+      "path": "tests/test_agent_background_jobs.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_agent_capability_policy.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_agent_command_receipts.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_agent_configuration.py",
@@ -2808,6 +3291,13 @@
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
+      "path": "tests/test_agent_execution_policy.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_agent_extensions.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2827,6 +3317,20 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
+    },
+    {
+      "path": "tests/test_agent_roles.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_event_hub_gap.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_agent_room_intercom_application.py",
@@ -2850,7 +3354,49 @@
       "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
     },
     {
+      "path": "tests/test_agent_room_partner_async_application.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_partner_dispatch_store.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_partner_restart_recovery.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_partner_revision_loop.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_prompt_budget.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_agent_room_turn_registry.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_work.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -2876,6 +3422,13 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_agent_service_room_partner_wake.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_agent_session_mode_gate.py",
@@ -2913,11 +3466,32 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
+      "path": "tests/test_agent_wake_scheduler.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_agent_workspace.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_brand_squirrel_app.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_browser_control.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_build_managed_pi_runtime_v2.py",
@@ -2983,6 +3557,13 @@
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
+      "path": "tests/test_debug_server.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_deepseek_memory_organizer.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3011,6 +3592,13 @@
       "reason": "Keep build and install verification aligned with the current product generation."
     },
     {
+      "path": "tests/test_manage_codex_skills.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_managed_pi_runtime.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3023,6 +3611,13 @@
       "disposition": "keep_release",
       "group": "memory_curation",
       "reason": "Keep owner-memory curation, capture provenance, and pagination updates."
+    },
+    {
+      "path": "tests/test_management_work_contract.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_memory_consumer_acceptance.py",
@@ -3039,6 +3634,13 @@
       "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
     },
     {
+      "path": "tests/test_model_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_native_control_bridge_contract.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3051,6 +3653,13 @@
       "disposition": "keep_release",
       "group": "memory_curation",
       "reason": "Keep owner-memory curation, capture provenance, and pagination updates."
+    },
+    {
+      "path": "tests/test_paw_browser_runtime.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_pi_runtime_v2.py",
@@ -3067,11 +3676,46 @@
       "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
     },
     {
+      "path": "tests/test_prepare_squirrel_workspace.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "tests/test_project_harness.py",
       "status": "added",
       "disposition": "keep_release",
       "group": "project_harness",
       "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "tests/test_public_release.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_session_memory_recall.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_settings_schema.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_system_terminal.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_tui.py",
@@ -3086,6 +3730,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep voice feature contract tests aligned with the release UI's plain-language provider, credential, and hotword boundaries."
+    },
+    {
+      "path": "tests/test_work_documents.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "uv.lock",

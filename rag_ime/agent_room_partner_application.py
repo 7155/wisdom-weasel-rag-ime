@@ -235,7 +235,7 @@ class RoomPartnerApplicationService:
             "operabilityVerdict": args.get("operabilityVerdict"),
             "requirementVerdict": args.get("requirementVerdict"),
             "evidenceRefs": args.get("evidenceRefs"),
-            **({"reason": args.get("reason")} if not accept else {}),
+            "reason": args.get("reason"),
         }
         callback = self.accept_room_work if accept else self.return_room_work
         wake = record.get("wake")
@@ -470,7 +470,9 @@ class RoomPartnerApplicationService:
                 f"Room Partner {record['targetParticipantId']} 的工作已进入 "
                 f"{record['status']}。先用 room_partner collect 查看 "
                 f"{child_dispatch_id} 与 WorkItem {record['workItemId']}；"
-                "检查 WorkDocument 和证据后，显式 accept 或 return。"
+                "检查 WorkDocument 和证据后，用非空 reason 显式 accept，或 return。"
+                "审查报告 unverified、changes_required、failed 或未解决 HIGH/MEDIUM "
+                "时必须 return，不得写成 passed/satisfied。"
             )
         try:
             self.wake_schedules.create_room_wake(

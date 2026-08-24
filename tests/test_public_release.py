@@ -281,7 +281,7 @@ class PublicReleaseAuditTests(unittest.TestCase):
     @staticmethod
     def _write_public_metadata(root: Path, *, ready: bool, include_license: bool) -> tuple[str, ...]:
         for name in (
-            "docs/project/ARCHITECTURE.md",
+            "ARCHITECTURE.md",
             "CHANGELOG.md",
             "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",
@@ -314,7 +314,7 @@ class PublicReleaseAuditTests(unittest.TestCase):
             encoding="utf-8",
         )
         tracked = [
-            "docs/project/ARCHITECTURE.md",
+            "ARCHITECTURE.md",
             "CHANGELOG.md",
             "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",

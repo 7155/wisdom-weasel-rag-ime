@@ -1534,11 +1534,13 @@ class AgentService:
             )
             result["message"] = (
                 '<managed-goal-follow-up origin="goal-supervisor">'
-                "当前 Goal 仍处于 active，Todo 中有正在执行的任务，且预算允许继续。"
-                "一次回答结束不代表 Goal 完成；立即完成 Todo 中当前正在执行、"
+                "当前 Goal 仍处于 active，且预算允许继续。"
+                "一次回答结束不代表 Goal 完成；先同步更新 Todo 状态，再推进"
                 "能够产生新验收证据的下一步。不要只汇报进度或复述 Todo。"
-                "先同步更新 Todo 状态；若已经没有可继续的下一步，再把 Goal 更新为"
-                "完成、暂停或取消，而不是继续空转。"
+                "没有可继续的下一步时：已有完整验收证据则完成 Goal；"
+                "Room 受阻则发出 blocked/partial 终态，保持 Goal active。"
+                "不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息；"
+                "暂停只用于用户明确要求停止，不是等待继续的手段。"
                 "</managed-goal-follow-up>"
             )
         validate_contract(result, "agent-goal-settle-result.v1.json")
@@ -2097,6 +2099,11 @@ class AgentService:
                 scope_id=room_id,
                 client_message_id=client_message_id,
                 error=exc,
+                cause_code=str(
+                    getattr(exc, "cause_code", "")
+                    or getattr(exc, "error_code", "")
+                    or ""
+                ),
             )
             raise
         return self.command_receipts.complete(
@@ -3463,12 +3470,22 @@ class AgentService:
                 if cause_code in {
                     "SESSION_BUSY",
                     "AGENT_TURN_CONFLICT",
+                    # Paused Goal must not auto-resume on wake. Defer until an
+                    # explicit user Room message resumes the Goal; do not burn
+                    # the completion wake as a terminal failure.
+                    "GOAL_PAUSED",
                 }:
                     self.wake_schedules.defer(
                         run_id,
-                        reason="Facilitator 刚刚开始其他回合，伙伴交付稍后重试",
+                        reason=(
+                            "Facilitator Goal 已暂停，等待用户在 Room 中继续后再验收"
+                            if cause_code == "GOAL_PAUSED"
+                            else "Facilitator 刚刚开始其他回合，伙伴交付稍后重试"
+                        ),
                         cause_code=cause_code,
-                        delay_ms=5_000,
+                        # Busy conflicts retry quickly; a paused Goal waits for
+                        # an explicit user Room message, so avoid a 5s storm.
+                        delay_ms=60_000 if cause_code == "GOAL_PAUSED" else 5_000,
                     )
                     return False
                 if str(self.sessions.get(session_id).get("status") or "") == "busy":
@@ -3498,6 +3515,24 @@ class AgentService:
             return True
         finally:
             self.room_turns.release_priority_session(session_id)
+
+    def _resume_room_goal_if_paused(self, session_id: str) -> None:
+        """Resume a paused participant Goal for an explicit user Room message.
+
+        The Room conversation entry is the only continue control a returning
+        user has, so the user's message carries the resume intent. Wake,
+        partner and Tool Agent paths never call this.
+        """
+
+        goal = self.sessions.agent_goal(session_id)
+        if str(goal.get("status") or "") != "paused":
+            return
+        self.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "resume", "expectedRevision": int(goal["revision"])},
+            actor="room-user-message",
+        )
+        self.publish_workflow_state(session_id, reason="goal:resume")
 
     def _recover_faulted_room_session(self, session_id: str) -> None:
         """Re-open one recoverable Pi Session without replacing Room identity."""
