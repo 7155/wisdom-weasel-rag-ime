@@ -36,7 +36,11 @@ from .agent_tool_ids import (
 )
 from .agent_sessions import AgentSessionStore
 from .agent_tool_artifacts import AgentToolArtifactProjector
-from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
+from .agent_workspace import (
+    PreparedWorkspaceCommand,
+    WorkspaceHarness,
+    WorkspaceHarnessError,
+)
 from .browser_control import BrowserControlService
 from .contracts.json_schema import validate_contract
 from .desktop_bridge import DesktopBridgeClient
