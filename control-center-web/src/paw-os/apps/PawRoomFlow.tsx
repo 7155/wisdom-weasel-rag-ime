@@ -56,7 +56,7 @@ export function PawRoomFlow({
         <header>
           <div>
             <strong>协作路径</strong>
-            <span>{room.workItems?.length ?? 0} 个 WorkItem · {room.participants.filter((participant) => participant.status === 'active').length} 位伙伴</span>
+            <span>{room.workItems?.length ?? 0} 项任务 · {room.participants.filter((participant) => participant.status === 'active').length} 位伙伴</span>
           </div>
           <small>来自当前 Room 的 WorkItem 与公开事件</small>
         </header>
@@ -85,7 +85,7 @@ export function PawRoomFlow({
               </div>
             </button>
           ))}
-          {!packets.length ? <p className="paw-room-flow__empty">还没有可投影的公开消息、分派或上下文流转。</p> : null}
+          {!packets.length ? <p className="paw-room-flow__empty">还没有公开消息、分派或上下文流转；伙伴之间的往来会实时记录在这里。</p> : null}
         </div>
         {selectedPacket ? (
           <section className="paw-room-flow__detail">

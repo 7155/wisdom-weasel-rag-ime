@@ -99,7 +99,9 @@ export function PawRoomWorkspace({
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(initialError ?? '');
-  const [panel, setPanel] = useState<RoomToolPanel | 'none'>('focus');
+  /* 对话是 Room 的主面。协作态势默认收起，由用户在需要时展开，
+     不再一进 Room 就占走三分之一宽度（截图问题 3）。 */
+  const [panel, setPanel] = useState<RoomToolPanel | 'none'>('none');
   const [view, setView] = useState<'conversation' | 'starfield'>('conversation');
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
   const [recoveryState, setRecoveryState] = useState<'recovering' | 'failed' | 'synced'>('recovering');
@@ -328,6 +330,13 @@ export function PawRoomWorkspace({
 
   const title = record?.title || '未命名 Room';
   const activeParticipants = record?.participants.filter((participant) => participant.status === 'active') ?? [];
+  /* 只亮有事发生的数字：全 0 时不排一排灰点占位（截图问题 5）。 */
+  const signalCounts = focusProjection ? ([
+    ['active', focusProjection.counts.active, '进行'],
+    ['review', focusProjection.counts.review, '复核'],
+    ['blocked', focusProjection.counts.blocked, '受阻'],
+    ['complete', focusProjection.counts.completed, '完成'],
+  ] as const).filter(([, count]) => count > 0) : [];
   const activeTopic = record?.topics?.find((topic) => topic.id === record.activeTopicId)
     ?? record?.topics?.find((topic) => topic.status === 'active');
   const activeRootId = activeTurn?.rootId ?? activeTurn?.id ?? '';
@@ -372,7 +381,7 @@ export function PawRoomWorkspace({
     <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span>
     <nav aria-label="Room 工作台视图">
       <button aria-pressed={panel === 'none' && view === 'conversation'} onClick={() => { setView('conversation'); setPanel('none'); }} type="button"><MessageCircle size={14} /><span>公开对话</span></button>
-      <button aria-pressed={panel !== 'none'} onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : current); }} type="button"><Focus size={14} /><span>协作态势</span></button>
+      <button aria-pressed={panel !== 'none'} onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : 'none'); }} type="button"><Focus size={14} /><span>协作态势</span></button>
       <button aria-pressed={view === 'starfield'} onClick={() => { setView('starfield'); setPanel('none'); }} type="button"><Orbit size={14} /><span>星空</span></button>
     </nav>
     <div className="paw-room-workspace__runtime"><span><i />{abortingActiveTurn ? '正在停止' : sending && activeTurn ? '正在干预' : activeTurn ? '协作中' : recoveryState === 'synced' ? '已同步' : '连接中'}</span>{activeTurn ? <button aria-label="停止整轮协作" disabled={abortingActiveTurn} onClick={() => void abortTurn(activeRootId)} type="button"><StopCircle size={16} /></button> : null}</div>
@@ -392,14 +401,16 @@ export function PawRoomWorkspace({
       <section aria-label="Room 当前协作" className="paw-room-workspace__signal">
         <div className="paw-room-workspace__objective">
           <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
-          <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 个 WorkItem</span>
+          <span>{activeParticipants.length} 位伙伴 · {focusProjection?.workItems.length ?? 0} 项任务</span>
         </div>
-        {focusProjection ? <div aria-label="Sol 当前状态" className="paw-room-workspace__signal-status">
-          <span data-tone="active"><i />{focusProjection.counts.active} 进行</span>
-          <span data-tone="review"><i />{focusProjection.counts.review} 复核</span>
-          <span data-tone="blocked"><i />{focusProjection.counts.blocked} 受阻</span>
-          <span data-tone="complete"><i />{focusProjection.counts.completed} 完成</span>
-        </div> : null}
+        {signalCounts.length ? <button
+          aria-label={panel === 'none' ? '打开协作态势' : '关闭协作态势面板'}
+          className="paw-room-workspace__signal-status"
+          onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : 'none'); }}
+          type="button"
+        >
+          {signalCounts.map(([tone, count, label]) => <span data-tone={tone} key={tone}><i />{count} {label}</span>)}
+        </button> : null}
       </section>
 
       <div className="paw-room-workspace__body">
@@ -640,7 +651,7 @@ function PawRoomActivityFold({
       }}
     >
       <ChevronRight aria-hidden="true" size={13} />
-      <strong>运行与流转 {activities.length} 项</strong>
+      <strong>执行过程 {activities.length} 项</strong>
       <small>{pawRoomActivitySummary(latest, latestEventType)}</small>
     </summary>
     <SmoothDisclosureReveal
@@ -822,7 +833,7 @@ function PawRoomRawActivityDetail({ detail }: { detail: string }) {
       aria-expanded={open}
       onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
       onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-    >详情</summary>
+    >原始记录</summary>
     <SmoothDisclosureReveal
       className="paw-room-chronology__detail-reveal"
       id={detailId}
@@ -875,7 +886,17 @@ function pawRoomRawDetail(value: string): boolean {
     || /```|(?:^|\s)[{[]\s*["']/u.test(value)
     || /\/(?:Users|Volumes|home|private|tmp|var)\//u.test(value)
     || /\b[a-f\d]{48,}\b/iu.test(value)
-    || value.length > 180;
+    || value.length > 180
+    || pawRoomTechnicalWall(value);
+}
+
+/** 不含任何中日韩文字、又带着代码痕迹（RLE/AABB 这类缩写、camelCase、
+ * snake_case、`::`、`=>`…）的英文开发日志，对用户就是一堵技术墙：摘要位
+ * 显示中文状态语，整段挪进「原始记录」，一次点击仍可完整读到。 */
+function pawRoomTechnicalWall(value: string): boolean {
+  if (value.length < 30 || /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(value)) return false;
+  return value.length > 90
+    || /\b[A-Z]{2,8}\b|[a-z][A-Z]|\w+_\w+|::|=>|->|\(\)/u.test(value);
 }
 
 function pawRoomCompactText(value: string): string {

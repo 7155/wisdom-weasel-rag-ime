@@ -23,10 +23,10 @@ export function PawRoomExecution({ projection, room }: {
 
   return <section aria-label="Room 任务流" className="paw-room-execution">
     <header className="paw-room-execution__summary">
-      <span>{workItems.length ? `${workItems.length} 个 WorkItem` : `${runtimeItems.length} 个运行回合`}</span>
+      <span>{workItems.length ? `${workItems.length} 项任务` : `${runtimeItems.length} 个运行回合`}</span>
       <small>{activeCount ? `${activeCount} 项仍在推进` : workItems.length || runtimeItems.length ? '当前流转已收口' : '等待真实分派'}</small>
     </header>
-    {workItems.length ? <ol aria-label="Room WorkItem 任务流" className="paw-room-execution__list">
+    {workItems.length ? <ol aria-label="Room 任务拆解" className="paw-room-execution__list">
       {workItems.map((item) => <RoomExecutionWorkItem item={item} key={item.id} owner={participantName(item.currentOwnerParticipantId || item.accountableParticipantId)} />)}
     </ol> : runtimeItems.length ? <ol aria-label="Room 运行任务流" className="paw-room-execution__list">
       {runtimeItems.map((item) => <li data-depth="0" data-state={roomExecutionRuntimeState(item.status)} key={item.id}>
@@ -38,7 +38,7 @@ export function PawRoomExecution({ projection, room }: {
           <footer><span>{item.laneCount} 条执行线 · {item.toolCount} 个工具步骤</span><time>{item.updatedAtMs ? formatTime(item.updatedAtMs) : ''}</time></footer>
         </article>
       </li>)}
-    </ol> : <div className="paw-room-execution__empty"><ListChecks size={18} /><span><strong>还没有任务流</strong><small>真实 dispatch 或 WorkItem 出现后会在这里形成节点。</small></span></div>}
+    </ol> : <div className="paw-room-execution__empty"><ListChecks size={18} /><span><strong>还没有任务流</strong><small>发生分派或拆出任务后，这里会实时形成节点。</small></span></div>}
   </section>;
 }
 
@@ -50,7 +50,7 @@ function RoomExecutionWorkItem({ item, owner }: { item: RoomWorkItem; owner: str
       <header><span>{owner}</span><b>{roomWorkStateLabel(item.state)}</b></header>
       <strong>{item.objective}</strong>
       {detail ? <p>{detail}</p> : null}
-      <footer><span>WorkItem r{item.revision}</span><time>{item.updatedAtMs ? formatTime(item.updatedAtMs) : ''}</time></footer>
+      <footer><span>任务 r{item.revision}</span><time>{item.updatedAtMs ? formatTime(item.updatedAtMs) : ''}</time></footer>
       {item.acceptanceCriteria.length ? (
         <Disclosure
           className="paw-room-execution__acceptance"

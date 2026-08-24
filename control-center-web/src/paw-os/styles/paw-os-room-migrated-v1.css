@@ -178,24 +178,32 @@
   background: #fff;
 }
 
+/* 信号条即「协作态势」开关：一组安静的数字加色点，不再逐项包 pill 边框
+   （截图问题 5）；点一下在对话旁展开或收起态势面板（截图问题 3）。 */
 .paw-desktop-root .paw-room-workspace__signal-status {
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 13px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease;
 }
+
+.paw-desktop-root .paw-room-workspace__signal-status:hover { background: rgb(29 36 48 / .045); }
+.paw-desktop-root .paw-room-workspace__signal-status:focus-visible { outline: 2px solid #7956e8; outline-offset: 2px; }
 
 .paw-desktop-root .paw-room-workspace__signal-status > span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 7px;
-  border: 1px solid rgb(29 36 48 / .07);
-  border-radius: 999px;
-  color: #727b89;
-  background: #fbfcfd;
+  color: #5f6b7c;
   font-size: 12px;
+  font-weight: 570;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -331,8 +339,10 @@
   background: #f9f8f7;
 }
 
+/* 态势面板默认收起；展开时收窄到最多 380px，让对话始终占大头
+   （截图问题 3）。 */
 .paw-desktop-root .paw-room-workspace--migrated-v1:not([data-panel='none']) .paw-room-workspace__body {
-  grid-template-columns: minmax(0, 1fr) clamp(320px, 36%, 420px);
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 32%, 380px);
 }
 
 .paw-desktop-root .paw-room-tools {
@@ -897,18 +907,20 @@
   scroll-snap-align: start;
 }
 
+/* 主窗与卫星卡同一套视觉语言：同 14px 圆角、同一族双层阴影，仅按主次
+   递减深度与投距（截图问题 1）。 */
 .paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='primary'] .paw-window {
   border-color: rgb(121 86 232 / .2);
-  border-radius: 15px;
+  border-radius: 14px;
   background: #fff;
-  box-shadow: 0 36px 84px -24px rgb(35 47 66 / .34), 0 6px 18px rgb(35 47 66 / .08);
+  box-shadow: 0 30px 72px -22px rgb(35 47 66 / .32), 0 5px 14px rgb(35 47 66 / .07);
 }
 
 .paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='satellite'] .paw-window {
   border-color: rgb(29 36 48 / .11);
   border-radius: 14px;
   background: rgb(255 255 255 / .96);
-  box-shadow: 0 24px 58px -20px rgb(35 47 66 / .25), 0 4px 12px rgb(35 47 66 / .06);
+  box-shadow: 0 22px 54px -22px rgb(35 47 66 / .22), 0 3px 10px rgb(35 47 66 / .05);
 }
 
 .paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-titlebar {
@@ -949,7 +961,7 @@
 
 .paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='satellite'][data-active] .paw-window {
   border-color: color-mix(in srgb, var(--paw-app-accent) 46%, rgb(29 36 48 / .12));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-app-accent) 9%, transparent), 0 28px 64px -20px rgb(35 47 66 / .29);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-app-accent) 9%, transparent), 0 24px 58px -22px rgb(35 47 66 / .26), 0 3px 10px rgb(35 47 66 / .05);
 }
 
 .paw-desktop-root .paw-window-shell[data-window-target='participant'] .paw-window-title [data-paw-app-icon] { display: none; }
@@ -1084,7 +1096,7 @@
   max-height: min(190px, 36vh);
   overflow: hidden;
   border: 1px solid rgb(29 36 48 / .09);
-  border-radius: 10px;
+  border-radius: 12px;
   color: #5f6b7c;
   background: rgb(255 255 255 / .94);
   box-shadow: 0 8px 22px rgb(35 47 66 / .08);

@@ -367,10 +367,10 @@ describe('PawOsSatelliteHost', () => {
       kind: 'room', id: room.id, panel: 'execution', title: room.title,
     });
 
-    const flow = await screen.findByRole('list', { name: 'Room WorkItem 任务流' });
+    const flow = await screen.findByRole('list', { name: 'Room 任务拆解' });
     expect(flow).toHaveTextContent('实现 Room 任务图交互');
     expect(flow).toHaveTextContent('实现伙伴');
-    expect(flow).toHaveTextContent('WorkItem r2');
+    expect(flow).toHaveTextContent('任务 r2');
     expect(screen.getByText('等待独立复核')).toBeVisible();
     expect(container.querySelector('.room-cockpit')).not.toBeInTheDocument();
     expect(container.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
@@ -512,7 +512,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const trigger = await screen.findByRole('button', { name: /运行活动 1 项/ });
+    const trigger = await screen.findByRole('button', { name: /执行过程 1 项/ });
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await userEvent.setup().click(trigger);
     expect(trigger).toHaveAttribute('aria-expanded', 'false');

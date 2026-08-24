@@ -455,19 +455,26 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
             {timelineItems.map((item) => item.kind === 'activity-group' ? (
               <SatelliteDisclosure active={item.active} className="paw-participant-chat__activity-group" contentId={`participant-activity-${item.id}`} dataActive={item.active} key={item.id} summary={(
                 <>
-                  <span><strong>运行活动 {item.entries.length} 项</strong><small>{item.entries.at(-1)?.summary}</small></span>
+                  <span><strong>执行过程 {item.entries.length} 项</strong><small>{item.entries.at(-1)?.summary}</small></span>
                   <SatelliteRunState eventType={item.entries.at(-1)?.eventType ?? 'run'} status={item.entries.at(-1)?.status ?? 'completed'} />
                 </>
               )}>
                 <div className="paw-participant-chat__activity-group-content">{item.entries.map((entry) => <ParticipantTimelineEntry entry={entry} key={entry.id} participantId={participant.id} room={room} />)}</div>
               </SatelliteDisclosure>
             ) : <ParticipantTimelineEntry entry={item} key={item.id} participantId={participant.id} room={room} />)}
-            {!timeline.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>还没有消息或执行轨迹</span></div> : null}
+            {!timeline.length ? (
+              /* 空态说实话也说得好看：一颗安静的行星示意 + 这里将来会出现什么。 */
+              <div className="paw-participant-chat__empty" data-state={focusPartner?.state ?? 'idle'}>
+                <span aria-hidden="true" className="paw-participant-chat__empty-planet"><i /></span>
+                <strong>{target.title || participant.displayName} 还没有公开动态</strong>
+                <p>接到分派或被 @ 点名后，这位伙伴的公开对话与执行过程会实时出现在这里。</p>
+              </div>
+            ) : null}
           </div>
           {/* PF-CM-013：卫星只补一条极薄状态行——当前工作一句、文字+色状态、
               去完整 Session 的入口；身份与治理留在标题栏和主 Room。 */}
           <SatelliteStatusline
-            currentWork={conciseParticipantEntry(focusPartner?.currentAction ?? '', '等待新的工作项')}
+            currentWork={conciseParticipantEntry(focusPartner?.currentAction ?? '', '等待新的任务')}
             sessionId={participant.sessionId}
             sessionLabel={`在 Agent 中打开 ${participant.displayName} 的完整 Session`}
             state={focusPartner?.state ?? 'idle'}
@@ -678,7 +685,17 @@ function participantDetailIsRaw(source: string): boolean {
   return /```|(?:^|\s)[{[]\s*["']/u.test(source)
     || /\/(?:Users|Volumes|home|private|tmp|var)\//u.test(source)
     || /\b[a-f\d]{48,}\b/iu.test(source)
-    || /["'](?:path|sha256|payload|metadata)["']\s*:/iu.test(source);
+    || /["'](?:path|sha256|payload|metadata)["']\s*:/iu.test(source)
+    || participantDetailIsTechnicalWall(source);
+}
+
+/** 不含任何中日韩文字、又带着代码痕迹（RLE/AABB 这类缩写、camelCase、
+ * snake_case、`::`、`=>`…）的英文开发日志，对用户就是一堵技术墙：紧凑的
+ * 行星卡里摘要位改说人话，整段进「查看公开原文」，一次点击仍可完整读到。 */
+function participantDetailIsTechnicalWall(source: string): boolean {
+  if (source.length < 30 || /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(source)) return false;
+  return source.length > 90
+    || /\b[A-Z]{2,8}\b|[a-z][A-Z]|\w+_\w+|::|=>|->|\(\)/u.test(source);
 }
 
 function participantToolStatusLabel(status: string): string {
@@ -794,7 +811,7 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
             {!entries.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>{run.state === 'queued' ? '等待开始' : '还没有公开进度'}</span></div> : null}
           </div>
           <SatelliteStatusline
-            currentWork={conciseParticipantEntry(run.task || run.todoTask, '等待新的工作项')}
+            currentWork={conciseParticipantEntry(run.task || run.todoTask, '等待新的任务')}
             sessionId={target.sessionId}
             sessionLabel="在 Agent 中打开所属 Session"
             state={subagentFocusState(run.state)}

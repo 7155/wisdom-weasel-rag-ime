@@ -126,7 +126,7 @@ export function PawWindowLayer() {
           <div aria-hidden="true" className="paw-room-focus-plane" />
           <header aria-label={`${focusedRoomMain?.title || focusedRoomId} Sol 协作聚焦`} className="paw-room-focus-modebar">
             <span><strong>SOL</strong><b>协作聚焦</b></span>
-            <span><i data-status={focusedRoomStatus.key} />{focusedRoomStatus.label} · {focusedRoomNodes.filter((node) => node.target?.kind === 'participant').length} 颗行星窗口</span>
+            <span><i data-status={focusedRoomStatus.key} />{focusedRoomStatus.label} · {focusedRoomNodes.filter((node) => node.target?.kind === 'participant').length} 个伙伴窗口</span>
           </header>
         </> : null}
         {keptRoomIds.map((roomId) => <PawRoomProjectionKeeper key={roomId} roomId={roomId} />)}
