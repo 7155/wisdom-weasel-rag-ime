@@ -25,6 +25,7 @@ class PawBrowserRuntimeTests(unittest.TestCase):
             Path(self.temp.name) / "runtime-profile",
             json_request=self._json_request,
             cdp_request=self._cdp_request,
+            host_request=self._host_request,
         )
 
     def tearDown(self) -> None:
@@ -128,6 +129,38 @@ class PawBrowserRuntimeTests(unittest.TestCase):
         self.assertEqual(typed["targetId"], "A1B2C3D4E5F6")
         self.assertEqual(typed["title"], "PAW docs")
 
+    def test_navigate_creates_the_first_visible_electron_guest_when_no_tab_exists(self) -> None:
+        self.targets = []
+        self.runtime.profile_path.mkdir(parents=True)
+        self.runtime.host_pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        self.runtime.host_origin_file.write_text("http://127.0.0.1:54321\n", encoding="utf-8")
+        self.runtime.host_pid_file.with_suffix(".token").write_text("host-token\n", encoding="utf-8")
+
+        result = self.runtime.execute(
+            9222,
+            "navigate",
+            {"url": "https://example.com/first"},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["targetId"], "VISIBLE-GUEST")
+        self.assertEqual(result["tabId"], self.runtime.tab_id("VISIBLE-GUEST"))
+        self.assertIn(
+            (
+                "host",
+                "POST",
+                {
+                    "url": "http://127.0.0.1:54321/__paw_browser/tabs",
+                    "payload": {"url": "https://example.com/first"},
+                    "token": "host-token",
+                },
+            ),
+            self.calls,
+        )
+        self.assertFalse(
+            any(kind == "json" and "/json/new" in str(params) for kind, _method, params in self.calls)
+        )
+
     def test_screenshot_returns_a_bounded_data_url_and_structured_page(self) -> None:
         result = self.runtime.execute(
             9222,
@@ -176,6 +209,25 @@ class PawBrowserRuntimeTests(unittest.TestCase):
         if method == "Page.captureScreenshot":
             return {"data": "iVBORw0KGgo="}
         return {"result": {"value": True}}
+
+    def _host_request(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, object],
+        token: str,
+    ) -> object:
+        self.calls.append(("host", method, {"url": url, "payload": payload, "token": token}))
+        self.targets.append(
+            {
+                "id": "VISIBLE-GUEST",
+                "type": "webview",
+                "title": "First",
+                "url": str(payload.get("url") or "about:blank"),
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/VISIBLE-GUEST",
+            }
+        )
+        return {"ok": True, "targetId": "VISIBLE-GUEST", "webContentsId": 42}
 
 
 if __name__ == "__main__":

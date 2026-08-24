@@ -22,6 +22,7 @@ class PawBrowserRuntimeError(RuntimeError):
 JsonRequest = Callable[[str, str], object]
 CdpRequest = Callable[[str, str, dict[str, object]], object]
 ListeningPorts = Callable[[int], list[int]]
+HostRequest = Callable[[str, str, dict[str, object], str], object]
 
 
 class PawBrowserRuntime:
@@ -42,6 +43,7 @@ class PawBrowserRuntime:
         json_request: JsonRequest | None = None,
         cdp_request: CdpRequest | None = None,
         listening_ports: ListeningPorts | None = None,
+        host_request: HostRequest | None = None,
     ) -> None:
         self.profile_path = Path(profile_path).expanduser().resolve(strict=False)
         self.port_file = self.profile_path / "DevToolsActivePort"
@@ -51,6 +53,7 @@ class PawBrowserRuntime:
         self._json_request = json_request or self._default_json_request
         self._cdp_request = cdp_request or self._default_cdp_request
         self._listening_ports = listening_ports or self._default_listening_ports
+        self._host_request = host_request or self._default_host_request
 
     def launch_command(self, executable: str | Path) -> list[str]:
         return [
@@ -231,7 +234,11 @@ class PawBrowserRuntime:
             target_id = str(created.get("id") or "")
             return {"ok": True, "summary": "已新建标签页", "targetId": target_id, "tabId": self.tab_id(target_id)}
 
-        target = self._target(port, payload.get("tabId"))
+        target = self._target(
+            port,
+            payload.get("tabId"),
+            create_url=(str(payload.get("url") or "") if action == "navigate" else ""),
+        )
         websocket_url = str(target["webSocketDebuggerUrl"])
         if action == "close_tab":
             # A browser keeps one usable tab after the last tab is closed.  The
@@ -326,8 +333,16 @@ class PawBrowserRuntime:
         value = int(hashlib.sha256(target_id.encode("utf-8")).hexdigest()[:8], 16) & 0x7FFFFFFF
         return value or 1
 
-    def _target(self, port: int, raw_tab_id: object) -> dict[str, object]:
+    def _target(
+        self,
+        port: int,
+        raw_tab_id: object,
+        *,
+        create_url: str = "",
+    ) -> dict[str, object]:
         tabs = self.tabs(port)
+        if not tabs and create_url:
+            return self._create_visible_target(port, create_url)
         if not tabs:
             raise PawBrowserRuntimeError("PAW Browser has no open page")
         if raw_tab_id is None:
@@ -340,6 +355,31 @@ class PawBrowserRuntime:
             if tab["tabId"] == tab_id:
                 return tab
         raise PawBrowserRuntimeError("The selected PAW Browser tab is no longer open")
+
+    def _create_visible_target(self, port: int, url: str) -> dict[str, object]:
+        if not self._live_host_pid():
+            raise PawBrowserRuntimeError("PAW Browser has no open page")
+        try:
+            origin = self.host_origin_file.read_text(encoding="utf-8").strip().rstrip("/")
+            token = self.host_pid_file.with_suffix(".token").read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PawBrowserRuntimeError("PAW Browser visible guest bridge is unavailable") from exc
+        parsed = urlsplit(origin)
+        if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port or not token:
+            raise PawBrowserRuntimeError("PAW Browser visible guest bridge is unavailable")
+        created = self._host_request(
+            "POST",
+            f"{origin}/__paw_browser/tabs",
+            {"url": url},
+            token,
+        )
+        if not isinstance(created, Mapping) or created.get("ok") is not True:
+            raise PawBrowserRuntimeError("PAW Browser did not create a visible guest")
+        target_id = str(created.get("targetId") or "")
+        for tab in self.tabs(port):
+            if str(tab.get("targetId") or "") == target_id:
+                return tab
+        raise PawBrowserRuntimeError("PAW Browser visible guest is not available to Agent control")
 
     def _snapshot(self, websocket_url: str) -> dict[str, object]:
         value = self._evaluate(websocket_url, _SNAPSHOT_EXPRESSION)
@@ -429,6 +469,28 @@ class PawBrowserRuntime:
         with urlopen(request, timeout=2.0) as response:
             payload = response.read(2_000_000)
         return json.loads(payload.decode("utf-8")) if payload else {}
+
+    @staticmethod
+    def _default_host_request(
+        method: str,
+        url: str,
+        payload: dict[str, object],
+        token: str,
+    ) -> object:
+        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = Request(
+            url,
+            data=encoded,
+            method=method,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json; charset=utf-8",
+                "X-PAW-Browser-Token": token,
+            },
+        )
+        with urlopen(request, timeout=10.0) as response:
+            body = response.read(100_000)
+        return json.loads(body.decode("utf-8")) if body else {}
 
     @staticmethod
     def _default_cdp_request(websocket_url: str, method: str, params: dict[str, object]) -> object:
