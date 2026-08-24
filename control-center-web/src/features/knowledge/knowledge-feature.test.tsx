@@ -65,7 +65,7 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('button', { name: '检索' }));
     expect(await screen.findByRole('option', { name: /工具注册/ })).toBeInTheDocument();
     expect(screen.getByText('结果按与你的问题的相关程度排序，建议打开来源核对原文。')).toBeInTheDocument();
-    expect(screen.getByText('高相关')).toBeInTheDocument();
+    expect(screen.getByText('高相关')).toHaveAttribute('data-level', 'high');
     await user.click(screen.getByText('高级：检索详情', { selector: 'summary' }));
     expect(screen.getByText('92 / 100')).toBeInTheDocument();
     expect(screen.getByText('混合检索 · 关键词候选第 1 · 向量候选第 2 · 图谱候选第 1 · 关联 工具、知识整理服务')).toBeInTheDocument();
@@ -278,7 +278,7 @@ describe('document knowledge library', () => {
 
     await user.click(await screen.findByRole('button', { name: '查看 runtime.pdf' }));
     expect(await screen.findByRole('tab', { name: '源文件' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Markdown' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: '正文' })).toHaveAttribute('data-state', 'active');
     expect(screen.getByRole('heading', { name: '伙伴工作循环' })).toBeInTheDocument();
     expect(screen.getByText('图片引用已隔离：远程图')).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: '远程图' })).not.toBeInTheDocument();
@@ -333,7 +333,7 @@ describe('document knowledge library', () => {
 
     await user.click(await screen.findByRole('button', { name: '查看 runtime.pdf' }));
     expect(await screen.findByRole('heading', { name: '第一段' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '继续加载 Markdown' }));
+    await user.click(screen.getByRole('button', { name: '继续加载正文' }));
     expect(await screen.findByRole('heading', { name: '第二段' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '段落' }));
@@ -341,6 +341,63 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('button', { name: '加载更多' }));
     expect(await screen.findByText('第二个片段')).toBeInTheDocument();
     expect(screen.getByText('已加载全部 2 个段落。')).toBeInTheDocument();
+  });
+
+  it('renders the reading outline and scrolls to the picked heading', async () => {
+    const scrollIntoView = vi.spyOn(window.HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => undefined);
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    await user.click(await screen.findByRole('button', { name: '查看 runtime.pdf' }));
+    const outline = await screen.findByRole('navigation', { name: '文档目录' });
+    expect(within(outline).getByText('1 个标题')).toBeInTheDocument();
+    const entry = within(outline).getByRole('button', { name: '伙伴工作循环' });
+    await user.click(entry);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(entry).toHaveAttribute('aria-current', 'location');
+  });
+
+  it('keeps the outline honest about partially loaded content', async () => {
+    const transport = createTransport({ pagedDetail: true });
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    await user.click(await screen.findByRole('button', { name: '查看 runtime.pdf' }));
+    const outline = await screen.findByRole('navigation', { name: '文档目录' });
+    expect(within(outline).getByText('目录来自已加载的 2 / 4 行，继续加载正文后会补全。')).toBeInTheDocument();
+    expect(within(outline).queryByRole('button', { name: '第二段' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '继续加载正文' }));
+    expect(await within(outline).findByRole('button', { name: '第二段' })).toBeInTheDocument();
+    expect(within(outline).queryByText(/目录来自已加载/)).not.toBeInTheDocument();
+  });
+
+  it('caps a drop at 20 files and says how many were left out', async () => {
+    const transport = createTransport();
+    Object.defineProperty(transport, 'kind', { value: 'http' });
+    renderKnowledge(transport);
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    const files = Array.from({ length: 22 }, (_, index) => new File(['x'], `note-${index + 1}.md`, { type: 'text/markdown' }));
+    fireEvent.drop(screen.getByRole('button', { name: '导入文件' }), { dataTransfer: { files } });
+
+    expect(await screen.findByText('一次最多导入 20 个文件：已开始前 20 个，其余 2 个请分批拖入。')).toBeInTheDocument();
+    await waitFor(() => expect(transport.knowledgeImportCalls).toHaveLength(20));
+    expect(transport.knowledgeImportCalls.every((call) => call.maxFiles === 1)).toBe(true);
+    expect(transport.knowledgeImportCalls.flatMap((call) => call.files?.map((file) => file.name) ?? [])).not.toContain('note-21.md');
+  });
+
+  it('says when a drop contains no files instead of ignoring it', async () => {
+    const transport = createTransport();
+    Object.defineProperty(transport, 'kind', { value: 'http' });
+    renderKnowledge(transport);
+
+    expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    fireEvent.drop(screen.getByRole('button', { name: '导入文件' }), { dataTransfer: { files: [] } });
+
+    expect(await screen.findByText('拖入的内容里没有文件；请直接拖动本机文件，或点击导入区选择。')).toBeInTheDocument();
+    expect(transport.knowledgeImportCalls).toHaveLength(0);
   });
 
   it('maps succeeded jobs to completed and exposes task details', async () => {
@@ -635,6 +692,25 @@ describe('document knowledge library', () => {
     expect(screen.getByRole('button', { name: '保存切分设置' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '放弃切分更改' })).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'knowledgeBases.update')).toBe(false);
+  });
+
+  it('shows a cleared basic-info field as 未填写 in the draft and keeps save honest', async () => {
+    const user = userEvent.setup();
+    renderKnowledge(createTransport(), '/knowledge?tab=settings');
+
+    const description = await screen.findByRole('textbox', { name: '说明' });
+    await user.clear(description);
+    const draft = screen.getByText('未保存的更改 · 1 项').closest('.knowledge-settings__draft');
+    if (!(draft instanceof HTMLElement)) throw new Error('基本信息草稿区块未找到');
+    expect(within(draft).getByText('说明')).toBeInTheDocument();
+    expect(within(draft).getByText('只包含外部文档')).toBeInTheDocument();
+    expect(within(draft).getByText('（未填写）')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存基本信息' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: '放弃基本信息更改' }));
+    expect(screen.queryByText(/未保存的更改/)).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '说明' })).toHaveValue('只包含外部文档');
+    expect(screen.getByRole('button', { name: '保存基本信息' })).toBeDisabled();
   });
 
   it('keeps materials stats on library-level truth and marks the selected file row', async () => {

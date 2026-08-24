@@ -40,6 +40,14 @@
   --k-tint-strong: color-mix(in srgb, var(--k-accent) 15%, transparent);
   --k-hairline: color-mix(in srgb, var(--k-ink) 10%, transparent);
   --k-hairline-soft: color-mix(in srgb, var(--k-ink) 6%, transparent);
+
+  /* Catalog layers: two cool (teal/blue support) tints instead of ad-hoc
+     chrome mixes. Deep = rails, tab strips and asides; mid = list heads,
+     filters and expanded rows. Content rows stay on the plain surface, so
+     the catalog reads cold-frame → cool-head → paper-content. */
+  --k-layer-deep: color-mix(in srgb, var(--k-support) 8%, var(--color-chrome));
+  --k-layer-mid: color-mix(in srgb, var(--k-support) 5%, var(--color-surface));
+  --k-cool-hairline: color-mix(in srgb, var(--k-support) 16%, var(--color-border-soft));
 }
 
 .knowledge-feature ::selection { background: color-mix(in srgb, var(--k-accent) 22%, transparent); }
@@ -147,9 +155,9 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   min-width: 0;
   min-height: 100%;
   overflow: visible;
-  border-right: 1px solid var(--color-border-soft);
+  border-right: 1px solid var(--k-cool-hairline);
   border-radius: var(--radius-3) 0 0 var(--radius-3);
-  background: var(--color-chrome);
+  background: var(--k-layer-deep);
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
@@ -412,7 +420,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   gap: 3px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--k-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 55%, var(--color-surface));
+  background: var(--k-layer-deep);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -604,6 +612,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   align-items: center;
   padding: 5px 10px;
   border-bottom: 1px solid var(--k-hairline-soft);
+  background: var(--k-layer-mid);
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 7px;
 }
@@ -628,7 +637,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
 .knowledge-material-list__head {
   padding: 0 10px;
   border-bottom: 1px solid var(--k-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 40%, var(--color-surface));
+  background: var(--k-layer-mid);
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-weight: var(--font-weight-semibold);
@@ -693,7 +702,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   min-width: 0;
   padding: var(--space-3) var(--space-4);
   align-self: stretch;
-  background: color-mix(in srgb, var(--color-chrome) 32%, var(--color-surface));
+  background: var(--k-layer-mid);
 }
 
 .knowledge-document-summary > header {
@@ -822,10 +831,13 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   margin: var(--space-2) auto;
   padding: 2px;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--color-chrome) 72%, var(--color-surface));
+  background: var(--k-layer-deep);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.knowledge-document-tabs [role='tab'] { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.knowledge-document-tabs > [role='tablist']::-webkit-scrollbar { display: none; }
+.knowledge-document-tabs [role='tab'] { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 5px; white-space: nowrap; }
 .knowledge-document-tabs > [role='tabpanel'] { min-height: 0; overflow: auto; }
 
 .knowledge-source-frame {
@@ -852,6 +864,100 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
 
 .knowledge-source-fallback strong { font-size: 13px; }
 .knowledge-source-fallback a { color: var(--k-accent); font-size: 13px; }
+
+/* Reading desk: the 目录 rail sits beside the paper sheet and stays sticky
+   inside the single scroll owner (the active tab panel). It never becomes a
+   second scroll chain for the document itself — only the outline list clips. */
+.knowledge-reading-desk {
+  display: grid;
+  height: auto;
+  min-height: 100%;
+  align-content: start;
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.knowledge-reading-desk[data-has-outline] { grid-template-columns: minmax(168px, 220px) minmax(0, 1fr); }
+
+.knowledge-reading-outline {
+  position: sticky;
+  top: var(--space-3);
+  display: grid;
+  overflow: hidden;
+  max-height: min(70dvh, 640px);
+  border: 1px solid var(--k-cool-hairline);
+  border-radius: 10px;
+  background: var(--k-layer-mid);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.knowledge-reading-outline > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--k-hairline-soft);
+  gap: 8px;
+}
+
+.knowledge-reading-outline > header strong { font-size: 13px; }
+.knowledge-reading-outline > header span { color: var(--color-text-tertiary); font-size: 12px; white-space: nowrap; }
+.knowledge-reading-outline ol {
+  display: grid;
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  gap: 1px;
+  list-style: none;
+}
+
+.knowledge-reading-outline button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-align: left;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.knowledge-reading-outline li[data-level='2'] button { padding-left: 20px; }
+.knowledge-reading-outline li[data-level='3'] button { padding-left: 32px; }
+.knowledge-reading-outline li[data-level='4'] button { padding-left: 44px; }
+.knowledge-reading-outline button:hover { background: var(--color-surface-hover); color: var(--k-ink); }
+.knowledge-reading-outline button[aria-current='location'] {
+  background: var(--k-tint);
+  color: color-mix(in srgb, var(--k-accent) 88%, var(--k-ink));
+  font-weight: var(--font-weight-semibold);
+}
+
+.knowledge-reading-outline > p {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--k-hairline-soft);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Reading is also copying: sources must stay selectable even where the OS
+   shell chrome disables selection. */
+.knowledge-markdown-body,
+.knowledge-page-preview article p,
+.knowledge-chunk-grid p,
+.knowledge-search__detail > p {
+  -webkit-user-select: text;
+  user-select: text;
+}
 
 /* Readers grow with content; the focusable tab panel above them owns the
    scroll, so wheel, trackpad, and keyboard all reach the end of the document.
@@ -931,7 +1037,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   align-content: start;
   padding: var(--space-3) max(var(--space-3), 4vw);
   overflow: visible;
-  background: color-mix(in srgb, var(--color-chrome) 40%, var(--color-surface));
+  background: var(--k-layer-mid);
   gap: var(--space-3);
 }
 
@@ -1145,7 +1251,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
 .knowledge-search__list {
   min-width: 0;
   border-right: 1px solid var(--k-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 40%, var(--color-surface));
+  background: var(--k-layer-mid);
 }
 
 .knowledge-search__list button {
@@ -1295,7 +1401,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   align-items: center;
   padding: 8px var(--space-3);
   border-bottom: 1px solid var(--k-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 45%, var(--color-surface));
+  background: var(--k-layer-mid);
   gap: var(--space-3);
 }
 
@@ -1377,7 +1483,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   justify-content: space-between;
   padding: 9px var(--space-3);
   border-bottom: 1px solid var(--k-hairline);
-  background: color-mix(in srgb, var(--color-chrome) 45%, var(--color-surface));
+  background: var(--k-layer-mid);
   font-size: 13px;
 }
 
@@ -1571,7 +1677,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
 }
 
 .knowledge-job-list article:last-child { border-bottom: 0; }
-.knowledge-job-list article[data-expanded] { background: color-mix(in srgb, var(--color-chrome) 36%, var(--color-surface)); }
+.knowledge-job-list article[data-expanded] { background: var(--k-layer-mid); }
 .knowledge-job-list__icon {
   display: grid;
   width: 28px;
@@ -1659,7 +1765,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   align-content: start;
   padding: var(--space-4);
   border-right: 1px solid var(--k-hairline-soft);
-  background: color-mix(in srgb, var(--color-chrome) 28%, var(--color-surface));
+  background: var(--k-layer-mid);
   gap: var(--space-3);
 }
 
@@ -1727,7 +1833,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   justify-content: space-between;
   padding: 9px 10px;
   border-bottom: 1px solid var(--k-hairline-soft);
-  background: color-mix(in srgb, var(--color-chrome) 40%, var(--color-surface));
+  background: var(--k-layer-mid);
 }
 
 .knowledge-chunk-preview > header strong { font-size: 13px; }
@@ -1779,6 +1885,10 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   .knowledge-material-workspace { grid-template-columns: 1fr; }
   .knowledge-material-list { min-height: 360px; border-right: 0; border-bottom: 1px solid var(--k-hairline); }
   .knowledge-document-summary { min-height: 260px; }
+
+  /* The 目录 folds above the sheet instead of squeezing the reading column. */
+  .knowledge-reading-desk[data-has-outline] { grid-template-columns: minmax(0, 1fr); }
+  .knowledge-reading-outline { position: static; max-height: 236px; }
 }
 
 @media (max-width: 980px) {
@@ -1907,6 +2017,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   .knowledge-material-stats > div:first-child { padding-left: 0; }
   .knowledge-image-grid,
   .knowledge-asset-list { grid-template-columns: 1fr; }
+  .knowledge-dropzone { min-height: 96px; flex-direction: column; text-align: center; }
   .knowledge-upload-queue article { grid-template-columns: 22px minmax(0, 1fr) auto; }
   .knowledge-upload-queue article > .ui-icon-button { grid-column: 3; }
   .knowledge-job-detail { grid-column: 1 / -1; }
@@ -1976,14 +2087,18 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-view
   min-height: 54px;
   align-items: end;
   padding: 8px 16px;
-  background: color-mix(in srgb, var(--color-chrome) 40%, var(--color-surface));
+  background: var(--k-layer-mid);
 }
 
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph { min-height: 100%; padding: 0; }
 
+/* The window viewer removes panel padding, so the desk carries its own
+   gutters; the sheet then fills its reading column. */
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-reading-desk { padding: var(--space-3) 16px 28px; }
+
 /* The reading sheet stays true paper white inside the light PAWOS window. */
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-markdown-preview {
-  width: min(780px, calc(100% - 32px));
+  width: min(780px, 100%);
   border-width: 0;
   background: #fff;
 }
@@ -2031,7 +2146,9 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
   padding: 2px;
   border: 0;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--color-chrome) 72%, var(--color-surface));
+  background: var(--k-layer-deep);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'] {
@@ -2070,6 +2187,8 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list,
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__list { border-right: 0; border-bottom: 1px solid var(--k-hairline); }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__form { grid-template-columns: minmax(0, 1fr) auto; }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-reading-desk[data-has-outline] { grid-template-columns: minmax(0, 1fr); }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-reading-outline { position: static; max-height: 236px; }
 }
 
 @container knowledge-library (max-width: 560px) {
@@ -2084,10 +2203,14 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-fields,
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-fields--chunking,
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-chunk-grid { grid-template-columns: minmax(0, 1fr); }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__bar { align-items: stretch; flex-direction: column; }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__back { align-self: flex-start; }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__bar label { min-width: 0; margin-right: 0; }
 }
 
 @container knowledge-library (max-width: 460px) {
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list__head { display: none; }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-dropzone { min-height: 96px; flex-direction: column; text-align: center; }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row { grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row__select { grid-column: 1 / -1; }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row__chunks { display: none; }
