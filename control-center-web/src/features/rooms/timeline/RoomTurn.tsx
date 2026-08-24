@@ -1033,6 +1033,7 @@ function ActivityLog({
         />;
       }
       const description = describeRoomActivity(activity, participantName);
+      const provenance = roomActivityProvenanceLabel(activity);
       const waitDetails = displayStatus === 'waiting'
         ? roomActivityWaitDetails(activity, description.detail)
         : null;
@@ -1053,7 +1054,7 @@ function ActivityLog({
                 : <CheckCircle2 size={14} />}
         <span>
           <strong>{description.title}</strong>
-          <small><span className="room-activity-provenance">{roomActivityProvenanceLabel(activity)}</span> · {description.detail} · <RoomActivityTimestamp activity={activity} /></small>
+          <small><span className="room-activity-provenance" data-dispatch={provenance === '任务分派' || undefined}>{provenance}</span> · {description.detail} · <RoomActivityTimestamp activity={activity} /></small>
           {waitDetails ? <small className="room-agent-activity__wait-details">
             <b>等待原因：</b>{waitDetails.reason}<br />
             <b>恢复条件：</b>{waitDetails.recovery}
@@ -1678,10 +1679,15 @@ function roomTurnOutcome(
   };
 }
 
-function roomActivityProvenanceLabel(activity: RoomActivityProjection): '进度更新' | '伙伴沟通' | '运行记录' {
+function roomActivityProvenanceLabel(activity: RoomActivityProjection): '进度更新' | '伙伴沟通' | '任务分派' | '运行记录' {
   const sourceEventType = textValue(activity.payload.sourceEventType);
   const activityKind = textValue(activity.payload.activityKind);
   if (activityKind === 'intercom') return '伙伴沟通';
+  /* PF-CM-012/UR-057: a real dispatch is a first-class ledger entry, named the
+   * same way the flow ledger names it — never buried as a generic run record. */
+  if ([activity.kind, sourceEventType, activityKind].some((signal) => (
+    ['dispatch', 'route', 'route_decision'].includes(signal)
+  ))) return '任务分派';
   if (['current_progress', 'progress'].includes(sourceEventType) || activityKind === 'work') {
     return '进度更新';
   }
