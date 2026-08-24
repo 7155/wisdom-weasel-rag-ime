@@ -48,6 +48,15 @@ import {
 } from 'react-zoom-pan-pinch';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { createRoomIslandGeometry } from './island-geometry';
+import {
+  deliveryDocumentLabel,
+  deliveryStageLabel,
+  projectFieldDocumentContracts,
+  projectFieldDocumentDetail,
+  type ProjectDocumentContracts,
+  type ProjectDocumentDetail,
+  type ProjectDocumentEntry,
+} from './project-documents';
 import { projectFieldZoomProjection } from './semantic-zoom';
 import {
   projectFieldProjects,
@@ -151,18 +160,6 @@ export function projectFieldCameraCenterXForViewport(
   if (currentRoomScreenCenter <= rightmostReadableCenter) return camera.centerX;
 
   return camera.centerX + (currentRoomScreenCenter - rightmostReadableCenter) / scale;
-}
-
-function deliveryStageLabel(stageId: string, deliveryState: ProjectWayfinderRoom['deliveryState']): string {
-  if (deliveryState === 'accepted') return '已验收';
-  switch (stageId) {
-    case 'alignment-and-decision': return '对齐中';
-    case 'implementation-planning': return '规划中';
-    case 'implementation-execution': return '实现中';
-    case 'quality-gate': return '待真实验收';
-    case 'independent-review': return '独立复核中';
-    default: return stageId;
-  }
 }
 
 export function projectFieldText(value: string): string {
@@ -294,6 +291,8 @@ export function ProjectFieldFeature() {
   const [routeProposal, setRouteProposal] = useState<RouteProposal | null>(null);
   const [pendingRequirement, setPendingRequirement] = useState<string | null>(null);
   const [attentionOpen, setAttentionOpen] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [selectedDocumentRef, setSelectedDocumentRef] = useState<string | null>(null);
   const [roomMessages, setRoomMessages] = useState<Record<string, Record<string, string>>>({});
   const [undoRoute, setUndoRoute] = useState<UndoRoute | null>(null);
   const [liveMessage, setLiveMessage] = useState('');
@@ -303,6 +302,9 @@ export function ProjectFieldFeature() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const navigatorInputRef = useRef<HTMLInputElement>(null);
   const focusedWorkspaceRef = useRef<HTMLElement>(null);
+  const documentsPanelRef = useRef<HTMLElement>(null);
+  const documentsToggleRef = useRef<HTMLButtonElement>(null);
+  const documentsReturnFocusRef = useRef<HTMLElement | null>(null);
   const previousFocusedRoomRef = useRef<string | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -335,6 +337,13 @@ export function ProjectFieldFeature() {
       .flatMap((edge) => [edge.from, edge.to]));
   }, [focusedRoom, project.edges]);
   const routeDistances = useMemo(() => courseDistances(project), [project]);
+  const documentContracts = useMemo(() => projectFieldDocumentContracts(project), [project]);
+  const documentDetail = useMemo(
+    () => (selectedDocumentRef ? projectFieldDocumentDetail(project, selectedDocumentRef) : null),
+    [project, selectedDocumentRef],
+  );
+  const currentRoomDocumentRef = project.wayfinder?.rooms
+    .find((room) => room.roomId === project.wayfinder?.currentRoomId)?.documentRef ?? null;
 
   const roomsWithEffectivePhase = useMemo(() => project.rooms.map((room) => ({
     room,
@@ -427,6 +436,31 @@ export function ProjectFieldFeature() {
     setViewportInteracted(false);
   }, []);
 
+  const openDocuments = useCallback((ref?: string | null) => {
+    documentsReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setSelectedDocumentRef(ref ?? currentRoomDocumentRef);
+    setDocumentsOpen(true);
+    setSearchOpen(false);
+    setSearchQuery('');
+    setAttentionOpen(false);
+    setRouteProposal(null);
+  }, [currentRoomDocumentRef]);
+
+  const closeDocuments = useCallback((restoreFocus = true) => {
+    setDocumentsOpen(false);
+    const returnFocus = documentsReturnFocusRef.current;
+    documentsReturnFocusRef.current = null;
+    if (!restoreFocus) return;
+    window.setTimeout(() => {
+      const target = returnFocus && returnFocus.isConnected
+        ? returnFocus
+        : documentsToggleRef.current;
+      target?.focus({ preventScroll: true });
+    }, 0);
+  }, []);
+
   useEffect(() => {
     window.localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify(projectStates));
   }, [projectStates]);
@@ -461,7 +495,9 @@ export function ProjectFieldFeature() {
         return;
       }
       if (event.key !== 'Escape') return;
-      if (routeProposal) {
+      if (documentsOpen) {
+        closeDocuments();
+      } else if (routeProposal) {
         setRouteProposal(null);
       } else if (searchOpen) {
         setSearchOpen(false);
@@ -480,7 +516,12 @@ export function ProjectFieldFeature() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [attentionOpen, focusedRoom, project.id, routeProposal, searchOpen, searchQuery]);
+  }, [attentionOpen, closeDocuments, documentsOpen, focusedRoom, project.id, routeProposal, searchOpen, searchQuery]);
+
+  useEffect(() => {
+    if (!documentsOpen) return;
+    window.setTimeout(() => documentsPanelRef.current?.focus({ preventScroll: true }), 0);
+  }, [documentsOpen]);
 
   useEffect(() => {
     const previous = previousFocusedRoomRef.current;
@@ -511,7 +552,8 @@ export function ProjectFieldFeature() {
     setSearchQuery('');
     setRouteProposal(null);
     setAttentionOpen(false);
-  }, [updateProjectState]);
+    closeDocuments(false);
+  }, [closeDocuments, updateProjectState]);
 
   const leaveRoomFocus = useCallback(() => {
     updateProjectState((state) => ({ ...state, focusedRoomId: null }));
@@ -523,6 +565,8 @@ export function ProjectFieldFeature() {
     setSearchQuery('');
     setRouteProposal(null);
     setAttentionOpen(false);
+    setDocumentsOpen(false);
+    setSelectedDocumentRef(null);
     setUndoRoute(null);
     setPendingRequirement(null);
     setViewportInteracted(false);
@@ -584,6 +628,22 @@ export function ProjectFieldFeature() {
     ? project.rooms.find((room) => room.id === routeProposal.roomId) ?? null
     : null;
 
+  const openProjectWorkbench = pawOsDesktop ? () => pawOsDesktop.openWindow({
+    appId: 'project-workbench',
+    target: {
+      kind: 'project',
+      id: project.id,
+      title: projectFieldText(project.compactTitle ?? project.name),
+      subtitle: projectFieldText(project.heading),
+    },
+  }) : undefined;
+
+  const openWorkbenchFromProposal = openProjectWorkbench ? () => {
+    openProjectWorkbench();
+    setRouteProposal(null);
+    setLiveMessage('已打开项目工作台窗口，可在那里真实安排任务。');
+  } : undefined;
+
   return (
     <main className="project-field" data-route-id="project-field">
       <h1 className="project-field__sr-only">{projectFieldText(project.compactTitle ?? project.name)} 项目场</h1>
@@ -610,15 +670,13 @@ export function ProjectFieldFeature() {
             setSearchOpen(true);
             window.requestAnimationFrame(() => searchInputRef.current?.focus());
           }}
-          onOpenProject={pawOsDesktop ? () => pawOsDesktop.openWindow({
-            appId: 'project-workbench',
-            target: {
-              kind: 'project',
-              id: project.id,
-              title: projectFieldText(project.compactTitle ?? project.name),
-              subtitle: projectFieldText(project.heading),
-            },
-          }) : undefined}
+          onOpenProject={openProjectWorkbench}
+          documentsOpen={documentsOpen}
+          documentsToggleRef={documentsToggleRef}
+          onOpenDocuments={documentContracts ? () => {
+            if (documentsOpen) closeDocuments();
+            else openDocuments();
+          } : undefined}
           onSearch={setSearchQuery}
           onSelectRoom={focusRoom}
           project={project}
@@ -639,7 +697,7 @@ export function ProjectFieldFeature() {
             if (didPanRef.current) return;
             if (!focusedRoom) return;
             const target = event.target;
-            if (!(target instanceof Element) || !target.closest('button, input, textarea, .room-focus')) {
+            if (!(target instanceof Element) || !target.closest('button, input, textarea, .room-focus, .project-documents')) {
               leaveRoomFocus();
             }
           }}
@@ -768,10 +826,23 @@ export function ProjectFieldFeature() {
             <RoomFocusPanel
               message={roomMessages[project.id]?.[focusedRoom.id]}
               onClose={leaveRoomFocus}
+              onOpenDocument={documentContracts ? openDocuments : undefined}
               projectWayfinder={project.wayfinder}
               room={focusedRoom}
               wayfinder={wayfinderRooms.get(focusedRoom.id)}
               workspaceRef={focusedWorkspaceRef}
+            />
+          ) : null}
+
+          {documentsOpen && documentContracts ? (
+            <ProjectDocumentsPanel
+              contracts={documentContracts}
+              detail={documentDetail}
+              onClose={() => closeDocuments()}
+              onOpenRoom={focusRoom}
+              onSelect={setSelectedDocumentRef}
+              panelRef={documentsPanelRef}
+              selectedRef={selectedDocumentRef}
             />
           ) : null}
 
@@ -801,6 +872,7 @@ export function ProjectFieldFeature() {
               onAcceptRoute={acceptRoute}
               onKeepPending={keepAsPendingRequirement}
               onDismissProposal={() => setRouteProposal(null)}
+              onOpenWorkbench={openWorkbenchFromProposal}
             />
           ) : null}
 
@@ -879,10 +951,13 @@ function ProjectRail({
 
 function FieldHeader({
   attentionCount,
+  documentsOpen,
+  documentsToggleRef,
   onAttention,
   onClearSearch,
   onDismissSearch,
   onFocusSearch,
+  onOpenDocuments,
   onOpenSearch,
   onOpenProject,
   onSearch,
@@ -894,10 +969,13 @@ function FieldHeader({
   searchResults,
 }: {
   attentionCount: number;
+  documentsOpen: boolean;
+  documentsToggleRef: React.RefObject<HTMLButtonElement | null>;
   onAttention: () => void;
   onClearSearch: () => void;
   onDismissSearch: () => void;
   onFocusSearch: () => void;
+  onOpenDocuments?: () => void;
   onOpenSearch: () => void;
   onOpenProject?: () => void;
   onSearch: (query: string) => void;
@@ -971,6 +1049,20 @@ function FieldHeader({
         ) : null}
       </div>
       <div className="project-field__header-actions">
+        {onOpenDocuments ? (
+          <button
+            aria-expanded={documentsOpen}
+            aria-haspopup="dialog"
+            aria-label="打开项目工作文档"
+            className="project-field__icon-button project-field__documents-toggle"
+            onClick={onOpenDocuments}
+            ref={documentsToggleRef}
+            title="项目工作文档"
+            type="button"
+          >
+            <FileText size={16} aria-hidden="true" />
+          </button>
+        ) : null}
         {onOpenProject ? (
           <button
             aria-label="在独立窗口中打开当前项目"
@@ -1254,20 +1346,6 @@ function sourceProviderLabel(source: ProjectRoomSource): string {
   return '项目文档';
 }
 
-function deliveryDocumentLabel(ref: string): string {
-  const filename = ref.split('/').at(-1) ?? ref;
-  const labels: Record<string, string> = {
-    'project-field.md': '项目图谱说明',
-    '01-alignment-decision-packet.md': '需求对齐记录',
-    '02-implementation-plan.md': '实现规划',
-    '03-work-document.md': '当前交付说明',
-    '04-quality-gate-pending.md': '质量检查（待完成）',
-    '05-independent-review-pending.md': '独立复核（待完成）',
-    '06-current-agent-handoff.md': '当前交接说明',
-  };
-  return labels[filename] ?? filename.replace(/\.md$/i, '').replace(/[-_]+/g, ' ');
-}
-
 function RoomSourceIcon({ source }: { source: ProjectRoomSource }) {
   if (source.kind === 'agent-session') return <MessageSquareText size={14} aria-hidden="true" />;
   if (source.kind === 'git-commit') return <GitCommitHorizontal size={14} aria-hidden="true" />;
@@ -1300,11 +1378,13 @@ function RoomSources({ room }: { room: ProjectRoom }) {
 
 function WayfinderRoomBody({
   message,
+  onOpenDocument,
   projectWayfinder,
   room,
   wayfinder,
 }: {
   message?: string;
+  onOpenDocument?: (ref: string) => void;
   projectWayfinder: ProjectWayfinderProjection;
   room: ProjectRoom;
   wayfinder: ProjectWayfinderRoom;
@@ -1405,11 +1485,31 @@ function WayfinderRoomBody({
       <section className="wayfinder-room__evidence" aria-label="交付文档与需求来源">
         <section aria-label="交付文档">
           <strong>交付文档</strong>
-          <ul>
-            {[wayfinder.documentRef, ...wayfinder.detailDocumentRefs].map((ref) => (
-              <li key={ref}><FileText size={13} aria-hidden="true" /><span>{projectFieldText(deliveryDocumentLabel(ref))}</span></li>
-            ))}
-          </ul>
+          {onOpenDocument ? (
+            <button
+              className="wayfinder-room__document-open"
+              onClick={() => onOpenDocument(wayfinder.documentRef)}
+              type="button"
+            >
+              <FileText size={14} aria-hidden="true" />
+              <span>
+                <b>{projectFieldText(deliveryDocumentLabel(wayfinder.documentRef))}</b>
+                <small>语义、契约与来源回执</small>
+              </span>
+              <ChevronRight size={13} aria-hidden="true" />
+            </button>
+          ) : (
+            <ul>
+              <li><FileText size={13} aria-hidden="true" /><span>{projectFieldText(deliveryDocumentLabel(wayfinder.documentRef))}</span></li>
+            </ul>
+          )}
+          {wayfinder.detailDocumentRefs.length ? (
+            <ul>
+              {wayfinder.detailDocumentRefs.map((ref) => (
+                <li key={ref}><FileText size={13} aria-hidden="true" /><span>{projectFieldText(deliveryDocumentLabel(ref))}</span></li>
+              ))}
+            </ul>
+          ) : null}
         </section>
         <RoomSources room={room} />
       </section>
@@ -1560,6 +1660,7 @@ function RoomLandmark({
 function RoomFocusPanel({
   message,
   onClose,
+  onOpenDocument,
   projectWayfinder,
   room,
   wayfinder,
@@ -1567,6 +1668,7 @@ function RoomFocusPanel({
 }: {
   message?: string;
   onClose: () => void;
+  onOpenDocument?: (ref: string) => void;
   projectWayfinder?: ProjectWayfinderProjection;
   room: ProjectRoom;
   wayfinder?: ProjectWayfinderRoom;
@@ -1585,7 +1687,13 @@ function RoomFocusPanel({
       </header>
       <div className="room-focus__body">
         {wayfinder && projectWayfinder ? (
-          <WayfinderRoomBody message={message} projectWayfinder={projectWayfinder} room={room} wayfinder={wayfinder} />
+          <WayfinderRoomBody
+            message={message}
+            onOpenDocument={onOpenDocument}
+            projectWayfinder={projectWayfinder}
+            room={room}
+            wayfinder={wayfinder}
+          />
         ) : (
           <>
             <h2>{projectFieldText(room.title)}</h2>
@@ -1699,6 +1807,7 @@ function NavigatorBar({
   onChange,
   onDismissProposal,
   onKeepPending,
+  onOpenWorkbench,
   onSubmit,
   proposalQuery,
   proposalRoom,
@@ -1709,6 +1818,7 @@ function NavigatorBar({
   onChange: (value: string) => void;
   onDismissProposal: () => void;
   onKeepPending: () => void;
+  onOpenWorkbench?: () => void;
   onSubmit: (event: FormEvent) => void;
   proposalQuery: string;
   proposalRoom: ProjectRoom | null;
@@ -1731,6 +1841,13 @@ function NavigatorBar({
             <button className="project-navigator__secondary" onClick={onKeepPending} type="button">保留为待整理目标</button>
             <button className="project-navigator__primary" onClick={onAcceptRoute} type="button">预览归入这里<CornerDownLeft size={14} /></button>
           </div>
+          {onOpenWorkbench ? (
+            <button className="project-navigator__workbench" onClick={onOpenWorkbench} type="button">
+              <PanelsTopLeft size={13} aria-hidden="true" />
+              <span>要真实安排任务，打开项目工作台</span>
+              <ArrowRight size={13} aria-hidden="true" />
+            </button>
+          ) : null}
         </section>
       ) : null}
       <form className="project-navigator__bar" onSubmit={onSubmit}>
@@ -1746,6 +1863,182 @@ function NavigatorBar({
         <button aria-label="预览合适目标" disabled={!query.trim()} type="submit"><ArrowRight size={17} /></button>
       </form>
     </div>
+  );
+}
+
+function DocumentRoleIcon({ role }: { role: ProjectDocumentEntry['role'] }) {
+  const props = { 'aria-hidden': true, size: 14 } as const;
+  if (role === 'map') return <MapIcon {...props} />;
+  if (role === 'initial-vision') return <Rocket {...props} />;
+  if (role === 'destination') return <Flag {...props} />;
+  return <FileText {...props} />;
+}
+
+function ProjectDocumentsPanel({
+  contracts,
+  detail,
+  onClose,
+  onOpenRoom,
+  onSelect,
+  panelRef,
+  selectedRef,
+}: {
+  contracts: ProjectDocumentContracts;
+  detail: ProjectDocumentDetail | null;
+  onClose: () => void;
+  onOpenRoom: (roomId: string) => void;
+  onSelect: (ref: string | null) => void;
+  panelRef: React.RefObject<HTMLElement | null>;
+  selectedRef: string | null;
+}) {
+  const detailRoomId = detail?.entry.roomId ?? null;
+  return (
+    <aside
+      aria-label="项目工作文档"
+      className="project-documents"
+      ref={panelRef}
+      role="dialog"
+      tabIndex={-1}
+    >
+      <header className="project-documents__header">
+        <div>
+          <span><FileText size={14} aria-hidden="true" />项目工作文档</span>
+          <strong>{contracts.documentCount} 份有契约的文档</strong>
+        </div>
+        <button aria-label="关闭项目工作文档" onClick={onClose} type="button"><X size={17} /></button>
+      </header>
+      <p className="project-documents__note">
+        文档语义来自已核验的本机资料投影；路径、内容指纹与来源回执用于对照真实仓库。这里只阅读，不修改文档。
+      </p>
+      <div className="project-documents__layout" data-view={detail ? 'detail' : 'index'}>
+        <nav aria-label="文档目录" className="project-documents__index">
+          {contracts.groups.map((group) => (
+            <section key={group.id}>
+              <h3>{group.label}</h3>
+              {group.entries.map((entry) => (
+                <button
+                  aria-current={entry.ref === selectedRef ? 'true' : undefined}
+                  key={entry.ref}
+                  onClick={() => onSelect(entry.ref)}
+                  type="button"
+                >
+                  <i aria-hidden="true"><DocumentRoleIcon role={entry.role} /></i>
+                  <span>
+                    <strong>{projectFieldText(entry.title)}</strong>
+                    <small>{entry.ref}</small>
+                  </span>
+                  {entry.stageLabel ? <em>{projectFieldText(entry.stageLabel)}</em> : null}
+                </button>
+              ))}
+            </section>
+          ))}
+        </nav>
+        <article aria-label="文档内容" className="project-documents__reader">
+          {detail ? (
+            <>
+              <header className="project-documents__reader-head">
+                <button
+                  aria-label="返回文档目录"
+                  className="project-documents__back"
+                  onClick={() => onSelect(null)}
+                  type="button"
+                >
+                  <Undo2 size={13} aria-hidden="true" />目录
+                </button>
+                <span className="project-documents__role">
+                  {detail.entry.roleLabel}
+                  {detail.entry.current ? <b>当前协作目标</b> : null}
+                </span>
+                <h4>{projectFieldText(detail.entry.title)}</h4>
+                <p>{projectFieldText(detail.purpose)}</p>
+              </header>
+              <div className="project-documents__sections">
+                {detail.sections.map((section) => (
+                  <section aria-label={section.label} key={section.label}>
+                    <header>
+                      <span>{section.label}</span>
+                      {'note' in section && section.note ? <small>{projectFieldText(section.note)}</small> : null}
+                    </header>
+                    {section.kind === 'statement' ? <p>{projectFieldText(section.body)}</p> : null}
+                    {section.kind === 'list' ? (
+                      <ul>
+                        {section.items.map((item) => (
+                          <li data-state={item.state} key={item.label}>
+                            {item.state === 'verified'
+                              ? <Check size={13} aria-hidden="true" />
+                              : item.state === 'pending'
+                                ? <CircleHelp size={13} aria-hidden="true" />
+                                : <i aria-hidden="true" />}
+                            <span>{projectFieldText(item.label)}</span>
+                            {item.state ? <em>{item.state === 'verified' ? '已核验' : '待核验'}</em> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {section.kind === 'stage-files' ? (
+                      <ul data-kind="stage-files">
+                        {section.items.map((item) => (
+                          <li key={item.ref}>
+                            <FileText size={13} aria-hidden="true" />
+                            <span>{projectFieldText(item.label)}</span>
+                            <code>{item.ref}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </section>
+                ))}
+              </div>
+              {detailRoomId ? (
+                <button
+                  className="project-documents__goal"
+                  onClick={() => onOpenRoom(detailRoomId)}
+                  type="button"
+                >
+                  在项目场查看该目标<ChevronRight size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+              <section aria-label="契约与来源" className="project-documents__authority">
+                <header>
+                  <span><ShieldCheck size={13} aria-hidden="true" />契约与来源</span>
+                  <small>仓库状态，与文档语义分开陈述</small>
+                </header>
+                <dl>
+                  <div><dt>文档路径</dt><dd>{detail.entry.ref}</dd></div>
+                  <div><dt>内容指纹</dt><dd title={detail.entry.sha256}>SHA-256 · {detail.entry.sha256.slice(0, 12)}…</dd></div>
+                </dl>
+                <ul>
+                  {detail.sources.map((source) => (
+                    <li data-authority={source.authority} key={source.id}>
+                      <i aria-hidden="true"><RoomSourceIcon source={source} /></i>
+                      <span>
+                        <strong>{projectFieldText(source.label)}</strong>
+                        <small>{projectFieldText(source.detail)}</small>
+                      </span>
+                      <em>{projectFieldText(sourceProviderLabel(source))} · {projectFieldText(sourceRoleLabel(source))} · {source.observedAt.slice(5)}</em>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </>
+          ) : (
+            <div className="project-documents__empty">
+              <FileText size={18} aria-hidden="true" />
+              <p>从目录选择一份文档，阅读语义、契约与来源。</p>
+            </div>
+          )}
+        </article>
+      </div>
+      <footer className="project-documents__provenance">
+        <span><GitCommitHorizontal size={13} aria-hidden="true" />资料快照</span>
+        <small>
+          {contracts.provenance.generatedAt ? `生成于 ${contracts.provenance.generatedAt.slice(0, 10)} · ` : ''}
+          {contracts.provenance.gitHead ? `git ${contracts.provenance.gitHead.slice(0, 10)} · ` : ''}
+          {contracts.provenance.dirtyAtCuration ? '整理时工作区有未提交改动 · ' : ''}
+          {contracts.provenance.sourceCount} 项来源回执
+        </small>
+      </footer>
+    </aside>
   );
 }
 
