@@ -14,7 +14,7 @@
    - Narrow behaviour lives in `@container paw-files (...)` queries, never
      `@media`, because the App reflows with its window, not the viewport.
    - The shared code/diff/plain readers own the `--color-code-bg` /
-     `--color-code-text` pair; no `.agent-file-code` block here may repaint it.
+     `--color-code-text` pair; no block here may repaint that code surface.
    - `paw-os.css` re-points the `--color-*` tokens per window
      (`.paw-window-shell[data-app='files'] …`) and repaints `.paw-files-tree`;
      `paw-os-motion.css` owns arrival motion for the reader/state surfaces.
