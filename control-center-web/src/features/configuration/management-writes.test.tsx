@@ -73,6 +73,33 @@ describe('Configuration settings WorkContract UI', () => {
     await waitFor(() => expect(transport.settingsReads).toBeGreaterThanOrEqual(3));
   });
 
+  it('states consequences before saving and keeps drafts visible and discardable', async () => {
+    const user = userEvent.setup();
+    renderConfiguration(true);
+    await screen.findByRole('heading', { name: '设置', level: 1 });
+    await user.click(await screen.findByRole('button', { name: /^上下文/ }));
+
+    const input = await screen.findByRole('spinbutton', { name: '上下文容量' });
+    expect(screen.getByText('保存后需重启本机补全服务')).toBeInTheDocument();
+    expect(screen.getByText('没有未保存的更改')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '放弃更改' })).not.toBeInTheDocument();
+    const row = input.closest('.mgmt-list__row');
+    expect(row).not.toHaveAttribute('data-changed');
+
+    await user.clear(input);
+    await user.type(input, '4096');
+    expect(row).toHaveAttribute('data-changed');
+    expect(screen.getByText('共 1 项未保存')).toBeInTheDocument();
+    expect(screen.getByLabelText('1 项未保存')).toBeInTheDocument();
+    expect(screen.getByText('这 1 项更改保存后不会立即生效（重启本机补全服务）。')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '放弃更改' }));
+    expect(input).toHaveValue(2048);
+    expect(row).not.toHaveAttribute('data-changed');
+    expect(screen.getByText('没有未保存的更改')).toBeInTheDocument();
+    expect(screen.queryByLabelText('1 项未保存')).not.toBeInTheDocument();
+  });
+
   it('fails closed when the settings WorkContract capability is absent', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(false);

@@ -2,6 +2,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ClipboardCopy,
   Copy,
   File,
   FileCode2,
@@ -10,6 +11,7 @@ import {
   FolderOpen,
   LoaderCircle,
   RefreshCw,
+  Search,
   TriangleAlert,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
@@ -62,6 +64,8 @@ export function PawOsFilesApp() {
   const [previewError, setPreviewError] = useState('');
   const [treeFocusPath, setTreeFocusPath] = useState('');
   const [copiedPathFor, setCopiedPathFor] = useState('');
+  const [copiedContentFor, setCopiedContentFor] = useState('');
+  const [filterQuery, setFilterQuery] = useState('');
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const treeRef = useRef<HTMLElement | null>(null);
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -80,6 +84,20 @@ export function PawOsFilesApp() {
     }
     return paths.size;
   }, [entries]);
+
+  // The filter only sees directories that have already been read; the result
+  // meta states that coverage truthfully instead of implying a full-disk find.
+  const filterMatches = useMemo(() => {
+    const query = filterQuery.trim().toLocaleLowerCase();
+    if (!query) return null;
+    const matches: WorkspaceEntry[] = [];
+    for (const children of Object.values(entries)) {
+      for (const entry of children) {
+        if (entry.name.toLocaleLowerCase().includes(query)) matches.push(entry);
+      }
+    }
+    return matches.sort((first, second) => first.path.localeCompare(second.path, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [entries, filterQuery]);
 
   const loadSessions = useCallback(async () => {
     setSessionsLoading(true);
@@ -116,7 +134,7 @@ export function PawOsFilesApp() {
         params: { sessionId: selectedSessionId },
         query: { path, depth: 1, limit: 240 },
       });
-      setEntries((current) => ({ ...current, [path]: workspaceEntries(response) }));
+      setEntries((current) => ({ ...current, [path]: sortedEntries(workspaceEntries(response)) }));
     } catch (error) {
       setPathErrors((current) => ({ ...current, [path]: publicError(error, '目录读取失败。') }));
     } finally {
@@ -137,6 +155,7 @@ export function PawOsFilesApp() {
     setExpanded(new Set(roots));
     setSelectedFile(null);
     setPreview(null);
+    setFilterQuery('');
     for (const root of roots) void loadDirectory(root);
     // Directory state is intentionally reset whenever Session authority changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -220,6 +239,33 @@ export function PawOsFilesApp() {
       // The full path remains available through the row/header title when the
       // clipboard is denied; the inspection flow is never blocked by copy.
     }
+  }
+
+  async function copySelectedContent(): Promise<void> {
+    if (!selectedFile || !preview) return;
+    try {
+      await writeClipboardText(preview.content);
+      setCopiedContentFor(selectedFile.path);
+      window.setTimeout(() => setCopiedContentFor((current) => current === selectedFile.path ? '' : current), 1_500);
+    } catch {
+      // The reader keeps the content on screen when the clipboard is denied.
+    }
+  }
+
+  function openFilterMatch(entry: WorkspaceEntry): void {
+    if (entry.kind !== 'directory') {
+      setSelectedFile(entry);
+      return;
+    }
+    setExpanded((current) => {
+      const next = new Set(current);
+      for (const ancestor of ancestorDirectories(entry.path, roots)) next.add(ancestor);
+      next.add(entry.path);
+      return next;
+    });
+    void loadDirectory(entry.path);
+    setFilterQuery('');
+    returnFocusPathRef.current = entry.path;
   }
 
   // When the narrow layout swaps the tree for the reader, focus travels with
@@ -337,6 +383,21 @@ export function PawOsFilesApp() {
           {sessions.map((session) => <option key={session.id} title={session.title} value={session.id}>{session.title}</option>)}
         </select>
       </label>
+      <label className="paw-files-filter">
+        <Search aria-hidden="true" size={13} />
+        <input
+          aria-label="筛选已加载的文件"
+          disabled={!roots.length}
+          onChange={(event) => setFilterQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setFilterQuery('');
+          }}
+          placeholder="筛选已加载的文件"
+          spellCheck={false}
+          type="search"
+          value={filterQuery}
+        />
+      </label>
       <button aria-busy={loadingPaths.size ? true : undefined} aria-label="刷新文件" disabled={!selectedSessionId || loadingPaths.size > 0} onClick={refresh} type="button"><RefreshCw className={loadingPaths.size ? 'ui-spin' : undefined} size={15} /><span>刷新</span></button>
     </div>
   );
@@ -353,7 +414,39 @@ export function PawOsFilesApp() {
           {sessionsLoading ? <TreeState loading>正在读取 Session…</TreeState> : null}
           {!sessionsLoading && !sessionError && !sessions.length ? <TreeState>还没有可浏览的 Session。</TreeState> : null}
           {!sessionsLoading && sessions.length > 0 && !roots.length ? <TreeState>这个 Session 还没有绑定工作区。</TreeState> : null}
-          {roots.length ? (
+          {roots.length && filterMatches ? (
+            <div className="paw-files-filter-results">
+              <p aria-live="polite" className="paw-files-filter-results__meta">在已加载的 {visibleEntryCount} 项中匹配 {filterMatches.length} 项</p>
+              {filterMatches.length ? (
+                <ul aria-label="筛选结果">
+                  {filterMatches.map((entry) => {
+                    const directory = entry.kind === 'directory';
+                    const symlink = entry.kind === 'symlink';
+                    return (
+                      <li key={entry.path}>
+                        <button
+                          aria-label={directory ? `在目录树中展开 ${entry.name}` : `打开文件 ${entry.name}`}
+                          className="paw-files-tree__row"
+                          data-ext={directory ? undefined : fileExtension(entry.name) || undefined}
+                          data-kind={symlink ? 'symlink' : undefined}
+                          data-selected={!directory && entry.path === selectedFile?.path || undefined}
+                          onClick={() => openFilterMatch(entry)}
+                          title={entry.path}
+                          type="button"
+                        >
+                          <span />
+                          {directory ? <Folder size={16} /> : symlink ? <FileSymlink size={16} /> : fileIcon(entry.name)}
+                          <span>{entry.name}</span>
+                          <small>{rootRelativeParent(entry.path, roots)}</small>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : <TreeState>没有匹配已加载的条目。</TreeState>}
+            </div>
+          ) : null}
+          {roots.length && !filterMatches ? (
             <nav aria-label="项目文件"><ul aria-label="项目文件" role="tree">
               {roots.map((root) => (
                 <li className="paw-files-tree__root" key={root} role="none">
@@ -409,6 +502,17 @@ export function PawOsFilesApp() {
                 >
                   {copiedPathFor === selectedFile.path ? <Check size={14} /> : <Copy size={14} />}
                 </button>
+                <button
+                  aria-label={copiedContentFor === selectedFile.path ? '已复制文件内容' : '复制文件内容'}
+                  className="paw-files-preview__copy"
+                  data-copied={copiedContentFor === selectedFile.path || undefined}
+                  disabled={!copyableContent(preview, previewLoading, previewError)}
+                  onClick={() => void copySelectedContent()}
+                  title={copyContentTitle(preview, previewLoading, previewError, copiedContentFor === selectedFile.path)}
+                  type="button"
+                >
+                  {copiedContentFor === selectedFile.path ? <Check size={14} /> : <ClipboardCopy size={14} />}
+                </button>
                 {preview?.truncated ? <em>前 64 KB</em> : null}
               </header>
               <div className="paw-files-preview__body" key={`body:${selectedFile.path}`}>
@@ -447,6 +551,52 @@ function renderPreview(file: WorkspaceFile): ReactNode {
 
 function authorizedRoots(session: SessionSummary | null): string[] {
   return (session?.workspaceRoots ?? []).filter((path, index, roots) => path.startsWith('/') && roots.indexOf(path) === index);
+}
+
+// Directory listings arrive in service order; Files presents them the way a
+// file browser reads: directories first, then names in natural order.
+function sortedEntries(items: WorkspaceEntry[]): WorkspaceEntry[] {
+  return [...items].sort((first, second) => {
+    const firstRank = first.kind === 'directory' ? 0 : 1;
+    const secondRank = second.kind === 'directory' ? 0 : 1;
+    if (firstRank !== secondRank) return firstRank - secondRank;
+    return first.name.localeCompare(second.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
+}
+
+function ancestorDirectories(path: string, roots: string[]): string[] {
+  const root = roots.find((candidate) => path === candidate || path.startsWith(`${candidate}/`));
+  if (!root) return [];
+  const chain = [root];
+  const segments = path.slice(root.length).split('/').filter(Boolean);
+  segments.pop();
+  let current = root;
+  for (const segment of segments) {
+    current = `${current}/${segment}`;
+    chain.push(current);
+  }
+  return chain;
+}
+
+function rootRelativeParent(path: string, roots: string[]): string {
+  const root = roots.find((candidate) => path.startsWith(`${candidate}/`));
+  const parent = path.split('/').slice(0, -1).join('/');
+  if (!root) return parent || '/';
+  const relative = parent.slice(root.length).replace(/^\//, '');
+  return relative ? `${pathName(root)}/${relative}` : pathName(root);
+}
+
+function copyableContent(preview: WorkspaceFile | null, loading: boolean, error: string): boolean {
+  if (!preview || loading || error) return false;
+  return preview.content !== '' && !isProbablyBinary(preview.content);
+}
+
+function copyContentTitle(preview: WorkspaceFile | null, loading: boolean, error: string, copied: boolean): string {
+  if (copied) return '已复制文件内容';
+  if (loading || error || !preview) return '内容尚未读取';
+  if (preview.content === '') return '文件没有文本内容';
+  if (isProbablyBinary(preview.content)) return '二进制内容不能复制为文本';
+  return preview.truncated ? '复制已加载的前 64 KB 内容' : '复制文件内容';
 }
 
 function workspaceEntries(value: unknown): WorkspaceEntry[] {

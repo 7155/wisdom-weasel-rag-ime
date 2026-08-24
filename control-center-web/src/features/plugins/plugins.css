@@ -462,8 +462,10 @@ main[data-route-id='plugins'] .plugins-count {
 
 .installed-plugin__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  grid-column: 1 / -1;
 }
 
 .plugin-lifecycle__validation {
@@ -515,13 +517,65 @@ main[data-route-id='plugins'] .plugins-count {
   .plugin-proposal:hover { border-color: var(--color-border-strong); }
 }
 .plugin-proposal span,
-.installed-plugin > div:first-child { display: grid; min-width: 0; gap: 2px; }
-.plugin-proposal small,
-.installed-plugin > div:first-child span { color: var(--color-text-secondary); font-size: 13px; }
+.installed-plugin__identity { display: grid; min-width: 0; gap: 2px; }
+.plugin-proposal small { color: var(--color-text-secondary); font-size: 13px; }
 
+/* An installed Package reads as one small dossier: identity and state on the
+   first line, then its permission/resource/rollback facts, then the guarded
+   lifecycle actions. Every fact answers "what will an action change?". */
 .installed-plugin {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: start;
+  padding: 12px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
+
+.installed-plugin__identity strong { font-size: 14px; overflow-wrap: anywhere; }
+
+.installed-plugin__identity small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.installed-plugin__identity small span + span::before {
+  margin-right: 6px;
+  color: var(--color-text-tertiary);
+  content: '·';
+}
+
+.installed-plugin__state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: end;
+  gap: 6px;
+}
+
+.installed-plugin__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin: 0;
+  padding: 0;
+  grid-column: 1 / -1;
+  list-style: none;
+}
+
+.installed-plugin__facts li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.installed-plugin__facts svg { flex: 0 0 auto; color: var(--color-text-tertiary); }
 
 .installed-plugin[data-selected] {
   border-color: color-mix(in srgb, var(--color-accent) 62%, var(--color-border));
@@ -772,8 +826,6 @@ main[data-route-id='plugins'] .plugins-count {
   .plugin-authoring-callout { align-items: start; grid-template-columns: 36px minmax(0, 1fr); }
   .plugin-authoring-callout .ui-button { grid-column: 1 / -1; justify-self: stretch; }
   .plugin-lifecycle__validation { grid-column: auto; flex-wrap: wrap; }
-  .installed-plugin { align-items: start; grid-template-columns: minmax(0, 1fr) auto; }
-  .installed-plugin__actions { grid-column: 1 / -1; }
   .plugin-lifecycle__approval-facts > div { grid-template-columns: 1fr; gap: 3px; }
   .plugin-lifecycle__receipt { align-items: stretch; flex-direction: column; }
   .plugin-catalog__row,
@@ -893,4 +945,175 @@ main[data-route-id='plugins'][data-paw-os-app] .capability-disclosure > p { font
  * catalogue layout. */
 .paw-desktop-root .paw-system-app[data-system-app='app-center'] .plugin-lifecycle__installed > .installed-plugin:only-child {
   grid-column: 1 / -1;
+}
+
+/* ---------------------------------------------------------------------------
+ * Native App Center consoles — cool bright rounded PAWOS surface.
+ *
+ * Inside the PAWOS window, the titlebar and the App navigation already name
+ * the App and the current page, so each console is a rounded white card with
+ * one slim purpose heading instead of a repeated management-sheet header.
+ * Token fallbacks keep the same geometry readable outside the desktop shell.
+ * ------------------------------------------------------------------------ */
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card {
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--paw-system-line, var(--color-border));
+  border-radius: 14px;
+  background: var(--paw-system-surface, var(--color-surface));
+  animation: plugins-card-arrive 320ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card:nth-child(2) { animation-delay: 35ms; }
+main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card:nth-child(3) { animation-delay: 70ms; }
+
+@keyframes plugins-card-arrive {
+  from { opacity: .72; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 13px;
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card__glyph {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--paw-system-accent-soft, var(--color-accent-subtle));
+  color: var(--paw-system-accent, var(--color-accent));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card__head h2 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  line-height: 1.3;
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card__trailing {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-count {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--paw-system-fill, var(--color-surface-subtle));
+  font-size: 12px;
+}
+
+/* Capability browser inside the console: one rounded frame, soft detail
+   panel, pill selection accent — no square sheet rules. */
+main[data-route-id='plugins'][data-paw-os-app] .plugins-browser {
+  overflow: hidden;
+  border: 1px solid var(--paw-system-line, var(--color-border));
+  border-radius: 12px;
+  background: var(--paw-system-surface, var(--color-surface));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-list__item {
+  border-bottom-color: var(--paw-system-line, var(--color-border));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-detail {
+  border-left-color: var(--paw-system-line, var(--color-border));
+  background: var(--paw-system-fill, var(--color-surface-subtle));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-detail__icon,
+main[data-route-id='plugins'][data-paw-os-app] .plugin-authoring-callout__icon {
+  border: 0;
+  border-radius: 10px;
+  background: var(--paw-system-accent-soft, var(--color-accent-subtle));
+  color: var(--paw-system-accent, var(--color-accent));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugins-detail__capabilities li {
+  border-color: var(--paw-system-line, var(--color-border));
+  border-radius: 999px;
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .capability-precedence {
+  border-left-color: var(--paw-system-accent, var(--color-accent));
+  border-radius: 10px;
+  background: var(--paw-system-accent-soft, var(--color-accent-subtle));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .capability-default-field {
+  border: 0;
+  border-radius: 10px;
+  background: var(--paw-system-fill, var(--color-surface-subtle));
+}
+
+/* Package lifecycle: rounded approval stop, soft install divider, calm
+   authoring callout, and hoverable Package dossiers. */
+main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__approval { border-radius: 12px; }
+
+main[data-route-id='plugins'][data-paw-os-app] .plugin-lifecycle__install {
+  padding: 14px 0 0;
+  border-top: 1px solid var(--paw-system-line, var(--color-border));
+  border-bottom: 0;
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .plugin-authoring-callout {
+  border: 0;
+  border-radius: 12px;
+  background: var(--paw-system-fill, var(--color-surface-subtle));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] :is(.installed-plugin, .plugin-proposal) {
+  border-radius: 11px;
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='plugins'][data-paw-os-app] :is(.installed-plugin, .plugin-proposal):hover {
+    border-color: color-mix(in srgb, var(--paw-system-accent, var(--color-accent)) 34%, var(--paw-system-line, var(--color-border)));
+    box-shadow: 0 4px 14px rgb(16 24 32 / 7%);
+  }
+}
+
+/* Automatic curation policies read as rounded fill rows instead of a ruled
+   table; the audit column keeps its quiet chronology. */
+main[data-route-id='plugins'][data-paw-os-app] .lifecycle-hooks__policies {
+  gap: 8px;
+  border-block: 0;
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .lifecycle-policy {
+  min-height: 0;
+  padding: 11px 13px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--paw-system-fill, var(--color-surface-subtle));
+}
+
+main[data-route-id='plugins'][data-paw-os-app] .mgmt-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+@container paw-window (max-width: 680px) {
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card { padding: 13px 14px; }
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card__head { margin-bottom: 10px; }
+  main[data-route-id='plugins'][data-paw-os-app] .installed-plugin__state { justify-content: start; grid-column: 1 / -1; }
+  main[data-route-id='plugins'][data-paw-os-app] .installed-plugin__actions .ui-button { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card { animation: none; }
+  main[data-route-id='plugins'][data-paw-os-app] :is(.installed-plugin, .plugin-proposal) { transition: none; }
 }

@@ -443,6 +443,14 @@ main[data-route-id='input'] .input-settings-diff-title {
 
 main[data-route-id='input'] .mgmt-toolbar { justify-content: space-between; }
 
+/* Review counts read left, bulk selection acts right; the pair stays on one
+   row so 全选/清除 never visually detach from the count they change. */
+main[data-route-id='input-lexicon'] .input-lexicon-review__bulk {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
 /* The system App owns the scroll viewport, while this route owns the reading
    inset. Keeping the first body block below the sticky action strip prevents
    the native chrome from visually cutting into the first section on short

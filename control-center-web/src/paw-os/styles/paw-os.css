@@ -109,7 +109,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-system-mark { grid-colum
 html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-app { grid-column: 3; }
 html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-column: 4; }
 .paw-system-mark { min-width: 0; height: 28px; display: grid; place-items: center; padding: 0 2px; cursor: pointer; }
-.paw-menu-app { display: inline-flex; align-items: center; gap: 8px; }
+.paw-menu-app { display: inline-flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
 .paw-menu-status { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 
 .paw-desktop-viewport { position: absolute; left: 0; top: var(--paw-menu-h); right: 0; bottom: 0; overflow: hidden; }
@@ -123,7 +123,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 62%, transparent);
   opacity: 0;
   content: '';
-  transition: inset 100ms ease, opacity 100ms ease;
+  /* The snap preview updates while a window is being dragged. Animating its
+     inset would run a layout invalidation on every preview change. */
+  transition: opacity 100ms ease;
 }
 .paw-desktop-root[data-snap-preview='maximized'] .paw-desktop-viewport::after { opacity: 1; }
 .paw-desktop-root[data-snap-preview='left'] .paw-desktop-viewport::after { right: calc(50% + 5px); opacity: 1; }
@@ -140,7 +142,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   display: none;
 }
 .paw-wayfinder { position: absolute; inset: 0; overflow: hidden; color: var(--paw-desktop-ink); user-select: none; transition: opacity 220ms var(--paw-ease-out), filter 220ms var(--paw-ease-out), transform 220ms var(--paw-ease-out); }
-.paw-desktop[data-overview] .paw-wayfinder { opacity: .42; filter: saturate(.65) blur(6px); transform: scale(.985); }
+.paw-desktop[data-overview] .paw-wayfinder { opacity: .55; filter: saturate(.78); }
 
 .paw-field-media {
   position: absolute;
@@ -476,7 +478,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-dock button[data-open]::after {
   position: absolute; bottom: -3px; width: 5px; height: 5px; border-radius: 50%;
-  background: var(--paw-accent); content: '';
+  background: var(--paw-app-accent, var(--paw-accent)); content: '';
 }
 .paw-launchpad {
   position: absolute;
@@ -492,9 +494,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   overflow: auto;
 }
 .paw-launchpad section > header {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(140px, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   min-height: 48px;
   padding: 0 16px;
   color: var(--paw-ink);
@@ -544,6 +547,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.paw-launchpad-group,
+.paw-launchpad-empty {
+  grid-column: 1 / -1;
 }
 .paw-dock button:is([aria-pressed='true'], [aria-current='page']) { color: var(--app-color, var(--paw-accent)); }
 

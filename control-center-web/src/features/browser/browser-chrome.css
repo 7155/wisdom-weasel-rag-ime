@@ -1,11 +1,12 @@
 /*
  * Browser feature chrome states.
  *
- * Owns only the new state elements of the real Browser surface: the tab icon
- * slot (loading / favicon / failure), the truthful omnibox security icon, and
- * the page failure overlay. Tab strip, toolbar, and omnibox layout plus their
- * surface colours remain owned by paw-apps.css and
- * paw-os-tools-files-migrated-v1.css.
+ * Owns the new state elements of the real Browser surface: the tab icon slot
+ * (loading / favicon / failure), the truthful omnibox security icon, the page
+ * failure overlay, the find-in-page match counter, day-grouped history, the
+ * in-App destructive confirmations, and the dismissible action receipt.
+ * Tab strip, toolbar, and omnibox layout plus their surface colours remain
+ * owned by paw-apps.css and paw-os-tools-files-migrated-v1.css.
  */
 
 .paw-browser-tab-icon {
@@ -98,13 +99,160 @@
   cursor: pointer;
 }
 
+/* Find-in-page additions: the leading icon and the guest-reported counter.
+   Bar layout and colours stay with the shared .paw-browser-find owner. */
+.paw-browser-find__icon {
+  flex-shrink: 0;
+  color: var(--paw-muted, #64748b);
+}
+
+.paw-browser-find__count {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  color: var(--paw-muted, #64748b);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The zoom readout doubles as the reset action; keep it as wide as the old
+   readout so the menu row does not shift while zooming. */
+.paw-browser-menu-zoom .paw-browser-menu-zoom-reset {
+  width: 100%;
+  height: 26px;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.paw-browser-menu-zoom .paw-browser-menu-zoom-reset:disabled {
+  cursor: default;
+  color: var(--paw-muted, #64748b);
+}
+
+/* Day-grouped history keeps one scroll area for the whole timeline. */
+.paw-browser-history-days {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 5px 8px 12px;
+}
+
+.paw-browser-history .paw-browser-history-day > h3 {
+  margin: 8px 0 2px;
+  padding: 0 10px;
+  color: var(--paw-muted, #64748b);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+
+.paw-browser-history .paw-browser-history-day:first-child > h3 {
+  margin-top: 2px;
+}
+
+.paw-browser-history .paw-browser-history-day ol {
+  padding: 0;
+  overflow: visible;
+}
+
+/* Destructive actions confirm in place instead of a blocking dialog. */
+.paw-browser-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  animation: paw-browser-confirm-in 150ms ease-out both;
+}
+
+.paw-browser-confirm em {
+  color: var(--paw-muted, #64748b);
+  font-size: 13px;
+  line-height: 1.4;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.paw-browser-confirm button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--paw-line, rgb(0 0 0 / 10%));
+  border-radius: 8px;
+  background: var(--paw-panel-strong, #fff);
+  color: var(--paw-ink, #0f172a);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.paw-browser-confirm button[data-danger] {
+  border-color: color-mix(in srgb, var(--paw-danger, #ef4444) 34%, transparent);
+  background: color-mix(in srgb, var(--paw-danger, #ef4444) 9%, transparent);
+  color: var(--paw-danger, #d70015);
+}
+
+.paw-browser-confirm button:disabled {
+  cursor: wait;
+  opacity: .5;
+}
+
+/* The receipt now carries its own dismiss action beside the live message. */
+.paw-browser-action-receipt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.paw-browser-action-receipt output {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.paw-browser-action-receipt button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--paw-muted, #64748b);
+  cursor: pointer;
+}
+
 @keyframes paw-browser-page-status-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
+@keyframes paw-browser-confirm-in {
+  from { opacity: 0; transform: translate3d(4px, 0, 0); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .paw-browser-menu-zoom .paw-browser-menu-zoom-reset:hover:not(:disabled),
+  .paw-browser-action-receipt button:hover {
+    background: var(--paw-browser-hover, rgb(15 23 42 / 6%));
+    color: var(--paw-ink, #0f172a);
+  }
+
+  .paw-browser-confirm button:hover:not(:disabled) {
+    background: var(--paw-browser-hover, rgb(15 23 42 / 6%));
+  }
+
+  .paw-browser-confirm button[data-danger]:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--paw-danger, #ef4444) 14%, transparent);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .paw-browser-page-status {
+  .paw-browser-page-status,
+  .paw-browser-confirm {
     animation: none;
   }
 }

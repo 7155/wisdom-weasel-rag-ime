@@ -90,10 +90,22 @@
 .paw-desktop-root .paw-system-mark:hover { color: #2f6bff; }
 
 .paw-desktop-root .paw-menu-app {
-  color: #5d6675;
+  min-height: 28px;
+  padding: 0 8px;
+  margin-left: -8px;
+  border-radius: 6px;
+  color: #171a21;
   font-size: 13px;
   line-height: 1.4;
-  font-weight: 570;
+  font-weight: 650;
+  cursor: pointer;
+}
+.paw-desktop-root .paw-menu-app:hover {
+  background: rgb(23 26 33 / .05);
+}
+.paw-desktop-root .paw-menu-app[data-idle] {
+  color: #5d6675;
+  font-weight: 550;
 }
 
 .paw-desktop-root .paw-menu-status {
@@ -215,8 +227,8 @@
 
 /* Bright shelf: identity colour belongs to Apps, not the system background. */
 .paw-desktop-root .paw-dock {
-  border: 1px solid rgb(255 255 255 / .82);
-  background: rgb(255 255 255 / .88);
+  border: 1px solid rgb(255 255 255 / .9);
+  background: rgb(255 255 255 / .92);
   box-shadow: 0 22px 52px -18px rgb(61 74 96 / .28), 0 7px 18px rgb(35 49 73 / .1), inset 0 1px 0 #fff;
   -webkit-backdrop-filter: blur(26px) saturate(145%);
   backdrop-filter: blur(26px) saturate(145%);
@@ -224,10 +236,16 @@
 .paw-desktop-root .paw-dock button { color: #556171; }
 .paw-desktop-root .paw-dock > i { background: rgb(23 26 33 / .12); }
 .paw-desktop-root .paw-dock button::before { content: none; }
-.paw-desktop-root .paw-dock button[aria-current='page'] { background: rgb(47 107 255 / .09); }
+.paw-desktop-root .paw-dock button[aria-current='page'] {
+  background: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 12%, #fff);
+}
 .paw-desktop-root .paw-dock button[data-open]::after {
-  background: #2f6bff;
-  box-shadow: 0 0 0 3px rgb(47 107 255 / .1);
+  background: var(--paw-app-accent, #2f6bff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 18%, transparent);
+}
+.paw-desktop-root .paw-dock button[data-minimized]::after {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--paw-app-accent, #2f6bff);
 }
 .paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview) { color: #4c5868; }
 
@@ -257,12 +275,32 @@
   animation: paw-shell-launchpad-arrive 280ms cubic-bezier(.16, 1, .3, 1) both;
 }
 .paw-desktop-root .paw-launchpad section > header {
+  display: grid;
+  grid-template-columns: max-content minmax(140px, 1fr) auto;
+  gap: 12px;
   min-height: 56px;
   padding: 0 20px;
   border-bottom: 1px solid rgb(23 26 33 / .075);
 }
 .paw-desktop-root .paw-launchpad-title { display: inline-flex; align-items: baseline; gap: 10px; }
 .paw-desktop-root .paw-launchpad-title > span { color: #687180; font-size: 13px; line-height: 1.4; font-weight: 550; }
+.paw-desktop-root .paw-launchpad section > header input[type='search'] {
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgb(23 26 33 / .1);
+  border-radius: 8px;
+  color: #171a21;
+  background: #f6f8fb;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.paw-desktop-root .paw-launchpad section > header input[type='search']:focus {
+  border-color: rgb(47 107 255 / .45);
+  background: #fff;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(47 107 255 / .12);
+}
 .paw-desktop-root .paw-launchpad section > header button {
   min-height: 32px;
   padding: 0 10px;
@@ -316,11 +354,28 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
+.paw-desktop-root .paw-launchpad-group {
+  grid-column: 1 / -1;
+  margin: 4px 2px 0;
+  color: #5d6675;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 650;
+  letter-spacing: .04em;
+}
+.paw-desktop-root .paw-launchpad-empty {
+  grid-column: 1 / -1;
+  margin: 28px 8px;
+  color: #5d6675;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
 
 @keyframes paw-shell-launchpad-backdrop { from { opacity: 0; } to { opacity: 1; } }
 @keyframes paw-shell-launchpad-arrive {
-  from { opacity: .72; transform: translateY(18px) scale(.97); filter: blur(5px); }
-  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  from { opacity: .72; transform: translateY(18px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Window material: opaque white working surfaces. Focus reads through border,
@@ -336,16 +391,16 @@
   box-shadow: 0 18px 44px -22px rgb(23 32 52 / .22), 0 3px 10px rgb(23 26 33 / .05);
 }
 .paw-desktop-root .paw-window-shell[data-active] .paw-window {
-  border-color: rgb(23 26 33 / .16);
+  border-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 38%, rgb(23 26 33 / .16));
   box-shadow: 0 1px 0 rgb(255 255 255 / .75) inset, 0 30px 74px -22px rgb(23 32 52 / .34), 0 5px 18px rgb(23 26 33 / .07);
 }
 .paw-desktop-root .paw-window-titlebar {
   border-bottom: 1px solid rgb(23 26 33 / .1);
-  background: rgb(255 255 255 / .5);
+  background: #fff;
 }
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-titlebar {
   border-bottom-color: var(--paw-app-line, rgb(23 26 33 / .1));
-  background: var(--paw-app-nav, rgb(255 255 255 / .5));
+  background: var(--paw-app-nav, #fff);
 }
 .paw-desktop-root .paw-window-title { gap: 8px; color: #171a21; font-size: 13px; line-height: 1.4; font-weight: 650; }
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-title { color: var(--paw-app-accent-strong, #171a21); }
@@ -374,6 +429,10 @@
 @media (max-width: 600px) {
   .paw-desktop-root .paw-launchpad { padding: 12px; }
   .paw-desktop-root .paw-launchpad > section { width: 100%; max-height: calc(100% - 12px); }
+  .paw-desktop-root .paw-launchpad section > header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .paw-desktop-root .paw-launchpad-title { grid-column: 1 / -1; }
   .paw-desktop-root .paw-launchpad section > div { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; }
   .paw-desktop-root .paw-launchpad section > div > button { min-height: 126px; }
   .paw-desktop-root .paw-dock { max-width: calc(100% - 16px); overflow-x: auto; }

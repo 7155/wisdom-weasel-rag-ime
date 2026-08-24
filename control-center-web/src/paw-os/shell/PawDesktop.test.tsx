@@ -81,6 +81,41 @@ describe('PAWOS desktop', () => {
     expect(current.querySelector('[data-lucide], .paw-os-app-icon, .paw-app-glyph')).toBeNull();
   });
 
+  it('names the menu bar 桌面 when no window is focused instead of borrowing Workbench', () => {
+    renderDesktop();
+    const current = document.querySelector('.paw-menu-app') as HTMLElement;
+    expect(current).toHaveAttribute('data-idle');
+    expect(current).toHaveTextContent('桌面');
+    expect(current.querySelector('[data-paw-app-icon]')).toBeNull();
+  });
+
+  it('opens hide and overview commands from the menu bar App name', () => {
+    renderDesktop('agent');
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 菜单' }));
+    expect(screen.getByRole('menu', { name: 'Agent 菜单' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: '隐藏窗口' }));
+    expect(document.querySelector('[data-paw-window-id="agent"]')).toBeNull();
+    const agentDock = within(screen.getByRole('navigation', { name: 'PAWOS 工具架' })).getByRole('button', { name: 'Agent' });
+    expect(agentDock).toHaveAttribute('data-open');
+    expect(agentDock).toHaveAttribute('data-minimized');
+  });
+
+  it('filters Launchpad Apps from the archive search field', () => {
+    renderDesktop();
+    fireEvent.click(screen.getByRole('button', { name: '全部 App' }));
+    const launcher = screen.getByRole('dialog', { name: '全部 App' });
+    fireEvent.change(within(launcher).getByRole('searchbox', { name: '搜索 App' }), { target: { value: 'Terminal' } });
+    expect(within(launcher).getByRole('button', { name: /Terminal/ })).toBeInTheDocument();
+    expect(within(launcher).queryByRole('button', { name: /Agent/ })).not.toBeInTheDocument();
+    expect(within(launcher).getByRole('heading', { name: '工具' })).toBeInTheDocument();
+  });
+
+  it('opens System Settings from the advertised keyboard shortcut', () => {
+    renderDesktop();
+    fireEvent.keyDown(window, { key: ',', metaKey: true });
+    expect(document.querySelector('[data-paw-window-id="system-settings"]')).toBeInTheDocument();
+  });
+
   it('replaces the browser context menu with desktop and App commands', () => {
     renderDesktop();
 
