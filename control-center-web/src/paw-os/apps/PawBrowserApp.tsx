@@ -900,6 +900,13 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
               tab={tab}
             />
           )) : null}
+          {electronHost && isStartPage && !selectedPageFailure && !selectedPageCrash ? (
+            <div aria-hidden="true" className="paw-browser-start" data-live={activeAgentTrace ? true : undefined}>
+              <span className="paw-browser-start-halo"><Globe2 size={26} /></span>
+              <strong>新标签页</strong>
+              <span className="paw-browser-start-hint">输入网址或搜索内容，回车直达</span>
+            </div>
+          ) : null}
           {electronHost && (selectedPageFailure || selectedPageCrash) && !showHistory && !showSettings ? (
             <BrowserPageStatus
               crashedReason={selectedPageCrash}

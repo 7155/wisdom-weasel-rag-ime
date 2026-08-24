@@ -1,10 +1,11 @@
 /*
- * PAWOS Browser migration v1
+ * PAWOS Browser migration v1 — cockpit glass pass.
  *
- * Owns the real Browser surface whose page remains dominant. Archive fixtures
- * supplied composition and state grammar only; tabs, history, settings,
- * traces, errors, and lifecycle remain owned by the existing PAW transport.
- * Files and Terminal now live entirely in their feature stylesheets.
+ * Final desktop owner of the real Browser surface. The page stays dominant:
+ * human chrome reads as calm teal porcelain, while a live Agent takeover is
+ * projected as an aurora execution field. Tabs, history, settings, traces,
+ * errors, and lifecycle remain owned by the existing PAW transport. Files and
+ * Terminal live entirely in their feature stylesheets.
  */
 
 /* --------------------------------------------------------------------------
@@ -12,12 +13,14 @@
    -------------------------------------------------------------------------- */
 
 .paw-desktop-root .paw-direct-browser {
-  --paw-browser-chrome: var(--paw-app-nav, #f4f6f9);
+  --paw-browser-chrome: var(--paw-app-nav, #f2f6f7);
   --paw-browser-control: var(--paw-app-surface-strong, #fff);
-  --paw-browser-hover: var(--paw-app-selection, rgb(24 32 44 / 6%));
-  --paw-browser-line: rgb(24 32 44 / 10%);
-  --paw-browser-ink: #18202c;
-  --paw-browser-muted: #687180;
+  --paw-browser-hover: var(--paw-app-selection, rgb(18 96 106 / 7%));
+  --paw-browser-line: rgb(23 42 48 / 10%);
+  --paw-browser-ink: #16232a;
+  --paw-browser-muted: #64737d;
+  --paw-browser-accent: var(--paw-app-accent, #146f7b);
+  --paw-browser-glow: rgb(20 143 158 / 26%);
   --paw-browser-agent-blue: #5b8cff;
   --paw-browser-agent-violet: #8b5cf6;
   --paw-browser-agent-cyan: #52d7ff;
@@ -32,45 +35,54 @@
   grid-template-rows: 38px 42px minmax(0, 1fr);
 }
 
+/* Window titlebar carrying the live tab deck. */
 .paw-desktop-root .paw-window-titlebar[data-window-chrome='browser-tabs'] {
-  --paw-browser-chrome: #f4f6f9;
+  --paw-browser-chrome: #f1f5f6;
   --paw-browser-control: #fff;
-  --paw-browser-hover: rgb(24 32 44 / 6%);
+  --paw-browser-hover: rgb(18 96 106 / 7%);
   grid-template-columns: 76px minmax(54px, 86px) minmax(0, 1fr);
   gap: 7px;
-  border-bottom-color: rgb(24 32 44 / 9%);
-  background: rgb(247 248 250 / 96%);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 78%) inset;
+  border-bottom-color: rgb(23 42 48 / 9%);
+  background: linear-gradient(180deg, rgb(249 251 251 / 97%), rgb(242 246 247 / 97%));
+  box-shadow: 0 1px 0 rgb(255 255 255 / 82%) inset;
 }
 
 .paw-desktop-root .paw-window-titlebar[data-window-chrome='browser-tabs'] .paw-window-title {
-  color: #5f6875;
+  color: #5d6b73;
 }
 
+/* Tab deck: floating porcelain pills, the active page carried as a lit card. */
 .paw-desktop-root .paw-browser-tabstrip {
-  align-items: end;
-  padding: 4px 4px 0;
+  align-items: center;
+  padding: 0 5px;
   border: 0;
   background: transparent;
 }
 
+.paw-desktop-root .paw-direct-browser:not([data-tabs-in-window-chrome]) .paw-browser-tabstrip {
+  padding: 0 8px;
+  border-bottom: 1px solid var(--paw-browser-line);
+  background: var(--paw-browser-chrome);
+}
+
 .paw-desktop-root .paw-browser-tabs-live {
-  gap: 4px;
+  align-items: center;
+  gap: 5px;
 }
 
 .paw-desktop-root .paw-browser-tab {
   min-width: 104px;
-  max-width: 232px;
-  height: 34px;
-  flex-basis: 174px;
+  max-width: 236px;
+  height: 30px;
+  flex-basis: 186px;
   border: 1px solid transparent;
-  border-radius: 10px 10px 0 0;
-  color: #737b88;
+  border-radius: 9px;
+  color: #6d7a83;
   box-shadow: none;
 }
 
 .paw-desktop-root .paw-browser-tab-main {
-  grid-template-columns: 14px minmax(0, 1fr);
+  grid-template-columns: 15px minmax(0, 1fr);
   gap: 7px;
   padding: 0 30px 0 10px;
   border: 0;
@@ -83,12 +95,27 @@
 }
 
 .paw-desktop-root .paw-browser-tab[data-active] {
-  border-color: rgb(24 32 44 / 10%);
-  border-bottom-color: #fff;
+  border-color: rgb(23 42 48 / 8%);
   background: #fff;
   color: var(--paw-browser-ink);
-  box-shadow: 0 -1px 2px rgb(15 23 42 / 3%);
-  transform: translateY(1px);
+  box-shadow:
+    0 1px 1px rgb(16 36 42 / 5%),
+    0 3px 10px rgb(15 66 76 / 9%),
+    inset 0 1px 0 rgb(255 255 255 / 90%);
+  transform: none;
+}
+
+/* The active pill carries one quiet accent thread instead of a whole colour. */
+.paw-desktop-root .paw-browser-tab[data-active]::after {
+  position: absolute;
+  right: 9px;
+  bottom: 2px;
+  left: 9px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--paw-browser-accent) 68%, transparent), transparent);
+  content: '';
+  pointer-events: none;
 }
 
 .paw-desktop-root .paw-browser-tab-close,
@@ -99,15 +126,16 @@
 .paw-desktop-root .paw-browser-new-tab {
   width: 28px;
   height: 28px;
-  margin-bottom: 3px;
+  margin-bottom: 0;
 }
 
+/* Navigation deck: satin gradient with one machined hairline. */
 .paw-desktop-root .paw-browser-toolbar {
   gap: 7px;
-  padding: 5px 10px 7px;
+  padding: 5px 10px 6px;
   border-bottom-color: var(--paw-browser-line);
-  background: #f7f8fa;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 86%) inset;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-browser-chrome) 42%, #fff), var(--paw-browser-chrome));
+  box-shadow: 0 1px 0 rgb(255 255 255 / 88%) inset;
 }
 
 .paw-desktop-root .paw-nav-buttons,
@@ -119,10 +147,17 @@
 .paw-desktop-root .paw-toolbar-actions > button {
   width: 29px;
   height: 29px;
-  border-radius: 8px;
-  color: #626c79;
+  border-radius: 9px;
+  color: #5c6a73;
 }
 
+.paw-desktop-root .paw-toolbar-actions > button[data-active] {
+  background: color-mix(in srgb, var(--paw-browser-accent) 12%, #fff);
+  color: var(--paw-browser-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-browser-accent) 24%, transparent);
+}
+
+/* Omnibox: one floating capsule that lights up under the hand. */
 .paw-desktop-root .paw-omnibox-form {
   height: 34px;
   gap: 7px;
@@ -130,7 +165,8 @@
   border: 1px solid var(--paw-browser-line);
   border-radius: 17px;
   background: #fff;
-  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%), inset 0 1px 0 rgb(255 255 255 / 85%);
+  transition: border-color 150ms ease, box-shadow 200ms ease;
 }
 
 /* The form owns the address field chrome. Older Browser composition rules
@@ -151,8 +187,11 @@
 }
 
 .paw-desktop-root .paw-omnibox-form:focus-within {
-  border-color: rgb(20 184 200 / 62%);
-  box-shadow: 0 0 0 3px rgb(20 184 200 / 12%), 0 1px 2px rgb(15 23 42 / 5%);
+  border-color: color-mix(in srgb, var(--paw-browser-accent) 55%, transparent);
+  box-shadow:
+    0 0 0 3px var(--paw-browser-glow),
+    0 8px 22px rgb(15 84 93 / 10%),
+    inset 0 1px 0 rgb(255 255 255 / 85%);
 }
 
 .paw-desktop-root .paw-omnibox-form input {
@@ -163,6 +202,7 @@
   color: #1f9d4d;
 }
 
+/* Page-first workspace. */
 .paw-desktop-root .paw-browser-workspace,
 .paw-desktop-root .paw-browser-workspace[data-show-agent] {
   position: relative;
@@ -188,7 +228,7 @@
   border: 1px solid rgb(197 27 47 / 18%);
   border-radius: 12px;
   background: #fff;
-  color: #687180;
+  color: #64737d;
   box-shadow: 0 12px 32px rgb(15 23 42 / 10%);
 }
 
@@ -207,7 +247,7 @@
   padding-inline: 11px;
   border: 1px solid var(--paw-browser-line);
   border-radius: 8px;
-  background: #f4f6f8;
+  background: #f3f6f7;
   color: var(--paw-browser-ink);
   font-size: 13px;
   font-weight: 650;
@@ -215,13 +255,82 @@
 }
 
 .paw-desktop-root .paw-browser-live-view {
-  background: #e9edf2;
+  background: #e8edf0;
 }
 
 .paw-desktop-root .paw-browser-live-canvas {
   box-shadow: 0 1px 4px rgb(15 23 42 / 12%);
 }
 
+/* New-tab start field: a quiet aurora horizon under the omnibox. */
+.paw-desktop-root .paw-browser-start {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 5px;
+  overflow: hidden;
+  padding-bottom: 6vh;
+  background:
+    radial-gradient(560px 320px at 50% 26%, rgb(20 143 158 / 8%), transparent 70%),
+    radial-gradient(760px 460px at 84% 92%, rgb(72 104 189 / 7%), transparent 64%),
+    radial-gradient(520px 380px at 8% 84%, rgb(82 197 226 / 6%), transparent 58%),
+    linear-gradient(180deg, #fdfefe, #f5f8f9);
+  color: var(--paw-browser-muted);
+  text-align: center;
+  pointer-events: none;
+}
+
+.paw-desktop-root .paw-browser-start::before {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgb(20 111 123 / 34%) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  content: '';
+  opacity: .3;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
+  mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
+}
+
+.paw-desktop-root .paw-browser-start-halo {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 9px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 28%, #fff 0%, rgb(255 255 255 / 0%) 58%),
+    conic-gradient(from 210deg, rgb(20 143 158 / 22%), rgb(72 104 189 / 26%), rgb(82 197 226 / 20%), rgb(20 143 158 / 22%));
+  box-shadow:
+    0 14px 34px rgb(15 84 93 / 16%),
+    inset 0 1px 0 rgb(255 255 255 / 85%),
+    0 0 0 1px rgb(20 111 123 / 12%);
+  color: #0f6570;
+  animation: paw-browser-start-breathe 4.4s ease-in-out infinite;
+}
+
+.paw-desktop-root .paw-browser-start > strong {
+  color: var(--paw-browser-ink);
+  font-size: 19px;
+  line-height: 1.4;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.paw-desktop-root .paw-browser-start-hint {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.paw-desktop-root .paw-browser-start[data-live] {
+  opacity: .5;
+}
+
+/* Agent trace card (on demand). */
 .paw-desktop-root .paw-browser-agent-stream {
   position: absolute;
   display: grid;
@@ -260,7 +369,7 @@
   padding-inline: 7px;
   border-color: transparent;
   background: transparent;
-  color: #687180;
+  color: #64737d;
   font-size: 12px;
 }
 
@@ -305,7 +414,7 @@
   width: 20px;
   height: 20px;
   border-radius: 6px;
-  background: #eef1f5;
+  background: #edf1f3;
 }
 
 .paw-desktop-root .paw-browser-agent-stream article strong {
@@ -318,7 +427,7 @@
 .paw-desktop-root .paw-browser-agent-stream article small {
   display: block;
   margin-top: 1px;
-  color: #737b88;
+  color: #6d7a83;
   font-size: 14px;
   line-height: 1.45;
 }
@@ -326,14 +435,14 @@
 .paw-desktop-root .paw-browser-trace-steps {
   margin-top: 6px;
   padding-top: 6px;
-  border-top-color: rgb(24 32 44 / 8%);
+  border-top-color: rgb(23 42 48 / 8%);
 }
 
 .paw-desktop-root .paw-browser-trace-step-window__meta {
   display: grid;
   gap: 4px;
   margin-top: 6px;
-  color: #737b88;
+  color: #6d7a83;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
@@ -368,7 +477,7 @@
 .paw-desktop-root .paw-browser-trace-steps-toggle:hover { color: #0f6d78; text-decoration: underline; }
 
 .paw-desktop-root .paw-browser-trace-steps li {
-  color: #737b88;
+  color: #6d7a83;
   font-size: 14px;
   line-height: 1.45;
 }
@@ -376,8 +485,8 @@
 .paw-desktop-root .paw-browser-agent-stream > footer {
   padding: 8px 12px;
   border-top-color: var(--paw-browser-line);
-  background: rgb(247 248 250 / 86%);
-  color: #737b88;
+  background: rgb(246 249 249 / 86%);
+  color: #6d7a83;
   font-size: 13px;
   line-height: 1.4;
 }
@@ -387,6 +496,7 @@
   box-shadow: 0 0 0 4px rgb(20 184 200 / 13%);
 }
 
+/* Toolbar menu. */
 .paw-desktop-root .paw-browser-menu {
   top: 35px;
   width: 220px;
@@ -414,6 +524,7 @@
   background: #fff;
 }
 
+/* History and Settings: one calm sheet over the page. */
 .paw-desktop-root .paw-browser-history,
 .paw-desktop-root .paw-browser-settings {
   position: absolute;
@@ -438,7 +549,7 @@
   display: grid;
   grid-template-rows: 50px auto minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid rgb(24 32 44 / 8%);
+  border: 1px solid rgb(23 42 48 / 8%);
   border-radius: 16px;
   background: #fff;
   box-shadow: 0 24px 70px rgb(15 23 42 / 22%), 0 1px 0 rgb(255 255 255 / 80%) inset;
@@ -469,7 +580,7 @@
   height: 28px;
   padding-inline: 8px;
   border-radius: 8px;
-  color: #687180;
+  color: #64737d;
   cursor: pointer;
 }
 
@@ -484,7 +595,7 @@
 .paw-desktop-root .paw-browser-history-search {
   margin: 8px 16px 5px;
   border: 1px solid var(--paw-browser-line);
-  background: #f4f6f8;
+  background: #f3f6f7;
 }
 
 .paw-desktop-root .paw-browser-history ol {
@@ -506,7 +617,7 @@
 
 .paw-desktop-root .paw-browser-history .paw-browser-surface-card > p {
   margin: auto;
-  color: #737b88;
+  color: #6d7a83;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -533,7 +644,7 @@
 
 .paw-desktop-root .paw-browser-settings-body p,
 .paw-desktop-root .paw-browser-setting-row {
-  color: #687180;
+  color: #64737d;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -542,7 +653,7 @@
 .paw-desktop-root .paw-browser-setting-row button {
   border-color: var(--paw-browser-line);
   border-radius: 9px;
-  background: #f4f6f8;
+  background: #f3f6f7;
 }
 
 .paw-desktop-root .paw-browser-action-receipt {
@@ -551,8 +662,11 @@
   color: var(--paw-browser-ink);
 }
 
-/* Ego-style execution projection. It is driven only by a real Agent trace;
-   the page remains the Browser and the full trace stays on demand. */
+/* --------------------------------------------------------------------------
+   Ego-style execution projection. Driven only by a real Agent trace; the page
+   remains the Browser and the full trace stays on demand.
+   -------------------------------------------------------------------------- */
+
 .paw-desktop-root .paw-browser-viewport[data-agent-state='active'] {
   box-shadow:
     inset 0 0 0 1px rgb(91 140 255 / 60%),
@@ -605,8 +719,26 @@
     0 0 36px rgb(91 140 255 / 31%);
 }
 
+/* One luminous runner rides the top edge while the Agent is actually working. */
+.paw-desktop-root .paw-browser-agent-signal::before {
+  position: absolute;
+  top: 0;
+  left: -34%;
+  width: 34%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #7ea4ff 42%, #c0a4ff 62%, transparent);
+  content: '';
+  opacity: 0;
+  filter: drop-shadow(0 0 6px rgb(126 164 255 / 85%));
+}
+
 .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal {
   animation: paw-browser-agent-signal-live 1.8s ease-in-out infinite;
+}
+
+.paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal::before {
+  opacity: 1;
+  animation: paw-browser-agent-runner 2.8s linear infinite;
 }
 
 .paw-desktop-root .paw-browser-agent-field[data-state='settled']::before,
@@ -655,16 +787,16 @@
   padding: 8px 8px 8px 13px;
   border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 21px;
-  background: rgb(27 28 34 / 90%);
+  background: rgb(25 27 34 / 91%);
   box-shadow:
-    0 18px 54px rgb(12 17 38 / 32%),
-    0 0 0 1px rgb(91 140 255 / 8%),
-    0 0 34px rgb(91 116 255 / 21%),
+    0 18px 54px rgb(12 17 38 / 34%),
+    0 0 0 1px rgb(91 140 255 / 9%),
+    0 0 38px rgb(91 116 255 / 22%),
     inset 0 1px 0 rgb(255 255 255 / 12%);
   color: #f7f8ff;
   pointer-events: auto;
-  -webkit-backdrop-filter: blur(22px) saturate(135%);
-  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
   animation: paw-browser-agent-capsule-in 240ms cubic-bezier(.16, 1, .3, 1) both;
 }
 
@@ -784,6 +916,10 @@
   50% { opacity: 1; }
 }
 
+@keyframes paw-browser-agent-runner {
+  to { left: 100%; }
+}
+
 @keyframes paw-browser-agent-capsule-in {
   from { opacity: 0; transform: translate3d(-50%, 10px, 0) scale(.97); }
   to { opacity: 1; transform: translate3d(-50%, 0, 0) scale(1); }
@@ -791,6 +927,11 @@
 
 @keyframes paw-browser-agent-spark {
   to { transform: rotate(360deg); }
+}
+
+@keyframes paw-browser-start-breathe {
+  0%, 100% { box-shadow: 0 14px 34px rgb(15 84 93 / 16%), inset 0 1px 0 rgb(255 255 255 / 85%), 0 0 0 1px rgb(20 111 123 / 12%); }
+  50% { box-shadow: 0 16px 40px rgb(15 84 93 / 22%), inset 0 1px 0 rgb(255 255 255 / 85%), 0 0 0 7px rgb(20 143 158 / 7%); }
 }
 
 /* --------------------------------------------------------------------------
@@ -818,9 +959,22 @@
   .paw-desktop-root .paw-browser-agent-capsule-actions > button { padding-inline: 8px; }
   .paw-desktop-root .paw-browser-surface-card { border-radius: 13px; }
   .paw-desktop-root .paw-browser-menu-narrow-only { display: flex; }
+  .paw-desktop-root .paw-browser-start-halo { width: 62px; height: 62px; }
+  .paw-desktop-root .paw-browser-start > strong { font-size: 17px; }
 }
 
 @media (hover: hover) and (pointer: fine) {
+  .paw-desktop-root .paw-browser-tab:not([data-active]):hover {
+    background: rgb(255 255 255 / 62%);
+    color: var(--paw-browser-ink);
+    box-shadow: inset 0 0 0 1px rgb(23 42 48 / 6%);
+  }
+  .paw-desktop-root .paw-nav-buttons button:hover:not(:disabled),
+  .paw-desktop-root .paw-toolbar-actions > button:hover:not(:disabled) {
+    background: var(--paw-browser-hover);
+    color: var(--paw-browser-ink);
+    box-shadow: inset 0 0 0 1px rgb(23 42 48 / 6%);
+  }
   .paw-desktop-root .paw-browser-agent-capsule-actions > button:hover {
     background: rgb(255 255 255 / 9%);
     color: #fff;
@@ -845,12 +999,14 @@
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-browser-agent-field,
   .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal,
+  .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal::before,
   .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-mark svg,
   .paw-desktop-root .paw-browser-agent-counter svg,
   .paw-desktop-root .paw-browser-agent-capsule,
   .paw-desktop-root .paw-browser-agent-capsule-actions > button,
   .paw-desktop-root .paw-browser-agent-stream,
   .paw-desktop-root .paw-browser-agent-stream article,
+  .paw-desktop-root .paw-browser-start-halo,
   .paw-desktop-root .paw-browser-history,
   .paw-desktop-root .paw-browser-settings,
   .paw-desktop-root .paw-browser-tab {
@@ -858,4 +1014,5 @@
     transition: none;
   }
   .paw-desktop-root .paw-browser-agent-capsule { transform: translate3d(-50%, 0, 0); }
+  .paw-desktop-root .paw-browser-agent-signal::before { opacity: 0; }
 }
