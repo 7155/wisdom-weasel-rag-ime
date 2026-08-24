@@ -24,8 +24,9 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type WheelEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
+import { BrowserFindBar, type BrowserFindMatch } from '@/features/browser/BrowserFindBar';
 import { BrowserOmnibox } from '@/features/browser/BrowserOmnibox';
 import { BrowserPageStatus } from '@/features/browser/BrowserPageStatus';
 import { BrowserTabStrip, type BrowserTabItem } from '@/features/browser/BrowserTabStrip';
@@ -36,6 +37,7 @@ import {
   pawBrowserHost,
   type PawBrowserGuestFailLoadEvent,
   type PawBrowserGuestFaviconEvent,
+  type PawBrowserGuestFoundInPageEvent,
   type PawBrowserGuestProcessGoneEvent,
   type PawBrowserHistoryEntry,
   type PawBrowserWebview,
@@ -46,8 +48,10 @@ import {
   browserElement,
   errorText,
   formatBytes,
+  historyClock,
   historyDateTime,
-  historyTime,
+  historyDayKey,
+  historyDayLabel,
   hostTab,
   initialHostTab,
   isTextEntry,
@@ -91,8 +95,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const [showBrowserMenu, setShowBrowserMenu] = useState(false);
   const [showFind, setShowFind] = useState(false);
   const [findDraft, setFindDraft] = useState('');
+  const [findMatch, setFindMatch] = useState<BrowserFindMatch>(null);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [browserActionReceipt, setBrowserActionReceipt] = useState('');
+  const [confirmingClear, setConfirmingClear] = useState<'' | 'history' | 'cache' | 'site-data'>('');
   const hostWebviews = useRef(new Map<string, PawBrowserWebview>());
   const started = useRef(false);
   const openedTargetCommand = useRef('');
@@ -225,6 +231,29 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       });
     }
   }, [electronHost, selectedHostTab]);
+
+  // Find state and zoom are per-guest: switching tabs drops the stale query
+  // and reads the real zoom factor of the newly selected guest.
+  useEffect(() => {
+    if (!electronHost) return;
+    setShowFind(false);
+    setFindDraft('');
+    setFindMatch(null);
+    const webview = hostWebviews.current.get(selectedHostTabId);
+    const factor = typeof webview?.getZoomFactor === 'function' ? webview.getZoomFactor() : null;
+    setZoomPercent(typeof factor === 'number' && Number.isFinite(factor) ? Math.round(factor * 100) : 100);
+  }, [electronHost, selectedHostTabId]);
+
+  useEffect(() => {
+    if (!browserActionReceipt) return;
+    const timer = window.setTimeout(() => setBrowserActionReceipt(''), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [browserActionReceipt]);
+
+  // A pending destructive confirmation never outlives its surface.
+  useEffect(() => {
+    if (!showHistory && !showSettings) setConfirmingClear('');
+  }, [showHistory, showSettings]);
 
   const refreshBrowserHistory = useCallback(async () => {
     if (!electronHost) return;
@@ -426,8 +455,8 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   };
 
   const clearBrowserData = async (action: 'cache' | 'site-data') => {
-    const label = action === 'cache' ? '缓存' : 'Cookie 与站点数据';
-    if (!electronHost || !window.confirm(`确认清除当前 PAW Browser Profile 的${label}？`)) return;
+    if (!electronHost) return;
+    setConfirmingClear('');
     setBusy(`clear-${action}`);
     setSettingsReceipt('');
     try {
@@ -471,6 +500,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     setFindDraft(value);
     if (!value) {
       selectedWebview()?.stopFindInPage('clearSelection');
+      setFindMatch(null);
       return;
     }
     selectedWebview()?.findInPage(value, { findNext, forward });
@@ -479,15 +509,20 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const closeFind = () => {
     selectedWebview()?.stopFindInPage('clearSelection');
     setFindDraft('');
+    setFindMatch(null);
     setShowFind(false);
+    selectedWebview()?.focus();
+  };
+
+  const applyZoomPercent = (next: number) => {
+    const webview = selectedWebview();
+    if (!webview) return;
+    webview.setZoomFactor(next / 100);
+    setZoomPercent(next);
   };
 
   const changeZoom = (step: number) => {
-    const webview = selectedWebview();
-    if (!webview) return;
-    const next = Math.min(300, Math.max(25, zoomPercent + step));
-    webview.setZoomFactor(next / 100);
-    setZoomPercent(next);
+    applyZoomPercent(Math.min(300, Math.max(25, zoomPercent + step)));
   };
 
   const takeScreenshot = async () => {
@@ -517,7 +552,8 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   };
 
   const clearHistory = async () => {
-    if (!electronHost || !window.confirm('确认清空当前 PAW Browser Profile 的全部浏览历史？')) return;
+    if (!electronHost) return;
+    setConfirmingClear('');
     setBusy('clear-history');
     try {
       setHistory(await electronHost.clearHistory());
@@ -548,10 +584,25 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     else webview.reload();
   };
 
-  const visibleHistory = history.filter((entry) => {
+  const visibleHistory = useMemo(() => history.filter((entry) => {
     const query = historyQuery.trim().toLocaleLowerCase();
     return !query || entry.title.toLocaleLowerCase().includes(query) || entry.url.toLocaleLowerCase().includes(query);
-  });
+  }), [history, historyQuery]);
+
+  // History reads like a timeline: consecutive visits of the same calendar day
+  // share one day heading, and rows only repeat the clock time.
+  const historyDayGroups = useMemo(() => {
+    const groups: { key: string; label: string; entries: PawBrowserHistoryEntry[] }[] = [];
+    for (const entry of visibleHistory) {
+      const key = historyDayKey(entry.visitedAt);
+      const lastGroup = groups.at(-1);
+      if (lastGroup && lastGroup.key === key) lastGroup.entries.push(entry);
+      else groups.push({ key, label: historyDayLabel(entry.visitedAt), entries: [entry] });
+    }
+    return groups;
+  }, [visibleHistory]);
+
+  const homePage = electronHost ? (browserSettings?.startPage || 'about:blank') : 'about:blank';
 
   const selectedTabLoading = Boolean(electronHost && selectedHostTab?.loading);
   const selectedPageFailure = electronHost ? selectedHostTab?.failure ?? null : null;
@@ -628,7 +679,13 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           >
             {selectedTabLoading ? <X size={14} /> : <RefreshCw className={busy === 'reload' ? 'ui-spin' : ''} size={14} />}
           </button>
-          <button aria-label="空白页" className="paw-browser-home" onClick={() => navigateTo('about:blank')} type="button">
+          <button
+            aria-label={homePage === 'about:blank' ? '打开空白页' : '打开启动页'}
+            className="paw-browser-home"
+            onClick={() => navigateTo(homePage)}
+            title={homePage === 'about:blank' ? '打开空白页' : `打开启动页 ${homePage}`}
+            type="button"
+          >
             <Home size={14} />
           </button>
         </div>
@@ -666,7 +723,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
             className="paw-browser-settings-toggle"
             disabled={!electronHost || Boolean(busy)}
             onClick={() => { setShowHistory(false); setShowSettings((value) => !value); if (!showSettings) void refreshBrowserSettings(); }}
-            title="Browser 设置"
+            title={electronHost ? 'Browser 设置' : 'Browser 设置需要 PAWOS 桌面版宿主'}
             type="button"
           >
             <Settings size={14} />
@@ -684,6 +741,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
               }
               setShowBrowserMenu(next);
             }}
+            title={electronHost ? 'Browser 菜单' : '页内查找、打印、缩放等操作需要 PAWOS 桌面版宿主'}
             type="button"
           >
             <EllipsisVertical size={14} />
@@ -692,11 +750,24 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
             <div className="paw-browser-menu" role="menu">
               <button onClick={() => { setShowFind(true); setShowBrowserMenu(false); }} role="menuitem" type="button"><Search size={13} />页内查找</button>
               <button onClick={() => { selectedWebview()?.print(); setShowBrowserMenu(false); }} role="menuitem" type="button"><Printer size={13} />打印</button>
-              <div className="paw-browser-menu-zoom"><span>缩放</span><button aria-label="缩小网页" onClick={() => changeZoom(-10)} type="button"><ZoomOut size={13} /></button><b>{zoomPercent}%</b><button aria-label="放大网页" onClick={() => changeZoom(10)} type="button"><ZoomIn size={13} /></button></div>
+              <div className="paw-browser-menu-zoom">
+                <span>缩放</span>
+                <button aria-label="缩小网页" onClick={() => changeZoom(-10)} type="button"><ZoomOut size={13} /></button>
+                <button
+                  aria-label="恢复默认缩放"
+                  className="paw-browser-menu-zoom-reset"
+                  disabled={zoomPercent === 100}
+                  onClick={() => applyZoomPercent(100)}
+                  title={zoomPercent === 100 ? '当前为默认缩放' : '恢复 100%'}
+                  type="button"
+                >
+                  {zoomPercent}%
+                </button>
+                <button aria-label="放大网页" onClick={() => changeZoom(10)} type="button"><ZoomIn size={13} /></button>
+              </div>
               <button onClick={() => void takeScreenshot()} role="menuitem" type="button"><Camera size={13} />截图</button>
               <button onClick={() => void openDownloads()} role="menuitem" type="button"><Download size={13} />下载</button>
               <button className="paw-browser-menu-narrow-only" onClick={() => { setShowSettings(false); setShowHistory(true); setShowBrowserMenu(false); void refreshBrowserHistory(); }} role="menuitem" type="button"><History size={13} />浏览历史</button>
-              <button onClick={() => { setShowHistory(false); setShowSettings(true); setShowBrowserMenu(false); void refreshBrowserSettings(); }} role="menuitem" type="button"><CircleX size={13} />清除浏览数据</button>
               <button className="paw-browser-menu-narrow-only" onClick={() => { setShowHistory(false); setShowSettings(true); setShowBrowserMenu(false); void refreshBrowserSettings(); }} role="menuitem" type="button"><Settings size={13} />浏览器设置</button>
             </div>
           ) : null}
@@ -706,33 +777,60 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       <section className="paw-browser-workspace" data-show-agent={showTrace || undefined}>
         <div className="paw-browser-viewport" data-agent-state={agentExecutionState || undefined}>
           {electronHost && showFind ? (
-            <div className="paw-browser-find" role="search"><input aria-label="页内查找" autoFocus onChange={(event) => findOnPage(event.target.value)} value={findDraft} /><button aria-label="上一个匹配项" onClick={() => findOnPage(findDraft, true, false)} type="button"><ArrowLeft size={13} /></button><button aria-label="下一个匹配项" onClick={() => findOnPage(findDraft, true, true)} type="button"><ArrowRight size={13} /></button><button aria-label="关闭页内查找" onClick={closeFind} type="button"><X size={13} /></button></div>
+            <BrowserFindBar
+              match={findMatch}
+              onChange={(value) => findOnPage(value)}
+              onClose={closeFind}
+              onNext={() => findOnPage(findDraft, true, true)}
+              onPrevious={() => findOnPage(findDraft, true, false)}
+              value={findDraft}
+            />
           ) : null}
-          {browserActionReceipt ? <output className="paw-browser-action-receipt" role="status">{browserActionReceipt}</output> : null}
+          {browserActionReceipt ? (
+            <div className="paw-browser-action-receipt">
+              <output role="status">{browserActionReceipt}</output>
+              <button aria-label="关闭操作提示" onClick={() => setBrowserActionReceipt('')} type="button"><X size={12} /></button>
+            </div>
+          ) : null}
           {showHistory ? (
             <section aria-label="浏览历史" className="paw-browser-history">
               <div className="paw-browser-surface-card">
                 <header>
                   <div><History size={16} /><strong>浏览历史</strong></div>
                   <div>
-                    <button disabled={!history.length || Boolean(busy)} onClick={() => void clearHistory()} type="button">清空</button>
+                    {confirmingClear === 'history' ? (
+                      <span aria-label="确认清空浏览历史" className="paw-browser-confirm" role="group">
+                        <em>清空全部浏览历史？</em>
+                        <button data-danger disabled={Boolean(busy)} onClick={() => void clearHistory()} type="button">确认清空</button>
+                        <button onClick={() => setConfirmingClear('')} type="button">取消</button>
+                      </span>
+                    ) : (
+                      <button disabled={!history.length || Boolean(busy)} onClick={() => setConfirmingClear('history')} type="button">清空</button>
+                    )}
                     <button aria-label="关闭浏览历史" onClick={() => setShowHistory(false)} type="button"><X size={14} /></button>
                   </div>
                 </header>
                 <label className="paw-browser-history-search"><Search size={13} /><input aria-label="搜索浏览历史" onChange={(event) => setHistoryQuery(event.target.value)} placeholder="搜索标题或网址" type="search" value={historyQuery} /></label>
-                {visibleHistory.length ? (
-                  <ol>
-                    {visibleHistory.map((entry) => (
-                      <li key={`${entry.visitedAt}-${entry.url}`}>
-                        <button onClick={() => { setShowHistory(false); navigateTo(entry.url); }} type="button">
-                          <Globe2 size={14} />
-                          <span><strong>{entry.title || entry.url}</strong><small>{entry.url}</small></span>
-                          <time dateTime={historyDateTime(entry.visitedAt)}>{historyTime(entry.visitedAt)}</time>
-                        </button>
-                        <button aria-label={`删除 ${entry.title || entry.url}`} onClick={() => void removeHistoryEntry(entry.id)} type="button"><X size={13} /></button>
-                      </li>
+                {historyDayGroups.length ? (
+                  <div className="paw-browser-history-days">
+                    {historyDayGroups.map((group) => (
+                      <section className="paw-browser-history-day" key={group.key}>
+                        <h3>{group.label}</h3>
+                        <ol>
+                          {group.entries.map((entry) => (
+                            <li key={`${entry.visitedAt}-${entry.url}`}>
+                              <button onClick={() => { setShowHistory(false); navigateTo(entry.url); }} type="button">
+                                <Globe2 size={14} />
+                                <span><strong>{entry.title || entry.url}</strong><small>{entry.url}</small></span>
+                                <time dateTime={historyDateTime(entry.visitedAt)}>{historyClock(entry.visitedAt)}</time>
+                              </button>
+                              <button aria-label={`删除 ${entry.title || entry.url}`} onClick={() => void removeHistoryEntry(entry.id)} type="button"><X size={13} /></button>
+                            </li>
+                          ))}
+                        </ol>
+                      </section>
                     ))}
-                  </ol>
+                  </div>
                 ) : <p>{history.length ? '没有匹配的浏览记录' : '还没有浏览记录'}</p>}
               </div>
             </section>
@@ -744,7 +842,31 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
                 <div className="paw-browser-settings-body">
                   <section><h3>启动页</h3><div className="paw-browser-setting-row"><input aria-label="Browser 启动页" onChange={(event) => setStartPageDraft(event.target.value)} value={startPageDraft} /><button disabled={Boolean(busy)} onClick={() => void saveStartPage()} type="button">保存</button></div></section>
                   <section><h3>下载</h3><p>下载位置</p><code>{browserSettings?.downloadPath || '读取中…'}</code></section>
-                  <section><h3>浏览数据</h3><div className="paw-browser-setting-row"><span>缓存 · {formatBytes(browserSettings?.cacheBytes ?? 0)}</span><button disabled={Boolean(busy)} onClick={() => void clearBrowserData('cache')} type="button">清除缓存</button></div><div className="paw-browser-setting-row"><span>Cookie 与站点数据 · {browserSettings?.cookieCount ?? 0} 个 Cookie</span><button disabled={Boolean(busy)} onClick={() => void clearBrowserData('site-data')} type="button">清除 Cookie 与站点数据</button></div></section>
+                  <section>
+                    <h3>浏览数据</h3>
+                    <div className="paw-browser-setting-row">
+                      <span>缓存 · {formatBytes(browserSettings?.cacheBytes ?? 0)}</span>
+                      {confirmingClear === 'cache' ? (
+                        <span aria-label="确认清除缓存" className="paw-browser-confirm" role="group">
+                          <button data-danger disabled={Boolean(busy)} onClick={() => void clearBrowserData('cache')} type="button">确认清除</button>
+                          <button onClick={() => setConfirmingClear('')} type="button">取消</button>
+                        </span>
+                      ) : (
+                        <button disabled={Boolean(busy)} onClick={() => setConfirmingClear('cache')} type="button">清除缓存</button>
+                      )}
+                    </div>
+                    <div className="paw-browser-setting-row">
+                      <span>Cookie 与站点数据 · {browserSettings?.cookieCount ?? 0} 个 Cookie</span>
+                      {confirmingClear === 'site-data' ? (
+                        <span aria-label="确认清除 Cookie 与站点数据" className="paw-browser-confirm" role="group">
+                          <button data-danger disabled={Boolean(busy)} onClick={() => void clearBrowserData('site-data')} type="button">确认清除</button>
+                          <button onClick={() => setConfirmingClear('')} type="button">取消</button>
+                        </span>
+                      ) : (
+                        <button disabled={Boolean(busy)} onClick={() => setConfirmingClear('site-data')} type="button">清除 Cookie 与站点数据</button>
+                      )}
+                    </div>
+                  </section>
                   <section><h3>网站权限</h3><p>网站在需要时请求权限，由当前隔离 Browser Session 处理。</p></section>
                   {settingsReceipt ? <output role="status">{settingsReceipt}</output> : null}
                 </div>
@@ -762,6 +884,9 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
                   setCurrentUrl(url);
                   electronHost.activate({ title, url, webContentsId });
                 }
+              }}
+              onFoundInPage={(match) => {
+                if (tab.id === selectedHostTabId) setFindMatch(match);
               }}
               onGuestState={(update) => updateHostTab(tab.id, update)}
               onIdentity={(webContentsId) => {
@@ -971,6 +1096,7 @@ function BrowserTraceRow({ trace }: { trace: BrowserRecord }) {
 function NativeBrowserWebview({
   active,
   onChange,
+  onFoundInPage,
   onGuestState,
   onIdentity,
   onWebview,
@@ -978,6 +1104,7 @@ function NativeBrowserWebview({
 }: {
   active: boolean;
   onChange(value: { title: string; url: string; webContentsId: number }): void;
+  onFoundInPage(match: BrowserFindMatch): void;
   onGuestState(update: Partial<HostBrowserTab>): void;
   onIdentity(webContentsId: number): void;
   onWebview(value: PawBrowserWebview | null): void;
@@ -1028,6 +1155,14 @@ function NativeBrowserWebview({
       const favicon = (event as PawBrowserGuestFaviconEvent).favicons?.[0];
       if (favicon) onGuestState({ favicon });
     };
+    const foundInPage = (event: Event) => {
+      const result = (event as PawBrowserGuestFoundInPageEvent).result;
+      if (!result) return;
+      onFoundInPage({
+        activeMatchOrdinal: typeof result.activeMatchOrdinal === 'number' ? result.activeMatchOrdinal : 0,
+        matches: typeof result.matches === 'number' ? result.matches : 0,
+      });
+    };
     webview.addEventListener('dom-ready', ready);
     webview.addEventListener('did-navigate', publish);
     webview.addEventListener('did-navigate-in-page', publish);
@@ -1037,6 +1172,7 @@ function NativeBrowserWebview({
     webview.addEventListener('did-fail-load', failLoad);
     webview.addEventListener('render-process-gone', processGone);
     webview.addEventListener('page-favicon-updated', faviconUpdated);
+    webview.addEventListener('found-in-page', foundInPage);
     return () => {
       webview.removeEventListener('dom-ready', ready);
       webview.removeEventListener('did-navigate', publish);
@@ -1047,9 +1183,10 @@ function NativeBrowserWebview({
       webview.removeEventListener('did-fail-load', failLoad);
       webview.removeEventListener('render-process-gone', processGone);
       webview.removeEventListener('page-favicon-updated', faviconUpdated);
+      webview.removeEventListener('found-in-page', foundInPage);
       onWebview(null);
     };
-  }, [onChange, onGuestState, onIdentity, onWebview, tab.title, tab.url]);
+  }, [onChange, onFoundInPage, onGuestState, onIdentity, onWebview, tab.title, tab.url]);
 
   return (
     <webview
