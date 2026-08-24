@@ -1,7 +1,7 @@
 # PAWOS Frontend Continuation Handoff
 
 **Date:** 2026-08-24  
-**Audience:** next local model on `main`  
+**Audience:** next GitHub-only cloud model on `main`  
 **Status:** partial — checkpoint pushed so work is not trapped in a dirty tree  
 **This file is progress context, not proof of install, foreground acceptance, or all-App completion.**
 
@@ -10,7 +10,7 @@
 Thoroughly reconstruct PAWOS frontend from the user's design, not a colour pass.
 
 - Every App and the OS shell must understand the human purpose in `PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md`, then **refactor**. Quality bar is very high.
-- **Agent App is the most important surface.** Read Tutti (`/Volumes/undo 4t/git/tutti`), CodingTo (`/Volumes/undo 4t/git/CodingTo/frontend`), and `file:///Volumes/undo%204t/MyGlobalDownloads/pawos-conversation-baseline.html`.
+- **Agent App is the most important surface.** Use the in-repo baseline `control-center-web/docs/references/pawos-conversation-baseline.html` plus BRIEF §2 and the interaction contracts. Do **not** fetch Tutti or CodingTo.
 - Also inspect performance, flicker, layout jump, and streaming reflow (user: 频闪 / 跳动抽搐 / 拖动卡顿).
 - Frontend-only. Do not edit `rag_ime/`, migrations, Pi Runtime, or backend contracts. Do not install unless the user asks.
 
@@ -80,7 +80,7 @@ Priority order is the user's:
 
 ```text
 1. git fetch && git log -1 && git status
-2. Read this file + BRIEF §2 (Agent) + baseline HTML + Tutti/CodingTo components
+2. Read CLOUD_MODEL.md, REQUIREMENTS, BRIEF §2 (Agent), in-repo baseline HTML. Do not fetch Tutti/CodingTo.
 3. Reconstruct Agent conversation (tree, composer, rich results, trace)
 4. Then shell, then remaining Apps one vertical slice at a time if serial;
    parallel only with hard file-ownership partitions

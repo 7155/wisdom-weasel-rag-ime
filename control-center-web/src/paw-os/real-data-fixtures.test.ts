@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const fixturesPath = resolve(process.cwd(), '..', 'docs/handoffs/pawos/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md');
+const fixturesPath = resolve(process.cwd(), 'docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md');
 
 describe('PAWOS web-model real data fixtures', () => {
   it('keeps every JSON and JSONL document parseable', () => {

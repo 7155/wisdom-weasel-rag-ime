@@ -18,10 +18,10 @@ bootstrap and route to the smallest additional context needed for the task.
    fresh checks as machine evidence. Root prose never proves that a Session is
    running, a worktree is clean, or a foreground path passed.
 
-`docs/` is ignored local history. It may be inspected when an exact file is
-named as evidence, but it is not the current project index and must not be
-loaded wholesale. Design prototypes are references, not current Runtime
-contracts.
+`docs/` at the repository root is ignored local history. For **PAWOS frontend**
+work that a GitHub-only model must continue, start at
+[control-center-web/CLOUD_MODEL.md](control-center-web/CLOUD_MODEL.md). Do not
+clone Tutti or CodingTo.
 
 ## Skill Routing
 
