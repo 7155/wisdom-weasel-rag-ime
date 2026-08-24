@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Mouse
 import { ConnectionIndicator } from '@/components/feedback';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
-import { PawAppIcon } from './PawAppIcon';
+import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 import { PawCompositionField } from './PawCompositionField';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuItem } from './PawContextMenu';
@@ -318,7 +318,7 @@ export function PawDesktop() {
       onContextMenu={openContextMenu}
     >
       <header className="paw-menu-bar">
-        <button aria-label="打开全部 App" className="paw-system-mark" onClick={() => api.getState().setLaunchpadOpen(!launchpadOpen)} type="button"><span className="paw-brand-wordmark">PAW</span></button>
+        <button aria-label="打开全部 App" className="paw-system-mark" onClick={() => api.getState().setLaunchpadOpen(!launchpadOpen)} type="button"><PawBrandMark size={15} /><span className="paw-brand-wordmark">PAW</span></button>
         <button
           aria-expanded={contextMenu?.kind === 'menubar'}
           aria-haspopup="menu"
@@ -491,7 +491,7 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
     >
       <section>
         <header>
-          <span className="paw-launchpad-title"><b className="paw-brand-wordmark">PAW</b><span>全部 App</span></span>
+          <span className="paw-launchpad-title"><PawBrandMark size={16} /><b className="paw-brand-wordmark">PAW</b><span>全部 App</span></span>
           <input
             aria-label="搜索 App"
             onChange={(event) => setQuery(event.target.value)}
