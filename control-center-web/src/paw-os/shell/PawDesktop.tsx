@@ -1,7 +1,7 @@
 import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
-import { pawApp, pawApps, pawDockAppIds, type PawAppId } from '../runtime/app-registry';
+import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import { PawAppIcon } from './PawAppIcon';
 import { PawCompositionField } from './PawCompositionField';
@@ -12,8 +12,17 @@ import { pawBrowserHost } from '../apps/paw-browser-host';
 
 type PawMenuTarget =
   | { kind: 'desktop' }
+  | { kind: 'menubar' }
   | { kind: 'apps'; appIds: PawAppId[]; label: string }
   | { kind: 'window'; windowId: string; label: string };
+
+const LAUNCHPAD_KIND_ORDER = ['work', 'agent', 'tool', 'system'] as const;
+const LAUNCHPAD_KIND_LABEL: Record<(typeof LAUNCHPAD_KIND_ORDER)[number], string> = {
+  work: '工作',
+  agent: 'Agent',
+  tool: '工具',
+  system: '系统',
+};
 
 type PawMenuState = PawMenuTarget & { x: number; y: number };
 type PawSelectionRect = { x: number; y: number; width: number; height: number };
@@ -29,12 +38,12 @@ export function PawDesktop() {
   const windows = usePawDesktopStore((state) => state.windows);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
   const collaborationFocus = Boolean(collaborationFocusGroup);
-  const menuAppId = activeAppId ?? 'project-workbench';
   const [clock, setClock] = useState(() => timeLabel());
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
   const viewportRef = useRef<HTMLElement>(null);
+  const menuAppRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(timeLabel()), 30_000);
     return () => window.clearInterval(timer);
@@ -45,6 +54,19 @@ export function PawDesktop() {
         event.preventDefault();
         setContextMenu(null);
         api.getState().setLaunchpadOpen(!api.getState().launchpadOpen);
+      } else if ((event.metaKey || event.ctrlKey) && event.key === ',') {
+        event.preventDefault();
+        setContextMenu(null);
+        const state = api.getState();
+        const existingWindowId = [...state.stack].reverse().find((windowId) => state.windows[windowId]?.appId === 'system-settings')
+          ?? Object.values(state.windows).find((node) => node.appId === 'system-settings')?.id;
+        if (existingWindowId) state.focusWindow(existingWindowId);
+        else state.openApp('system-settings', { title: pawApp('system-settings').label });
+        state.setLaunchpadOpen(false);
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'h') {
+        event.preventDefault();
+        const state = api.getState();
+        if (state.activeWindowId) state.minimizeWindow(state.activeWindowId);
       } else if (event.key === 'F5') {
         event.preventDefault();
         setContextMenu(null);
@@ -205,6 +227,27 @@ export function PawDesktop() {
         },
       ];
     }
+    if (contextMenu.kind === 'menubar') {
+      if (!activeWindowId || !activeAppId) {
+        return [
+          { id: 'launchpad', label: '全部 App', icon: <LayoutGrid size={15} />, action: () => api.getState().setLaunchpadOpen(true) },
+          { id: 'new-agent', label: '新建 Agent 工作', icon: <Bot size={15} />, action: () => openApp('agent') },
+          { id: 'settings', label: '系统设置', icon: <Settings size={15} />, action: () => openApp('system-settings') },
+        ];
+      }
+      return [
+        { id: 'hide', label: '隐藏窗口', icon: <Minus size={15} />, action: () => api.getState().minimizeWindow(activeWindowId) },
+        { id: 'overview', label: '窗口总览', icon: <PanelsTopLeft size={15} />, action: () => api.getState().setOverviewOpen(true) },
+        {
+          id: 'close',
+          label: '关闭窗口',
+          icon: <X size={15} />,
+          danger: true,
+          separatorBefore: true,
+          action: () => api.getState().closeWindow(activeWindowId),
+        },
+      ];
+    }
     if (contextMenu.kind === 'apps') {
       const openWindowCount = Object.values(windows).filter((node) => contextMenu.appIds.includes(node.appId)).length;
       return [
@@ -255,7 +298,18 @@ export function PawDesktop() {
         },
       },
     ];
-  }, [api, contextMenu, windows]);
+  }, [activeAppId, activeWindowId, api, contextMenu, windows]);
+  const menuBarLabel = activeAppId ? pawApp(activeAppId).label : '桌面';
+  const openMenuBarMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (contextMenu?.kind === 'menubar') {
+      setContextMenu(null);
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({ kind: 'menubar', x: rect.left, y: rect.bottom + 6 });
+  };
   return (
     <div
       className="paw-desktop"
@@ -265,7 +319,19 @@ export function PawDesktop() {
     >
       <header className="paw-menu-bar">
         <button aria-label="打开全部 App" className="paw-system-mark" onClick={() => api.getState().setLaunchpadOpen(!launchpadOpen)} type="button"><span className="paw-brand-wordmark">PAW</span></button>
-        <span className="paw-menu-app"><PawAppIcon appId={menuAppId} size={14} /><span>{activeAppId ? pawApp(activeAppId).label : '项目'}</span></span>
+        <button
+          aria-expanded={contextMenu?.kind === 'menubar'}
+          aria-haspopup="menu"
+          aria-label={`${menuBarLabel} 菜单`}
+          className="paw-menu-app"
+          data-idle={activeAppId ? undefined : true}
+          onClick={openMenuBarMenu}
+          ref={menuAppRef}
+          type="button"
+        >
+          {activeAppId ? <PawAppIcon appId={activeAppId} size={14} /> : null}
+          <span>{menuBarLabel}</span>
+        </button>
         <div className="paw-menu-status"><ConnectionIndicator /><span>{clock}</span></div>
       </header>
 
@@ -292,7 +358,8 @@ export function PawDesktop() {
       {launchpadOpen ? <PawLaunchpad onClose={() => api.getState().setLaunchpadOpen(false)} onOpen={openApp} /> : null}
       {contextMenu ? (
         <PawContextMenu
-          ariaLabel={contextMenu.kind === 'desktop' ? '桌面菜单' : `${contextMenu.label} 菜单`}
+          anchor={contextMenu.kind === 'menubar' ? menuAppRef : undefined}
+          ariaLabel={contextMenuAriaLabel(contextMenu, activeAppId)}
           items={menuItems}
           onClose={() => setContextMenu(null)}
           x={contextMenu.x}
@@ -344,17 +411,41 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
   onOverview: () => void;
   overviewOpen: boolean;
 }) {
-  const openAppSignature = usePawDesktopStore((state) => Object.values(state.windows)
-    .map((node) => node.appId)
+  const dockStateSignature = usePawDesktopStore((state) => Object.values(state.windows)
+    .map((node) => `${node.appId}\u0001${node.minimized ? '1' : '0'}`)
     .sort()
     .join('\u0000'));
-  const openIds = useMemo(
-    () => new Set(openAppSignature.split('\u0000').filter(Boolean) as PawAppId[]),
-    [openAppSignature],
-  );
+  const dockState = useMemo(() => {
+    const open = new Set<PawAppId>();
+    const visible = new Set<PawAppId>();
+    for (const item of dockStateSignature.split('\u0000').filter(Boolean)) {
+      const [appId, minimized] = item.split('\u0001') as [PawAppId, string];
+      open.add(appId);
+      if (minimized === '0') visible.add(appId);
+    }
+    return { open, visible };
+  }, [dockStateSignature]);
   return (
     <nav aria-label="PAWOS 工具架" className="paw-dock">
-      {pawDockAppIds.map((appId) => <button aria-current={activeAppId === appId ? 'page' : undefined} aria-label={pawApp(appId).label} data-app={appId} data-desktop-app={appId} data-open={openIds.has(appId) || undefined} key={appId} onClick={() => onOpen(appId)} type="button"><PawAppIcon appId={appId} size={32} /></button>)}
+      {pawDockAppIds.map((appId) => {
+        const minimizedOnly = dockState.open.has(appId) && !dockState.visible.has(appId);
+        return (
+          <button
+            aria-current={activeAppId === appId ? 'page' : undefined}
+            aria-label={pawApp(appId).label}
+            data-app={appId}
+            data-desktop-app={appId}
+            data-minimized={minimizedOnly || undefined}
+            data-open={dockState.open.has(appId) || undefined}
+            key={appId}
+            onClick={() => onOpen(appId)}
+            title={minimizedOnly ? `${pawApp(appId).label} 已最小化，点击恢复` : undefined}
+            type="button"
+          >
+            <PawAppIcon appId={appId} size={32} />
+          </button>
+        );
+      })}
       <i aria-hidden="true" />
       <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /></button>
       <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /></button>
@@ -363,9 +454,86 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
 }
 
 function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: PawAppId) => void }) {
-  return <div className="paw-launchpad" role="dialog" aria-label="全部 App" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section><header><span className="paw-launchpad-title"><b className="paw-brand-wordmark">PAW</b><span>全部 App</span></span><button onClick={onClose} type="button">完成</button></header><div>{pawApps.map((app) => <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} type="button"><span><PawAppIcon appId={app.id} size={48} /></span><strong>{app.label}</strong><small>{app.tagline}</small></button>)}</div></section></div>;
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return pawApps.filter((app) => {
+      if (!needle) return true;
+      return [app.label, app.shortLabel, app.tagline, app.id].some((part) => part.toLowerCase().includes(needle));
+    });
+  }, [query]);
+  const groups = useMemo(() => LAUNCHPAD_KIND_ORDER.flatMap((kind) => {
+    const apps = filtered.filter((app) => launchpadKind(app) === kind);
+    return apps.length ? [{ kind, label: LAUNCHPAD_KIND_LABEL[kind], apps }] : [];
+  }), [filtered]);
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
+  return (
+    <div
+      aria-label="全部 App"
+      aria-modal="true"
+      className="paw-launchpad"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && query) {
+          event.stopPropagation();
+          setQuery('');
+          return;
+        }
+        if (event.key === 'Enter' && filtered.length === 1) {
+          event.preventDefault();
+          onOpen(filtered[0].id);
+        }
+      }}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+      role="dialog"
+    >
+      <section>
+        <header>
+          <span className="paw-launchpad-title"><b className="paw-brand-wordmark">PAW</b><span>全部 App</span></span>
+          <input
+            aria-label="搜索 App"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索 App"
+            ref={searchRef}
+            type="search"
+            value={query}
+          />
+          <button onClick={onClose} type="button">完成</button>
+        </header>
+        <div>
+          {groups.length === 0 ? (
+            <p className="paw-launchpad-empty">没有匹配的 App</p>
+          ) : groups.map((group) => (
+            <Fragment key={group.kind}>
+              <h2 className="paw-launchpad-group">{group.label}</h2>
+              {group.apps.map((app) => (
+                <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} type="button">
+                  <span><PawAppIcon appId={app.id} size={48} /></span>
+                  <strong>{app.label}</strong>
+                  <small>{app.tagline}</small>
+                </button>
+              ))}
+            </Fragment>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function timeLabel(): string {
   return new Intl.DateTimeFormat('zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+}
+
+function launchpadKind(app: PawAppDefinition): (typeof LAUNCHPAD_KIND_ORDER)[number] {
+  if (app.kind === 'work' && app.id !== 'project-workbench') return 'tool';
+  return app.kind;
+}
+
+function contextMenuAriaLabel(menu: PawMenuState, activeAppId: PawAppId | null): string {
+  if (menu.kind === 'desktop') return '桌面菜单';
+  if (menu.kind === 'menubar') return activeAppId ? `${pawApp(activeAppId).label} 菜单` : '桌面菜单';
+  return `${menu.label} 菜单`;
 }
