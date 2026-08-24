@@ -310,6 +310,11 @@ describe('PawOsTerminalApp', () => {
       const secondTab = screen.getByRole('tab', { name: 'Terminal 2' });
       expect(firstTab).toHaveAttribute('title', 'Terminal 1 · /bin/zsh · /workspace/paw');
       expect(secondTab).toHaveAttribute('aria-selected', 'true');
+      // The cwd basename is a visible identity hint that stays out of the
+      // accessible tab name, which the exact name queries above already prove.
+      const cwdHint = firstTab.querySelector('.paw-terminal-tab-cwd');
+      expect(cwdHint).toHaveTextContent('paw');
+      expect(cwdHint).toHaveAttribute('aria-hidden', 'true');
       expect(screen.getByRole('button', { name: '结束终端会话 Terminal 1' })).toBeInTheDocument();
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
 
@@ -320,6 +325,55 @@ describe('PawOsTerminalApp', () => {
     } finally {
       scrollIntoView.mockRestore();
     }
+  });
+
+  it('surfaces hidden tabs through edge fades and an all-sessions switcher only while the strip overflows', async () => {
+    const user = userEvent.setup();
+    const first = terminalSession('terminal-one', 'Terminal');
+    const second = { ...terminalSession('terminal-two', 'Terminal'), cwd: '/workspace/other' };
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [first, second] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: second, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: second.terminalId },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    const tablist = await screen.findByRole('tablist', { name: 'PAWOS 终端' });
+    await screen.findByRole('tab', { name: 'Terminal 1' });
+    // While every tab fits, no overflow affordance may exist.
+    expect(tablist).not.toHaveAttribute('data-overflow');
+    expect(screen.queryByRole('button', { name: /列出全部终端/ })).not.toBeInTheDocument();
+
+    // The strip measures its own scroll box; simulate a real overflow.
+    Object.defineProperties(tablist, {
+      scrollWidth: { configurable: true, value: 640 },
+      clientWidth: { configurable: true, value: 240 },
+    });
+    fireEvent.scroll(tablist);
+    expect(tablist).toHaveAttribute('data-overflow');
+    expect(tablist).toHaveAttribute('data-at-start');
+    expect(tablist).not.toHaveAttribute('data-at-end');
+
+    const toggle = screen.getByRole('button', { name: '列出全部终端（2 个）' });
+    await user.click(toggle);
+    const switcher = screen.getByRole('group', { name: '全部终端会话' });
+    const rows = within(switcher).getAllByRole('button');
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toHaveAttribute('aria-current', 'true');
+    expect(within(switcher).getByText('/workspace/other')).toBeInTheDocument();
+
+    // Escape closes the switcher and hands focus back to its toggle.
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('group', { name: '全部终端会话' })).not.toBeInTheDocument();
+    expect(toggle).toHaveFocus();
+
+    await user.click(toggle);
+    await user.click(within(screen.getByRole('group', { name: '全部终端会话' })).getByRole('button', { name: /Terminal 1/ }));
+    expect(screen.queryByRole('group', { name: '全部终端会话' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Terminal 1' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('keeps an ended session readable, states the exit truthfully, and never reruns or forwards input', async () => {
@@ -519,6 +573,8 @@ describe('PawOsTerminalApp', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('新建终端失败：后端拒绝了新终端');
+    // The notice floats inside the workspace instead of taking a layout row.
+    expect(alert.closest('.paw-terminal-app__workspace')).not.toBeNull();
     await user.click(within(alert).getByRole('button', { name: '关闭错误提示' }));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '新建终端' })).toBeInTheDocument();
@@ -575,6 +631,18 @@ describe('paw-os-terminal-app.css contracts', () => {
   it('keeps the tab strip locally scrollable while the new-terminal action stays outside it', () => {
     expect(terminalCss).toMatch(/\.paw-terminal-tabs\s*\{[^}]*overflow-x:\s*auto;[^}]*\}/s);
     expect(terminalCss).toMatch(/\.paw-terminal-tab-new\s*\{[^}]*flex:\s*0 0 auto;/s);
+  });
+
+  it('fades only the strip edges that truly hide tabs', () => {
+    expect(terminalCss).toMatch(/\.paw-terminal-tabs\[data-overflow\]\s*\{[^}]*mask-image:/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-tabs\[data-overflow\]\[data-at-start\]\s*\{[^}]*mask-image:/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-tabs\[data-overflow\]\[data-at-end\]\s*\{[^}]*mask-image:/s);
+  });
+
+  it('floats the error notice over the console instead of granting it a grid row', () => {
+    expect(terminalCss).toMatch(/\.paw-terminal-error\s*\{[^}]*position:\s*absolute;/s);
+    expect(terminalCss).not.toMatch(/\[data-error\][^{]*\{[^}]*grid-template-rows/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app__workspace\s*\{[^}]*position:\s*relative;/s);
   });
 
   it('silences terminal motion for both the OS media query and the PAWOS preference', () => {

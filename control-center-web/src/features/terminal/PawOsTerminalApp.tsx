@@ -3,8 +3,8 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Terminal as Xterm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, ChevronDown, Folder, LoaderCircle, Plus, Search, TriangleAlert, X } from 'lucide-react';
-import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, ChevronDown, Folder, List, LoaderCircle, Plus, Search, TriangleAlert, X } from 'lucide-react';
+import { type KeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '@/paw-os/shell/PawWindowChrome';
 import { writeClipboardText } from '@/platform/clipboard';
@@ -71,6 +71,20 @@ function terminalStateText(session: TerminalSession): string {
   return session.exitCode !== null ? `已退出（退出码 ${session.exitCode}）` : '已退出';
 }
 
+// The working-directory basename is the strongest per-tab identity signal the
+// backend actually knows; the full path stays in the tooltip and status bar.
+function cwdBasename(cwd: string): string {
+  return cwd.split('/').filter(Boolean).at(-1) ?? '';
+}
+
+interface TabStripOverflow {
+  overflowing: boolean;
+  atStart: boolean;
+  atEnd: boolean;
+}
+
+const settledTabStrip: TabStripOverflow = { overflowing: false, atStart: true, atEnd: true };
+
 // PAWOS appearance preference plus the OS media query; xterm's blinking cursor
 // is JS-driven, so CSS reduced-motion rules alone cannot silence it.
 function prefersReducedMotion(): boolean {
@@ -91,6 +105,8 @@ export function PawOsTerminalApp() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [cwdDraft, setCwdDraft] = useState('');
   const [cwdCopied, setCwdCopied] = useState(false);
+  const [showTabSwitcher, setShowTabSwitcher] = useState(false);
+  const [tabStrip, setTabStrip] = useState<TabStripOverflow>(settledTabStrip);
   const terminalTabsId = useId();
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Xterm | null>(null);
@@ -98,6 +114,9 @@ export function PawOsTerminalApp() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const cwdInputRef = useRef<HTMLInputElement | null>(null);
   const terminalTabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabStripRef = useRef<HTMLDivElement | null>(null);
+  const tabSwitcherToggleRef = useRef<HTMLButtonElement | null>(null);
+  const tabSwitcherFirstItemRef = useRef<HTMLButtonElement | null>(null);
   const emptyCreateRef = useRef<HTMLButtonElement | null>(null);
   const initialLoadHandled = useRef(false);
   const restoreTabFocusRef = useRef(false);
@@ -194,7 +213,41 @@ export function PawOsTerminalApp() {
     setSearchDraft('');
     setSearchResult(null);
     setCwdCopied(false);
+    setShowTabSwitcher(false);
   }, [selectedId]);
+
+  // The strip only reports what it can prove: scroll metrics of its own box.
+  // Hidden-tab affordances (edge fades, the session switcher) appear exactly
+  // while tabs overflow locally and disappear when everything fits again.
+  const measureTabStrip = useCallback(() => {
+    const strip = tabStripRef.current;
+    if (!strip) return;
+    const maxScroll = strip.scrollWidth - strip.clientWidth;
+    const next: TabStripOverflow = maxScroll > 1
+      ? { overflowing: true, atStart: strip.scrollLeft <= 1, atEnd: strip.scrollLeft >= maxScroll - 1 }
+      : settledTabStrip;
+    setTabStrip((current) =>
+      current.overflowing === next.overflowing && current.atStart === next.atStart && current.atEnd === next.atEnd
+        ? current
+        : next);
+  }, []);
+
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    if (!strip) return;
+    measureTabStrip();
+    const observer = new ResizeObserver(measureTabStrip);
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, [measureTabStrip, sessions.length]);
+
+  useEffect(() => {
+    if (!tabStrip.overflowing) setShowTabSwitcher(false);
+  }, [tabStrip.overflowing]);
+
+  useEffect(() => {
+    if (showTabSwitcher) tabSwitcherFirstItemRef.current?.focus();
+  }, [showTabSwitcher]);
 
   useEffect(() => () => window.clearTimeout(cwdCopyTimerRef.current), []);
 
@@ -419,10 +472,15 @@ export function PawOsTerminalApp() {
         aria-label="PAWOS 终端"
         aria-orientation="horizontal"
         className="paw-terminal-tabs"
+        data-at-end={tabStrip.atEnd || undefined}
+        data-at-start={tabStrip.atStart || undefined}
+        data-overflow={tabStrip.overflowing || undefined}
+        onScroll={measureTabStrip}
         onWheel={(event) => {
           if (!event.deltaY || event.deltaX) return;
           event.currentTarget.scrollLeft += event.deltaY;
         }}
+        ref={tabStripRef}
         role="tablist"
       >
         {sessions.map((terminal, index) => {
@@ -430,6 +488,7 @@ export function PawOsTerminalApp() {
           const label = tabLabels.get(terminal.terminalId) ?? `终端 ${index + 1}`;
           const stateText = terminalStateText(terminal);
           const tabId = `${terminalTabsId}-tab-${terminal.terminalId}`;
+          const folder = cwdBasename(terminal.cwd);
           return (
             <div className="paw-terminal-tab" data-selected={active || undefined} key={terminal.terminalId} role="presentation">
               <button
@@ -449,6 +508,7 @@ export function PawOsTerminalApp() {
                 type="button"
               >
                 <span>{label}</span>
+                {folder ? <small aria-hidden className="paw-terminal-tab-cwd">{folder}</small> : null}
                 {terminal.status === 'running' ? null : <span className="paw-terminal-tab-state">（{stateText}）</span>}
                 <i data-exit-failure={terminal.status === 'exited' && terminal.exitCode !== null && terminal.exitCode !== 0 ? true : undefined} data-state={terminal.status} />
               </button>
@@ -472,6 +532,24 @@ export function PawOsTerminalApp() {
       </div>
       {sessions.length ? (
         <div className="paw-terminal-new-group">
+          {tabStrip.overflowing ? (
+            <button
+              aria-expanded={showTabSwitcher}
+              aria-haspopup="true"
+              aria-label={`列出全部终端（${sessions.length} 个）`}
+              className="paw-terminal-tab-new paw-terminal-tabs-overflow"
+              onClick={() => {
+                setShowSearch(false);
+                setShowCreateForm(false);
+                setShowTabSwitcher((value) => !value);
+              }}
+              ref={tabSwitcherToggleRef}
+              title="列出全部终端"
+              type="button"
+            >
+              <List size={13} />
+            </button>
+          ) : null}
           <button aria-busy={create.isPending || undefined} aria-label="新建终端" className="paw-terminal-tab-new" disabled={create.isPending} onClick={() => create.mutate({})} title="新建终端（⌘T / Ctrl+Shift+T）" type="button">
             {create.isPending ? <LoaderCircle className="ui-spin" size={13} /> : <Plus size={13} />}
           </button>
@@ -501,16 +579,26 @@ export function PawOsTerminalApp() {
         <h1 className="sr-only">Terminal</h1>
         {windowChromeTarget ? null : terminalTabs}
 
-        {errorNotice ? (
-          <div className="paw-terminal-error" role="alert">
-            <TriangleAlert size={15} />
-            <span>{errorNotice.text}</span>
-            {errorNotice.retry ? <button className="paw-terminal-error__retry" onClick={errorNotice.retry} type="button">重试</button> : null}
-            {errorNotice.dismiss ? <button aria-label="关闭错误提示" onClick={errorNotice.dismiss} type="button"><X size={13} /></button> : null}
-          </div>
-        ) : null}
-
         <div className="paw-terminal-app__workspace">
+          {errorNotice ? (
+            <div className="paw-terminal-error" role="alert">
+              <TriangleAlert size={15} />
+              <span>{errorNotice.text}</span>
+              {errorNotice.retry ? <button className="paw-terminal-error__retry" onClick={errorNotice.retry} type="button">重试</button> : null}
+              {errorNotice.dismiss ? (
+                <button
+                  aria-label="关闭错误提示"
+                  onClick={() => {
+                    errorNotice.dismiss?.();
+                    terminalRef.current?.focus();
+                  }}
+                  type="button"
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <main
             aria-labelledby={selectedTabId}
             className="paw-terminal-console"
@@ -573,6 +661,45 @@ export function PawOsTerminalApp() {
                   <button onClick={closeCreateForm} type="button">取消</button>
                 </div>
               </form>
+            ) : null}
+            {showTabSwitcher && sessions.length ? (
+              <div
+                aria-label="全部终端会话"
+                className="paw-terminal-switcher"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return;
+                  event.stopPropagation();
+                  setShowTabSwitcher(false);
+                  tabSwitcherToggleRef.current?.focus();
+                }}
+                role="group"
+              >
+                <header>全部终端<em>{sessions.length}</em></header>
+                <ol>
+                  {sessions.map((terminal, index) => {
+                    const active = terminal.terminalId === selectedId;
+                    const label = tabLabels.get(terminal.terminalId) ?? `终端 ${index + 1}`;
+                    return (
+                      <li key={terminal.terminalId}>
+                        <button
+                          aria-current={active || undefined}
+                          onClick={() => {
+                            setShowTabSwitcher(false);
+                            selectTerminalTab(terminal.terminalId, true);
+                          }}
+                          ref={active || (!selectedId && index === 0) ? tabSwitcherFirstItemRef : undefined}
+                          title={`${label} · ${terminal.cwd}`}
+                          type="button"
+                        >
+                          <i data-exit-failure={terminal.status === 'exited' && terminal.exitCode !== null && terminal.exitCode !== 0 ? true : undefined} data-state={terminal.status} />
+                          <span><strong>{label}</strong><small>{terminal.cwd}</small></span>
+                          {terminal.status === 'running' ? null : <em>{terminalStateText(terminal)}</em>}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
             ) : null}
             {sessionsQuery.isPending ? (
               <div className="paw-terminal-console__empty" data-loading role="status"><LoaderCircle className="ui-spin" size={15} /><p>正在读取终端会话…</p></div>

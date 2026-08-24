@@ -31,9 +31,9 @@
   overflow: hidden;
   container: paw-terminal / inline-size;
 }
-.paw-terminal-app[data-error] { grid-template-rows: 40px auto minmax(0, 1fr); }
+/* Errors float over the console (see .paw-terminal-error); they never earn a
+   grid row, so an arriving or dismissed notice cannot resize the live PTY. */
 .paw-terminal-app[data-tabs-in-window-chrome] { grid-template-rows: minmax(0, 1fr); }
-.paw-terminal-app[data-tabs-in-window-chrome][data-error] { grid-template-rows: auto minmax(0, 1fr); }
 
 .paw-window-titlebar[data-window-chrome='terminal-tabs'] {
   grid-template-columns: 76px 96px minmax(0, 1fr);
@@ -71,6 +71,18 @@
   scrollbar-width: none;
 }
 .paw-terminal-tabs::-webkit-scrollbar { display: none; }
+
+/* Edge fades appear only on the side that truly hides tabs; the component
+   measures its own scroll box, so the affordance never lies about overflow. */
+.paw-terminal-tabs[data-overflow] {
+  mask-image: linear-gradient(90deg, transparent, #000 26px, #000 calc(100% - 26px), transparent);
+}
+.paw-terminal-tabs[data-overflow][data-at-start] {
+  mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+}
+.paw-terminal-tabs[data-overflow][data-at-end] {
+  mask-image: linear-gradient(90deg, transparent, #000 26px);
+}
 
 .paw-terminal-tab-state {
   position: absolute;
@@ -120,7 +132,7 @@
   height: 100%;
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 7px;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) 7px;
   align-items: center;
   gap: 6px;
   padding: 0 29px 0 11px;
@@ -130,6 +142,20 @@
   text-align: left;
 }
 .paw-terminal-tab-main > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paw-terminal-tab-main > i { grid-column: 3; }
+
+/* Second identity signal: the tab's working-directory basename. It yields
+   space to the numbered label first and never joins the accessible name. */
+.paw-terminal-tab-cwd {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--paw-terminal-faint);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paw-terminal-tab[data-selected] .paw-terminal-tab-cwd { color: var(--paw-terminal-muted); }
 .paw-terminal-tab-main:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; border-radius: 8px; }
 .paw-terminal-tab-main i {
   position: relative;
@@ -203,19 +229,31 @@
 .paw-terminal-tab-new:active { transform: scale(.94); }
 .paw-terminal-tab-new:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 .paw-terminal-tab-new--cwd { width: 17px; }
-.paw-terminal-tab-new--cwd[aria-expanded='true'] {
+.paw-terminal-tab-new--cwd[aria-expanded='true'],
+.paw-terminal-tabs-overflow[aria-expanded='true'] {
   border-color: color-mix(in srgb, var(--paw-terminal-accent) 40%, transparent);
   background: color-mix(in srgb, var(--paw-terminal-accent) 14%, transparent);
   color: var(--paw-terminal-bright);
 }
 
+/* The error notice is a floating glass layer over the console, not a grid
+   row: appearing and disappearing must never resize or reflow the PTY. It
+   stays until dismissed, retried, or truthfully cleared by the next success. */
 .paw-terminal-error {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  right: 12px;
+  left: 12px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  background: rgb(255 69 58 / 10%);
-  border-bottom: 1px solid rgb(255 69 58 / 26%);
+  padding: 8px 12px;
+  border: 1px solid rgb(255 69 58 / 32%);
+  border-radius: 12px;
+  background: color-mix(in srgb, #2b161a 88%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 16px 40px rgb(0 0 0 / 46%);
   color: var(--paw-terminal-danger);
   font-size: 14px;
   line-height: 1.45;
@@ -251,6 +289,7 @@
 }
 
 .paw-terminal-app__workspace {
+  position: relative;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -268,11 +307,12 @@
   outline: none;
 }
 
-/* Scrollback search and the new-terminal-with-cwd form float over the console
-   as dark glass instruments; they never displace the PTY grid rows or resize
-   the live terminal. */
+/* Scrollback search, the new-terminal-with-cwd form, and the all-sessions
+   switcher float over the console as dark glass instruments; they never
+   displace the PTY grid rows or resize the live terminal. */
 .paw-terminal-search,
-.paw-terminal-create {
+.paw-terminal-create,
+.paw-terminal-switcher {
   position: absolute;
   z-index: 6;
   top: 10px;
@@ -283,6 +323,87 @@
   backdrop-filter: blur(14px) saturate(1.2);
   box-shadow: 0 1px 0 rgb(255 255 255 / 6%) inset, 0 16px 40px rgb(0 0 0 / 52%);
   animation: paw-terminal-overlay-enter 200ms var(--paw-terminal-ease) both;
+}
+
+/* The switcher lists every session with its truthful state and full cwd; it
+   opens only while the tab strip actually overflows. */
+.paw-terminal-switcher {
+  display: grid;
+  width: min(330px, calc(100% - 28px));
+  max-height: min(320px, calc(100% - 20px));
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+.paw-terminal-switcher > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 5px;
+  color: var(--paw-terminal-muted);
+  font-size: 12px;
+  letter-spacing: .04em;
+}
+.paw-terminal-switcher > header em {
+  color: var(--paw-terminal-faint);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+.paw-terminal-switcher > ol {
+  margin: 0;
+  padding: 4px 6px 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 16%) transparent;
+}
+.paw-terminal-switcher li button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--paw-terminal-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background-color 120ms var(--paw-terminal-ease);
+}
+.paw-terminal-switcher li button[aria-current] {
+  background: color-mix(in srgb, var(--paw-terminal-accent) 13%, transparent);
+}
+.paw-terminal-switcher li button:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
+.paw-terminal-switcher li button > span { min-width: 0; display: grid; gap: 1px; }
+.paw-terminal-switcher li button :is(strong, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paw-terminal-switcher li button strong { font-size: 13px; font-weight: 600; }
+.paw-terminal-switcher li button small { color: var(--paw-terminal-faint); font-size: 11px; line-height: 1.4; }
+.paw-terminal-switcher li button > em {
+  flex: 0 0 auto;
+  color: var(--paw-terminal-muted);
+  font-size: 12px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.paw-terminal-switcher li i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid #484f58;
+  background: transparent;
+}
+.paw-terminal-switcher li i[data-state='running'] {
+  border: 0;
+  background: #30d158;
+  box-shadow: 0 0 0 2px rgb(48 209 88 / 16%);
+}
+.paw-terminal-switcher li i[data-state='exited'][data-exit-failure] {
+  border: 0;
+  background: var(--paw-terminal-danger);
+  box-shadow: 0 0 0 2px rgb(248 113 113 / 14%);
 }
 
 .paw-terminal-search {
@@ -675,6 +796,7 @@
   .paw-terminal-app__toolbar { padding-inline: 6px; }
   .paw-terminal-app__toolbar[data-window-chrome] { padding-inline: 0; }
   .paw-terminal-tab { min-width: 92px; max-width: 124px; }
+  .paw-terminal-tab-cwd { display: none; }
 }
 
 @container paw-terminal (max-width: 560px) {
@@ -693,6 +815,7 @@
   .paw-terminal-error button:hover { background: rgb(255 69 58 / 16%); }
   .paw-terminal-search button:hover:not(:disabled),
   .paw-terminal-statusbar__search:hover { background: rgb(255 255 255 / 9%); color: var(--paw-terminal-bright); }
+  .paw-terminal-switcher li button:hover { background: rgb(255 255 255 / 7%); }
   .paw-terminal-cwd:hover { background: rgb(255 255 255 / 7%); color: var(--paw-terminal-text); }
   .paw-terminal-create__actions button:hover:not(:disabled) { background: rgb(255 255 255 / 9%); }
   .paw-terminal-create__actions button[type='submit']:hover:not(:disabled) { background: color-mix(in srgb, var(--paw-terminal-accent-strong) 88%, #fff); }
@@ -709,6 +832,7 @@
   .paw-terminal-console__empty,
   .paw-terminal-search,
   .paw-terminal-create,
+  .paw-terminal-switcher,
   .paw-terminal-tab,
   .paw-terminal-empty-glyph > i,
   .paw-terminal-running-badge > i,
@@ -730,6 +854,7 @@
 :root[data-reduce-motion='true'] .paw-terminal-console__empty,
 :root[data-reduce-motion='true'] .paw-terminal-search,
 :root[data-reduce-motion='true'] .paw-terminal-create,
+:root[data-reduce-motion='true'] .paw-terminal-switcher,
 :root[data-reduce-motion='true'] .paw-terminal-tab,
 :root[data-reduce-motion='true'] .paw-terminal-empty-glyph > i,
 :root[data-reduce-motion='true'] .paw-terminal-running-badge > i,
@@ -753,6 +878,7 @@
 
 @media (forced-colors: active) {
   .paw-terminal-tab-main i,
+  .paw-terminal-switcher li i,
   .paw-terminal-running-badge > i,
   .paw-terminal-empty-glyph > i { background: currentColor; forced-color-adjust: none; }
   .paw-terminal-tab[data-selected]::before { background: Highlight; }
