@@ -596,7 +596,7 @@ describe('PAWOS semantic type roles', () => {
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
     expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
     expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
-    expect(systemMigratedCss).toMatch(/\.paw-system-agent-fields small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    expect(systemMigratedCss).toMatch(/\.paw-agent-mode__copy small\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.55;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);
     expect(memoryCss).toMatch(/\.memory-lineage-panel > div:first-child > p,[\s\S]*?font-size:\s*14px;[\s\S]*?line-height:\s*1\.55;/);
     expect(memoryCss).toMatch(/\.memory-pipeline__note span\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/s);
