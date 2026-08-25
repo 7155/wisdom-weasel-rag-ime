@@ -215,8 +215,11 @@ export function focusWorkTreeRows(items: RoomFocusWorkItem[]): FocusTreeRow[] {
       const members = items.filter((candidate) => candidate.wave?.waveId === waveId && !consumed.has(candidate.id));
       if (members.length > 1) {
         members.sort((left, right) => (left.wave?.parallelIndex ?? 0) - (right.wave?.parallelIndex ?? 0) || left.id.localeCompare(right.id));
-        const size = Math.max(item.wave?.parallelSize ?? 0, members.length);
-        rows.push({ kind: 'wave', wave: { ...item.wave!, parallelSize: size }, count: members.length });
+        /* Lane count is distinct tracks, not member rows: two rows on the same
+         * track (rare duplicate) must not fabricate an extra parallel lane. */
+        const tracks = new Set(members.map((member) => Math.max(member.wave?.parallelIndex ?? 0, 0)));
+        const size = Math.max(item.wave?.parallelSize ?? 0, ...[...tracks].map((track) => track + 1));
+        rows.push({ kind: 'wave', wave: { ...item.wave!, parallelSize: size }, count: tracks.size });
         for (const member of members) {
           consumed.add(member.id);
           rows.push({

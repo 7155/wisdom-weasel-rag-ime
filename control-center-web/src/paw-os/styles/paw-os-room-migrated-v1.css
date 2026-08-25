@@ -572,7 +572,7 @@
   border-radius: 999px;
   color: #5f6b7c;
   background: rgb(255 255 255 / .8);
-  font-size: 11.5px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 600;
   line-height: 16px;
@@ -586,7 +586,7 @@
 .paw-desktop-root .paw-room-chronology__dispatch-candidates li[data-selected] { background: rgb(90 145 222 / .1); }
 .paw-desktop-root .paw-room-chronology__dispatch-candidates li strong { font-size: 12.5px; font-weight: 640; }
 .paw-desktop-root .paw-room-chronology__dispatch-candidates li small { overflow: hidden; color: #8a94a3; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li span { color: #758092; font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__dispatch-candidates li span { color: #758092; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .paw-desktop-root .paw-room-chronology__dispatch-ids { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 6px 0 0; font-size: 12px; }
 .paw-desktop-root .paw-room-chronology__dispatch-ids > div { display: contents; }
 .paw-desktop-root .paw-room-chronology__dispatch-ids dt { color: #939ca3; }

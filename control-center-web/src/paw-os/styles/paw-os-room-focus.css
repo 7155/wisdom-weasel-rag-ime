@@ -179,7 +179,7 @@
 }
 .paw-desktop-root .paw-room-focus-overview__wave svg { align-self: center; color: var(--focus-blue); }
 .paw-desktop-root .paw-room-focus-overview__wave strong { overflow: hidden; font-size: 12px; font-weight: 640; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__wave small { flex-shrink: 0; color: #949aa4; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-focus-overview__wave small { flex-shrink: 0; color: #949aa4; font-size: 12px; font-variant-numeric: tabular-nums; }
 .paw-desktop-root .paw-room-focus-overview__tree > li[data-in-wave] { margin-left: 10px; }
 .paw-desktop-root .paw-room-focus-overview__tree > li[data-in-wave]::after {
   position: absolute;
@@ -203,9 +203,9 @@
   border-radius: 999px;
   color: #666e7a;
   background: rgb(255 255 255 / .85);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 15px;
+  line-height: 16px;
   white-space: nowrap;
 }
 .paw-desktop-root .paw-room-focus-overview__lane-chip { border-color: rgb(39 131 222 / .22); color: #206fae; background: rgb(39 131 222 / .05); font-variant-numeric: tabular-nums; }
@@ -218,8 +218,8 @@
 .paw-desktop-root .paw-room-focus-overview__tree-blocker {
   overflow: hidden;
   color: #a13d3d;
-  font-size: 11.5px;
-  line-height: 15px;
+  font-size: 12px;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -296,7 +296,7 @@
 .paw-desktop-root .paw-room-focus-overview__dispatch-route { display: flex; min-width: 0; align-items: baseline; gap: 6px; }
 .paw-desktop-root .paw-room-focus-overview__dispatch-route svg { align-self: center; flex-shrink: 0; color: var(--focus-blue); }
 .paw-desktop-root .paw-room-focus-overview__dispatch-route b { font-size: 12.5px; font-weight: 680; }
-.paw-desktop-root .paw-room-focus-overview__dispatch-route small { overflow: hidden; color: #8b929d; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-route small { overflow: hidden; color: #8b929d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-overview__dispatch-plan > dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 0; font-size: 12px; line-height: 16px; }
 .paw-desktop-root .paw-room-focus-overview__dispatch-plan > dl > div { display: contents; }
 .paw-desktop-root .paw-room-focus-overview__dispatch-plan dt { color: #7d8592; }
@@ -309,7 +309,7 @@
 .paw-desktop-root .paw-room-focus-overview__dispatch-candidates li[data-selected] { background: rgb(39 131 222 / .08); }
 .paw-desktop-root .paw-room-focus-overview__dispatch-candidates li strong { font-size: 12px; font-weight: 640; }
 .paw-desktop-root .paw-room-focus-overview__dispatch-candidates li small { overflow: hidden; color: #8b929d; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__dispatch-candidates li span { color: #737a86; font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates li span { color: #737a86; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .paw-desktop-root .paw-room-focus-overview__inspector { min-width: 0; display: grid; align-content: start; overflow: hidden; border: 1px solid rgb(39 131 222 / .14); border-radius: 13px; background: #fff; box-shadow: 0 10px 28px rgb(42 45 52 / .055); animation: paw-room-focus-inspector-enter 180ms cubic-bezier(.23, 1, .32, 1) both; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy { display: grid; gap: 3px; padding: 10px 11px 8px; }

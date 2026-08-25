@@ -184,7 +184,13 @@ export function buildRoomFocusProjection(
     if (focus && item.rootTurnId) rootByTurn.set(item.rootTurnId, focus);
   }
   const defaultRoot = explicit.find((item) => !item.parentId);
-  const runtime = runtimeFocusWork(activities, rootByTurn, defaultRoot, wavesByDispatch);
+  /* Dispatches whose route decision binds them to an explicit WorkItem are the
+   * WorkItem — the tree must not show the same task twice. */
+  const explicitIds = new Set(explicit.map((item) => item.id));
+  const coveredDispatchIds = new Set(dispatchPlans
+    .filter((plan) => plan.dispatchId && plan.workItemId && explicitIds.has(plan.workItemId))
+    .map((plan) => plan.dispatchId));
+  const runtime = runtimeFocusWork(activities, rootByTurn, defaultRoot, wavesByDispatch, explicitIds, coveredDispatchIds);
   const workItems = [...explicit, ...runtime];
   const partners = room.participants
     .slice()
@@ -338,17 +344,25 @@ function focusReview(item: RoomWorkItem): RoomFocusReview | undefined {
   };
 }
 
+/** Runtime rows only surface dispatched work that has no explicit WorkItem
+ * (e.g. private tool agents). A dispatch already bound to a WorkItem stays a
+ * single row — the WorkItem itself carries owner, wave and review. */
 function runtimeFocusWork(
   activities: RoomActivityProjection[],
   rootByTurn: Map<string, RoomFocusWorkItem>,
   defaultRoot?: RoomFocusWorkItem,
   wavesByDispatch?: Map<string, RoomFocusWaveSlot>,
+  explicitIds?: Set<string>,
+  coveredDispatchIds?: Set<string>,
 ): RoomFocusWorkItem[] {
   const byDispatch = new Map<string, RoomFocusWorkItem>();
   for (const activity of activities) {
     const task = stringValue(activity.payload.task);
     const dispatchId = stringValue(activity.payload.dispatchId || activity.payload.childDispatchId);
     if (!task || !dispatchId) continue;
+    if (coveredDispatchIds?.has(dispatchId)) continue;
+    const boundWorkId = stringValue(activity.payload.workItemId);
+    if (boundWorkId && explicitIds?.has(boundWorkId)) continue;
     const previous = byDispatch.get(dispatchId);
     const parent = rootByTurn.get(activity.turnId) ?? defaultRoot;
     const owner = activity.participantId
