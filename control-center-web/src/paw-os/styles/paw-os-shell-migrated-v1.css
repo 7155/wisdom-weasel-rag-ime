@@ -318,20 +318,22 @@
 .paw-desktop-root .paw-dock button { color: #556171; }
 .paw-desktop-root .paw-dock > i { background: rgb(23 26 33 / .12); }
 .paw-desktop-root .paw-dock button::before { content: none; }
+/* Current App, hover and the running dot all resolve the one identity wash
+   declared in paw-app-icon.css — never an opaque white plate. */
 .paw-desktop-root .paw-dock button[aria-current='page'] {
-  background: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 12%, #fff);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 22%, transparent);
+  background: var(--paw-identity-wash-strong);
+  box-shadow: var(--paw-identity-ring);
 }
 .paw-desktop-root .paw-dock button[data-open]::after {
-  background: var(--paw-app-accent, #2f6bff);
+  background: var(--paw-identity-dot, #2f6bff);
 }
 .paw-desktop-root .paw-dock button[data-minimized]::after {
-  background: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 46%, #fff);
+  background: color-mix(in srgb, var(--paw-identity-dot, #2f6bff) 46%, #fff);
 }
 .paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview) { color: #4c5868; }
 .paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview):is([aria-pressed='true'], :active) {
   color: #1e57e7;
-  background: rgb(47 107 255 / .1);
+  background: var(--paw-identity-wash);
 }
 
 /* The hover label is a real opaque surface: graphite on white, hairline and
@@ -350,7 +352,7 @@
    colour answers here with a soft halo in the App's own accent. */
 @media (hover: hover) and (pointer: fine) {
   .paw-desktop-root .paw-dock button:hover {
-    background: color-mix(in srgb, var(--app-color, #2f6bff) 10%, rgb(255 255 255 / .55));
+    background: var(--paw-identity-wash);
   }
 }
 
@@ -444,9 +446,9 @@
 .paw-desktop-root .paw-launchpad section > div > button:hover,
 .paw-desktop-root .paw-launchpad section > div > button:focus-visible {
   border-color: var(--paw-chrome-hairline);
-  background: #fff;
+  background: var(--paw-identity-wash-strong);
   box-shadow:
-    0 0 0 1.5px color-mix(in srgb, var(--app-color, #2f6bff) 30%, transparent),
+    var(--paw-identity-ring),
     0 14px 34px -20px color-mix(in srgb, var(--app-color, #2f6bff) 26%, rgb(31 43 66 / .35)),
     0 2px 8px rgb(23 26 33 / .05);
   transform: translateY(-2px);

@@ -1,6 +1,23 @@
-/* PAWOS full-colour App identities. Navigation and command icons stay monochrome. */
+/* PAWOS App identity system — one visual language for every placement.
+   Full-colour identities live here; navigation and command icons stay
+   monochrome. The identity is always the bare silhouette on a transparent
+   ground with one shared shadow: no placement may wrap it in a white tile,
+   recolour it, or invent its own selected state. */
+
+/* One size ladder. Every shell placement resolves one of these five steps,
+   so identical surfaces can never drift apart by a pixel or two. */
+:root {
+  --paw-icon-step-xs: 16px; /* menu bar App identity */
+  --paw-icon-step-sm: 20px; /* window titlebar */
+  --paw-icon-step-md: 28px; /* overview targets, App runtime headers */
+  --paw-icon-step-lg: 34px; /* Dock, native App nav header */
+  --paw-icon-step-xl: 48px; /* desktop shortcuts, launcher */
+}
 
 .paw-app-icon {
+  /* The single paper white for every internal detail cut. */
+  --paw-icon-paper: rgb(255 255 255 / .94);
+
   display: block;
   flex: 0 0 auto;
   overflow: visible;
@@ -9,38 +26,29 @@
   transition: filter 180ms ease, transform 180ms cubic-bezier(.2, .8, .2, 1);
 }
 
+/* One ink set: primary mass, one accent element, paper detail cuts. */
 .paw-app-icon__silhouette { transform-origin: center; }
 .paw-app-icon__primary { fill: var(--paw-app-icon-color); }
 .paw-app-icon__secondary { fill: var(--paw-app-icon-accent); }
-.paw-app-icon__tertiary { fill: color-mix(in srgb, var(--paw-app-icon-color) 52%, white); }
-.paw-app-icon__paper { fill: rgb(255 255 255 / .94); }
+.paw-app-icon__paper { fill: var(--paw-icon-paper); }
 .paw-app-icon__stroke { fill: none; stroke: var(--paw-app-icon-color); }
 .paw-app-icon__stroke-accent { fill: none; stroke: var(--paw-app-icon-accent); }
 .paw-app-icon__ring { fill: none; stroke: color-mix(in srgb, var(--paw-app-icon-color) 42%, white); }
-
-.paw-app-icon[data-paw-app-icon='files'] .paw-app-icon__paper { fill: #eef4ff; }
-.paw-app-icon[data-paw-app-icon='memory'] .paw-app-icon__paper { fill: #eef6fb; }
-.paw-app-icon[data-paw-app-icon='knowledge'] .paw-app-icon__paper { opacity: .85; }
-.paw-app-icon[data-paw-app-icon='system-settings'] .paw-app-icon__paper { fill: #f7f7f8; }
-
-/* Ink identities need an optical lift on the dark Dock; their light-surface
-   colour and geometry remain unchanged. */
-.paw-dock .paw-app-icon[data-paw-app-icon='terminal'] .paw-app-icon__stroke { stroke: #7d818b; }
-.paw-dock .paw-app-icon[data-paw-app-icon='terminal'] .paw-app-icon__primary { fill: #7d818b; }
-.paw-dock .paw-app-icon[data-paw-app-icon='system-monitor'] .paw-app-icon__primary { fill: #687c8d; }
+.paw-app-icon__outlined { stroke: var(--paw-icon-paper); }
 
 /* The PAW system mark is monochrome and follows the surrounding text colour. */
 .paw-brand-mark { display: block; flex: 0 0 auto; }
 .paw-desktop-root .paw-system-mark { display: inline-flex; gap: 6px; align-items: center; }
 .paw-launchpad-title .paw-brand-mark { align-self: center; }
 
-/* Small placements retain the same geometry; contrast is strengthened without
-   replacing the identity with a generic tile. */
+/* Small placements retain the same geometry; only the shadow tightens so the
+   identity stays crisp at 16px instead of blooming. */
 .paw-app-icon[data-paw-icon-scale='small'] {
   filter: drop-shadow(0 1px 1px rgb(15 23 42 / .2));
 }
 
-/* The placement owns spacing only; the identity itself owns its colour and silhouette. */
+/* The placement owns spacing only; the identity itself owns its colour and
+   silhouette, so every ground under an icon is transparent. */
 .paw-desktop-shortcuts button > span,
 .paw-launchpad section > div > button > span,
 .paw-native-app .paw-native-nav > header > span {
@@ -49,13 +57,27 @@
   box-shadow: none;
 }
 .paw-desktop-shortcuts button > span { width: 56px; height: 56px; }
-.paw-desktop-shortcuts .paw-app-icon { width: 48px; height: 48px; }
-.paw-dock .paw-app-icon { width: 34px; height: 34px; }
-.paw-launchpad .paw-app-icon { width: 46px; height: 46px; }
-.paw-window-title .paw-app-icon { width: 18px; height: 18px; }
-.paw-native-nav > header .paw-app-icon { width: 34px; height: 34px; }
-.paw-menu-app .paw-app-icon { width: 17px; height: 17px; }
-.paw-overview-window-target > .paw-app-icon { width: 28px; height: 28px; }
+.paw-menu-app .paw-app-icon { width: var(--paw-icon-step-xs); height: var(--paw-icon-step-xs); }
+.paw-window-title .paw-app-icon { width: var(--paw-icon-step-sm); height: var(--paw-icon-step-sm); }
+.paw-overview-window-target > .paw-app-icon { width: var(--paw-icon-step-md); height: var(--paw-icon-step-md); }
+.paw-dock .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
+.paw-native-nav > header .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
+.paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-xl); height: var(--paw-icon-step-xl); }
+.paw-launchpad .paw-app-icon { width: var(--paw-icon-step-xl); height: var(--paw-icon-step-xl); }
+
+/* One selected / running language. Hover, selection, the current-App plate
+   and the running dot all speak the App's own identity colour over a
+   translucent ground — never an opaque white square, never the system accent
+   on one surface and the App accent on another. Declared on the owning
+   buttons so var(--app-color) resolves against each App's palette. */
+.paw-dock button,
+.paw-desktop-shortcuts button,
+.paw-launchpad section > div > button {
+  --paw-identity-wash: color-mix(in srgb, var(--app-color, var(--paw-accent)) 11%, rgb(255 255 255 / .4));
+  --paw-identity-wash-strong: color-mix(in srgb, var(--app-color, var(--paw-accent)) 18%, rgb(255 255 255 / .52));
+  --paw-identity-ring: inset 0 0 0 1px color-mix(in srgb, var(--app-color, var(--paw-accent)) 30%, transparent);
+  --paw-identity-dot: var(--app-color, var(--paw-accent));
+}
 
 .paw-menu-bar > .paw-menu-app { display: inline-flex; align-items: center; gap: 7px; }
 .paw-menu-app > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,5 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-  <rect x="2" y="2" width="44" height="44" rx="11" fill="#1c222c" />
+  <!-- The one plate in the identity system: the system mark needs an opaque
+       ground on foreign chrome (browser tabs, home screens). In-OS App
+       identities stay bare silhouettes; this plate never appears there. -->
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="#212a3c" />
   <g fill="#fff" transform="translate(24 24) scale(.68) translate(-24 -25.8)">
     <ellipse cx="10.5" cy="17.5" rx="5.6" ry="7" transform="rotate(-14 10.5 17.5)" />
     <ellipse cx="24" cy="13" rx="5.9" ry="7.3" />
