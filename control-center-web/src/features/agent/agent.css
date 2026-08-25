@@ -3929,7 +3929,10 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
   margin-inline-start: 1px;
   background: color-mix(in srgb, var(--color-accent) 14%, transparent);
   color: var(--color-accent);
-  font: var(--font-weight-semibold) 11px / 17px var(--font-mono);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--text-label-lh);
   text-align: center;
 }
 
