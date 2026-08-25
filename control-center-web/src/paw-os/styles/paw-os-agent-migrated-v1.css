@@ -1720,11 +1720,18 @@
   padding: 16px 52px 0;
 }
 
-/* 用户气泡：气泡只包正文，时间戳退到泡外右下（对齐签收稿 paw-user-step） */
+/* 用户气泡：气泡只包正文，时间戳退到泡外右下（对齐签收稿 paw-user-step）。
+   The outer wrapper carries no border/shadow of its own — an earlier
+   compatibility layer's straight-edged border + shadow used to sit flush
+   against this rounded bubble with zero padding, showing a faint square
+   "ghost" behind the bubble's rounded corners. Only .agent-markdown below
+   draws the visible bubble now. */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message {
   padding: 0;
+  border: 0;
   border-radius: 0;
   background: transparent;
+  box-shadow: none;
 }
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message .agent-markdown {
   display: block;

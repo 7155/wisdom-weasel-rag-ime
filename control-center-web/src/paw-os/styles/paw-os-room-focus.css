@@ -6,10 +6,14 @@
  */
 
 .paw-desktop-root .paw-room-focus-overview {
-  --focus-blue: #2783de;
-  --focus-green: #248a4d;
-  --focus-amber: #b36a0b;
-  --focus-red: #c64747;
+  /* One Room status palette (UR-057 / paw-os-room-migrated-v1): reuse the
+     desktop-scoped --room-* hues instead of a near-duplicate local set, so
+     "running/waiting/blocked/complete" reads as the exact same colour in the
+     Focus console, the chronology work-strip and the flow ledger. */
+  --focus-blue: var(--room-blue);
+  --focus-green: var(--room-green);
+  --focus-amber: var(--room-amber);
+  --focus-red: var(--room-red);
   min-width: 0;
   min-height: 100%;
   display: grid;
@@ -188,7 +192,7 @@
   margin: 2px auto 0;
   padding: 0 8px;
   color: #9197a1;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 

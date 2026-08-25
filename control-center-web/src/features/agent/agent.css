@@ -3884,7 +3884,7 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
   border-radius: 999px;
   background: var(--color-collaboration-soft);
   color: var(--color-collaboration);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 17px;
   white-space: nowrap;
@@ -3963,7 +3963,7 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
 
 .agent-route-plan__candidates > li > small {
   color: var(--color-text-tertiary);
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
