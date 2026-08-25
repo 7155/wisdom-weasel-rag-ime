@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "pawos.minecraft-harness-scenes.v1",
+  "roomId": "room:00000000-0000-4000-8000-000000000001",
+  "scenes": [
+    {
+      "id": "initial-parallel-build",
+      "fromSequence": 1,
+      "toSequence": 2033,
+      "purpose": "并行实现、伙伴回执、失败审查与第一轮收敛"
+    },
+    {
+      "id": "browser-blocker-and-recovery",
+      "fromSequence": 2034,
+      "toSequence": 2665,
+      "purpose": "重复继续、Browser 阻塞、失败结果与恢复"
+    },
+    {
+      "id": "short-resume-turns",
+      "fromSequence": 2668,
+      "toSequence": 2888,
+      "purpose": "短输入继续、恢复态与无重复旧操作"
+    },
+    {
+      "id": "durable-final-recovery",
+      "fromSequence": 2889,
+      "toSequence": 3261,
+      "purpose": "重启后继续、重新验收、Ego 成功与唯一 Root 终态"
+    }
+  ],
+  "expectedProblemStates": [
+    "participant tool failure",
+    "partner submitted but reviewer verdict is unverified",
+    "Facilitator contradictory accept",
+    "workspace job orphan and restart",
+    "Browser attach/screenshot timeout and recovery",
+    "Tool Agent timeout/abort",
+    "single final Root result"
+  ]
+}

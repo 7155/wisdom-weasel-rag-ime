@@ -1,0 +1,285 @@
+{
+  "root": "/workspace/minecraft-harness-20260825",
+  "items": [
+    {
+      "path": "AGENTS.md",
+      "sizeBytes": 1243,
+      "sha256": "c22b43fceb842f8b59d0e04013d8bd067a688946bcba83aed28d43b47586404e"
+    },
+    {
+      "path": "README.md",
+      "sizeBytes": 842,
+      "sha256": "f97d0629a22423e95398c60ca37a7857875ee33bcef8a99ef8b9a08e900dd210"
+    },
+    {
+      "path": "dist/index.html",
+      "sizeBytes": 458,
+      "sha256": "d8a7fa7378e2801c4cfe58712728c50e9a583089c13688301a5db220216b5c73"
+    },
+    {
+      "path": "dist/src/core/blocks.js",
+      "sizeBytes": 1597,
+      "sha256": "7a61bc292ba9f4c0dcb71eace93a8b9df4304c125985f8163874e2f76d3706ed"
+    },
+    {
+      "path": "dist/src/core/index.js",
+      "sizeBytes": 406,
+      "sha256": "8cc5679f8c807a40da024ec2ad55fb11392655ccfaafe9a200931da1ff147954"
+    },
+    {
+      "path": "dist/src/core/inventory.js",
+      "sizeBytes": 3993,
+      "sha256": "4ef3424efd7f486d3a7e59012c0d401fa140afa215a69667da8bbe56099cc612"
+    },
+    {
+      "path": "dist/src/core/save.js",
+      "sizeBytes": 1599,
+      "sha256": "1803691e3d6aa3a993033b10e05f8dffd4452f697138b20f7b956a6857cc0cb4"
+    },
+    {
+      "path": "dist/src/core/survival.js",
+      "sizeBytes": 3228,
+      "sha256": "cc8987f3273059031b182266ff4fc6c74e99c1a1a5e7e3497af05dac3be552a0"
+    },
+    {
+      "path": "dist/src/core/world.js",
+      "sizeBytes": 8634,
+      "sha256": "aaedf6da27f5a6a9253438d7613be069c495998f494da38b25c7d703abeab619"
+    },
+    {
+      "path": "dist/src/game/index.js",
+      "sizeBytes": 45,
+      "sha256": "34948a10d3599e551674ef1769b361d2c7f5ad22bb4ad61bb635f20252254dc7"
+    },
+    {
+      "path": "dist/src/game/runtime.js",
+      "sizeBytes": 17777,
+      "sha256": "29f38c9706c11db7a2c7d0fce85ecd05df4cd3f6a8b990cbae139663a7525e68"
+    },
+    {
+      "path": "dist/src/main.js",
+      "sizeBytes": 386,
+      "sha256": "0dd6b0add2016d26d87b4a0550adec0ba757f5e900a3cc289faa2f8842d04c9a"
+    },
+    {
+      "path": "dist/src/style.css",
+      "sizeBytes": 8991,
+      "sha256": "d961ee82e3a89b6e6e7b45ff7f65bddb5a172bc299e9c6f2c898b16a99d1c57f"
+    },
+    {
+      "path": "dist/src/ui/README.md",
+      "sizeBytes": 2581,
+      "sha256": "2d7828ac3b6d11e8838e8d618178189ad2a5a6b3015ad19d57d431f519598feb"
+    },
+    {
+      "path": "dist/src/ui/audio.js",
+      "sizeBytes": 5636,
+      "sha256": "aae0abf2e4c664ed31f8defc6f34a1782ec1b94466f35c21ab1c2d9ad7ab75a0"
+    },
+    {
+      "path": "dist/src/ui/hud.js",
+      "sizeBytes": 12275,
+      "sha256": "17cdcdecbe4b0c0ff55a2db2b96e07d9459cca2d4e4864d7cd63b20f7156c7c9"
+    },
+    {
+      "path": "dist/src/ui/index.js",
+      "sizeBytes": 498,
+      "sha256": "cc8e65f8c1695b47e286fe0cc7fc0915d33f2ef4e186ebd47fc77a38a81449e5"
+    },
+    {
+      "path": "docs/agent/FINAL.md",
+      "sizeBytes": 2290,
+      "sha256": "5c3582547978c8e9c1c7251f678b8ef7f1da0165a938ae7edb8307e75a0c518b"
+    },
+    {
+      "path": "docs/agent/INDEX.md",
+      "sizeBytes": 370,
+      "sha256": "7787b78751d119492c6bf3ebae0d1b3598380f3911a44e0d107abb2013f761dd"
+    },
+    {
+      "path": "docs/agent/ROOT.md",
+      "sizeBytes": 338,
+      "sha256": "5afb3544257826b3b1bf6520d86707c70c228e040fae687e1a5c26dd3456347e"
+    },
+    {
+      "path": "docs/agent/WORKBOARD.md",
+      "sizeBytes": 760,
+      "sha256": "e118f8a024ed75e228d3b54bcfea2f51f216d89f8dec96c405a4a35105bcc0c1"
+    },
+    {
+      "path": "docs/agent/acceptance.md",
+      "sizeBytes": 824,
+      "sha256": "88755258f7fbedc5dff8fe59f3ce8507e29e2702396a12394e56027e1fabb491"
+    },
+    {
+      "path": "docs/agent/architecture.md",
+      "sizeBytes": 648,
+      "sha256": "5d8037238f67b71657839257fe0c4db6aa1a7c2a885f3febae1843bbe800d411"
+    },
+    {
+      "path": "docs/agent/decisions.md",
+      "sizeBytes": 512,
+      "sha256": "672472cb93ee9a1e88a7f85754a583ee9a8a83155c2fcb5a1a06a61b35e78e5d"
+    },
+    {
+      "path": "docs/agent/requirements.md",
+      "sizeBytes": 541,
+      "sha256": "9fe26605a1c99b36bfab8b8471c9d4c05a06d801f5973647814a284cba7382be"
+    },
+    {
+      "path": "docs/agent/tests.md",
+      "sizeBytes": 1040,
+      "sha256": "607e89675c4091abd62fe3fd26dfb6abf38b281fefdff15eac2a88da4a6bdc21"
+    },
+    {
+      "path": "docs/agent/work/ACTIVE.json",
+      "sizeBytes": 603,
+      "sha256": "72247b573fe3a89c96de291b75ac6c89012ccf3badf16296a084fa29f9a29f04"
+    },
+    {
+      "path": "docs/agent/work/ARCHIVE.json",
+      "sizeBytes": 2734,
+      "sha256": "479c4365df3350ec9ad3e0b01844efcd3f0ec8f97dd4b32d045b1a8bda614f8f"
+    },
+    {
+      "path": "docs/agent/work/active/room_work_item/workdoc_378d191f1cadc57d1caf766070c9e4be.md",
+      "sizeBytes": 2412,
+      "sha256": "8480ddd86bd5b97131256424193d90df1cbd6e26b603c0cd7f17696be92a6026"
+    },
+    {
+      "path": "docs/agent/work/archive/room_work_item/workdoc_33e27fc07ce5f17cf867e7a612569e19.md",
+      "sizeBytes": 3752,
+      "sha256": "b5e48748e34c45a64cf7e0ae978ae78969a5963a3057b23f97e069301cd72992"
+    },
+    {
+      "path": "docs/agent/work/archive/room_work_item/workdoc_3e2699da0c97f9f8b67711c529c2e291.md",
+      "sizeBytes": 4569,
+      "sha256": "acd1fc0009697eae68fdf847912ccc3db2fabd86349690469b86af13928d8a5a"
+    },
+    {
+      "path": "docs/agent/work/archive/room_work_item/workdoc_e91fd23ad39f59b718be73e8cfb80f30.md",
+      "sizeBytes": 8250,
+      "sha256": "1183da2daddac3b35691cee2596f2576cefb67dbd01ca1ea7991d86675c52d8c"
+    },
+    {
+      "path": "docs/agent/work/archive/room_work_item/workdoc_fbfe235cef4452360e21d2e11052df70.md",
+      "sizeBytes": 3774,
+      "sha256": "0c4dea74e3c1b8e8cd09fce10d99ee859b25b51d257a7d92755bd8c37ca0a382"
+    },
+    {
+      "path": "docs/agent/work/archive/session_goal/workdoc_dfb5bed84ae59e5b491c2c34183f32e6.md",
+      "sizeBytes": 2839,
+      "sha256": "ad23e294b6f08fac38f384ca99d000c78bb64f736f4bef89694b2122169e0717"
+    },
+    {
+      "path": "index.html",
+      "sizeBytes": 458,
+      "sha256": "d8a7fa7378e2801c4cfe58712728c50e9a583089c13688301a5db220216b5c73"
+    },
+    {
+      "path": "package-lock.json",
+      "sizeBytes": 197,
+      "sha256": "0bbf8bf649fdc193d203145e04434883ad78eefa85cf6f1cd734c89a149e57db"
+    },
+    {
+      "path": "package.json",
+      "sizeBytes": 259,
+      "sha256": "5ec42a681686bc3668fd397f778ce2b553a2a5000f102453528df3f6b04efc81"
+    },
+    {
+      "path": "scripts/build.mjs",
+      "sizeBytes": 336,
+      "sha256": "5f8d71f79a6601d070b8571f97701782ee5ba3903b3a577bad4b0b91c841f98b"
+    },
+    {
+      "path": "scripts/dev.mjs",
+      "sizeBytes": 1494,
+      "sha256": "34e95cf3d5f34193b449c62e5221d3532e6debffb90b01ba48e96b9d06177706"
+    },
+    {
+      "path": "src/core/blocks.js",
+      "sizeBytes": 1597,
+      "sha256": "7a61bc292ba9f4c0dcb71eace93a8b9df4304c125985f8163874e2f76d3706ed"
+    },
+    {
+      "path": "src/core/index.js",
+      "sizeBytes": 406,
+      "sha256": "8cc5679f8c807a40da024ec2ad55fb11392655ccfaafe9a200931da1ff147954"
+    },
+    {
+      "path": "src/core/inventory.js",
+      "sizeBytes": 3993,
+      "sha256": "4ef3424efd7f486d3a7e59012c0d401fa140afa215a69667da8bbe56099cc612"
+    },
+    {
+      "path": "src/core/save.js",
+      "sizeBytes": 1599,
+      "sha256": "1803691e3d6aa3a993033b10e05f8dffd4452f697138b20f7b956a6857cc0cb4"
+    },
+    {
+      "path": "src/core/survival.js",
+      "sizeBytes": 3228,
+      "sha256": "cc8987f3273059031b182266ff4fc6c74e99c1a1a5e7e3497af05dac3be552a0"
+    },
+    {
+      "path": "src/core/world.js",
+      "sizeBytes": 8634,
+      "sha256": "aaedf6da27f5a6a9253438d7613be069c495998f494da38b25c7d703abeab619"
+    },
+    {
+      "path": "src/game/index.js",
+      "sizeBytes": 45,
+      "sha256": "34948a10d3599e551674ef1769b361d2c7f5ad22bb4ad61bb635f20252254dc7"
+    },
+    {
+      "path": "src/game/runtime.js",
+      "sizeBytes": 17777,
+      "sha256": "29f38c9706c11db7a2c7d0fce85ecd05df4cd3f6a8b990cbae139663a7525e68"
+    },
+    {
+      "path": "src/main.js",
+      "sizeBytes": 386,
+      "sha256": "0dd6b0add2016d26d87b4a0550adec0ba757f5e900a3cc289faa2f8842d04c9a"
+    },
+    {
+      "path": "src/style.css",
+      "sizeBytes": 8991,
+      "sha256": "d961ee82e3a89b6e6e7b45ff7f65bddb5a172bc299e9c6f2c898b16a99d1c57f"
+    },
+    {
+      "path": "src/ui/README.md",
+      "sizeBytes": 2581,
+      "sha256": "2d7828ac3b6d11e8838e8d618178189ad2a5a6b3015ad19d57d431f519598feb"
+    },
+    {
+      "path": "src/ui/audio.js",
+      "sizeBytes": 5636,
+      "sha256": "aae0abf2e4c664ed31f8defc6f34a1782ec1b94466f35c21ab1c2d9ad7ab75a0"
+    },
+    {
+      "path": "src/ui/hud.js",
+      "sizeBytes": 12275,
+      "sha256": "17cdcdecbe4b0c0ff55a2db2b96e07d9459cca2d4e4864d7cd63b20f7156c7c9"
+    },
+    {
+      "path": "src/ui/index.js",
+      "sizeBytes": 498,
+      "sha256": "cc8e65f8c1695b47e286fe0cc7fc0915d33f2ef4e186ebd47fc77a38a81449e5"
+    },
+    {
+      "path": "tests/browser-entry.test.js",
+      "sizeBytes": 552,
+      "sha256": "4858292a28738cadb2fb5707714c1ff3ea6c3bbd2034557ddf4e6596b1c43064"
+    },
+    {
+      "path": "tests/core.test.js",
+      "sizeBytes": 4402,
+      "sha256": "df441847caef389897bb4093e6cac51f3485e0480ec92f15942fc0b06bf1be8b"
+    },
+    {
+      "path": "tests/runtime.test.js",
+      "sizeBytes": 1726,
+      "sha256": "2893eaba34b7ad92f6e9467d6622ec9c12054827bb9279f93b5daaf9768572db"
+    }
+  ]
+}

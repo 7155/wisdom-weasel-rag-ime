@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "pawos.frontend-test-bundle.v1",
+  "fixtureId": "minecraft-harness-20260825",
+  "sourceKind": "installed-paw-blackbox-run",
+  "privacy": "stable aliases; system prompts, credentials and unrelated machine history excluded",
+  "room": {
+    "id": "room:00000000-0000-4000-8000-000000000001",
+    "eventCount": 3261,
+    "firstSequence": 1,
+    "lastSequence": 3261,
+    "snapshotEventCount": 373,
+    "files": [
+      "room/get.json",
+      "room/snapshot.json",
+      "room/history.jsonl"
+    ]
+  },
+  "sessions": [
+    {
+      "role": "coordinator",
+      "sessionId": "agent:00000000-0000-4000-8000-000000000001",
+      "path": "sessions/coordinator.snapshot.json",
+      "messageCount": 30,
+      "liveEventCount": 24,
+      "lastSequence": 3790
+    },
+    {
+      "role": "reviewer",
+      "sessionId": "agent:00000000-0000-4000-8000-000000000002",
+      "path": "sessions/reviewer.snapshot.json",
+      "messageCount": 17,
+      "liveEventCount": 11,
+      "lastSequence": 1144
+    },
+    {
+      "role": "core-specialist",
+      "sessionId": "agent:00000000-0000-4000-8000-000000000003",
+      "path": "sessions/core-specialist.snapshot.json",
+      "messageCount": 16,
+      "liveEventCount": 15,
+      "lastSequence": 847
+    },
+    {
+      "role": "ui-specialist",
+      "sessionId": "agent:00000000-0000-4000-8000-000000000004",
+      "path": "sessions/ui-specialist.snapshot.json",
+      "messageCount": 23,
+      "liveEventCount": 13,
+      "lastSequence": 1447
+    }
+  ],
+  "project": {
+    "fileCount": 56,
+    "archive": "project/minecraft-harness-project.zip",
+    "archiveBytes": 79666,
+    "archiveSha256": "31907df0300c0e4de68ce40824b9d03c3cb4ac8eebab5925396432824bca0070",
+    "fileIndex": "project/files.json"
+  },
+  "sceneIndex": "scene-index.json",
+  "acceptance": "ACCEPTANCE.md"
+}
