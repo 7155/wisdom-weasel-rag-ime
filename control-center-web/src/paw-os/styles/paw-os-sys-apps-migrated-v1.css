@@ -5,27 +5,57 @@
  * Every datum and action rendered below still comes from the existing PAWOS
  * feature owners, transports, native bridges, and guarded mutation workflows.
  *
- * Desktop viewport logic: the rail is a compact 168px table of contents, the
- * page chrome strip is 36px, and entering a page lands on its main form or
+ * Desktop viewport logic: the rail is a 176px table of contents, the page
+ * chrome strip is 36px, and entering a page lands on its main form or
  * decision desk — never on a hero header. The approvals route additionally
  * locks its decision desk to the window height so the human queue is always
  * inside the first viewport.
+ *
+ * One control language, one accent: Input Studio, App Center, System Monitor,
+ * and System Settings are four routes into the same PAWOS instrument, not
+ * four branded products. Every one of them shares the desktop's cool slate
+ * family (#f2f5f9 field, #0f172a ink), the shared cobalt accent from
+ * paw-os-controls.css (#1e57e7 / #2f6bff — the exact --paw-button-primary-bg
+ * / --paw-menu-selected-bg pair, not a fourth invented hue), and the control
+ * scale below. A maximized Settings or Monitor window must read as the same
+ * material as Input Studio, not a competing brand colour.
  */
 
 .paw-desktop-root .paw-system-app {
-  /* The four system Apps share the desktop's cool slate family (#eef3f9 field,
-     #0f172a ink) so a maximized Settings or Monitor window reads as the same
-     material as the desktop behind it. */
-  --paw-system-accent: #5e5ce6;
-  --paw-system-accent-soft: rgb(94 92 230 / 10%);
+  /* Shared cobalt accent — identical across all four system Apps. Do not
+     reintroduce a per-App override here: that was the #5e5ce6 purple / teal /
+     blue-grey drift this stylesheet now guards against (see
+     PawSystemAppsMigrated.test.tsx and paw-os-controls.test.ts). */
+  --paw-system-accent: #1e57e7;
+  --paw-system-accent-soft: rgb(30 87 231 / 10%);
   --paw-system-stage: #f2f5f9;
   --paw-system-surface: #fff;
   --paw-system-fill: rgb(15 23 42 / 4.5%);
   --paw-system-line: rgb(15 23 42 / 8.5%);
   --paw-system-ink: #0f172a;
   --paw-system-muted: #5f6c80;
+  /* One three-step radius scale, borrowed verbatim from paw-os-controls.css
+     instead of the 9/11/13/14px ad hoc values this file used to carry. */
+  --paw-system-radius-sm: var(--paw-control-radius, 8px);
+  --paw-system-radius-md: var(--paw-menu-radius, 10px);
+  --paw-system-radius-lg: var(--paw-panel-radius, 12px);
+
+  /* Bridge the shared cobalt into the generic --color-accent-* tokens that
+     the mounted feature content (input-method, plugins, observability,
+     diagnostics, context-debug, configuration…) already reads. Without this
+     bridge those routes fall back to the standalone-page design token
+     (an unrelated teal) and visibly clash with the cobalt rail right next to
+     them — the exact "per-App inventiveness" this migration removes. */
+  --color-accent: var(--paw-system-accent);
+  --color-accent-hover: color-mix(in srgb, var(--paw-system-accent) 86%, black);
+  --color-accent-pressed: color-mix(in srgb, var(--paw-system-accent) 76%, black);
+  --color-accent-strong: color-mix(in srgb, var(--paw-system-accent) 86%, black);
+  --color-accent-soft: color-mix(in srgb, var(--paw-system-accent) 12%, white);
+  --color-accent-subtle: color-mix(in srgb, var(--paw-system-accent) 6%, white);
+  --color-accent-border: color-mix(in srgb, var(--paw-system-accent) 40%, var(--color-border));
+  --color-accent-text: #fff;
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-columns: 176px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -33,21 +63,6 @@
   overflow: hidden;
   background: var(--paw-system-stage);
   color: var(--paw-system-ink);
-}
-
-.paw-desktop-root .paw-system-app[data-system-app='app-center'] {
-  --paw-system-accent: #0e9f8a;
-  --paw-system-accent-soft: rgb(14 159 138 / 10%);
-}
-
-.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] {
-  --paw-system-accent: #42688a;
-  --paw-system-accent-soft: rgb(66 104 138 / 10%);
-}
-
-.paw-desktop-root .paw-system-app[data-system-app='system-settings'] {
-  --paw-system-accent: #5b6f96;
-  --paw-system-accent-soft: rgb(91 111 150 / 11%);
 }
 
 .paw-desktop-root .paw-system-app ::selection {
@@ -105,10 +120,10 @@
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 9px;
+  min-height: var(--paw-control-h, 32px);
+  padding: 0 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--paw-system-radius-sm);
   background: transparent;
   color: var(--paw-system-muted);
   font: inherit;
@@ -258,7 +273,7 @@
   overflow: hidden;
   background: var(--paw-system-surface);
   border: 1px solid var(--paw-system-line);
-  border-radius: 12px;
+  border-radius: var(--paw-system-radius-lg);
   animation: paw-system-arrive 300ms cubic-bezier(.16, 1, .3, 1) both;
 }
 
@@ -310,10 +325,12 @@
 }
 
 /* Native <select> now inherits the shared control language
-   (paw-os-controls.css); only the ui-* primitives keep the compact height. */
+   (paw-os-controls.css); only the ui-* primitives keep the compact height —
+   the same --paw-control-h-sm every other PAWOS surface uses, not an
+   invented 30px. */
 .paw-desktop-root .paw-system-app :is(.ui-button, .ui-input, .ui-select__trigger) {
-  min-height: 30px;
-  border-radius: 8px;
+  min-height: var(--paw-control-h-sm, 28px);
+  border-radius: var(--paw-system-radius-sm);
 }
 
 .paw-desktop-root .paw-system-app :is(.ui-button, button):active:not(:disabled) {
@@ -348,7 +365,7 @@
 }
 
 .paw-desktop-root .paw-system-app .mgmt-notice {
-  border-radius: 11px;
+  border-radius: var(--paw-system-radius-lg);
   box-shadow: none;
 }
 
@@ -363,7 +380,7 @@
   padding: 12px 13px;
   background: var(--paw-system-fill);
   border: 0;
-  border-radius: 11px;
+  border-radius: var(--paw-system-radius-md);
 }
 
 .paw-desktop-root .paw-system-app .mgmt-metric dt {
@@ -389,7 +406,7 @@
 .paw-desktop-root .paw-system-app .mgmt-loading,
 .paw-desktop-root .paw-system-app .ui-empty-state {
   min-height: 180px;
-  border-radius: 14px;
+  border-radius: var(--paw-system-radius-lg);
 }
 
 .paw-desktop-root .paw-system-resource-state {
@@ -400,7 +417,7 @@
   margin-bottom: 12px;
   padding: 9px 11px;
   background: var(--paw-system-fill);
-  border-radius: 9px;
+  border-radius: var(--paw-system-radius-sm);
   color: var(--paw-system-muted);
   font-size: 14px;
 }
@@ -421,7 +438,7 @@
 .paw-desktop-root .paw-system-app[data-system-app='input-studio'] .input-status-item {
   background: var(--paw-system-fill);
   border: 0;
-  border-radius: 11px;
+  border-radius: var(--paw-system-radius-md);
 }
 
 .paw-desktop-root .paw-system-app[data-system-app='input-studio'] .input-status-item__icon,
@@ -436,7 +453,7 @@
 
 .paw-desktop-root .paw-system-app[data-system-app='input-studio'] :is(.history-table-wrap, .voice-connection-details, .voice-recognition-details, .voice-refinement-status) {
   border-color: var(--paw-system-line);
-  border-radius: 11px;
+  border-radius: var(--paw-system-radius-md);
 }
 
 .paw-desktop-root .paw-system-app[data-system-app='input-studio'] .history-table th {
@@ -470,7 +487,7 @@
   padding-left: 9px;
   background: #fff;
   border: 1px solid var(--paw-system-line);
-  border-radius: 9px;
+  border-radius: var(--paw-system-radius-sm);
   color: var(--paw-system-muted);
 }
 
@@ -551,7 +568,7 @@
   padding: 14px 15px;
   background: #fff;
   border: 1px solid var(--paw-system-line);
-  border-radius: 13px;
+  border-radius: var(--paw-system-radius-lg);
   transition: border-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out;
 }
 
@@ -573,7 +590,7 @@
   place-items: center;
   width: 34px;
   height: 34px;
-  border-radius: 9px;
+  border-radius: var(--paw-system-radius-sm);
   background: var(--paw-system-accent);
   color: #fff;
 }
@@ -657,7 +674,7 @@
 
 .paw-desktop-root .paw-system-app[data-system-app='app-center'] :is(.plugin-catalog__row, .installed-plugin, .plugin-proposal) {
   border-color: var(--paw-system-line);
-  border-radius: 11px;
+  border-radius: var(--paw-system-radius-md);
   box-shadow: none;
 }
 
@@ -687,7 +704,7 @@
   padding: 9px 11px;
   background: #fff;
   border: 1px solid var(--paw-system-line);
-  border-radius: 11px;
+  border-radius: var(--paw-system-radius-md);
 }
 
 .paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .observation-workspace {
@@ -706,7 +723,7 @@
 .paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .context-debug-session-viewer {
   background: #fff;
   border-color: var(--paw-system-line);
-  border-radius: 13px;
+  border-radius: var(--paw-system-radius-lg);
 }
 
 .paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .context-debug-session-tree {
@@ -778,7 +795,7 @@
   align-items: start;
   padding: 13px 14px;
   border: 1px solid var(--paw-system-line);
-  border-radius: 12px;
+  border-radius: var(--paw-system-radius-lg);
   background: var(--paw-system-surface);
   cursor: pointer;
   transition: border-color 140ms ease-out, background-color 140ms ease-out;
@@ -819,7 +836,7 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--paw-system-radius-sm);
   background: var(--paw-system-fill);
   color: var(--paw-system-muted);
 }
@@ -914,8 +931,8 @@
 /* Responsive composition -------------------------------------------------- */
 
 /* The System App fills a named PAW window. Query that parent: a container
-   cannot select and restyle itself, which previously left the 168px rail in
-   place even after its labels disappeared. */
+   cannot select and restyle itself, which previously left the full-width rail
+   in place even after its labels disappeared. */
 @container paw-window (max-width: 900px) {
   .paw-desktop-root .paw-system-package-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .paw-desktop-root .paw-system-app .mgmt-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
