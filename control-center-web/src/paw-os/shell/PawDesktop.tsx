@@ -29,6 +29,13 @@ const LAUNCHPAD_KIND_LABEL: Record<(typeof LAUNCHPAD_KIND_ORDER)[number], string
 type PawMenuState = PawMenuTarget & { x: number; y: number };
 type PawSelectionRect = { x: number; y: number; width: number; height: number };
 
+const selectMenuSignature = (state: { windows: Record<string, { id: string; appId: PawAppId; placement?: string }> }) => Object
+  .values(state.windows)
+  .map((node) => `${node.id}\u0001${node.appId}\u0001${node.placement ?? ''}`)
+  .sort()
+  .join('\u0000');
+const selectNoMenuSignature = () => '';
+
 export function PawDesktop() {
   const api = usePawDesktopApi();
   const activeWindowId = usePawDesktopStore((state) => state.activeWindowId);
@@ -37,19 +44,6 @@ export function PawDesktop() {
   ));
   const launchpadOpen = usePawDesktopStore((state) => state.launchpadOpen);
   const overviewOpen = usePawDesktopStore((state) => state.overviewOpen);
-  /* Menus and their disabled states need only structural window facts:
-   * identity, owning App and placement. Subscribing to that sorted signature
-   * instead of the windows record keeps the whole shell (menu bar, Wayfinder,
-   * Dock, Launchpad) from re-rendering on bounds commits after every drag,
-   * resize or viewport refit, and on runtime title/target binds. */
-  const menuSignature = usePawDesktopStore((state) => Object.values(state.windows)
-    .map((node) => `${node.id}\u0001${node.appId}\u0001${node.placement ?? ''}`)
-    .sort()
-    .join('\u0000'));
-  const menuWindows = useMemo(() => menuSignature.split('\u0000').filter(Boolean).map((item) => {
-    const [id, appId, placement] = item.split('\u0001') as [string, PawAppId, string];
-    return { id, appId, placement };
-  }), [menuSignature]);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
   const collaborationFocus = Boolean(collaborationFocusGroup);
   /* The wallpaper only spends frames when somebody can actually watch it.
@@ -63,6 +57,16 @@ export function PawDesktop() {
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
+  /* Menus and their disabled states need only structural window facts:
+   * identity, owning App and placement. Nobody reads them until a menu is
+   * actually open, so a closed desktop subscribes to a constant — window
+   * opens, closes, snaps and runtime title binds then cost the shell nothing,
+   * and no bounds commit can re-render the menu bar, Wayfinder or Dock. */
+  const menuSignature = usePawDesktopStore(contextMenu ? selectMenuSignature : selectNoMenuSignature);
+  const menuWindows = useMemo(() => menuSignature.split('\u0000').filter(Boolean).map((item) => {
+    const [id, appId, placement] = item.split('\u0001') as [string, PawAppId, string];
+    return { id, appId, placement };
+  }), [menuSignature]);
   const viewportRef = useRef<HTMLElement>(null);
   const menuAppRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -624,7 +628,7 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
         item.style.setProperty('--paw-dock-shift', shift[index].toFixed(2));
       });
     };
-    const windowGestureOwnsPointer = () => Boolean(dock.closest('.paw-desktop-root')?.dataset.windowInteraction);
+    const windowGestureOwnsPointer = () => Boolean(dock.closest<HTMLElement>('.paw-desktop-root')?.dataset.windowInteraction);
     const conducting = () => {
       if (!finePointer.matches || !wideShelf.matches || reducedMotion.matches) return false;
       if (windowGestureOwnsPointer()) return false;
