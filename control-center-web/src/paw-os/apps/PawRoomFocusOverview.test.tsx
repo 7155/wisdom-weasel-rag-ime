@@ -98,6 +98,19 @@ const focus: RoomFocusProjection = {
     state: 'dispatched',
     createdAtMs: 22,
   }],
+  flow: [
+    {
+      id: 'message:request',
+      sourceParticipantId: 'root',
+      targetParticipantIds: ['p-earth'],
+      kind: 'request',
+      summary: '请并行实现任务图交互与依赖投影',
+      status: 'completed',
+      createdAtMs: 10,
+      sequence: 1,
+      refs: [],
+    },
+  ],
   rootEvidence: [{ ref: 'test:room-focus', kind: 'evidence' }],
   counts: { active: 1, review: 1, blocked: 0, completed: 1 },
 };

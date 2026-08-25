@@ -407,7 +407,7 @@ describe('PawOsSatelliteHost', () => {
     } });
 
     renderSatellite(transport, {
-      kind: 'room', id: 'room-live', panel: 'flow', title: '产品协作室',
+      kind: 'room', id: 'room-live', panel: 'focus', title: '产品协作室',
     });
 
     expect(await screen.findByText('找不到这个 Room')).toBeInTheDocument();
@@ -415,11 +415,11 @@ describe('PawOsSatelliteHost', () => {
     expect(screen.getByRole('button', { name: '回到 Room' })).toBeInTheDocument();
   });
 
-  it('projects the execution satellite as a compact WorkItem flow instead of the full Room cockpit', async () => {
+  it('projects the consolidated Sol console into the focus satellite', async () => {
     const room = {
       ...participantRoom(),
       workItems: [{
-        id: 'work-a', roomId: 'room-participant', topicId: '', rootTurnId: 'root-a', rootWorkId: 'work-a', parentWorkId: '',
+        id: 'work-a', roomId: 'room-live', topicId: '', rootTurnId: 'root-a', rootWorkId: 'work-a', parentWorkId: '',
         objective: '实现 Room 任务图交互', expectedOutput: '可复查的任务图交互', acceptanceCriteria: ['保持真实依赖关系'],
         accountableParticipantId: 'participant-a', currentOwnerParticipantId: 'participant-a', offeredToParticipantId: '',
         createdByParticipantId: 'participant-a', clientMessageId: '', state: 'review' as const, depth: 0, revision: 2,
@@ -433,14 +433,12 @@ describe('PawOsSatelliteHost', () => {
     } });
 
     const { container } = renderSatellite(transport, {
-      kind: 'room', id: room.id, panel: 'execution', title: room.title,
+      kind: 'room', id: room.id, panel: 'focus', title: room.title,
     });
 
-    const flow = await screen.findByRole('list', { name: 'Room 任务拆解' });
-    expect(flow).toHaveTextContent('实现 Room 任务图交互');
-    expect(flow).toHaveTextContent('实现伙伴');
-    expect(flow).toHaveTextContent('任务 r2');
-    expect(screen.getByText('等待独立复核')).toBeVisible();
+    const console = await screen.findByRole('region', { name: 'Sol 协作态势' });
+    expect(console).toHaveTextContent('实现 Room 任务图交互');
+    expect(console).toHaveTextContent('等待独立复核');
     expect(container.querySelector('.room-cockpit')).not.toBeInTheDocument();
     expect(container.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
   });
