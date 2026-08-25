@@ -11,6 +11,8 @@ import {
   generateStarMap,
   generateSunMap,
   periodicFbm,
+  SKY_PREVIEW_WIDTH,
+  spectralStarColor,
   StarfieldTextureFactory,
   type GeneratedTextureData,
   type PlanetArchetype,
@@ -172,5 +174,46 @@ describe('starfield texture factory', () => {
     expect(factory.owns(sun)).toBe(false);
     // A fresh acquire after dispose regenerates rather than reusing disposed GPU state.
     expect(factory.sun('sol')).not.toBe(sun);
+  });
+
+  it('opens on a cheap preview dome and keeps the full sky as a separate entry', () => {
+    const factory = new StarfieldTextureFactory();
+    const preview = factory.skyPreview('sol');
+    const full = factory.sky('sol');
+
+    // The preview is what the first frame shows, so it must be far cheaper:
+    // cost scales with pixel count, and the two must not collide in cache.
+    expect(preview).not.toBe(full);
+    expect(preview.image.width).toBe(SKY_PREVIEW_WIDTH);
+    expect(preview.image.width * preview.image.height * 4)
+      .toBeLessThan(full.image.width * full.image.height);
+    expect(factory.skyPreview('sol')).toBe(preview);
+    expect(factory.owns(preview)).toBe(true);
+
+    factory.dispose();
+  });
+});
+
+describe('spectral star population', () => {
+  it('keeps most starlight warm, with a thin hot-blue minority', () => {
+    // Both the dome map and the parallax shells sample this, so the sky
+    // reads as real starlight instead of a uniform blue haze.
+    const blue = spectralStarColor(0.02);
+    const red = spectralStarColor(0.95);
+    expect(blue[2]).toBeGreaterThan(blue[0]);
+    expect(red[0]).toBeGreaterThan(red[2]);
+
+    let warm = 0;
+    const samples = 200;
+    for (let index = 0; index < samples; index += 1) {
+      const rgb = spectralStarColor(index / samples);
+      if (rgb[0]! >= rgb[2]!) warm += 1;
+    }
+    expect(warm / samples).toBeGreaterThan(0.7);
+  });
+
+  it('clamps out-of-range picks instead of returning undefined', () => {
+    expect(spectralStarColor(-1)).toEqual(spectralStarColor(0));
+    expect(spectralStarColor(2)).toEqual(spectralStarColor(1));
   });
 });
