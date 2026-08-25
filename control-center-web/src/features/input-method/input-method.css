@@ -1,9 +1,422 @@
 /* ---------------------------------------------------------------------------
- * 智能候选：面板示意 + 三步生成车道
+ * 输入法 = 设置台视口
  *
- * 示意与车道都只反映真实设置与真实运行状态；槽位是抽象占位而不是候选
- * 正文。布局在宽窗横排、窄窗纵排，动效只用透明度与颜色，不改布局尺寸。
+ * 首屏是决策台：使用方式的四张事实卡 + 差异台账 + 保存，一眼读完，不需要
+ * 主滚动。生成管线、输入链路与细项设置以折叠台账的方式排在后面，展开是
+ * 用户意图，而不是页面默认。
+ *
+ * 控件语言与 paw-os-controls 对齐：32px 控件高度、8px 控件圆角、12px 面板
+ * 圆角、13px 控件文字；表面一律不透明、无渐变泡泡卡。窗口外的独立网页
+ * 通过回退值沿用同一尺度。
  * ------------------------------------------------------------------------- */
+
+main[data-route-id='input'] {
+  --input-os-control-h: var(--paw-control-h, 32px);
+  --input-os-control-h-sm: var(--paw-control-h-sm, 28px);
+  --input-os-control-radius: var(--paw-control-radius, 8px);
+  --input-os-panel-radius: var(--paw-panel-radius, 12px);
+  --input-os-control-font: var(--paw-control-font, 13px);
+}
+
+/* ---------------------------------------------------------------------------
+ * 使用方式控制台（首屏主决策）
+ *
+ * 四种预设是并列的真实写入集合，横向一排（窄窗 2×2）。每张卡：图形 +
+ * 名称 +（当前）+ 一句说明 + 从真实写入逐键派生的事实签名。勾选态 =
+ * 草稿目标，data-current = 设置推断出的现役模式，两个真相互不冒充。
+ * ------------------------------------------------------------------------- */
+
+main[data-route-id='input'] .input-mode-console {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+main[data-route-id='input'] .input-mode-deck {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+main[data-route-id='input'] .input-mode-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 96px;
+  align-content: start;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-os-panel-radius);
+  background: var(--color-surface);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  touch-action: manipulation;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-mode-card:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* 选中 = 平面双线描边，不透明表面；不用渐变泡泡表达状态。 */
+main[data-route-id='input'] .input-mode-card[data-state='checked'] {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+main[data-route-id='input'] .input-mode-card:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+main[data-route-id='input'] .input-mode-card__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+main[data-route-id='input'] .input-mode-card__glyph {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__glyph {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+main[data-route-id='input'] .input-mode-card__head strong {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* “当前”标记来自设置推断，不随草稿点击移动。 */
+main[data-route-id='input'] .input-mode-card__current {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__current {
+  border-color: var(--color-accent-border);
+  color: var(--color-accent);
+}
+
+main[data-route-id='input'] .input-mode-card__check {
+  display: inline-grid;
+  margin-inline-start: auto;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+main[data-route-id='input'] .input-mode-card__note {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* 事实签名：一键一枚，标准/记忆增强 的真实分界键高亮。 */
+main[data-route-id='input'] .input-mode-card__facts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+}
+
+main[data-route-id='input'] .input-mode-card__facts > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-mode-card__facts > span[data-off] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='input'] .input-mode-card__facts > span[data-highlight] {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='input'] .input-mode-card:not(:disabled):hover {
+    border-color: var(--color-accent-border);
+    background: var(--color-surface-subtle);
+  }
+}
+
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card,
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card__glyph { transition: none; }
+
+/* 决策条：左侧差异台账（可折叠），右侧保存工作流。两者与卡片同屏，
+   保存动作不会被推到折叠内容之下。 */
+main[data-route-id='input'] .input-mode-decision {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: var(--space-3) var(--space-5);
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-os-panel-radius);
+  background: var(--color-surface);
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr);
+}
+
+main[data-route-id='input'] .input-mode-decision > .mgmt-workflow[data-confirmation='direct'] {
+  padding-block: 2px 0;
+  border-top: 0;
+}
+
+/* 差异台账：左侧细规线，逐行“设置：当前 → 目标”，列表内滚动而不是
+   把整页推长。 */
+main[data-route-id='input'] .input-mode-delta {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 6px;
+  padding: 4px 0 4px 12px;
+  border-left: 2px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+main[data-route-id='input'] .input-mode-delta:has(> .input-mode-delta__head) {
+  border-left-color: var(--color-accent);
+}
+
+main[data-route-id='input'] .input-mode-delta__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+main[data-route-id='input'] .input-mode-delta__head strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='input'] .input-mode-delta ul {
+  display: grid;
+  overflow: auto;
+  max-height: 148px;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+main[data-route-id='input'] .input-mode-delta li {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 台账开关：paw-os-controls 尺度的安静按钮，展开态箭头翻转。 */
+main[data-route-id='input'] .input-ledger-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: var(--input-os-control-h-sm);
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-os-control-radius);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--input-os-control-font);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  touch-action: manipulation;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-ledger-toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+main[data-route-id='input'] .input-ledger-toggle svg {
+  flex: 0 0 auto;
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-ledger-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='input'] .input-ledger-toggle:hover {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-subtle);
+    color: var(--color-text-primary);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 智能候选：一行事实概览 + 折叠的示意与三步车道
+ *
+ * 概览与细节都只反映真实设置与真实运行状态；槽位是抽象占位而不是候选
+ * 正文。收起时三步状态仍然在场，展开是细看而不是解锁。
+ * ------------------------------------------------------------------------- */
+
+main[data-route-id='input'] .input-pipeline {
+  min-width: 0;
+  overflow: clip;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-os-panel-radius);
+  background: var(--color-surface);
+}
+
+main[data-route-id='input'] .input-pipeline__summary {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 7px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  touch-action: manipulation;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-pipeline__summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+main[data-route-id='input'] .input-pipeline__summary > svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+
+main[data-route-id='input'] .input-pipeline[data-open='true'] .input-pipeline__summary > svg {
+  transform: rotate(180deg);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='input'] .input-pipeline__summary:hover { background: var(--color-surface-subtle); }
+}
+
+main[data-route-id='input'] .input-pipeline__steps {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 20px;
+}
+
+/* 每一步一枚状态点 + 一句真实状态；步与步之间的箭头是纯装饰。 */
+main[data-route-id='input'] .input-pipeline__step {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-pipeline__step::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+
+main[data-route-id='input'] .input-pipeline__step[data-tone='success']::before { background: var(--color-success); }
+main[data-route-id='input'] .input-pipeline__step[data-tone='warning']::before { background: var(--color-warning); }
+main[data-route-id='input'] .input-pipeline__step[data-tone='danger']::before { background: var(--color-danger); }
+
+main[data-route-id='input'] .input-pipeline__step[data-off] {
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='input'] .input-pipeline__step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -13px;
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid var(--color-border-strong);
+  border-right: 1.5px solid var(--color-border-strong);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+main[data-route-id='input'] .input-pipeline__detail {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+}
 
 main[data-route-id='input'] .input-suggest-preview {
   display: grid;
@@ -18,10 +431,10 @@ main[data-route-id='input'] .input-suggest-preview__stage {
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 16px 18px;
+  padding: 14px 16px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-3);
-  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-subtle) 100%);
+  border-radius: var(--input-os-control-radius);
+  background: var(--color-surface-subtle);
 }
 
 /* 刚上屏的内容：灰色占位条 + 静态光标线，不使用闪烁动画。 */
@@ -66,7 +479,7 @@ main[data-route-id='input'] .input-suggest-preview__panel {
   gap: 8px 10px;
   padding: 9px 12px;
   border: 1px solid var(--color-accent-border);
-  border-radius: var(--radius-3);
+  border-radius: var(--input-os-control-radius);
   background: var(--color-accent-subtle);
 }
 
@@ -175,13 +588,13 @@ main[data-route-id='input'] .input-suggest-preview__hints > span {
 main[data-route-id='input'] .input-gen-lanes {
   display: grid;
   min-width: 0;
-  margin: var(--space-3) 0 0;
+  margin: 0;
   padding: 0;
   gap: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   overflow: clip;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-3);
+  border-radius: var(--input-os-control-radius);
   background: var(--color-surface);
   counter-reset: input-gen-lane;
   list-style: none;
@@ -313,6 +726,10 @@ main[data-route-id='input'] .input-gen-lane__facts > li {
   overflow-wrap: anywhere;
 }
 
+/* ---------------------------------------------------------------------------
+ * 输入链路：一条紧凑的状态带
+ * ------------------------------------------------------------------------- */
+
 main[data-route-id='input'] .input-status-grid {
   display: grid;
   min-width: 0;
@@ -323,20 +740,20 @@ main[data-route-id='input'] .input-status-grid {
 main[data-route-id='input'] .input-status-item {
   display: grid;
   min-width: 0;
-  min-height: 76px;
+  min-height: 62px;
   align-items: center;
   gap: 10px;
-  padding: 11px 13px;
+  padding: 9px 12px;
   border-right: 1px solid var(--color-border);
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
 }
 
 main[data-route-id='input'] .input-status-item:last-child { border-right: 0; }
 
 main[data-route-id='input'] .input-status-item__icon {
   display: inline-grid;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   border-radius: 6px;
   background: var(--color-surface-subtle);
@@ -361,28 +778,21 @@ main[data-route-id='input'] .input-status-item[data-tone='danger'] .input-status
   color: var(--color-danger);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  main[data-route-id='input'] .input-status-item__icon,
-  main[data-route-id='input'] .input-settings-group__meta svg,
-  main[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
-  main[data-route-id='input'] .input-settings-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
-}
-
 main[data-route-id='input'] .input-status-item__copy {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 1px;
 }
 
 main[data-route-id='input'] .input-status-item__copy small {
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 650;
 }
 
 main[data-route-id='input'] .input-status-item__copy strong {
   overflow: hidden;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -392,10 +802,10 @@ main[data-route-id='input'] .input-status-item__copy > span {
   display: -webkit-box;
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.4;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 
 main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action {
@@ -408,274 +818,80 @@ main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-
 
 main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .mgmt-notice { margin: 0; }
 
-main[data-route-id='input'] .input-mode-layout {
-  display: grid;
-  min-width: 0;
-  align-items: start;
-  gap: var(--space-5);
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-}
-
-main[data-route-id='input'] .input-mode-choice {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-3);
-  padding-block: var(--space-2);
-}
-
 /* ---------------------------------------------------------------------------
- * 使用方式卡片
- *
- * 四种预设是并列的真实写入集合。每张卡片：图形 + 名称 +（当前）+ 一句
- * 说明 + 从真实写入逐键派生的事实签名。勾选态 = 草稿目标，data-current =
- * 设置推断出的现役模式，两个真相各有标记、互不冒充。
+ * 输入体验设置：台账在前（状态 + 可折叠差异表 + 保存），分组索引在后
  * ------------------------------------------------------------------------- */
-main[data-route-id='input'] .input-mode-cards {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-2);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-main[data-route-id='input'] .input-mode-card {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  min-height: 104px;
-  align-content: start;
-  gap: 7px;
-  padding: 11px 13px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-3);
-  background: var(--color-surface);
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  touch-action: manipulation;
-  transition:
-    border-color var(--duration-fast) var(--ease-standard),
-    background-color var(--duration-fast) var(--ease-standard),
-    box-shadow var(--duration-fast) var(--ease-standard);
-}
-
-main[data-route-id='input'] .input-mode-card:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-main[data-route-id='input'] .input-mode-card[data-state='checked'] {
-  border-color: var(--color-accent);
-  box-shadow: inset 0 0 0 1px var(--color-accent);
-  background: linear-gradient(180deg, var(--color-accent-subtle) 0%, var(--color-surface) 88%);
-}
-
-main[data-route-id='input'] .input-mode-card:disabled {
-  cursor: not-allowed;
-  opacity: .6;
-}
-
-main[data-route-id='input'] .input-mode-card__head {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-main[data-route-id='input'] .input-mode-card__glyph {
-  display: inline-grid;
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: var(--color-surface-subtle);
-  color: var(--color-text-secondary);
-  transition:
-    background-color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard);
-}
-
-main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__glyph {
-  border-color: var(--color-accent-border);
-  background: var(--color-accent);
-  color: var(--color-accent-text);
-}
-
-main[data-route-id='input'] .input-mode-card__head strong {
-  overflow: hidden;
-  font-size: 14px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* “当前”标记来自设置推断，不随草稿点击移动。 */
-main[data-route-id='input'] .input-mode-card__current {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 5px;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: .04em;
-  white-space: nowrap;
-}
-
-main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__current {
-  border-color: var(--color-accent-border);
-  color: var(--color-accent);
-}
-
-main[data-route-id='input'] .input-mode-card__check {
-  display: inline-grid;
-  margin-inline-start: auto;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--color-accent);
-  color: var(--color-accent-text);
-}
-
-main[data-route-id='input'] .input-mode-card__note {
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-/* 事实签名：一键一枚，标准/记忆增强 的真实分界键高亮。 */
-main[data-route-id='input'] .input-mode-card__facts {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: auto;
-}
-
-main[data-route-id='input'] .input-mode-card__facts > span {
-  display: inline-flex;
-  align-items: center;
-  padding: 1.5px 7px;
-  border: 1px solid var(--color-border);
-  border-radius: 5px;
-  background: var(--color-surface-subtle);
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-main[data-route-id='input'] .input-mode-card__facts > span[data-off] {
-  border-style: dashed;
-  background: transparent;
-  color: var(--color-text-tertiary);
-}
-
-main[data-route-id='input'] .input-mode-card__facts > span[data-highlight] {
-  border-color: var(--color-accent-border);
-  background: var(--color-accent-subtle);
-  color: var(--color-accent);
-  font-weight: var(--font-weight-semibold);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  main[data-route-id='input'] .input-mode-card:not(:disabled):hover {
-    border-color: var(--color-accent-border);
-    background: var(--color-surface-subtle);
-  }
-}
-
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card,
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card__glyph { transition: none; }
-
-/* 差异台账：左侧细规线，逐行“设置：当前 → 目标”。 */
-main[data-route-id='input'] .input-mode-delta {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-  padding: 4px 0 4px 12px;
-  border-left: 2px solid var(--color-border-strong);
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-main[data-route-id='input'] .input-mode-delta:has(> strong) {
-  border-left-color: var(--color-accent);
-}
-
-main[data-route-id='input'] .input-mode-delta > strong {
-  color: var(--color-text-primary);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-main[data-route-id='input'] .input-mode-delta ul {
-  display: grid;
-  gap: 3px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-main[data-route-id='input'] .input-mode-delta li {
-  overflow-wrap: anywhere;
-  font-variant-numeric: tabular-nums;
-}
 
 main[data-route-id='input'] .input-settings-layout {
   display: grid;
   min-width: 0;
-  gap: var(--space-4);
+  gap: var(--space-3);
   align-items: start;
   grid-template-columns: minmax(0, 1fr);
+}
+
+main[data-route-id='input'] .input-settings-ledger {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: 8px 12px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-os-panel-radius);
+  background: var(--color-surface);
+}
+
+main[data-route-id='input'] .input-settings-ledger[data-attention] {
+  border-color: var(--color-accent-border);
+}
+
+main[data-route-id='input'] .input-settings-ledger__row {
+  display: flex;
+  min-width: 0;
+  min-height: var(--input-os-control-h);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+main[data-route-id='input'] .input-settings-diff-title {
+  margin: 0;
+  font-size: 14px;
+}
+
+main[data-route-id='input'] .input-settings-ledger__row .input-ledger-toggle {
+  margin-inline-start: auto;
+}
+
+main[data-route-id='input'] .input-settings-ledger__hint {
+  overflow: hidden;
+  margin-inline-start: auto;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 差异表在台账内部滚动，保存按钮不会被长表推走。 */
+main[data-route-id='input'] .input-settings-ledger .mgmt-table-wrap {
+  max-height: 220px;
+}
+
+main[data-route-id='input'] .input-settings-ledger > .mgmt-workflow[data-confirmation='direct'] {
+  padding-block: var(--space-2) 0;
 }
 
 main[data-route-id='input'] .input-settings-grid {
   display: grid;
   min-width: 0;
   align-items: start;
-  gap: var(--space-3);
+  gap: var(--space-2);
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-main[data-route-id='input'] .input-settings-save {
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-3);
-  background: var(--color-surface-subtle);
-}
-
-main[data-route-id='input'] .input-settings-save__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-main[data-route-id='input'] .input-settings-save__heading > div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-main[data-route-id='input'] .input-settings-save__heading p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
 }
 
 main[data-route-id='input'] .input-settings-group {
   min-width: 0;
   overflow: clip;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-3);
+  border-radius: var(--input-os-panel-radius);
   background: var(--color-surface);
 }
 
@@ -690,11 +906,11 @@ main[data-route-id='input'] .input-settings-group[data-open='true'] {
 main[data-route-id='input'] .input-settings-group__summary {
   display: flex;
   width: 100%;
-  min-height: 56px;
+  min-height: 52px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 8px 12px;
+  padding: 7px 12px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -726,7 +942,7 @@ main[data-route-id='input'] .input-settings-group [role='heading'] {
 main[data-route-id='input'] .input-settings-group__copy small {
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.4;
 }
 
@@ -738,6 +954,10 @@ main[data-route-id='input'] .input-settings-group__meta {
   color: var(--color-text-tertiary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='input'] .input-settings-group[data-attention='true'] .input-settings-group__meta {
+  color: var(--color-accent);
 }
 
 main[data-route-id='input'] .input-settings-group__meta svg {
@@ -827,7 +1047,18 @@ main[data-route-id='input'] .input-settings-advanced[data-attention='true'] > bu
   main[data-route-id='input'] .input-settings-advanced > button:hover { background: var(--color-surface-subtle); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='input'] .input-status-item__icon,
+  main[data-route-id='input'] .input-settings-group__meta svg,
+  main[data-route-id='input'] .input-ledger-toggle svg,
+  main[data-route-id='input'] .input-pipeline__summary > svg,
+  main[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
+  main[data-route-id='input'] .input-settings-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
+}
+
 :root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-group__meta svg,
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-ledger-toggle svg,
+:root[data-reduce-motion='true'] main[data-route-id='input'] .input-pipeline__summary > svg,
 :root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
 
 :root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-disclosure {
@@ -876,9 +1107,9 @@ main[data-route-id='input'] .input-setting-row dd {
 main[data-route-id='input'] .input-setting-editor-row {
   display: grid;
   min-width: 0;
-  min-height: 68px;
+  min-height: 64px;
   align-items: center;
-  padding: 11px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -940,11 +1171,6 @@ main[data-route-id='input'] .input-setting-editor-row--readonly strong { font-si
 main[data-route-id='input'] .input-setting-editor-row--readonly small {
   color: var(--color-text-secondary);
   font-size: 13px;
-}
-
-main[data-route-id='input'] .input-settings-diff-title {
-  margin: 0;
-  font-size: 14px;
 }
 
 main[data-route-id='input'] .mgmt-toolbar { justify-content: space-between; }
@@ -1040,11 +1266,11 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 }
 
 @media (max-width: 980px) {
-  main[data-route-id='input'] .input-mode-layout,
-  main[data-route-id='input'] .input-settings-layout {
-    grid-template-columns: minmax(0, 1fr);
+  main[data-route-id='input'] .input-mode-deck {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  main[data-route-id='input'] .input-mode-decision,
   main[data-route-id='input'] .input-settings-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1065,8 +1291,7 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 
 @media (max-width: 620px) {
   main[data-route-id='input'] .input-status-grid,
-  main[data-route-id='input'] .input-mode-layout,
-  main[data-route-id='input'] .input-settings-layout {
+  main[data-route-id='input'] .input-mode-deck {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1086,10 +1311,6 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'] .input-setting-row { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='input'] .input-setting-row dd { justify-items: start; text-align: left; }
 
-  main[data-route-id='input'] .input-mode-cards {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   main[data-route-id='input'] .input-setting-editor-row .ui-field {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1100,17 +1321,13 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
     grid-row: auto;
   }
 
-  main[data-route-id='input'] .input-settings-save__heading,
+  main[data-route-id='input'] .input-settings-ledger__row,
+  main[data-route-id='input'] .input-mode-delta__head {
+    flex-wrap: wrap;
+  }
+
   main[data-route-id='input'] .input-settings-group__summary {
     align-items: flex-start;
-  }
-
-  main[data-route-id='input'] .input-settings-save__heading {
-    display: grid;
-  }
-
-  main[data-route-id='input'] .input-settings-save__heading .mgmt-badge {
-    justify-self: start;
   }
 
   main[data-route-id='input'] .input-settings-group__meta {
@@ -1121,13 +1338,16 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
   main[data-route-id='input'] .ui-button,
   main[data-route-id='input'] .ui-input,
   main[data-route-id='input'] .ui-select__trigger,
+  main[data-route-id='input'] .input-ledger-toggle,
   main[data-route-id='input'] .input-mode-card {
     min-height: 44px;
   }
 }
 
 @container paw-window (max-width: 900px) {
-  main[data-route-id='input'][data-paw-os-app] .input-mode-layout,
+  main[data-route-id='input'][data-paw-os-app] .input-mode-deck { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  main[data-route-id='input'][data-paw-os-app] .input-mode-decision,
   main[data-route-id='input'][data-paw-os-app] .input-settings-layout,
   main[data-route-id='input'][data-paw-os-app] .input-settings-grid,
   main[data-route-id='input'][data-paw-os-app] .input-gen-lanes { grid-template-columns: minmax(0, 1fr); }
@@ -1150,7 +1370,7 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 @container paw-window (max-width: 560px) {
   main[data-route-id='input'][data-paw-os-app] .input-status-grid,
   main[data-route-id='input'][data-paw-os-app] .input-inline-action,
-  main[data-route-id='input'][data-paw-os-app] .input-mode-cards,
+  main[data-route-id='input'][data-paw-os-app] .input-mode-deck,
   main[data-route-id='input'][data-paw-os-app] .input-setting-row,
   main[data-route-id='input'][data-paw-os-app] .input-setting-editor-row .ui-field { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='input'][data-paw-os-app] .input-status-item { border-right: 0; border-bottom: 1px solid var(--color-border); }
@@ -1161,7 +1381,7 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
     flex-direction: column;
   }
   main[data-route-id='input'][data-paw-os-app] .input-setting-row dd { justify-items: start; text-align: left; }
-  main[data-route-id='input'][data-paw-os-app] .input-settings-save__heading { display: grid; }
+  main[data-route-id='input'][data-paw-os-app] .input-settings-ledger__row { flex-wrap: wrap; }
 
   main[data-route-id='input-lexicon'][data-paw-os-app] .input-inline-action {
     grid-template-columns: minmax(0, 1fr);
