@@ -44,6 +44,9 @@ const EMPTY_TRANSCRIPT: RoomTranscript = { messages: [], activityByBlockId: {}, 
 
 const RESOLVED_APPROVAL_STATES = ['approved', 'rejected', 'applied', 'resolved', 'cancelled'];
 
+/** The state words `roomToolActivityLine` appends to a derived tool headline. */
+const TOOL_STATE_WORDS = ['正在执行', '执行失败', '已停止', '已完成'];
+
 /**
  * Project the authoritative Room reducer state onto the shared conversation
  * model: one Runtime loop becomes one assistant card, and that loop's public
@@ -235,14 +238,26 @@ function activityBelongsToParticipant(activity: RoomActivityProjection, particip
   return target ? target === participantId : activity.participantId === participantId;
 }
 
+const PUBLIC_ACTIVITY_SIGNALS = ['reasoning', 'progress', 'route', 'route_decision', 'dispatch', 'intercom', 'status'];
+
+function activitySignalSupported(signal: string): boolean {
+  return signal === 'tool'
+    || signal.startsWith('tool_')
+    || signal.includes('route')
+    || signal.includes('dispatch')
+    || PUBLIC_ACTIVITY_SIGNALS.includes(signal);
+}
+
 function activityVisible(activity: RoomActivityProjection): boolean {
-  const eventType = text(activity.payload.sourceEventType, activity.kind);
-  return Boolean(text(activity.payload.approvalId))
-    || eventType === 'tool'
-    || eventType.startsWith('tool_')
-    || ['reasoning', 'progress', 'route', 'route_decision', 'dispatch', 'status'].includes(activity.kind)
-    || eventType.includes('route')
-    || eventType.includes('dispatch');
+  if (text(activity.payload.approvalId)) return true;
+  const declared = [text(activity.payload.sourceEventType), text(activity.payload.activityKind)]
+    .map((signal) => signal.trim())
+    .filter(Boolean);
+  /* A payload that names its own event decides: when every declared signal is
+     unsupported the entry is a machine event, and the generic reducer `kind`
+     it arrived under must not smuggle it into a reader's transcript. */
+  if (declared.length && !declared.some(activitySignalSupported)) return false;
+  return [...declared, activity.kind].some(activitySignalSupported);
 }
 
 function activityBlock(
@@ -269,6 +284,7 @@ function activityBlock(
     const targetName = options.actorName(plan.targetParticipantId) || plan.targetDisplayName || '伙伴';
     const objective = plan.workItemId ? options.workItemObjective?.(plan.workItemId) ?? '' : '';
     const routingDetail = [
+      objective ? `任务：${objective}` : '',
       plan.routingPolicyLabel,
       ...plan.candidates.map((candidate) => (
         `${options.actorName(candidate.participantId) || candidate.displayName} · ${candidate.score.toFixed(1)}${candidate.selected ? ' · 已选择' : ''}${candidate.signals.length ? ` · ${candidate.signals.join('、')}` : ''}`
@@ -276,11 +292,18 @@ function activityBlock(
       plan.dispatchId ? `分派 ${plan.dispatchId}` : '',
       plan.workItemId ? `任务 ${plan.workItemId}` : '',
     ].filter(Boolean).join('\n');
+    /* Runtime's own line stays first: the derived plan summary explains the
+     * routing, it does not replace what the Room actually published. A real
+     * WorkItem objective is a paragraph, so it rides in the card body rather
+     * than flooding the head. */
+    const dispatchLine = [compact(activity.summary), roomDispatchPlanSummary(plan)]
+      .filter(Boolean)
+      .filter((part, index, parts) => parts.indexOf(part) === index);
     return {
       id: `dispatch:${activity.id}`,
       kind: 'tool',
       name: `${sourceName} → ${targetName} · 任务分派`,
-      summary: [roomDispatchPlanSummary(plan), objective].filter(Boolean).join(' · '),
+      summary: dispatchLine.join(' · '),
       status: toolStatus(activity.status),
       ...(routingDetail ? { output: routingDetail } : {}),
       startedAt: activity.createdAtMs,
@@ -292,11 +315,19 @@ function activityBlock(
      * is derived from real evidence instead; the blob stays reachable as the
      * card's input, so folding never costs a trace. */
     const raw = rawDetail(activity.summary);
+    const name = evidence?.label || '工具';
+    const line = roomToolActivityLine(raw ? '' : activity.summary, activity.payload, activity.status);
+    /* The card head already names the tool and carries its state, so a derived
+     * line of exactly those two would print the same sentence twice. One that
+     * carries the real op (`行星协调 · 批量并行委派`) still says something. */
+    const derived = roomToolActivityLine('', activity.payload, activity.status);
+    const duplicate = line === derived
+      && TOOL_STATE_WORDS.some((word) => derived === `${name} ${word}`);
     return {
       id: `tool:${activity.id}`,
       kind: 'tool',
-      name: evidence?.label || '工具',
-      summary: roomToolActivityLine(raw ? '' : activity.summary, activity.payload, activity.status),
+      name,
+      summary: duplicate ? '' : line,
       status: toolStatus(activity.status),
       ...(raw ? { input: activity.summary.trim() } : {}),
       ...(evidence?.facts.length

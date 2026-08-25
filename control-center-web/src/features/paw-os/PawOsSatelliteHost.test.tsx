@@ -9,6 +9,7 @@ import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-ru
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { clearConversationScrollMemory } from '@/features/conversation-ui';
 import { MockControlTransport } from '@/test/mock-transport';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { PawOsSatelliteHost } from './PawOsSatelliteHost';
@@ -16,6 +17,9 @@ import satelliteCss from './paw-os-satellite.css?raw';
 
 afterEach(() => {
   cleanup();
+  /* Reading position is remembered per conversation across mounts, so one
+     test's scroll must not become the next test's starting point. */
+  clearConversationScrollMemory();
   delete document.documentElement.dataset.reduceMotion;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -232,9 +236,9 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
     expect(document.querySelector('.paw-participant-chat__workline')).not.toBeInTheDocument();
-    expect(timeline.querySelector('article[data-status="running"]')).toHaveTextContent('正在读取 PawWindowLayer.tsx');
+    expect(timeline.querySelector('.ccui-tool-card.status-running')).toHaveTextContent('正在读取 PawWindowLayer.tsx');
     expect(screen.queryByRole('banner', { name: '实现伙伴 当前上下文' })).not.toBeInTheDocument();
     expect(document.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
     expect(transport.requests.map(({ request }) => request.pathId)).toEqual(['agent.room.get']);
@@ -263,7 +267,7 @@ describe('PawOsSatelliteHost', () => {
     expect(openRoute).toHaveBeenCalledWith('/agent?session=session-a');
   });
 
-  it('compresses each tool activity into one line with the time at the end', async () => {
+  it('gives each tool activity one reader line naming the real tool and its state', async () => {
     const room = participantRoom();
     const projection = participantProjectionWithActivities(room.id, [
       { ...roomActivity('participant-tool-1', 'participant-a', 101, '已创建 interface.js'), status: 'completed' },
@@ -276,22 +280,21 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
-    const row = timeline.querySelector('article[data-kind="activity"]');
-    expect(row).not.toBeNull();
-    expect(row?.querySelector('header')).toBeNull();
-    expect(row?.querySelector('p')).toBeNull();
-    // The category is a glyph in the tight frame; the full meaning stays in
-    // the accessible label and names the concrete tool (图4, PF-CM-013).
-    expect(row?.querySelector('strong')).not.toHaveTextContent('工具');
-    expect(row?.querySelector('strong .paw-room-activity-glyph')).toHaveAttribute('aria-label', '工具 · 读取文件');
-    expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveTextContent('已创建 interface.js');
-    expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveAttribute('title', '已创建 interface.js');
-    expect(row?.querySelector('time')).toHaveTextContent(/\d/);
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    // The Runtime tool id reaches the reader as its label (`read` → 读取文件),
+    // and the receipt carries its own state instead of a second status row.
+    const card = timeline.querySelector<HTMLElement>('.ccui-tool-card');
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('.ccui-tool-main strong')).toHaveTextContent('读取文件');
+    expect(card?.querySelector('.ccui-tool-main span')).toHaveTextContent('已创建 interface.js');
+    expect(card?.querySelector('.ccui-tool-meta')).toHaveTextContent('已完成');
+    // One card per real Runtime loop, with the loop's actor and time in its head.
+    const turn = timeline.querySelector<HTMLElement>('article.ccui-assistant-turn');
+    expect(turn?.querySelector('.ccui-assistant-head strong')).toHaveTextContent('Mars');
+    expect(turn?.querySelector('.ccui-assistant-head time')).toHaveTextContent(/\d/);
   });
 
-  it('keeps the failure alarm visible on the one-line tool row', async () => {
+  it('keeps the failure alarm visible on the tool receipt', async () => {
     const room = participantRoom();
     const projection = createRoomProjection(room.id);
     projection.activityOrder.push('tool-failed');
@@ -308,12 +311,11 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    await userEvent.setup().click(await screen.findByRole('button', { name: /运行活动 1 项/ }));
-    const row = timeline.querySelector<HTMLElement>('article[data-kind="activity"][data-status="failed"]');
-    expect(row).not.toBeNull();
-    expect(within(row!).getByRole('img', { name: '执行失败' })).toBeInTheDocument();
-    expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveTextContent('命令执行完成，退出码 1');
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const card = timeline.querySelector<HTMLElement>('.ccui-tool-card.status-error');
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('.ccui-tool-meta')).toHaveTextContent('失败');
+    expect(card).toHaveTextContent('命令执行完成，退出码 1');
   });
 
   it('turns a machine event name in the statusline into readable completion copy', async () => {
@@ -390,14 +392,13 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    expect(timeline.querySelectorAll('article[data-kind="activity"]')).toHaveLength(5);
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    expect(timeline.querySelectorAll('.ccui-tool-card, .ccui-thinking')).toHaveLength(5);
     expect(timeline).toHaveTextContent('路由已确定');
     expect(timeline).toHaveTextContent('已派发');
     expect(timeline).toHaveTextContent('伙伴请求已送达');
     expect(timeline).toHaveTextContent('正在读取');
     expect(timeline).toHaveTextContent('读取完成');
-    expect(timeline.querySelector('article[data-event-type="tool"] [role="img"]')).toHaveAttribute('data-kind', 'tool');
     expect(timeline).not.toHaveTextContent('不属于当前伙伴');
     expect(timeline).not.toHaveTextContent('未知事件不应出现');
     expect(timeline).not.toHaveTextContent('应归属其他目标');
@@ -467,7 +468,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
     setScrollMetrics(timeline, 600);
     fireEvent.scroll(timeline);
     const nearBottomProjection = participantProjectionWithActivities(room.id, [
@@ -543,23 +544,21 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    // Raw Runtime tool ids map to reader-facing labels (`read` → 读取文件).
-    expect(timeline.querySelector('article[data-status="running"]')).toHaveTextContent('读取文件 工具执行中');
-    const disclosure = document.querySelector<HTMLElement>('.paw-participant-chat__raw-detail');
-    expect(disclosure).not.toBeNull();
-    expect(screen.queryByText('/Volumes/private/workspace/PawWindowLayer.tsx')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText('查看公开原文'));
-    expect(await screen.findByText(/PawWindowLayer\.tsx/)).toBeInTheDocument();
-    expect(disclosure?.querySelector('pre')).toHaveTextContent('a'.repeat(64));
-    fireEvent.click(screen.getByText('查看公开原文'));
-    expect(disclosure?.querySelector('.agent-smooth-reveal')).toHaveAttribute('data-state', 'closing');
-    expect(disclosure?.querySelector('pre')).toHaveTextContent('/Volumes/private/workspace/PawWindowLayer.tsx');
-    fireEvent.transitionEnd(disclosure?.querySelector('.agent-smooth-reveal')!, { propertyName: 'height' });
-    await waitFor(() => expect(disclosure?.querySelector('pre')).not.toBeInTheDocument());
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    // Raw Runtime tool ids map to reader-facing labels (`read` → 读取文件),
+    // and the raw call stays reachable instead of becoming the headline.
+    const card = timeline.querySelector<HTMLElement>('.ccui-tool-card.status-running');
+    expect(card?.querySelector('.ccui-tool-main strong')).toHaveTextContent('读取文件');
+    expect(card?.querySelector('.ccui-tool-meta')).toHaveTextContent('正在执行');
+    expect(screen.queryByText(/\/Volumes\/private\/workspace\/PawWindowLayer\.tsx/)).not.toBeInTheDocument();
+    fireEvent.click(within(card!).getByRole('button'));
+    expect(await within(card!).findByText(/PawWindowLayer\.tsx/)).toBeInTheDocument();
+    expect(card?.querySelector('pre')).toHaveTextContent('a'.repeat(64));
+    fireEvent.click(within(card!).getAllByRole('button')[0]!);
+    await waitFor(() => expect(card?.querySelector('pre')).not.toBeInTheDocument());
   });
 
-  it('makes the participant history window explicit and lets the reader load the older 48-entry page', async () => {
+  it('keeps the whole partner history readable without a windowed history boundary', async () => {
     const room = participantRoom();
     const projection = participantProjectionWithActivities(room.id, Array.from({ length: 49 }, (_, index) => (
       roomActivity(`participant-tool-${index}`, 'participant-a', index + 1, `活动 ${index}`)
@@ -572,18 +571,20 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    expect(await screen.findByText('最近 48 / 共 49 条')).toBeInTheDocument();
-    expect(screen.queryByText('活动 0')).not.toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: '加载更早的 1 条' }));
-    expect(await screen.findByText('活动 0')).toBeInTheDocument();
-    /* PF-CM-013/UR-056：历史全部可见后，边界行让位给真实对话。 */
-    expect(screen.queryByText(/最近 \d+ \/ 共 \d+ 条/)).not.toBeInTheDocument();
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    /* Virtualization replaced the 48-entry page: the oldest activity is part
+       of the transcript from the first paint, with no 「加载更早」 gate. */
+    expect(within(timeline).getByText(/活动 0$/)).toBeInTheDocument();
+    expect(within(timeline).getByText(/活动 48$/)).toBeInTheDocument();
+    expect(timeline.querySelectorAll('.ccui-tool-card')).toHaveLength(49);
     expect(screen.queryByRole('button', { name: /加载更早的/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/最近 \d+ \/ 共 \d+ 条/)).not.toBeInTheDocument();
   });
 
-  it('keeps a manually collapsed running participant group collapsed after completion', async () => {
+  it('keeps a manually collapsed tool receipt collapsed after Runtime completes it', async () => {
     const room = participantRoom();
-    const running = participantProjectionWithActivities(room.id, [roomActivity('participant-tool-1', 'participant-a', 101, '仍在读取')]);
+    const rawSummary = '```json\n{"path":"/workspace/PawWindowLayer.tsx"}\n```';
+    const running = participantProjectionWithActivities(room.id, [roomActivity('participant-tool-1', 'participant-a', 101, rawSummary)]);
     useRoomLiveStore.setState({ projections: { [room.id]: running } });
     const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
     renderSatellite(transport, {
@@ -591,13 +592,13 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const trigger = await screen.findByRole('button', { name: /运行活动 1 项/ });
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    await userEvent.setup().click(trigger);
+    const trigger = await screen.findByRole('button', { name: /读取文件/ });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    const completed = participantProjectionWithActivities(room.id, [{ ...roomActivity('participant-tool-1', 'participant-a', 101, '读取已完成'), status: 'completed' }]);
+    await userEvent.setup().click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    const completed = participantProjectionWithActivities(room.id, [{ ...roomActivity('participant-tool-1', 'participant-a', 101, rawSummary), status: 'completed' }]);
     act(() => useRoomLiveStore.setState({ projections: { [room.id]: completed } }));
-    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /读取文件/ })).toHaveAttribute('aria-expanded', 'true'));
   });
 
   it('makes the 50-run subagent directory bound explicit without inventing a total', async () => {
@@ -614,8 +615,7 @@ describe('PawOsSatelliteHost', () => {
     expect(screen.getByRole('button', { name: '在 Agent 中查看' })).toBeInTheDocument();
   });
 
-  it('uses the reduced-motion disclosure path without leaving closing content mounted', async () => {
-    document.documentElement.dataset.reduceMotion = 'true';
+  it('unmounts a closed tool disclosure instead of leaving its trace in the tree', async () => {
     const user = userEvent.setup();
     const room = participantRoom();
     const projection = participantProjectionWithActivities(room.id, [roomActivity('participant-tool-1', 'participant-a', 101, '正文很长\n需要在公开原文中逐层读取')]);
@@ -623,10 +623,10 @@ describe('PawOsSatelliteHost', () => {
     const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
     renderSatellite(transport, { kind: 'participant', id: 'participant-a', roomId: room.id, title: '实现伙伴', subtitle: '实现 · session-a' });
 
-    const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    await user.click(await screen.findByRole('button', { name: '查看公开原文' }));
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    await user.click(await screen.findByRole('button', { name: /读取文件/ }));
     expect(await within(timeline).findByText(/需要在公开原文中逐层读取/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '查看公开原文' }));
+    await user.click(screen.getByRole('button', { name: /读取文件/ }));
     expect(within(timeline).queryByText(/需要在公开原文中逐层读取/)).not.toBeInTheDocument();
   });
 

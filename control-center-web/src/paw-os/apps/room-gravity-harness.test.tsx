@@ -191,26 +191,29 @@ describe('room gravity projection over the minecraft harness', () => {
       room={harness.room}
     />);
 
-    const cards = container.querySelectorAll('.paw-room-chronology__activity--dispatch');
+    const cards = [...container.querySelectorAll('.ccui-tool-card')]
+      .filter((card) => card.textContent?.includes('任务分派'));
     expect(cards.length).toBeGreaterThanOrEqual(2);
-    const texts = [...cards].map((card) => card.textContent ?? '');
+    const texts = cards.map((card) => card.textContent ?? '');
     expect(texts.some((text) => text.includes('Earth → Venus · 任务分派'))).toBe(true);
     expect(texts.some((text) => text.includes('Earth → Jupiter · 任务分派'))).toBe(true);
-    const waveCard = [...cards].find((card) => card.textContent?.includes('Earth → Venus'));
+    const waveCard = cards.find((card) => card.textContent?.includes('Earth → Venus'));
     expect(waveCard).toHaveTextContent('伙伴委派');
-    expect(waveCard).toHaveTextContent('∥ 轨道 1/2');
+    expect(waveCard).toHaveTextContent('并行轨道 1/2');
     expect(waveCard).toHaveTextContent('并行实现纯逻辑与界面轨道');
-    // The real core objective rides with the dispatch, not just an id.
+    // The real core objective rides with the dispatch, not just an id — a
+    // WorkItem paragraph belongs in the receipt body, not in its head line.
+    expect(waveCard).not.toHaveTextContent('实现原创 3D 方块生存游戏的纯逻辑核心');
+    fireEvent.click(within(waveCard!).getByRole('button'));
     expect(waveCard).toHaveTextContent('实现原创 3D 方块生存游戏的纯逻辑核心');
     // The dead label pattern (planet · 分派 with no plan) is gone.
     expect(container.textContent).not.toContain('route_decision');
 
-    // Category words are replaced by glyphs in the tight rows (图4); the full
-    // meaning stays in the accessible label, and the concrete tool is named.
-    const glyphs = [...container.querySelectorAll('.paw-room-activity-glyph')];
-    expect(glyphs.length).toBeGreaterThanOrEqual(1);
-    expect(glyphs.some((glyph) => (glyph.getAttribute('aria-label') ?? '').startsWith('工具'))).toBe(true);
-    expect(container.textContent).not.toContain('· 工具');
+    // Every tool receipt names the concrete tool, never the bare category.
+    const toolNames = [...container.querySelectorAll('.ccui-tool-main strong')]
+      .map((element) => element.textContent?.trim() ?? '');
+    expect(toolNames.length).toBeGreaterThanOrEqual(1);
+    expect(toolNames).not.toContain('工具');
   });
 
   it('resolves all 112 machine-id tool summaries in the 3261-event history into evidence lines', () => {
@@ -257,13 +260,13 @@ describe('room gravity projection over the minecraft harness', () => {
       room={harness.room}
     />);
 
-    const summaries = [...container.querySelectorAll('.paw-room-chronology__activity > div > p')]
-      .map((paragraph) => paragraph.textContent?.trim() ?? '');
+    const summaries = [...container.querySelectorAll('.ccui-tool-main')]
+      .map((main) => main.textContent?.trim() ?? '');
     expect(summaries.length).toBeGreaterThanOrEqual(5);
     // No row text is ever the bare Runtime id (`room_partner`, `tool_search`…).
     expect(summaries.filter((summary) => machineTokenPattern.test(summary))).toEqual([]);
     // The delegate_batch tool call reads as the real gravity it exerted.
-    expect(summaries).toContain('行星协调 · 批量并行委派 已完成');
+    expect(summaries.some((summary) => summary.includes('行星协调 · 批量并行委派 已完成'))).toBe(true);
   });
 
   it('expands the coordinator satellite to the real sent and modified evidence — no empty tool rows', async () => {
@@ -287,24 +290,19 @@ describe('room gravity projection over the minecraft harness', () => {
       </ControlTransportProvider>,
     );
 
-    const timeline = await screen.findByRole('log', { name: 'Agent 3 公开消息与运行事件' });
-    for (const group of screen.getAllByRole('button', { name: /运行活动/ })) fireEvent.click(group);
-    const messages = [...timeline.querySelectorAll('.paw-participant-chat__activity-message')]
-      .map((element) => element.textContent?.trim() ?? '');
+    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const receipts = [...timeline.querySelectorAll('.ccui-tool-card')];
+    const messages = receipts.map((card) => card.querySelector('.ccui-tool-main')?.textContent?.trim() ?? '');
     expect(messages.length).toBeGreaterThanOrEqual(5);
     // Real prose summaries survive; machine ids never surface as row text.
-    expect(messages).toContain('已创建 ROOT.md');
-    expect(messages).toContain('行星协调 · 批量并行委派 已完成');
+    expect(messages.some((message) => message.includes('已创建 ROOT.md'))).toBe(true);
+    expect(messages.some((message) => message.includes('行星协调 · 批量并行委派 已完成'))).toBe(true);
     expect(messages.filter((message) => machineTokenPattern.test(message))).toEqual([]);
 
-    // The write row expands to the file it really modified.
-    const writeRow = [...timeline.querySelectorAll('article[data-kind="activity"]')].find((row) => (
-      row.querySelector('.paw-participant-chat__activity-message')?.textContent?.trim() === '已创建 ROOT.md'
-    )) as HTMLElement;
+    // The write receipt expands to the file it really modified.
+    const writeRow = receipts.find((card) => card.textContent?.includes('已创建 ROOT.md')) as HTMLElement;
     expect(writeRow).toBeDefined();
-    fireEvent.click(within(writeRow).getByRole('button', { name: '查看执行详情' }));
-    const facts = within(writeRow).getByRole('button', { name: '查看执行详情' })
-      .closest('.paw-participant-chat__raw-detail');
-    expect(facts).toHaveTextContent('docs/agent/ROOT.md');
+    fireEvent.click(within(writeRow).getByRole('button'));
+    expect(writeRow).toHaveTextContent('docs/agent/ROOT.md');
   });
 });

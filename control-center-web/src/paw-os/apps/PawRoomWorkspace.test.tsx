@@ -42,7 +42,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
     expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
-    const timeline = screen.getByRole('log', { name: '公开对话时间线' });
+    const timeline = screen.getByRole('log', { name: 'Room 公开对话时间线' });
     const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
     expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();

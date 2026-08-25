@@ -40,7 +40,11 @@ describe('roomTranscript', () => {
     const card = messages[1] as AssistantMessage;
     const tool = card.blocks.find((block) => block.id === 'tool:tool-a');
     expect(tool).toMatchObject({ kind: 'tool', name: '读取文件', status: 'running' });
-    expect(tool?.kind === 'tool' && tool.summary).toBe('读取文件 正在执行');
+    /* The raw Runtime blob is not a reader line, and the derived fallback would
+       only repeat the card's own name and state, so the summary stays empty
+       and the blob stays reachable as the recorded call. */
+    expect(tool?.kind === 'tool' && tool.summary).toBe('');
+    expect(tool?.kind === 'tool' && tool.input).toContain('PawWindowLayer.tsx');
   });
 
   it('keeps a pending approval on the card and links it back to its activity', () => {

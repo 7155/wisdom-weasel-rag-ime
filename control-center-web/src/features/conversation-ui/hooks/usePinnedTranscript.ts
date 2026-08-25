@@ -37,14 +37,19 @@ export function usePinnedTranscript(
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const scroller = scrollRef.current;
     if (!scroller) return;
-    programmatic.current = true;
     updatePinned(true);
-    if (typeof scroller.scrollTo === 'function') scroller.scrollTo({ top: scroller.scrollHeight, behavior });
-    else scroller.scrollTop = scroller.scrollHeight;
-    requestAnimationFrame(() => {
+    setShowJumpToBottom(false);
+    /* Only the reader's explicit jump animates, and only that animation needs
+     * the guard below: its own intermediate scroll events would otherwise read
+     * as the reader scrolling away. Staying pinned while content arrives is an
+     * instant assignment, so it lands in the same frame the content does. */
+    if (behavior === 'smooth' && typeof scroller.scrollTo === 'function') {
+      programmatic.current = true;
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    } else {
       programmatic.current = false;
-      setShowJumpToBottom(false);
-    });
+      scroller.scrollTop = scroller.scrollHeight;
+    }
   }, [scrollRef, updatePinned]);
 
   useEffect(() => {
@@ -52,13 +57,18 @@ export function usePinnedTranscript(
     if (!scroller) return;
     const onScroll = () => {
       const gap = gapToBottom();
-      setShowJumpToBottom(gap > 48);
-      if (programmatic.current) return;
-      if (gap <= 16) updatePinned(true);
-      else if (gap > 24) updatePinned(false);
+      if (gap <= 16) {
+        programmatic.current = false;
+        updatePinned(true);
+      } else if (gap > 24 && !programmatic.current) {
+        updatePinned(false);
+      }
+      setShowJumpToBottom(gap > 48 && !programmatic.current);
     };
+    /* Wheel, touch or pointer is the reader taking the scroller back, which
+     * ends any animation we started on their behalf. */
     const onIntent = () => {
-      if (programmatic.current) return;
+      programmatic.current = false;
       if (gapToBottom() > 24) updatePinned(false);
     };
     scroller.addEventListener('scroll', onScroll, { passive: true });

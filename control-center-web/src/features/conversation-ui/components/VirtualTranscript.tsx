@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { conversationBusy, useConversationSurface } from '../ConversationSurfaceContext';
 import { usePinnedTranscript } from '../hooks/usePinnedTranscript';
 import { useSessionScrollMemory } from '../hooks/useSessionScrollMemory';
@@ -41,6 +41,15 @@ export function VirtualTranscript({ empty, label, lead }: {
   });
 
   useSessionScrollMemory(conversationId, pinned.captureAnchor, pinned.restoreAnchor, scrollRef);
+
+  /* Arriving content pins in the same commit. The resize observation behind
+   * the hook only catches later growth of an already-mounted row — streamed
+   * text, an opened disclosure — and would otherwise leave the tail behind by
+   * a frame every time the transcript itself changes. */
+  const { isPinnedRef, scrollToBottom } = pinned;
+  useEffect(() => {
+    if (isPinnedRef.current) scrollToBottom('auto');
+  }, [isPinnedRef, messages, scrollToBottom]);
 
   const messageIndex = useMemo(
     () => new Map(messages.map((message, index) => [message.id, index])),
