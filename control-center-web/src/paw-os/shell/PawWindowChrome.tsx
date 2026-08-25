@@ -7,19 +7,15 @@ const PawWindowTrailingChromeContext = createContext<HTMLElement | null>(null);
 export function PawWindowChromeProvider({
   children,
   leading = null,
-  target = null,
   trailing = null,
 }: {
   children: ReactNode;
   leading?: HTMLElement | null;
-  /** @deprecated use `trailing` */
-  target?: HTMLElement | null;
   trailing?: HTMLElement | null;
 }) {
-  const trailingTarget = trailing ?? target ?? null;
   return (
-    <PawWindowLeadingChromeContext.Provider value={leading ?? null}>
-      <PawWindowTrailingChromeContext.Provider value={trailingTarget}>
+    <PawWindowLeadingChromeContext.Provider value={leading}>
+      <PawWindowTrailingChromeContext.Provider value={trailing}>
         {children}
       </PawWindowTrailingChromeContext.Provider>
     </PawWindowLeadingChromeContext.Provider>
@@ -31,7 +27,9 @@ export function PawWindowChromePortal({ children }: { children: ReactNode }) {
   return target ? createPortal(children, target) : null;
 }
 
-/** Left titlebar slot — controls that open left-side surfaces (e.g. work-record rail). */
+/** Leading titlebar slot, immediately after the traffic lights — for controls
+ * that open a leading-edge surface, so the control and the surface it reveals
+ * sit on the same side. */
 export function PawWindowLeadingPortal({ children }: { children: ReactNode }) {
   const target = useContext(PawWindowLeadingChromeContext);
   return target ? createPortal(children, target) : null;

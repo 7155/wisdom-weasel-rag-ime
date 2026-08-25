@@ -134,10 +134,10 @@ describe('PAWOS semantic type roles', () => {
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-shell(?:\[[^\]]+\])? \.paw-window\s*\{/);
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{/);
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-menu-bar\s*\{/);
-    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);/s);
+    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*var\(--paw-titlebar-lead, 76px\) minmax\(0, 1fr\) minmax\(0, auto\);/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*background:\s*#fff;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
-    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights > button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock button::before\s*\{\s*content:\s*none;/s);
   });
 
@@ -579,6 +579,71 @@ describe('PAWOS semantic type roles', () => {
       expect(css).not.toContain('.paw-room-flow');
       expect(css).not.toContain('.paw-room-execution');
       expect(css).not.toContain('.paw-room-work-tree');
+    }
+  });
+
+  it('opens the Room tools aside on the same edge as the control cluster that opens it', () => {
+    // Named areas, so the trailing side survives any body re-ordering.
+    expect(roomMigratedCss).toMatch(
+      /:not\(\[data-panel='none'\]\) \.paw-room-workspace__body\s*\{[^}]*grid-template-areas:\s*'room-main room-tools';/s,
+    );
+    expect(roomMigratedCss).toMatch(/\.paw-room-tools\[data-side='trailing'\]\s*\{[^}]*grid-area:\s*room-tools;/s);
+    expect(roomMigratedCss).toMatch(/\.paw-room-workspace__main\s*\{\s*grid-area:\s*room-main;\s*\}/s);
+    // The cluster is trailing in the portalled titlebar and in the fallback
+    // header alike — never leading against a trailing panel.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-room-workspace__header > \.paw-room-window-chrome\s*\{[^}]*justify-content:\s*flex-end;/s,
+    );
+    expect(roomMigratedCss).not.toMatch(
+      /\.paw-room-workspace__header > \.paw-room-window-chrome\s*\{[^}]*justify-content:\s*flex-start;/s,
+    );
+  });
+
+  it('gives every Room window one traffic-light language and no isolated card close', () => {
+    // Focus-card satellites inherit the shared titlebar instead of redefining
+    // a shorter bar with buttons hidden behind nth-child.
+    expect(roomMigratedCss).not.toContain('.paw-focus-card-close');
+    expect(roomMigratedCss).not.toMatch(
+      /\[data-frame-mode='focus-card'\][^{]*\.paw-traffic-lights button:nth-child\(\d\)[^{]*\{[^}]*display:\s*none;/s,
+    );
+    expect(roomMigratedCss).not.toMatch(
+      /\[data-frame-mode='focus-card'\] \.paw-window-titlebar\s*\{[^}]*grid-template-columns:/s,
+    );
+    // Leading App chrome docks after the lights so the shared nth-child
+    // red/yellow/green rules keep landing on close/minimize/maximize.
+    expect(pawOsCss).toMatch(/\.paw-window-leading-slot\s*\{[^}]*margin-inline-start:/s);
+    // Direct-child scoping, so docked App chrome never inherits a light's
+    // ring, fill or 12px circle.
+    expect(shellMigratedCss).toMatch(/\.paw-traffic-lights > button:nth-child\(1\)\s*\{[^}]*#f04438/s);
+    for (const css of [pawOsCss, shellMigratedCss, roomMigratedCss]) {
+      expect(css).not.toMatch(/\.paw-traffic-lights(?::[a-z-]+)? button/);
+    }
+    // 退出协作聚焦 shares the leading edge with every window's red light.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-collaboration-focus-exit\s*\{[^}]*right:\s*auto;[^}]*left:\s*14px;/s,
+    );
+    // The focus modebar reads in the same column rhythm as a titlebar.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-room-focus-modebar\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*148px minmax\(0, 1fr\) minmax\(0, auto\);/s,
+    );
+    // The SOL badge is dormant unless the Room owner published a live host.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-window-layer\[data-room-focus\]:not\(:has\(\.paw-room-window-chrome\[data-coordinator\]\)\) \.paw-room-focus-modebar strong\s*\{[^}]*display:\s*none;/s,
+    );
+  });
+
+  it('keeps one 12px traffic-light hit target on every window that docks App chrome', () => {
+    // A light never flex-shrinks, so the main Room's close target measures the
+    // same as a satellite's even when the cluster outgrows its column.
+    expect(pawOsCss).toMatch(/\.paw-traffic-lights > button\s*\{[^}]*flex:\s*0 0 12px;/s);
+    // Only the column gives ground, through one token every titlebar reads.
+    expect(pawOsCss).toMatch(
+      /\.paw-window-titlebar:has\(\.paw-window-leading-slot:not\(:empty\)\)\s*\{[^}]*--paw-titlebar-lead:\s*auto;/s,
+    );
+    for (const css of [pawOsCss, roomMigratedCss, agentMigratedCss, toolsMigratedCss]) {
+      // No titlebar may pin its leading track past the shared token, or its
+      // lights start shrinking again the moment an App docks a control.
+      expect(css).not.toMatch(/\.paw-window-titlebar[^{]*\{[^}]*grid-template-columns:\s*\d+px/s);
     }
   });
 

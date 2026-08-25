@@ -50,7 +50,7 @@ import { PawRoomConversation, roomProcessWindowRequest } from './PawRoomConversa
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 /* 星空按钮按下之前，星空代码不进入 Room 默认对话的 bundle 路径。 */
 import { LazyPawRoomStarfield } from './PawStarfieldLazy';
-import { buildRoomFocusProjection, roomFocusHasCoordinator, type RoomFocusProjection } from './room-focus-projection';
+import { buildRoomFocusProjection, roomFocusHasCoordinator, roomFocusOriginLabel, type RoomFocusProjection } from './room-focus-projection';
 import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
 /* Shared conversation modules (tool result panels, diff reader) style the
  * Room's tool receipts too; the Room window must not depend on a Session
@@ -391,7 +391,10 @@ export function PawRoomWorkspace({
     ['blocked', focusProjection?.counts.blocked ?? 0, '受阻'],
     ['complete', focusProjection?.counts.completed ?? 0, '完成'],
   ] as const).filter(([, count]) => count > 0);
+  /* 没有主持就没有 Sol：signal chrome 只有在真的有伙伴担任 coordinator 时
+     才用 Sol 命名这个 Room 的原点，否则统一叫「主 Room」。 */
   const coordinatorActive = focusProjection ? roomFocusHasCoordinator(focusProjection.partners) : false;
+  const originLabel = roomFocusOriginLabel(coordinatorActive);
   const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
     {coordinatorActive ? <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span> : null}
     <nav aria-label="Room 工作台视图">
@@ -418,7 +421,7 @@ export function PawRoomWorkspace({
           <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
           <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 项任务</span>
         </div>
-        {signalChips.length ? <div aria-label="Sol 当前状态" className="paw-room-workspace__signal-status">
+        {signalChips.length ? <div aria-label={`${originLabel} 当前状态`} className="paw-room-workspace__signal-status">
           {signalChips.map(([tone, count, label]) => <span data-tone={tone} key={tone}><i />{count} {label}</span>)}
         </div> : null}
       </section>
@@ -518,7 +521,9 @@ function PawRoomToolWorkspace({
   room: RoomSummary;
 }) {
   const tabId = useId();
-  return <aside aria-label="Room 协作态势" className="paw-room-tools">
+  /* 空间指向：协作态势键在标题栏尾端，面板也必须从尾端展开。data-side 把这个
+     朝向写成契约而不是 DOM 顺序的副作用，CSS 用同名网格区落位。 */
+  return <aside aria-label="Room 协作态势" className="paw-room-tools" data-side="trailing">
     <header className="paw-room-tools__header">
       <span><Focus aria-hidden="true" size={15} /><strong>协作态势</strong></span>
       <div className="paw-room-tools__actions">

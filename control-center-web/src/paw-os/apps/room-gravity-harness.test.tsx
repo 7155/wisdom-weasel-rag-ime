@@ -191,7 +191,7 @@ describe('room gravity projection over the minecraft harness', () => {
       room={harness.room}
     />);
 
-    const cards = [...container.querySelectorAll('.ccui-tool-card')]
+    const cards = [...container.querySelectorAll<HTMLElement>('.ccui-tool-card')]
       .filter((card) => card.textContent?.includes('任务分派'));
     expect(cards.length).toBeGreaterThanOrEqual(2);
     const texts = cards.map((card) => card.textContent ?? '');

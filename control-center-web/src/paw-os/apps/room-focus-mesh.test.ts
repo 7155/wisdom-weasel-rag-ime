@@ -20,6 +20,12 @@ function partner(participantId: string, celestialName: string, overrides: Partia
   };
 }
 
+/* Sol only exists once somebody really hosts, so every fixture that expects an
+   origin has to seat a connected coordinator first. */
+function coordinator(participantId: string, celestialName: string, overrides: Partial<RoomFocusPartner> = {}): RoomFocusPartner {
+  return partner(participantId, celestialName, { collaborationRole: 'coordinator', ...overrides });
+}
+
 function work(id: string, overrides: Partial<RoomFocusWorkItem> = {}): RoomFocusWorkItem {
   return {
     id,
@@ -50,8 +56,7 @@ function projection(overrides: Partial<RoomFocusProjection> = {}): RoomFocusProj
 describe('buildRoomFocusMesh', () => {
   const focus = projection({
     partners: [
-      /* The origin lane only exists while a connected coordinator hosts it. */
-      partner('p-earth', 'Earth', { collaborationRole: 'coordinator' }),
+      coordinator('p-earth', 'Earth'),
       partner('p-mars', 'Mars'),
       partner('p-venus', 'Venus', { state: 'review' }),
     ],
@@ -176,7 +181,7 @@ describe('buildRoomFocusMesh', () => {
 
   it('never fabricates edges for unknown actors, self-handoffs or duplicates', () => {
     const mesh = buildRoomFocusMesh(projection({
-      partners: [partner('p-earth', 'Earth', { collaborationRole: 'coordinator' })],
+      partners: [coordinator('p-earth', 'Earth')],
       workItems: [work('work-a', { ownerParticipantId: 'p-gone', parentId: 'work-missing' })],
       handoffs: [
         { id: 'h-unknown', sourceParticipantId: 'p-earth', targetParticipantId: 'p-gone', state: 'offered', createdAtMs: 1 },
@@ -192,7 +197,7 @@ describe('buildRoomFocusMesh', () => {
       .toBe(mesh.nodes.find((node) => node.id === 'root')!.x);
 
     const twice = buildRoomFocusMesh(projection({
-      partners: [partner('p-earth', 'Earth', { collaborationRole: 'coordinator' }), partner('p-mars', 'Mars')],
+      partners: [coordinator('p-earth', 'Earth'), partner('p-mars', 'Mars')],
       handoffs: [
         { id: 'h-1', sourceParticipantId: 'p-earth', targetParticipantId: 'p-mars', state: 'dispatched', createdAtMs: 1 },
         { id: 'h-2', sourceParticipantId: 'p-earth', targetParticipantId: 'p-mars', state: 'completed', createdAtMs: 2 },
@@ -200,26 +205,6 @@ describe('buildRoomFocusMesh', () => {
     }));
     // One visual relation per pair — repeats never stack into spaghetti.
     expect(twice.edges.filter((edge) => edge.kind === 'handoff')).toHaveLength(1);
-  });
-
-  it('reserves the origin lane instead of drawing a chair nobody sits in', () => {
-    // No connected partner holds `coordinator`, so there is no Sol: no origin
-    // node, no origin lifeline, and lineage that would have hung off it falls
-    // away with it rather than pointing at an absent host.
-    const mesh = buildRoomFocusMesh(projection({
-      partners: [partner('p-earth', 'Earth'), partner('p-mars', 'Mars')],
-      workItems: [work('work-a', { ownerParticipantId: 'p-earth', updatedAtMs: 10 })],
-    }));
-
-    expect(mesh.hasOrigin).toBe(false);
-    expect(mesh.nodes.find((node) => node.id === 'root')).toBeUndefined();
-    expect(mesh.lanes.map((lane) => lane.id)).toEqual(['p-earth', 'p-mars']);
-    expect(mesh.edges.filter((edge) => edge.sourceId === 'root')).toEqual([]);
-
-    // A disconnected coordinator is not a host either.
-    expect(buildRoomFocusMesh(projection({
-      partners: [partner('p-earth', 'Earth', { collaborationRole: 'coordinator', state: 'disconnected' })],
-    })).hasOrigin).toBe(false);
   });
 
   it('exposes the real covered time range for the axis caption, never inventing one', () => {
@@ -231,7 +216,7 @@ describe('buildRoomFocusMesh', () => {
 
   it('never invents a time — a partner with no recorded involvement waits on the origin row', () => {
     const mesh = buildRoomFocusMesh(projection({
-      partners: [partner('p-earth', 'Earth', { collaborationRole: 'coordinator' }), partner('p-mars', 'Mars')],
+      partners: [coordinator('p-earth', 'Earth'), partner('p-mars', 'Mars')],
       workItems: [work('work-a', { ownerParticipantId: 'p-earth', updatedAtMs: 10 })],
     }));
     const at = (id: string) => mesh.nodes.find((node) => node.id === id)!;
@@ -269,6 +254,44 @@ describe('buildRoomFocusMesh', () => {
     // A quiet room still renders a readable band, not a zero-height strip.
     const quiet = buildRoomFocusMesh(projection({ partners: [partner('p-earth', 'Earth')] }));
     expect(quiet.height).toBeGreaterThanOrEqual(36);
+  });
+
+  it('draws no Sol origin until a connected partner really holds the coordinator role', () => {
+    const unhosted = projection({
+      partners: [partner('p-earth', 'Earth'), partner('p-mars', 'Mars')],
+      workItems: [work('work-a', { ownerParticipantId: 'p-earth', updatedAtMs: 10 })],
+    });
+    const dormant = buildRoomFocusMesh(unhosted);
+
+    expect(dormant.hasOrigin).toBe(false);
+    expect(dormant.nodes.some((node) => node.kind === 'root')).toBe(false);
+    expect(dormant.lanes.map((lane) => lane.id)).toEqual(['p-earth', 'p-mars']);
+    // Lineage falls back to the real owner rather than pointing at an empty chair.
+    expect(dormant.edges.map((edge) => edge.id)).not.toContain('parent:root->work:work-a');
+    expect(dormant.edges.every((edge) => edge.sourceId !== 'root' && edge.targetId !== 'root')).toBe(true);
+    // Partners take the whole width instead of orbiting a reserved gutter.
+    expect(dormant.nodes.find((node) => node.id === 'partner:p-earth')!.x)
+      .toBeLessThan(buildRoomFocusMesh({
+        ...unhosted,
+        partners: [coordinator('p-earth', 'Earth'), partner('p-mars', 'Mars')],
+      }).nodes.find((node) => node.id === 'partner:p-earth')!.x);
+  });
+
+  it('lights Sol the moment a coordinator takes the chair, and drops it again when they disconnect', () => {
+    const hosted = buildRoomFocusMesh(projection({
+      partners: [coordinator('p-earth', 'Earth')],
+      workItems: [work('work-a', { ownerParticipantId: 'p-earth', updatedAtMs: 10 })],
+    }));
+    expect(hosted.hasOrigin).toBe(true);
+    expect(hosted.nodes.some((node) => node.kind === 'root')).toBe(true);
+
+    // A coordinator who has dropped off cannot keep the origin lit.
+    const gone = buildRoomFocusMesh(projection({
+      partners: [coordinator('p-earth', 'Earth', { state: 'disconnected' })],
+      workItems: [work('work-a', { ownerParticipantId: 'p-earth', updatedAtMs: 10 })],
+    }));
+    expect(gone.hasOrigin).toBe(false);
+    expect(gone.nodes.some((node) => node.kind === 'root')).toBe(false);
   });
 
   it('labels every edge kind for the legend', () => {
