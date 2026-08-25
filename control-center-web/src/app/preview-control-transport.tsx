@@ -1297,7 +1297,7 @@ async function previewSha256(file: File): Promise<string> {
         };
         reader.readAsArrayBuffer(file);
       });
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
   return Array.from(
     new Uint8Array(digest),
     (value) => value.toString(16).padStart(2, '0'),
