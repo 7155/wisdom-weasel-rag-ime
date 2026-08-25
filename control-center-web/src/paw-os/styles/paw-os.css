@@ -940,9 +940,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   color: var(--paw-accent-strong);
   cursor: pointer;
 }
+/* Five tracks, because the archive's widest group is five Apps: every group
+   then lands on one band and the whole shelf reads without a scroll at the
+   height a desktop actually has. */
 .paw-launchpad section > div {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   padding: 14px;
 }

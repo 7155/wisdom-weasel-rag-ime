@@ -19,10 +19,16 @@ type PawMenuTarget =
   | { kind: 'apps'; appIds: PawAppId[]; label: string }
   | { kind: 'window'; windowId: string; label: string };
 
-const LAUNCHPAD_KIND_ORDER = ['work', 'agent', 'tool', 'system'] as const;
-const LAUNCHPAD_KIND_LABEL: Record<(typeof LAUNCHPAD_KIND_ORDER)[number], string> = {
+/* The archive is grouped the way the machine is actually laid out: where the
+ * work happens (工作), where what came out of it is kept (记忆与知识), what the
+ * work reaches for (工具), and what runs underneath (系统). Splitting 工作 from
+ * Agent left two lone tiles on their own bands and made eleven Apps read as a
+ * half-empty shelf; this order is also the flywheel read left to right —
+ * Session, its deposits, its instruments, the floor. */
+const LAUNCHPAD_GROUP_ORDER = ['work', 'library', 'tool', 'system'] as const;
+const LAUNCHPAD_GROUP_LABEL: Record<(typeof LAUNCHPAD_GROUP_ORDER)[number], string> = {
   work: '工作',
-  agent: 'Agent',
+  library: '记忆与知识',
   tool: '工具',
   system: '系统',
 };
@@ -685,10 +691,10 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
     // header takes its own beat and its tiles follow, so the archive opens as
     // one choreography that reads in document order — section, then contents.
     let order = 0;
-    return LAUNCHPAD_KIND_ORDER.flatMap((kind) => {
-      const apps = filtered.filter((app) => launchpadKind(app) === kind);
+    return LAUNCHPAD_GROUP_ORDER.flatMap((kind) => {
+      const apps = filtered.filter((app) => launchpadGroup(app) === kind);
       return apps.length
-        ? [{ kind, label: LAUNCHPAD_KIND_LABEL[kind], order: order++, apps: apps.map((app) => ({ app, order: order++ })) }]
+        ? [{ kind, label: LAUNCHPAD_GROUP_LABEL[kind], order: order++, apps: apps.map((app) => ({ app, order: order++ })) }]
         : [];
     });
   }, [filtered]);
@@ -767,9 +773,11 @@ function sameAppSelection(left: ReadonlySet<PawAppId>, right: ReadonlySet<PawApp
   return true;
 }
 
-function launchpadKind(app: PawAppDefinition): (typeof LAUNCHPAD_KIND_ORDER)[number] {
-  if (app.kind === 'work' && app.id !== 'project-workbench') return 'tool';
-  return app.kind;
+function launchpadGroup(app: PawAppDefinition): (typeof LAUNCHPAD_GROUP_ORDER)[number] {
+  if (app.id === 'memory' || app.id === 'knowledge') return 'library';
+  if (app.id === 'project-workbench' || app.kind === 'agent') return 'work';
+  if (app.kind === 'system') return 'system';
+  return 'tool';
 }
 
 function contextMenuAriaLabel(menu: PawMenuState, activeAppId: PawAppId | null): string {
