@@ -1,23 +1,23 @@
 /**
  * 星空 v2 WebGL stage — the immersive 3D renderer.
  *
- * A hand-driven three.js scene (no per-frame React): a spectral-type star
- * sphere with a milky-way band (craft ported from the MIT q-jade/solar-system
- * reference), nebulae, readable orbit lines, planets carrying real downscaled
- * NASA-style maps (async, procedural color until ready), a textured burning
- * Sol, handoff light beams and picked-body highlighting. All *work* motion
- * comes from `StarfieldMotion` profiles produced by the pure motion module,
- * so the 3D stage can never claim activity the Runtime does not report:
+ * A hand-driven three.js scene (no per-frame React): a procedurally textured
+ * deep-sky dome with a milky-way band, particle star shells, nebulae, orbit
+ * rings, planets with seeded surface + normal maps and fresnel atmospheres,
+ * a granulated burning Sol, handoff light beams and picked-body highlighting.
+ * All *work* motion comes from `StarfieldMotion` profiles produced by the
+ * pure motion module, so the 3D stage can never claim activity the Runtime
+ * does not report:
  * - orbit + spin advance by `motion.orbitRadPerS` / `spinRadPerS` (working);
  * - queue / review / failure appear as rings and light, never as motion;
  * - reduced motion stops the integrator and renders on demand only.
  *
- * Performance contract (hard):
- * - pixel ratio capped at 1.5 and stepped further down under sustained load;
- * - one shared unit-sphere geometry per body class, scaled per instance;
- * - dashed-link distances update in place — zero per-frame allocations;
- * - the backdrop is fully static; ambient life is the damped camera only;
- * - `dispose()` frees renderer, geometries, materials and every texture.
+ * Render budget: DPR capped by `starfieldPixelRatio` (hard ceiling + total
+ * pixel budget), three shared unit-sphere geometries reused by every body
+ * through THREE.LOD, all surface textures generated once and cached by the
+ * texture factory, unchanged poll ticks skipped via `sceneModelSignature`,
+ * zero per-frame allocations in the link updater, and no rAF at all while
+ * the sky is hidden (`setRunning(false)` cancels the loop).
  *
  * DOM labels are positioned by projecting body anchors each frame, keeping
  * text crisp and accessible while the sky itself stays on the GPU.
@@ -25,9 +25,44 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  METEOR_POOL_SIZE,
+  METEOR_TRAIL_POINTS,
+  METEOR_TRAIL_SPAN_S,
+  meteorFade,
+  meteorSpawn,
+  nebulaBreath,
+  twinkleOpacity,
+  type MeteorSpawn,
+} from './starfield-flourish';
 import type { StarfieldTone } from './starfield-motion';
-import { SCENE_STAGE_RADIUS, type SceneBody, type StarfieldSceneModel } from './starfield-scene-model';
-import { StarfieldTextureSet } from './starfield-textures';
+import {
+  SPHERE_SEGMENTS,
+  sphereLodLevels,
+  starfieldPixelRatio,
+  surfaceTextureSize,
+  type SphereDetail,
+} from './starfield-render-quality';
+import {
+  SCENE_STAGE_RADIUS,
+  sceneModelSignature,
+  type SceneBody,
+  type StarfieldSceneModel,
+} from './starfield-scene-model';
+import {
+  bodyRingSurfaceKey,
+  bodySurfaceKey,
+  centerSurfaceKey,
+  StarfieldSurfaceLoader,
+  type SurfaceKey,
+} from './starfield-surface-catalog';
+import {
+  archetypeForPalette,
+  archetypeForSeed,
+  spectralStarColor,
+  StarfieldTextureFactory,
+  type PlanetArchetype,
+} from './starfield-textures';
 
 const TONE_COLORS: Record<StarfieldTone, number> = {
   working: 0x5b9bf0,
@@ -42,20 +77,20 @@ const TONE_COLORS: Record<StarfieldTone, number> = {
 
 const BODY_PALETTE = [0x5b9bf0, 0xde8273, 0xdcb25e, 0x9a7ae0, 0x55c3dd, 0x8fd0a0];
 const SPACE_CLEAR = 0x05070f;
-/** Reference-style readable orbit line color (q-jade/solar-system). */
-const ORBIT_LINE_COLOR = 0x8cb8ce;
 const MAX_FRAME_DT = 0.1;
+/** Deep-sky dome radius: outside every orbit, inside the camera far plane. */
+const SKY_RADIUS = 170;
+/** Meteor shell: behind every orbit and star shell, in front of the dome. */
+const METEOR_SHELL_RADIUS = 84;
 
-/**
- * Adaptive resolution ladder: start at 1.5 (never 2 — HiDPI full-res quadruples
- * fragment work for no perceptible gain on a starfield) and step down when the
- * frame budget is missed for a sustained stretch. Never steps back up, so the
- * sky cannot oscillate.
- */
-const PIXEL_RATIO_STEPS = [1.5, 1.25, 1] as const;
-/** A frame slower than this (≈38 fps) counts against the budget. */
-const SLOW_FRAME_S = 0.026;
-const SLOW_FRAMES_BEFORE_STEP = 60;
+const ARCHETYPE_ROUGHNESS: Record<PlanetArchetype, number> = {
+  ocean: 0.62,
+  rocky: 0.96,
+  desert: 0.92,
+  gas: 0.72,
+  ice: 0.5,
+  terra: 0.85,
+};
 
 /** Deterministic LCG stream seeded by a string, mirrors starfieldHash. */
 function seededRandom(seed: string): () => number {
@@ -73,99 +108,18 @@ function seededRandom(seed: string): () => number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Procedural textures (instant fallbacks; real maps stream in async)  */
-/* ------------------------------------------------------------------ */
-
-function radialGlowTexture(inner: string, outer = 'rgba(0,0,0,0)'): THREE.CanvasTexture {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const context = canvas.getContext('2d')!;
-  const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, inner);
-  gradient.addColorStop(0.35, inner.replace(/[\d.]+\)$/, '0.35)'));
-  gradient.addColorStop(1, outer);
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, size, size);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-/** Soft horizontal bands + hash noise: a cheap believable gas surface. */
-function bandedSurfaceTexture(seed: string): THREE.CanvasTexture {
-  const width = 256;
-  const height = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d')!;
-  const random = seededRandom(`${seed}:surface`);
-  context.fillStyle = '#8892aa';
-  context.fillRect(0, 0, width, height);
-  let y = 0;
-  while (y < height) {
-    const bandHeight = 6 + Math.floor(random() * 18);
-    const lightness = 52 + Math.floor(random() * 34);
-    context.fillStyle = `hsl(222 18% ${lightness}%)`;
-    context.fillRect(0, y, width, bandHeight);
-    y += bandHeight;
-  }
-  context.globalAlpha = 0.16;
-  for (let index = 0; index < 320; index += 1) {
-    const lightness = 34 + Math.floor(random() * 52);
-    context.fillStyle = `hsl(222 22% ${lightness}%)`;
-    context.fillRect(random() * width, random() * height, 3 + random() * 14, 1 + random() * 3);
-  }
-  context.globalAlpha = 1;
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  return texture;
-}
-
-function softDotTexture(): THREE.CanvasTexture {
-  return radialGlowTexture('rgba(232,239,255,1)');
-}
-
-/**
- * Approximate spectral-type distribution (ported from the reference):
- * mostly warm K/M dwarfs, a few hot blue-white giants. Gives the sphere a
- * believable astronomic color mix instead of a uniform blue haze.
- */
-const STAR_SPECTRA = [
-  { weight: 0.04, r: 0.75, g: 0.85, b: 1.0 },
-  { weight: 0.08, r: 0.9, g: 0.95, b: 1.0 },
-  { weight: 0.12, r: 1.0, g: 1.0, b: 0.8 },
-  { weight: 0.4, r: 1.0, g: 0.85, b: 0.6 },
-  { weight: 0.36, r: 1.0, g: 0.7, b: 0.5 },
-] as const;
-
-function pickSpectrum(roll: number): (typeof STAR_SPECTRA)[number] {
-  let cumulative = 0;
-  for (const spectrum of STAR_SPECTRA) {
-    cumulative += spectrum.weight;
-    if (roll < cumulative) return spectrum;
-  }
-  return STAR_SPECTRA[STAR_SPECTRA.length - 1]!;
-}
-
-/* ------------------------------------------------------------------ */
 /* Runtime bookkeeping                                                 */
 /* ------------------------------------------------------------------ */
 
 interface BodyRuntime {
   body: SceneBody;
-  orbitGroup: THREE.Group;
   carrier: THREE.Group;
   anchor: THREE.Group;
-  mesh: THREE.Mesh;
+  /** Rotated for self-spin: the LOD holding every detail level. */
+  spinTarget: THREE.Object3D;
   glow: THREE.Sprite;
   glowBaseScale: number;
-  statusRing: THREE.Object3D | null;
   statusRingMaterial: THREE.Material | null;
-  trail: THREE.Line | null;
   angleRad: number;
   pulseSeed: number;
 }
@@ -175,9 +129,37 @@ interface CenterRuntime {
   group: THREE.Group;
   glow: THREE.Sprite;
   glowBaseScale: number;
+  /** World radius — shared unit geometry means we must not read params. */
   size: number;
   spinRadPerS: number;
   pulseHz: number;
+}
+
+interface MeteorRuntime {
+  line: THREE.Line;
+  head: THREE.Sprite;
+  lineMaterial: THREE.LineBasicMaterial;
+  headMaterial: THREE.SpriteMaterial;
+  positions: THREE.BufferAttribute;
+  spawn: MeteorSpawn;
+  /** Sky-time (elapsedS) when this streak ignites; negative age = waiting. */
+  igniteAtS: number;
+}
+
+interface ShellTwinkle {
+  material: THREE.PointsMaterial;
+  baseOpacity: number;
+  phase: number;
+  speed: number;
+}
+
+interface NebulaBreathRuntime {
+  sprite: THREE.Sprite;
+  material: THREE.SpriteMaterial;
+  baseScaleX: number;
+  baseScaleY: number;
+  baseOpacity: number;
+  phase: number;
 }
 
 interface LinkRuntime {
@@ -187,8 +169,8 @@ interface LinkRuntime {
   toId: string;
   live: boolean;
   positions: THREE.BufferAttribute;
-  /** Preallocated dashed-line distance attribute, updated in place. */
-  lineDistances: THREE.BufferAttribute | null;
+  /** Persistent two-entry attribute; never reallocated per frame. */
+  lineDistances: THREE.BufferAttribute;
   packetSeed: number;
   /** Accumulated dash-pattern shift for the flowing live-handoff look. */
   dashShift: number;
@@ -213,7 +195,7 @@ export class StarfieldStage {
   private readonly canvas: HTMLCanvasElement;
   private readonly labelLayer: HTMLElement;
   private readonly onPick: ((bodyId: string | null) => void) | undefined;
-  private readonly onContextLost: (() => void) | undefined;
+  private readonly contextLostCallback: (() => void) | undefined;
   private readonly clock = new THREE.Clock();
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
@@ -221,16 +203,24 @@ export class StarfieldStage {
   private readonly linkFrom = new THREE.Vector3();
   private readonly linkTo = new THREE.Vector3();
 
-  private readonly glowTexture = radialGlowTexture('rgba(255,255,255,0.9)');
-  private readonly dotTexture = softDotTexture();
-  /** Async real-map pool; owns disposal of every streamed texture. */
-  private readonly textures = new StarfieldTextureSet();
-  /** Shared unit spheres, scaled per instance — one GPU buffer per class. */
-  private readonly bodyUnitSphere = new THREE.SphereGeometry(1, 28, 20);
-  private readonly centerUnitSphere = new THREE.SphereGeometry(1, 48, 32);
+  private readonly textures = new StarfieldTextureFactory();
+  private readonly surfaces = new StarfieldSurfaceLoader();
+  private readonly pmrem: THREE.PMREMGenerator;
+  private envTarget: THREE.WebGLRenderTarget | null = null;
+  private readonly glowTexture: THREE.Texture;
+  private readonly dotTexture: THREE.Texture;
+  private readonly sphereGeometries: Record<SphereDetail, THREE.SphereGeometry>;
+  private skyGeometry: THREE.SphereGeometry | null = null;
+  private readonly sharedGeometries = new Set<THREE.BufferGeometry>();
+  private readonly atmosphereMaterials = new Map<string, THREE.ShaderMaterial>();
+  private readonly cachedMaterials = new Set<THREE.Material>();
 
   private modelRoot = new THREE.Group();
   private backdropRoot = new THREE.Group();
+  private shellTwinkles: ShellTwinkle[] = [];
+  private nebulaBreaths: NebulaBreathRuntime[] = [];
+  private meteors: MeteorRuntime[] = [];
+  private meteorRandom: () => number = () => 0.5;
   private bodies: BodyRuntime[] = [];
   private center: CenterRuntime | null = null;
   private links: LinkRuntime[] = [];
@@ -238,6 +228,7 @@ export class StarfieldStage {
   private anchorById = new Map<string, THREE.Object3D>();
   private labelById = new Map<string, HTMLElement>();
   private backdropSeed = '';
+  private modelSignature = '';
 
   private frameHandle = 0;
   private running = false;
@@ -246,8 +237,6 @@ export class StarfieldStage {
   private elapsedS = 0;
   private viewWidth = 1;
   private viewHeight = 1;
-  private pixelRatioStep = 0;
-  private slowFrames = 0;
   private pointerMoved = false;
   private hoveredId: string | null = null;
   private pointerDownAt: { x: number; y: number; timeMs: number } | null = null;
@@ -258,7 +247,7 @@ export class StarfieldStage {
     this.canvas = options.canvas;
     this.labelLayer = options.labelLayer;
     this.onPick = options.onPick;
-    this.onContextLost = options.onContextLost;
+    this.contextLostCallback = options.onContextLost;
     this.renderer = new THREE.WebGLRenderer({
       canvas: options.canvas,
       antialias: true,
@@ -266,7 +255,21 @@ export class StarfieldStage {
       powerPreference: 'high-performance',
     });
     this.renderer.setClearColor(SPACE_CLEAR, 1);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.02;
     this.scene.fog = new THREE.FogExp2(SPACE_CLEAR, 0.011);
+
+    this.textures.setAnisotropy(Math.min(4, this.renderer.capabilities.getMaxAnisotropy()));
+    this.surfaces.setAnisotropy(Math.min(4, this.renderer.capabilities.getMaxAnisotropy()));
+    this.pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.glowTexture = this.textures.glow();
+    this.dotTexture = this.textures.dot();
+    this.sphereGeometries = {
+      high: new THREE.SphereGeometry(1, SPHERE_SEGMENTS.high[0], SPHERE_SEGMENTS.high[1]),
+      medium: new THREE.SphereGeometry(1, SPHERE_SEGMENTS.medium[0], SPHERE_SEGMENTS.medium[1]),
+      low: new THREE.SphereGeometry(1, SPHERE_SEGMENTS.low[0], SPHERE_SEGMENTS.low[1]),
+    };
+    for (const geometry of Object.values(this.sphereGeometries)) this.sharedGeometries.add(geometry);
 
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
     this.camera.position.set(0, SCENE_STAGE_RADIUS * 0.78, SCENE_STAGE_RADIUS * 1.72);
@@ -282,8 +285,9 @@ export class StarfieldStage {
     this.controls.autoRotateSpeed = 0.22;
     this.controls.addEventListener('change', this.markDirty);
 
-    this.scene.add(new THREE.AmbientLight(0x37456b, 0.9));
-    const key = new THREE.DirectionalLight(0xdfe8ff, 1.6);
+    this.scene.add(new THREE.AmbientLight(0x2c3a5c, 0.55));
+    this.scene.add(new THREE.HemisphereLight(0x9db8e8, 0x141020, 0.5));
+    const key = new THREE.DirectionalLight(0xdfe8ff, 1.7);
     key.position.set(7, 11, 5);
     this.scene.add(key);
     this.scene.add(this.backdropRoot);
@@ -304,7 +308,13 @@ export class StarfieldStage {
       this.backdropSeed = model.seed;
       this.rebuildBackdrop(model);
     }
-    this.rebuildModel(model);
+    // Poll ticks usually return an unchanged sky — skip the full geometry
+    // teardown/upload and keep every accumulated orbit/spin angle.
+    const signature = sceneModelSignature(model);
+    if (signature !== this.modelSignature) {
+      this.modelSignature = signature;
+      this.rebuildModel(model);
+    }
     this.collectLabels();
     this.markDirty();
   }
@@ -312,7 +322,19 @@ export class StarfieldStage {
   setReducedMotion(reduced: boolean): void {
     this.reducedMotion = reduced;
     this.controls.autoRotate = !reduced;
+    if (reduced) this.hideMeteors();
     this.markDirty();
+  }
+
+  /** A frozen mid-flight streak is wrong under reduced motion: go dark. */
+  private hideMeteors(): void {
+    for (const meteor of this.meteors) {
+      meteor.line.visible = false;
+      meteor.head.visible = false;
+      meteor.lineMaterial.opacity = 0;
+      meteor.headMaterial.opacity = 0;
+      meteor.igniteAtS = this.elapsedS + meteor.spawn.delayS;
+    }
   }
 
   setSelected(bodyId: string | null): void {
@@ -337,7 +359,11 @@ export class StarfieldStage {
     if (this.disposed || width < 2 || height < 2) return;
     this.viewWidth = width;
     this.viewHeight = height;
-    this.applyViewport();
+    this.renderer.setPixelRatio(starfieldPixelRatio(window.devicePixelRatio || 1, width, height));
+    this.renderer.setSize(width, height, false);
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+    this.markDirty();
     if (!this.running) this.renderOnce();
   }
 
@@ -353,35 +379,70 @@ export class StarfieldStage {
     this.controls.removeEventListener('change', this.markDirty);
     this.controls.dispose();
     this.disposeSubtree(this.scene);
-    this.bodyUnitSphere.dispose();
-    this.centerUnitSphere.dispose();
-    this.glowTexture.dispose();
-    this.dotTexture.dispose();
+    for (const geometry of this.sharedGeometries) geometry.dispose();
+    this.sharedGeometries.clear();
+    for (const material of this.atmosphereMaterials.values()) material.dispose();
+    this.atmosphereMaterials.clear();
+    this.cachedMaterials.clear();
+    this.scene.environment = null;
+    this.envTarget?.dispose();
+    this.pmrem.dispose();
     this.textures.dispose();
+    this.surfaces.dispose();
     this.renderer.dispose();
+    this.shellTwinkles = [];
+    this.nebulaBreaths = [];
+    this.meteors = [];
+    this.labelById.clear();
+    // Exit must return the GPU immediately: dropping the context releases
+    // its memory now instead of whenever the canvas is garbage collected.
+    // The contextlost listener is already removed, so no fallback fires.
+    try {
+      this.renderer.forceContextLoss();
+    } catch {
+      // Context may already be lost — that is the state we want.
+    }
   }
 
   /* ------------------------------------------------------- backdrop -- */
 
-  /**
-   * Static deep space: a spectral star sphere plus a tilted milky-way band
-   * (both ported from the reference at a reduced particle budget) and a few
-   * nebula sprites. Nothing here updates per frame — ambient life comes from
-   * the slowly auto-rotating camera, so an idle sky costs no CPU integration.
-   */
   private rebuildBackdrop(model: StarfieldSceneModel): void {
     this.disposeSubtree(this.backdropRoot);
     this.backdropRoot.clear();
+    this.shellTwinkles = [];
+    this.nebulaBreaths = [];
+    this.meteors = [];
     const random = seededRandom(`${model.seed}:backdrop`);
 
+    // Deep-sky dome: seeded nebulae, milky-way band and star scatter baked
+    // into one equirect texture. Fog is disabled so the sky never washes out.
+    if (!this.skyGeometry) {
+      this.skyGeometry = new THREE.SphereGeometry(SKY_RADIUS, 48, 24);
+      this.sharedGeometries.add(this.skyGeometry);
+    }
+    const skyTexture = this.textures.sky(model.seed);
+    const sky = new THREE.Mesh(this.skyGeometry, new THREE.MeshBasicMaterial({
+      map: skyTexture,
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+    }));
+    sky.rotation.set(0.08 + random() * 0.22, random() * Math.PI * 2, 0);
+    sky.renderOrder = -10;
+    this.backdropRoot.add(sky);
+    this.refreshEnvironment(skyTexture);
+
+    // Parallax star shells in front of the dome. The dome carries density,
+    // so the shells stay lean.
     const shells: Array<{ count: number; radius: [number, number]; size: number; opacity: number }> = [
-      { count: 1050, radius: [64, 96], size: 0.55, opacity: 0.62 },
-      { count: 460, radius: [44, 64], size: 0.85, opacity: 0.78 },
-      { count: 220, radius: [28, 44], size: 1.2, opacity: 0.95 },
+      { count: 900, radius: [64, 96], size: 0.55, opacity: 0.6 },
+      { count: 420, radius: [44, 64], size: 0.8, opacity: 0.75 },
+      { count: 200, radius: [28, 44], size: 1.15, opacity: 0.95 },
     ];
     for (const shell of shells) {
       const positions = new Float32Array(shell.count * 3);
       const colors = new Float32Array(shell.count * 3);
+      const tint = new THREE.Color();
       for (let index = 0; index < shell.count; index += 1) {
         const radius = shell.radius[0] + random() * (shell.radius[1] - shell.radius[0]);
         const theta = random() * Math.PI * 2;
@@ -389,23 +450,41 @@ export class StarfieldStage {
         positions[index * 3] = radius * Math.sin(phi) * Math.cos(theta);
         positions[index * 3 + 1] = radius * Math.cos(phi);
         positions[index * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
-        const spectrum = pickSpectrum(random());
-        const brightness = 0.6 + random() * 0.4;
-        colors[index * 3] = spectrum.r * brightness;
-        colors[index * 3 + 1] = spectrum.g * brightness;
-        colors[index * 3 + 2] = spectrum.b * brightness;
+        tint.setHSL(0.55 + random() * 0.16, 0.35 + random() * 0.3, 0.62 + random() * 0.3);
+        colors[index * 3] = tint.r;
+        colors[index * 3 + 1] = tint.g;
+        colors[index * 3 + 2] = tint.b;
       }
-      this.backdropRoot.add(this.buildPoints(positions, colors, shell.size, shell.opacity));
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      const material = new THREE.PointsMaterial({
+        size: shell.size,
+        map: this.dotTexture,
+        transparent: true,
+        opacity: shell.opacity,
+        vertexColors: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true,
+      });
+      this.backdropRoot.add(new THREE.Points(geometry, material));
+      // Gentle whole-shell shimmer; each shell breathes on its own phase.
+      this.shellTwinkles.push({
+        material,
+        baseOpacity: shell.opacity,
+        phase: random() * Math.PI * 2,
+        speed: 0.7 + random() * 0.6,
+      });
     }
 
-    this.backdropRoot.add(this.buildMilkyWayBand(random));
-
-    const nebulaTints = ['rgba(76,118,255,0.55)', 'rgba(148,104,235,0.5)', 'rgba(84,196,222,0.4)'];
+    const nebulaTints = [0x4c76ff, 0x9468eb, 0x54c4de];
     nebulaTints.forEach((tint, index) => {
       const material = new THREE.SpriteMaterial({
-        map: radialGlowTexture(tint),
+        map: this.glowTexture,
+        color: tint,
         transparent: true,
-        opacity: 0.32,
+        opacity: 0.3,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
@@ -420,60 +499,95 @@ export class StarfieldStage {
       const scale = 46 + random() * 30 + index * 6;
       sprite.scale.set(scale, scale * (0.6 + random() * 0.3), 1);
       this.backdropRoot.add(sprite);
+      this.nebulaBreaths.push({
+        sprite,
+        material,
+        baseScaleX: sprite.scale.x,
+        baseScaleY: sprite.scale.y,
+        baseOpacity: material.opacity,
+        phase: random() * Math.PI * 2,
+      });
     });
 
+    this.buildMeteorPool(model.seed);
     if (model.mode === 'galaxy') this.backdropRoot.add(this.buildSpiral(random));
   }
 
-  private buildPoints(
-    positions: Float32Array,
-    colors: Float32Array,
-    size: number,
-    opacity: number,
-  ): THREE.Points {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    return new THREE.Points(geometry, new THREE.PointsMaterial({
-      size,
-      map: this.dotTexture,
-      transparent: true,
-      opacity,
-      vertexColors: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      sizeAttenuation: true,
-    }));
+  /**
+   * A small pool of shooting stars: pure presence, no Runtime meaning.
+   * They only advance inside the motion integrator, so reduced motion
+   * (system preference or the OS-level data-reduce-motion switch) stops
+   * spawning entirely and `setReducedMotion` hides any streak mid-flight.
+   */
+  private buildMeteorPool(seed: string): void {
+    this.meteorRandom = seededRandom(`${seed}:meteor`);
+    for (let index = 0; index < METEOR_POOL_SIZE; index += 1) {
+      const positions = new THREE.BufferAttribute(new Float32Array(METEOR_TRAIL_POINTS * 3), 3);
+      const colors = new Float32Array(METEOR_TRAIL_POINTS * 3);
+      for (let point = 0; point < METEOR_TRAIL_POINTS; point += 1) {
+        // Head white-blue, tail fading to nothing — the taper lives in the
+        // vertex colors so per-frame work is position + opacity only.
+        const fade = (1 - point / (METEOR_TRAIL_POINTS - 1)) ** 1.6;
+        colors[point * 3] = 0.86 * fade;
+        colors[point * 3 + 1] = 0.92 * fade;
+        colors[point * 3 + 2] = fade;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', positions);
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      const lineMaterial = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+      });
+      const line = new THREE.Line(geometry, lineMaterial);
+      line.visible = false;
+      line.frustumCulled = false;
+      this.backdropRoot.add(line);
+      const headMaterial = new THREE.SpriteMaterial({
+        map: this.glowTexture,
+        color: 0xeaf3ff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        fog: false,
+      });
+      const head = new THREE.Sprite(headMaterial);
+      head.visible = false;
+      this.backdropRoot.add(head);
+      const spawn = meteorSpawn(this.meteorRandom, METEOR_SHELL_RADIUS);
+      this.meteors.push({
+        line,
+        head,
+        lineMaterial,
+        headMaterial,
+        positions,
+        spawn,
+        // Stagger first appearances so the pool never volleys at once.
+        igniteAtS: this.elapsedS + spawn.delayS + index * 2.4,
+      });
+    }
   }
 
-  /** Milky-way: stars concentrated on a tilted galactic plane, dust-reddened toward the core. */
-  private buildMilkyWayBand(random: () => number): THREE.Points {
-    const count = 620;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const tilt = Math.PI / 3;
-    for (let index = 0; index < count; index += 1) {
-      const distance = 52 + random() * 40;
-      const angle = random() * Math.PI * 2;
-      const up = (random() - 0.5) * (5 + random() * 4);
-      const flatX = distance * Math.cos(angle);
-      const flatZ = distance * Math.sin(angle);
-      positions[index * 3] = flatX * Math.cos(tilt);
-      positions[index * 3 + 1] = flatX * Math.sin(tilt) + up;
-      positions[index * 3 + 2] = flatZ;
-      const reddish = 0.5 + 0.5 * ((distance - 52) / 40);
-      const brightness = 0.5 + random() * 0.5;
-      colors[index * 3] = brightness;
-      colors[index * 3 + 1] = (0.8 + 0.2 * (1 - reddish)) * brightness;
-      colors[index * 3 + 2] = (0.6 + 0.4 * (1 - reddish)) * brightness;
+  /** Image-based lighting from the sky dome so surfaces never look plastic. */
+  private refreshEnvironment(skyTexture: THREE.Texture): void {
+    try {
+      const target = this.pmrem.fromEquirectangular(skyTexture);
+      this.envTarget?.dispose();
+      this.envTarget = target;
+      this.scene.environment = target.texture;
+      this.scene.environmentIntensity = 0.42;
+    } catch {
+      this.scene.environment = null;
     }
-    const points = this.buildPoints(positions, colors, 0.7, 0.8);
-    points.name = 'sf-milkyway';
-    return points;
   }
 
   private buildSpiral(random: () => number): THREE.Points {
-    const count = 1200;
+    const count = 1500;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     const tint = new THREE.Color();
@@ -490,7 +604,19 @@ export class StarfieldStage {
       colors[index * 3 + 1] = tint.g;
       colors[index * 3 + 2] = tint.b;
     }
-    const points = this.buildPoints(positions, colors, 0.5, 0.5);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const material = new THREE.PointsMaterial({
+      size: 0.5,
+      map: this.dotTexture,
+      transparent: true,
+      opacity: 0.5,
+      vertexColors: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const points = new THREE.Points(geometry, material);
     points.name = 'sf-spiral';
     return points;
   }
@@ -514,27 +640,126 @@ export class StarfieldStage {
     this.applySelectionHighlight();
   }
 
+  /** Fresnel rim shell shared per tone color — light, never a work signal. */
+  private atmosphereMaterial(color: number, intensity: number): THREE.ShaderMaterial {
+    const key = `${color}:${intensity}`;
+    const cached = this.atmosphereMaterials.get(key);
+    if (cached) return cached;
+    const material = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.FrontSide,
+      uniforms: {
+        uColor: { value: new THREE.Color(color) },
+        uIntensity: { value: intensity },
+      },
+      vertexShader: `
+        varying float vRim;
+        void main() {
+          vec3 n = normalize(normalMatrix * normal);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vec3 viewDir = normalize(-mv.xyz);
+          vRim = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 2.6);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uIntensity;
+        varying float vRim;
+        void main() {
+          gl_FragColor = vec4(uColor, vRim * uIntensity);
+        }`,
+    });
+    this.atmosphereMaterials.set(key, material);
+    this.cachedMaterials.add(material);
+    return material;
+  }
+
+  /**
+   * Swap a body's procedural surface for its real photographic map once the
+   * async load completes (q-jade/solar-system craft: texture with graceful
+   * color fallback — here the fallback *is* the procedural surface, so the
+   * sky is never blank while the photo is in flight). The stale-signature
+   * guard drops deliveries that raced a scene rebuild; the shared cache makes
+   * the re-request from the rebuilt scene a synchronous hit.
+   */
+  private applySurfaceMap(
+    key: SurfaceKey,
+    material: THREE.MeshStandardMaterial | THREE.MeshBasicMaterial,
+    tint?: THREE.Color,
+  ): void {
+    const signature = this.modelSignature;
+    this.surfaces.load(key, (texture) => {
+      if (this.disposed || signature !== this.modelSignature) return;
+      material.map = texture;
+      // Photo maps bake their own relief; the procedural normal map would
+      // fight it with mismatched detail.
+      if ('normalMap' in material) material.normalMap = null;
+      material.color.set(tint ?? 0xffffff);
+      material.needsUpdate = true;
+      this.markDirty();
+    });
+  }
+
+  /**
+   * Real ring built from the radial alpha strip (reference craft): UVs are
+   * remapped so u runs across the band and v around the ring, which keeps
+   * every ringlet a perfect circle instead of smearing the strip planarly.
+   */
+  private buildStripRing(size: number, texture: THREE.Texture): THREE.Mesh {
+    const innerR = size * 1.24;
+    const outerR = size * 2.3;
+    const geometry = new THREE.RingGeometry(innerR, outerR, 96, 1);
+    geometry.rotateX(-Math.PI / 2);
+    const positions = geometry.attributes.position as THREE.BufferAttribute;
+    const uv = geometry.attributes.uv as THREE.BufferAttribute;
+    for (let index = 0; index < positions.count; index += 1) {
+      const x = positions.getX(index);
+      const z = positions.getZ(index);
+      const radius = Math.hypot(x, z);
+      uv.setXY(
+        index,
+        (radius - innerR) / (outerR - innerR),
+        (Math.atan2(z, x) + Math.PI) / (Math.PI * 2),
+      );
+    }
+    uv.needsUpdate = true;
+    const ring = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 0.92,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }));
+    ring.rotation.x = 0.3;
+    ring.rotation.z = 0.16;
+    return ring;
+  }
+
   private buildCenter(model: StarfieldSceneModel): CenterRuntime {
     const center = model.center!;
     const group = new THREE.Group();
     const toneColor = TONE_COLORS[center.motion.tone];
+    const surfaceKey = centerSurfaceKey(model.mode, center);
 
     let mesh: THREE.Mesh;
     if (center.kind === 'sun') {
-      const material = new THREE.MeshBasicMaterial({ color: 0xffe3b0 });
-      mesh = new THREE.Mesh(this.centerUnitSphere, material);
-      if (center.textureKey) {
-        this.textures.get(center.textureKey, (texture) => {
-          material.map = texture;
-          material.color.set(0xffffff);
-          material.needsUpdate = true;
-          this.markDirty();
-        });
-      }
+      const sunMaterial = new THREE.MeshBasicMaterial({ map: this.textures.sun(model.seed) });
+      if (surfaceKey) this.applySurfaceMap(surfaceKey, sunMaterial);
+      mesh = new THREE.Mesh(this.sphereGeometries.high, sunMaterial);
+      mesh.scale.setScalar(center.size);
+      const chromosphere = new THREE.Mesh(
+        this.sphereGeometries.medium,
+        this.atmosphereMaterial(0xffa14f, 0.6),
+      );
+      chromosphere.scale.setScalar(center.size * 1.26);
+      group.add(chromosphere);
       const light = new THREE.PointLight(0xffc37a, 130, 0, 2);
       group.add(light);
       const corona = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: radialGlowTexture('rgba(255,196,106,0.85)'),
+        map: this.glowTexture,
+        color: 0xffc46a,
         transparent: true,
         opacity: 0.85,
         depthWrite: false,
@@ -543,39 +768,42 @@ export class StarfieldStage {
       corona.scale.setScalar(center.size * 5.4);
       group.add(corona);
     } else {
-      const material = new THREE.MeshStandardMaterial({
-        color: 0x6fa4ec,
-        roughness: 0.52,
-        metalness: 0.12,
-        map: bandedSurfaceTexture(model.seed),
+      const archetype = archetypeForSeed(model.seed);
+      const { width } = surfaceTextureSize(center.size);
+      const maps = this.textures.planet({
+        seed: model.seed,
+        archetype,
+        baseColor: 0x6fa4ec,
+        width,
       });
-      mesh = new THREE.Mesh(this.centerUnitSphere, material);
-      if (center.textureKey) {
-        this.textures.get(center.textureKey, (texture) => {
-          const previous = material.map;
-          material.map = texture;
-          material.color.set(0xf3f6ff);
-          material.needsUpdate = true;
-          if (previous && !previous.userData.sfOwnedBySet) previous.dispose();
-          this.markDirty();
-        });
-      }
+      const centerMaterial = new THREE.MeshStandardMaterial({
+        map: maps.map,
+        normalMap: maps.normalMap,
+        roughness: ARCHETYPE_ROUGHNESS[archetype],
+        metalness: 0.04,
+      });
+      if (surfaceKey) this.applySurfaceMap(surfaceKey, centerMaterial);
+      mesh = new THREE.Mesh(this.sphereGeometries.high, centerMaterial);
+      mesh.scale.setScalar(center.size);
       const atmosphere = new THREE.Mesh(
-        this.centerUnitSphere,
+        this.sphereGeometries.medium,
+        this.atmosphereMaterial(toneColor, 0.55),
+      );
+      atmosphere.scale.setScalar(center.size * 1.18);
+      group.add(atmosphere);
+      const saturnRing = new THREE.Mesh(
+        new THREE.RingGeometry(center.size * 1.5, center.size * 2.25, 96),
         new THREE.MeshBasicMaterial({
-          color: toneColor,
+          map: this.textures.ring(model.seed),
           transparent: true,
-          opacity: 0.16,
-          side: THREE.BackSide,
+          side: THREE.DoubleSide,
           depthWrite: false,
-          blending: THREE.AdditiveBlending,
         }),
       );
-      atmosphere.scale.setScalar(center.size * 1.16);
-      group.add(atmosphere);
-      group.add(this.buildPlanetRing(center.size * 1.2, center.size * 2.3, 0.34, 0.22));
+      saturnRing.rotation.x = -Math.PI / 2 + 0.34;
+      saturnRing.rotation.z = 0.22;
+      group.add(saturnRing);
     }
-    mesh.scale.setScalar(center.size);
     mesh.userData.sfBodyId = 'center';
     group.add(mesh);
 
@@ -618,46 +846,48 @@ export class StarfieldStage {
     const toneColor = TONE_COLORS[body.motion.tone];
     const surface = BODY_PALETTE[body.paletteIndex % BODY_PALETTE.length]!;
 
-    const material = body.kind === 'star'
-      ? new THREE.MeshBasicMaterial({ color: surface })
-      : new THREE.MeshStandardMaterial({ color: surface, roughness: 0.6, metalness: 0.08 });
-    const mesh = new THREE.Mesh(this.bodyUnitSphere, material);
-    mesh.scale.setScalar(body.size);
-    mesh.userData.sfBodyId = body.id;
-    anchor.add(mesh);
-
-    if (body.kind !== 'star' && body.textureKey) {
-      // Moons keep a lightened palette tint over the grayscale lunar map so
-      // per-run hue identity survives; planets show their real map colors.
-      const mapTint = body.kind === 'moon'
-        ? new THREE.Color(surface).lerp(new THREE.Color(0xffffff), 0.55)
-        : new THREE.Color(0xffffff);
-      this.textures.get(body.textureKey, (texture) => {
-        const standard = material as THREE.MeshStandardMaterial;
-        standard.map = texture;
-        standard.color.copy(mapTint);
-        standard.needsUpdate = true;
-        this.markDirty();
+    // One material shared by every LOD level; textures cached by identity.
+    let material: THREE.Material;
+    if (body.kind === 'star') {
+      material = new THREE.MeshBasicMaterial({
+        map: this.textures.star(),
+        color: new THREE.Color(surface).lerp(new THREE.Color(0xffffff), 0.4),
       });
-      if (body.textureKey === 'saturn') {
-        anchor.add(this.buildPlanetRing(body.size * 1.25, body.size * 2.15, 0.42, 0.1));
-      }
+    } else {
+      const archetype = archetypeForPalette(body.paletteIndex);
+      const { width } = surfaceTextureSize(body.size);
+      const maps = this.textures.planet({
+        seed: body.id,
+        archetype,
+        baseColor: surface,
+        width,
+      });
+      material = new THREE.MeshStandardMaterial({
+        map: maps.map,
+        normalMap: maps.normalMap,
+        roughness: ARCHETYPE_ROUGHNESS[archetype],
+        metalness: 0.04,
+      });
     }
+    const lod = new THREE.LOD();
+    for (const level of sphereLodLevels(body.size)) {
+      const levelMesh = new THREE.Mesh(this.sphereGeometries[level.detail], material);
+      levelMesh.scale.setScalar(body.size);
+      levelMesh.userData.sfBodyId = body.id;
+      lod.addLevel(levelMesh, level.distance);
+    }
+    lod.userData.sfBodyId = body.id;
+    anchor.add(lod);
 
-    if (body.kind !== 'star') {
-      const atmosphere = new THREE.Mesh(
-        this.bodyUnitSphere,
-        new THREE.MeshBasicMaterial({
-          color: toneColor,
-          transparent: true,
-          opacity: body.motion.tone === 'muted' ? 0.08 : 0.18,
-          side: THREE.BackSide,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-        }),
+    // Fresnel atmosphere only for bodies large enough to read it; moons rely
+    // on the tone glow, which halves their draw calls.
+    if (body.kind !== 'star' && body.size >= 0.45) {
+      const shell = new THREE.Mesh(
+        this.sphereGeometries.medium,
+        this.atmosphereMaterial(toneColor, body.motion.tone === 'muted' ? 0.22 : 0.5),
       );
-      atmosphere.scale.setScalar(body.size * 1.24);
-      anchor.add(atmosphere);
+      shell.scale.setScalar(body.size * 1.22);
+      anchor.add(shell);
     }
 
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -681,75 +911,25 @@ export class StarfieldStage {
       }
     }
 
-    let trail: THREE.Line | null = null;
     if (body.motion.working) {
-      trail = this.buildTrail(body.orbitRadius, toneColor);
-      carrier.add(trail);
+      carrier.add(this.buildTrail(body.orbitRadius, toneColor));
     }
 
     const { statusRing, statusRingMaterial } = this.buildStatusRing(body, toneColor);
     if (statusRing) anchor.add(statusRing);
 
-    this.pickTargets.push(mesh);
+    this.pickTargets.push(lod);
     this.bodies.push({
       body,
-      orbitGroup,
       carrier,
       anchor,
-      mesh,
+      spinTarget: lod,
       glow,
       glowBaseScale,
-      statusRing,
       statusRingMaterial,
-      trail,
       angleRad: body.phaseRad,
       pulseSeed: body.phaseRad * 7.13,
     });
-  }
-
-  /**
-   * A Saturn-style ring: RingGeometry with UVs remapped so u follows the
-   * radius and v wraps the circumference (reference technique). Starts as a
-   * translucent tinted disc and swaps in the real ring-alpha strip when it
-   * arrives.
-   */
-  private buildPlanetRing(innerRadius: number, outerRadius: number, tiltX: number, tiltZ: number): THREE.Mesh {
-    const geometry = new THREE.RingGeometry(innerRadius, outerRadius, 64, 1);
-    const positions = geometry.attributes.position as THREE.BufferAttribute;
-    const uv = geometry.attributes.uv as THREE.BufferAttribute;
-    for (let index = 0; index < positions.count; index += 1) {
-      const x = positions.getX(index);
-      const y = positions.getY(index);
-      const radius = Math.hypot(x, y);
-      uv.setXY(
-        index,
-        (radius - innerRadius) / (outerRadius - innerRadius),
-        (Math.atan2(y, x) + Math.PI) / (Math.PI * 2),
-      );
-    }
-    uv.needsUpdate = true;
-    const material = new THREE.MeshBasicMaterial({
-      color: 0x93a1bd,
-      transparent: true,
-      opacity: 0.28,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const ring = new THREE.Mesh(geometry, material);
-    ring.rotation.x = -Math.PI / 2 + tiltX;
-    ring.rotation.z = tiltZ;
-    this.textures.get('saturnRing', (texture) => {
-      // v wraps the circumference, so the angular axis must repeat.
-      texture.wrapT = THREE.RepeatWrapping;
-      texture.wrapS = THREE.ClampToEdgeWrapping;
-      texture.needsUpdate = true;
-      material.map = texture;
-      material.color.set(0xffffff);
-      material.opacity = 0.88;
-      material.needsUpdate = true;
-      this.markDirty();
-    });
-    return ring;
   }
 
   private buildOrbitPath(radius: number, working: boolean): THREE.LineLoop {
@@ -764,9 +944,9 @@ export class StarfieldStage {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     return new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({
-      color: ORBIT_LINE_COLOR,
+      color: working ? 0x93b0e2 : 0x4a5878,
       transparent: true,
-      opacity: working ? 0.42 : 0.22,
+      opacity: working ? 0.4 : 0.22,
     }));
   }
 
@@ -844,12 +1024,12 @@ export class StarfieldStage {
 
   private buildLink(link: { id: string; fromId: string; toId: string; live: boolean; failed: boolean }): void {
     const positions = new THREE.BufferAttribute(new Float32Array(6), 3);
-    positions.setUsage(THREE.DynamicDrawUsage);
+    const lineDistances = new THREE.BufferAttribute(new Float32Array(2), 1);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', positions);
+    geometry.setAttribute('lineDistance', lineDistances);
     const color = link.failed ? TONE_COLORS.attention : link.live ? 0x55c3dd : TONE_COLORS.done;
-    const dashed = link.live || link.failed;
-    const material = dashed
+    const material = link.live || link.failed
       ? new THREE.LineDashedMaterial({
           color,
           transparent: true,
@@ -858,12 +1038,6 @@ export class StarfieldStage {
           gapSize: 0.35,
         })
       : new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.32 });
-    let lineDistances: THREE.BufferAttribute | null = null;
-    if (dashed) {
-      lineDistances = new THREE.BufferAttribute(new Float32Array(2), 1);
-      lineDistances.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('lineDistance', lineDistances);
-    }
     const line = new THREE.Line(geometry, material);
     this.modelRoot.add(line);
 
@@ -934,7 +1108,6 @@ export class StarfieldStage {
     this.frameHandle = requestAnimationFrame(this.frame);
 
     const dt = Math.min(this.clock.getDelta(), MAX_FRAME_DT);
-    this.trackFrameBudget(dt);
     const motionDt = this.reducedMotion ? 0 : dt;
     this.elapsedS += motionDt;
 
@@ -948,7 +1121,7 @@ export class StarfieldStage {
           animated = true;
         }
         if (motion.spinRadPerS > 0) {
-          runtime.mesh.rotation.y += motion.spinRadPerS * motionDt;
+          runtime.spinTarget.rotation.y += motion.spinRadPerS * motionDt;
           animated = true;
         }
         if (motion.pulseHz > 0) {
@@ -971,6 +1144,12 @@ export class StarfieldStage {
           animated = true;
         }
       }
+      // Ambient backdrop drift: decoration, never a work signal.
+      this.backdropRoot.rotation.y += dt * 0.004;
+      const spiral = this.backdropRoot.getObjectByName('sf-spiral');
+      if (spiral) spiral.rotation.y += dt * 0.01;
+      this.updateFlourishes();
+      animated = true;
     }
 
     if (this.updateLinks(motionDt)) animated = true;
@@ -985,31 +1164,57 @@ export class StarfieldStage {
   };
 
   /**
-   * Adaptive resolution: count sustained slow frames (ignoring clamped
-   * outliers such as tab switches) and step the pixel-ratio ladder down so
-   * the sky yields GPU headroom back to the OS instead of dragging it.
+   * Advance the decorative presence layer — twinkle, nebula breathing and
+   * meteor streaks. Runs only inside the motion integrator (motionDt > 0),
+   * so reduced motion stills all of it; zero allocations per frame.
    */
-  private trackFrameBudget(dt: number): void {
-    if (dt >= MAX_FRAME_DT) return;
-    if (dt > SLOW_FRAME_S) {
-      this.slowFrames += 1;
-    } else {
-      this.slowFrames = Math.max(0, this.slowFrames - 2);
+  private updateFlourishes(): void {
+    for (const twinkle of this.shellTwinkles) {
+      twinkle.material.opacity = twinkleOpacity(
+        twinkle.baseOpacity,
+        this.elapsedS * twinkle.speed,
+        twinkle.phase,
+      );
     }
-    if (this.slowFrames >= SLOW_FRAMES_BEFORE_STEP && this.pixelRatioStep < PIXEL_RATIO_STEPS.length - 1) {
-      this.pixelRatioStep += 1;
-      this.slowFrames = 0;
-      this.applyViewport();
+    for (const breath of this.nebulaBreaths) {
+      const factor = nebulaBreath(this.elapsedS, breath.phase);
+      breath.sprite.scale.set(breath.baseScaleX * factor, breath.baseScaleY * factor, 1);
+      breath.material.opacity = breath.baseOpacity * (0.88 + (factor - 1) * 3);
     }
-  }
-
-  private applyViewport(): void {
-    const cap = PIXEL_RATIO_STEPS[this.pixelRatioStep]!;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
-    this.renderer.setSize(this.viewWidth, this.viewHeight, false);
-    this.camera.aspect = this.viewWidth / this.viewHeight;
-    this.camera.updateProjectionMatrix();
-    this.markDirty();
+    for (const meteor of this.meteors) {
+      const age = this.elapsedS - meteor.igniteAtS;
+      if (age < 0) continue;
+      if (age >= meteor.spawn.lifeS) {
+        meteor.line.visible = false;
+        meteor.head.visible = false;
+        meteor.spawn = meteorSpawn(this.meteorRandom, METEOR_SHELL_RADIUS);
+        meteor.igniteAtS = this.elapsedS + meteor.spawn.delayS;
+        continue;
+      }
+      const { origin, velocity, lifeS, headScale } = meteor.spawn;
+      const brightness = meteorFade(age, lifeS);
+      const step = METEOR_TRAIL_SPAN_S / (METEOR_TRAIL_POINTS - 1);
+      for (let point = 0; point < METEOR_TRAIL_POINTS; point += 1) {
+        const at = Math.max(age - point * step, 0);
+        meteor.positions.setXYZ(
+          point,
+          origin[0] + velocity[0] * at,
+          origin[1] + velocity[1] * at,
+          origin[2] + velocity[2] * at,
+        );
+      }
+      meteor.positions.needsUpdate = true;
+      meteor.lineMaterial.opacity = brightness * 0.9;
+      meteor.headMaterial.opacity = brightness;
+      meteor.head.position.set(
+        origin[0] + velocity[0] * age,
+        origin[1] + velocity[1] * age,
+        origin[2] + velocity[2] * age,
+      );
+      meteor.head.scale.setScalar(headScale * (1.1 + brightness * 0.9));
+      meteor.line.visible = true;
+      meteor.head.visible = true;
+    }
   }
 
   private renderOnce(): void {
@@ -1021,32 +1226,34 @@ export class StarfieldStage {
 
   private updateLinks(motionDt: number): boolean {
     if (!this.links.length) return false;
+    const from = this.linkFrom;
+    const to = this.linkTo;
     let animated = false;
     for (const link of this.links) {
       const fromObject = this.anchorById.get(link.fromId) ?? this.center?.group;
       const toObject = this.anchorById.get(link.toId);
       if (!fromObject || !toObject) continue;
-      fromObject.getWorldPosition(this.linkFrom);
-      toObject.getWorldPosition(this.linkTo);
-      link.positions.setXYZ(0, this.linkFrom.x, this.linkFrom.y, this.linkFrom.z);
-      link.positions.setXYZ(1, this.linkTo.x, this.linkTo.y, this.linkTo.z);
+      fromObject.getWorldPosition(from);
+      toObject.getWorldPosition(to);
+      link.positions.setXYZ(0, from.x, from.y, from.z);
+      link.positions.setXYZ(1, to.x, to.y, to.z);
       link.positions.needsUpdate = true;
       const material = link.line.material as THREE.LineDashedMaterial | THREE.LineBasicMaterial;
-      if (link.lineDistances && 'dashSize' in material) {
-        // Two-point dashed line: shift the lineDistance values in place so
-        // the dash pattern visibly flows from source to target while live.
+      if ('dashSize' in material) {
+        // Two-point dashed line: shift the lineDistance attribute so the
+        // dash pattern visibly flows from source to target while live.
         if (link.live && motionDt > 0) {
           link.dashShift = (link.dashShift + motionDt * 1.6) % (material.dashSize + material.gapSize);
           animated = true;
         }
-        const length = this.linkFrom.distanceTo(this.linkTo);
+        const length = from.distanceTo(to);
         link.lineDistances.setX(0, -link.dashShift);
         link.lineDistances.setX(1, length - link.dashShift);
         link.lineDistances.needsUpdate = true;
       }
       if (link.packet) {
         const t = (this.elapsedS * 0.32 + link.packetSeed) % 1;
-        link.packet.position.lerpVectors(this.linkFrom, this.linkTo, t);
+        link.packet.position.lerpVectors(from, to, t);
         if (motionDt > 0) animated = true;
       }
     }
@@ -1084,7 +1291,7 @@ export class StarfieldStage {
 
   private readonly handleContextLost = (): void => {
     this.setRunning(false);
-    this.onContextLost?.();
+    this.contextLostCallback?.();
   };
 
   private pickAt(event: PointerEvent): string | null {
@@ -1098,6 +1305,7 @@ export class StarfieldStage {
 
   private raycastPointer(): string | null {
     this.raycaster.setFromCamera(this.pointer, this.camera);
+    // LOD targets delegate to their currently visible level mesh.
     const hit = this.raycaster.intersectObjects(this.pickTargets, false)[0];
     return hit ? String(hit.object.userData.sfBodyId ?? '') || null : null;
   }
@@ -1129,13 +1337,7 @@ export class StarfieldStage {
   private disposeSubtree(root: THREE.Object3D): void {
     root.traverse((object) => {
       const mesh = object as Partial<THREE.Mesh> & Partial<THREE.Points> & Partial<THREE.Sprite>;
-      if (
-        mesh.geometry
-        && mesh.geometry !== this.bodyUnitSphere
-        && mesh.geometry !== this.centerUnitSphere
-      ) {
-        mesh.geometry.dispose();
-      }
+      if (mesh.geometry && !this.sharedGeometries.has(mesh.geometry)) mesh.geometry.dispose();
       const material = mesh.material;
       if (Array.isArray(material)) {
         for (const item of material) this.disposeMaterial(item);
@@ -1146,18 +1348,18 @@ export class StarfieldStage {
   }
 
   private disposeMaterial(material: THREE.Material): void {
-    const textured = material as THREE.Material & { map?: THREE.Texture | null };
-    const map = textured.map;
-    // Textures owned by the shared pool are disposed exactly once by the
-    // pool itself; per-material procedural canvases die with their material.
-    if (
-      map
-      && map !== this.glowTexture
-      && map !== this.dotTexture
-      && !map.userData.sfOwnedBySet
-    ) {
-      map.dispose();
+    // Cached fresnel materials outlive rebuilds; the stage disposes them once.
+    if (this.cachedMaterials.has(material)) return;
+    const textured = material as THREE.Material & {
+      map?: THREE.Texture | null;
+      normalMap?: THREE.Texture | null;
+    };
+    // Factory- and surface-loader-owned textures outlive scene rebuilds and
+    // are disposed exactly once by their owner on stage teardown.
+    if (textured.map && !this.textures.owns(textured.map) && !this.surfaces.owns(textured.map)) {
+      textured.map.dispose();
     }
+    if (textured.normalMap && !this.textures.owns(textured.normalMap)) textured.normalMap.dispose();
     material.dispose();
   }
 }

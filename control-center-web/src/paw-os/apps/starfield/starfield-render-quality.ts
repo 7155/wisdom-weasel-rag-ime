@@ -10,10 +10,14 @@
  *   fifty moons stays within a few megabytes of texture memory.
  */
 
-/** Hard DPR ceiling — beyond 2 the extra pixels are invisible on a sky. */
-export const MAX_PIXEL_RATIO = 2;
+/**
+ * Hard DPR ceiling. A deep-space scene is dominated by smooth gradients and
+ * additive glows, so anything beyond 1.5 spends GPU time on pixels the eye
+ * cannot separate — the fill-rate saving at 1.5 vs 2 is ~44% per frame.
+ */
+export const MAX_PIXEL_RATIO = 1.5;
 
-/** Total pixel budget per frame ≈ 1080p × 2 supersample. */
+/** Total pixel budget per frame ≈ 1080p × 1.5² supersample, minus headroom. */
 export const MAX_RENDER_PIXELS = 4_200_000;
 
 function round2(value: number): number {
