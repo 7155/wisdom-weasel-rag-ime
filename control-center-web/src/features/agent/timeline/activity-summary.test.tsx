@@ -379,6 +379,70 @@ describe('Agent tool activity details', () => {
     expect(within(row).getByLabelText('完整工具返回')).toBeInTheDocument();
   });
 
+  it('puts a planet on every live conversation state and leaves settled rows still', () => {
+    const running = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-planet-running',
+      toolName: 'workspace_search',
+      summary: '正在检索仓库',
+    });
+    const settled = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-planet-settled',
+      toolName: 'overview',
+      result: { details: { ok: true, operation: 'status', result: { summary: '运行状态已读取' } } },
+    });
+
+    const live = render(<ActivitySummary activities={[running]} inline />);
+    const liveSummary = live.container.querySelector('details.agent-activity--inline > summary')!;
+    expect(liveSummary.querySelector('.paw-conv-planet[data-state="running"][data-size="md"]')).toBeInTheDocument();
+    expect(
+      liveSummary.querySelector('.agent-activity__inline-status .paw-conv-planet[data-state="running"]'),
+    ).toBeInTheDocument();
+    expect(liveSummary.querySelector('.agent-activity__inline-icon')).not.toBeInTheDocument();
+    cleanup();
+
+    const done = render(<ActivitySummary activities={[settled]} inline />);
+    const doneSummary = done.container.querySelector('details.agent-activity--inline > summary')!;
+    expect(doneSummary.querySelector('.paw-conv-planet')).not.toBeInTheDocument();
+    expect(doneSummary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
+    cleanup();
+
+    const tree = render(<FxActivityStack activities={[running, settled]} />);
+    const pills = [...tree.container.querySelectorAll('.fx-pill')];
+    expect(pills[0]!.querySelector('.paw-conv-planet[data-state="running"][data-size="sm"]')).toBeInTheDocument();
+    expect(pills[1]!.querySelector('.paw-conv-planet')).toBeNull();
+  });
+
+  it('turns the public feed slower for a live thought than for a live Tool call', () => {
+    const reasoning: AgentActivityProjection = {
+      id: 'reasoning-planet-feed',
+      turnId: 'turn-planet-feed',
+      kind: 'reasoning_summary',
+      status: 'running',
+      summary: '正在核对事件顺序',
+      payload: { source: 'provider_reasoning_summary', items: ['正在核对事件顺序'] },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    const waitingTool = toolActivity('tool_progress', 'waiting', {
+      toolCallId: 'call-planet-waiting',
+      toolName: 'shell',
+      summary: '等待你确认命令',
+    });
+
+    const { container } = render(<PublicActivityFeed activities={[reasoning, waitingTool]} />);
+
+    const rows = [...container.querySelectorAll('.agent-public-activity__feed > article')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.querySelector('.paw-conv-planet[data-state="thinking"]')).toBeInTheDocument();
+    expect(rows[1]!.querySelector('.paw-conv-planet[data-state="waiting"]')).toBeInTheDocument();
+
+    cleanup();
+    render(<ReasoningActivitySummary activities={[reasoning]} />);
+    expect(
+      screen.getByRole('button', { name: /查看 Agent 思考摘要/u }).querySelector('.paw-conv-planet[data-state="thinking"]'),
+    ).toBeInTheDocument();
+  });
+
   it('marks a settled background subagent receipt with the violet completion tone', () => {
     const subagent = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-subagent-vio',

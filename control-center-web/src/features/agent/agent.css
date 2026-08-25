@@ -415,8 +415,97 @@
   from { background-color: color-mix(in srgb, var(--color-accent-soft) 55%, transparent); }
   to { background-color: transparent; }
 }
+/* ===================== Conversation planet marks =====================
+   活状态（思考、执行、等待）不再借用通用转圈图标：一枚受光的小球带自己的
+   晨昏线，活着时外挂一条轨道并驮一颗卫星。节奏沿用会话面 ccui-pulse 的
+   1.2s 呼吸，思考放慢到 2s，以便「在想」与「在跑」在余光里就能分开。
+   颜色由 --paw-planet-core 一处决定，宿主（PAWOS 冷白面、pill 色调）只需
+   改这一个变量即可换色，不必重写渐变。 */
+.paw-conv-planet {
+  --paw-planet-size: 13px;
+  --paw-planet-core: var(--color-accent);
+  --paw-planet-shade: color-mix(in srgb, var(--paw-planet-core) 48%, #0b1220);
+  position: relative;
+  display: inline-grid;
+  width: var(--paw-planet-size);
+  height: var(--paw-planet-size);
+  flex: 0 0 auto;
+  place-items: center;
+  vertical-align: -2px;
+}
+
+.paw-conv-planet[data-size='sm'] { --paw-planet-size: 9px; }
+.paw-conv-planet[data-size='lg'] { --paw-planet-size: 17px; }
+.paw-conv-planet[data-state='waiting'] { --paw-planet-core: var(--color-warning); }
+.paw-conv-planet[data-state='failed'] { --paw-planet-core: var(--color-danger); }
+.paw-conv-planet[data-state='done'] { --paw-planet-core: var(--color-success); }
+
+.paw-conv-planet[data-state='idle'] {
+  --paw-planet-core: color-mix(in srgb, var(--color-text-tertiary) 70%, var(--color-surface));
+  --paw-planet-shade: color-mix(in srgb, var(--color-text-tertiary) 92%, #0b1220);
+}
+
+.paw-conv-planet__body {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 27%, rgb(255 255 255 / 88%) 0 13%, rgb(255 255 255 / 0%) 46%),
+    radial-gradient(circle at 76% 82%, rgb(8 16 34 / 32%) 0 16%, rgb(8 16 34 / 0%) 60%),
+    radial-gradient(circle at 42% 38%, var(--paw-planet-core) 0 54%, var(--paw-planet-shade) 100%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--paw-planet-core) 22%, transparent);
+}
+
+.paw-conv-planet[data-state='thinking'] .paw-conv-planet__body { animation: paw-conv-planet-breathe 2s ease-in-out infinite; }
+.paw-conv-planet[data-state='running'] .paw-conv-planet__body { animation: paw-conv-planet-breathe 1.2s ease-in-out infinite; }
+.paw-conv-planet[data-state='waiting'] .paw-conv-planet__body { animation: paw-conv-planet-breathe 1.9s ease-in-out infinite; }
+
+.paw-conv-planet__orbit {
+  position: absolute;
+  inset: calc(var(--paw-planet-size) / -4);
+  border: 1px solid color-mix(in srgb, var(--paw-planet-core) 26%, transparent);
+  border-radius: 50%;
+  animation: paw-conv-planet-orbit 3.4s linear infinite;
+}
+
+.paw-conv-planet[data-state='running'] .paw-conv-planet__orbit { animation-duration: 2.1s; }
+.paw-conv-planet[data-state='waiting'] .paw-conv-planet__orbit { animation-duration: 5.2s; }
+
+.paw-conv-planet__orbit::after {
+  position: absolute;
+  top: calc(var(--paw-planet-size) / -12 - 1px);
+  left: 50%;
+  width: max(2.5px, calc(var(--paw-planet-size) / 4.5));
+  height: max(2.5px, calc(var(--paw-planet-size) / 4.5));
+  border-radius: 50%;
+  background: var(--paw-planet-core);
+  content: '';
+  transform: translateX(-50%);
+}
+
+@keyframes paw-conv-planet-breathe {
+  0%, 100% { opacity: .58; transform: scale(.86); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes paw-conv-planet-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-conv-planet__body,
+  .paw-conv-planet__orbit { animation: none; }
+  .paw-conv-planet__body { opacity: 1; }
+}
+
+:root[data-reduce-motion='true'] .paw-conv-planet__body,
+:root[data-reduce-motion='true'] .paw-conv-planet__orbit { animation: none; }
+:root[data-reduce-motion='true'] .paw-conv-planet__body { opacity: 1; }
+
 .agent-assistant-pending { display: flex; min-height: 52px; max-width: 620px; align-items: center; gap: 10px; margin: 2px 0 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--color-info) 30%, var(--color-border)); border-left: 3px solid var(--color-info); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-info-soft) 64%, var(--color-surface)); color: var(--color-info); }
 .agent-assistant-pending > svg { flex: 0 0 auto; animation: agent-status-spin 1.2s linear infinite; }
+.agent-assistant-pending > .paw-conv-planet { margin-inline: 2px 3px; }
 .agent-assistant-pending > span { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .agent-assistant-pending strong { display: flex; align-items: baseline; gap: 7px; color: var(--color-text); font-size: 14px; }
 .agent-assistant-pending time { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-mono); }

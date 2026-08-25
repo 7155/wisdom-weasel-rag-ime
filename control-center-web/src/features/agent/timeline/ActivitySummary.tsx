@@ -82,6 +82,7 @@ import { publicAgentErrorText } from '../public-error';
 import { routeDecisionPlanView } from './route-decision-plan';
 import { RouteDecisionPlan } from './RouteDecisionPlan';
 import { SmoothDisclosureReveal } from './SmoothDisclosureReveal';
+import { ConversationPlanetMark, type ConversationPlanetState } from './ConversationPlanetMark';
 
 const activityDisclosureOverrides = new Map<string, boolean>();
 const activityDisclosureOverrideLimit = 512;
@@ -227,6 +228,14 @@ export function ActivitySummary({
     </>
   );
   if (inline) {
+    /* Only a live group trades its Tool identity icon for a planet: motion in
+       the transcript has to mean the Runtime is still working, and a settled
+       group keeps the glyph that says what it was. */
+    const inlinePlanetState: ConversationPlanetState | null = running
+      ? 'running'
+      : waiting
+        ? 'waiting'
+        : null;
     const InlineIcon = terminalFailure
       ? TriangleAlert
       : waiting
@@ -250,10 +259,17 @@ export function ActivitySummary({
             onClick={(event) => toggleDisclosurePreservingAnchor(event, setInlineOpen)}
             onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setInlineOpen)}
           >
-            <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />
+            {inlinePlanetState
+              ? <ConversationPlanetMark size="md" state={inlinePlanetState} />
+              : <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />}
             <strong>{inlineTitle}</strong>
             <span className="agent-activity__inline-tools">{inlineSummary}</span>
-            <span className="agent-activity__inline-status agent-fx-pill" data-status={state} data-tone={state === 'done' ? 'ok' : state === 'running' ? 'run' : state === 'waiting' ? 'wait' : state === 'failed' ? 'danger' : 'warn'}><i aria-hidden="true" />{inlineStatus}</span>
+            <span className="agent-activity__inline-status agent-fx-pill" data-status={state} data-tone={state === 'done' ? 'ok' : state === 'running' ? 'run' : state === 'waiting' ? 'wait' : state === 'failed' ? 'danger' : 'warn'}>
+              {inlinePlanetState
+                ? <ConversationPlanetMark size="sm" state={inlinePlanetState} />
+                : <i aria-hidden="true" />}
+              {inlineStatus}
+            </span>
             <ChevronRight aria-hidden="true" size={15} />
           </summary>
           <SmoothDisclosureReveal
@@ -493,6 +509,19 @@ const ActivityRow = memo(function ActivityRow({
   );
 });
 
+/* One rule for every live surface in the conversation: a still-working row
+   shows a planet, a settled row keeps its ordinary glyph or dot. `thinking`
+   turns slower than `running` so a reasoning stream and a Tool call are
+   distinguishable without reading their labels. */
+function livePlanetState(
+  status: AgentActivityProjection['status'],
+  reasoning = false,
+): ConversationPlanetState | null {
+  if (status === 'waiting') return 'waiting';
+  if (status !== 'running') return null;
+  return reasoning ? 'thinking' : 'running';
+}
+
 interface PublicActivityFeedEntry {
   id: string;
   kind: 'reasoning' | 'tool';
@@ -526,18 +555,23 @@ export function PublicActivityFeed({
       <div
         className="agent-public-activity__feed"
       >
-        {entries.map((entry) => (
-          <article data-kind={entry.kind} data-state={entry.status} key={entry.id}>
-            <span aria-hidden="true">
-              {entry.kind === 'reasoning' ? <Brain size={14} /> : <Wrench size={14} />}
-            </span>
-            <span>
-              <strong>{entry.label}</strong>
-              <small>{entry.summary}</small>
-            </span>
-            <i>{statusLabel(entry.status)}</i>
-          </article>
-        ))}
+        {entries.map((entry) => {
+          const planet = livePlanetState(entry.status, entry.kind === 'reasoning');
+          return (
+            <article data-kind={entry.kind} data-state={entry.status} key={entry.id}>
+              <span aria-hidden="true">
+                {planet
+                  ? <ConversationPlanetMark size="md" state={planet} />
+                  : entry.kind === 'reasoning' ? <Brain size={14} /> : <Wrench size={14} />}
+              </span>
+              <span>
+                <strong>{entry.label}</strong>
+                <small>{entry.summary}</small>
+              </span>
+              <i>{statusLabel(entry.status)}</i>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -639,7 +673,9 @@ function ReasoningSummaryStrip({
           data-state={running ? 'running' : 'completed'}
           type="button"
         >
-          <Brain aria-hidden="true" size={15} />
+          {running
+            ? <ConversationPlanetMark size="md" state="thinking" />
+            : <Brain aria-hidden="true" size={15} />}
           <strong>{running ? '正在思考' : '思考摘要'}</strong>
           <span>{latest}</span>
           <small>{running ? `实时 · ${items.length} 项` : `${items.length} 项`}</small>
@@ -1583,6 +1619,7 @@ function FxActivityDisclosure({
   const subagent = isSubagentActivity(activity);
   const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : subagent ? 'vio' : 'ok';
   const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : subagent ? '后台完成' : '完成';
+  const rowPlanetState = livePlanetState(activity.status, activity.kind === 'reasoning_summary');
   const nowMs = useActivityClock(running);
   // A Tool receipt with an explicit duration stays authoritative; otherwise a
   // live row shows its real elapsed clock and a settled row its measured span.
@@ -1612,7 +1649,12 @@ function FxActivityDisclosure({
           <span aria-hidden="true" className="paw-activity__glyph" data-kind={glyphKind}><Glyph size={14} /></span>
           <span className="paw-activity__label">{label}</span>
           {hint ? <span className="paw-activity__hint">{hint}</span> : null}
-          <span className={`fx-pill ${tone}`}><i />{statusText}</span>
+          <span className={`fx-pill ${tone}`}>
+            {rowPlanetState
+              ? <ConversationPlanetMark size="sm" state={rowPlanetState} />
+              : <i aria-hidden="true" />}
+            {statusText}
+          </span>
           {meta ? <span className="fx-meta">{meta}</span> : null}
           {progress ? <span
             aria-label={`${label}：${progress.label}`}
