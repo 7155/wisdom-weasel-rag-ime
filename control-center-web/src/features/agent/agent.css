@@ -907,6 +907,31 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-assistant-message[data-status='streaming'] .agent-streaming-cursor--inline { display: inline-block; }
 .agent-blocks[data-has-stream-tail] + .agent-streaming-cursor:not(.agent-streaming-cursor--inline) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
 
+/* Active streaming tail. The progressive renderer freezes every committed
+   chunk (their DOM never changes per token batch), so streaming motion may
+   only live on the single mutable tail chunk. The wrapper div is a stable DOM
+   node across token appends, which keeps the sweep continuous instead of
+   restarting on every re-parse; frozen prose above it stays perfectly still. */
+.agent-markdown__active-tail { position: relative; min-width: 0; }
+.agent-markdown__active-tail::after {
+  content: '';
+  position: absolute;
+  inset: -1px -7px -3px;
+  border-radius: var(--radius-2);
+  background: linear-gradient(102deg, transparent 34%, color-mix(in srgb, var(--color-accent) 6%, transparent) 50%, transparent 66%);
+  background-size: 280% 100%;
+  animation: agent-tail-shimmer 2.4s linear infinite;
+  pointer-events: none;
+}
+.agent-assistant-message[data-status='streaming'] .agent-markdown__active-tail .agent-streaming-cursor--inline {
+  border-radius: 1.5px;
+  box-shadow: 0 0 7px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+@keyframes agent-tail-shimmer {
+  from { background-position: 210% 0; }
+  to { background-position: -110% 0; }
+}
+
 .ui-dialog.agent-review-dialog { display: grid; width: min(760px, calc(100vw - 28px)); max-height: min(760px, calc(100dvh - 28px)); grid-template-rows: auto auto minmax(0, 1fr) auto auto; gap: 12px; overflow: hidden; }
 .ui-dialog.agent-approval-dialog { display: grid; width: min(520px, calc(100vw - 28px)); gap: 14px; }
 .agent-review-dialog .ui-dialog__header, .agent-approval-dialog .ui-dialog__header { display: grid; gap: 4px; }
@@ -2609,6 +2634,11 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
     animation: none;
   }
 
+  .agent-markdown__active-tail::after {
+    animation: none;
+    opacity: 0;
+  }
+
   .agent-streaming-cursor,
   .agent-context-snapshot-state[data-state='restoring']::before,
   .agent-assistant-pending > svg,
@@ -2837,6 +2867,11 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   .paw-os-app-window[data-paw-os-app='agent'] .agent-conversation-nav { display: none; }
   .paw-os-app-window[data-paw-os-app='agent'] .agent-composer-wrap { padding: 6px 10px 11px; }
   .paw-os-app-window[data-paw-os-app='agent'] .agent-composer textarea { min-height: 70px; padding: 10px 12px 41px; }
+}
+
+:root[data-reduce-motion='true'] .agent-markdown__active-tail::after {
+  animation: none;
+  opacity: 0;
 }
 
 :root[data-reduce-motion='true'] .agent-streaming-cursor,
