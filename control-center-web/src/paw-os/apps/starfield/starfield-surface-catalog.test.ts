@@ -1,8 +1,12 @@
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   bodyRingSurfaceKey,
   bodySurfaceKey,
   centerSurfaceKey,
+  StarfieldSurfaceLoader,
   SURFACE_TEXTURE_FILES,
   surfaceTextureUrl,
   type SurfaceKey,
@@ -23,6 +27,24 @@ describe('starfield surface catalog', () => {
       expect(url).not.toMatch(/^https?:/);
       expect(url.endsWith(file)).toBe(true);
     }
+  });
+
+  it('actually ships every cataloged asset in the public starfield directory', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const file of Object.values(SURFACE_TEXTURE_FILES)) {
+      const onDisk = resolve(here, '../../../../public', file);
+      expect(existsSync(onDisk), `missing shipped texture: ${file}`).toBe(true);
+    }
+  });
+
+  it('never delivers a texture after dispose', () => {
+    const loader = new StarfieldSurfaceLoader();
+    loader.dispose();
+    let delivered = false;
+    loader.load('earth', () => {
+      delivered = true;
+    });
+    expect(delivered).toBe(false);
   });
 
   it('gives Room partner planets the map of the planet they are named after', () => {
