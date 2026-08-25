@@ -763,12 +763,42 @@
 }
 .paw-desktop-root .paw-window-layer[data-room-focus] .paw-window-title > strong { display: block; font-size: 14px; }
 
+/* UR-056 satellite signal band. A satellite window carries its partner colour
+   as a 3px band on the first row of its content instead of a second identity
+   bar. Inherited from the retired Agent composition layer, which is why the
+   participant reset below still has to follow it in source order. */
+.paw-desktop-root .paw-window-shell[data-collaboration-role='satellite'] .paw-window-body > *:first-child {
+  border-top: 3px solid var(--paw-satellite-color, #7a5af8);
+}
+
 .paw-desktop-root .paw-window-shell[data-window-target='participant'] .paw-window-body > *:first-child {
   border-top: 0;
 }
 
+/* The window paints the satellite surface; the content pane only supplies the
+   satellite type scale. */
+.paw-desktop-root .paw-os-satellite {
+  background: transparent;
+  color: #171a21;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .paw-desktop-root .paw-os-satellite--participant-chat {
   background: #fff;
+}
+
+/* The process satellite is the same graphite instrument as every other code and
+   terminal reader, so it reads the shared code pair rather than a private
+   near-black. */
+.paw-desktop-root .paw-os-satellite--process {
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
+}
+
+.paw-desktop-root .paw-process-terminal__meta {
+  border-bottom-color: color-mix(in srgb, var(--color-code-text) 14%, transparent);
+  color: var(--color-code-muted);
 }
 
 .paw-desktop-root .paw-os-satellite--participant-chat .paw-participant-chat__timeline {
