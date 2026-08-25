@@ -660,7 +660,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   z-index: 9;
   inset: 0 0 auto;
   height: var(--paw-titlebar-h);
-  display: grid; grid-template-columns: 76px minmax(0, 1fr) minmax(0, auto); align-items: center;
+  display: grid; grid-template-columns: var(--paw-titlebar-lead, 76px) minmax(0, 1fr) minmax(0, auto); align-items: center;
   padding: 0 14px;
   /* The empty title area is the drag target. Controls opt back in below. */
   pointer-events: auto;
@@ -677,6 +677,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
    whose control keeps its own size and shape. */
 .paw-traffic-lights > button {
   width: 12px; height: 12px;
+  /* 同一套命中区域：a light is a fixed 12px target on every window. Without
+     this it flex-shrinks whenever the cluster outgrows its titlebar column,
+     so the main window's lights end up smaller than a satellite's. */
+  flex: 0 0 12px;
   display: grid; place-items: center; padding: 0;
   cursor: pointer;
 }
@@ -705,6 +709,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-traffic-lights:has(.paw-window-leading-slot:not(:empty)) {
   width: auto;
   min-width: 76px;
+}
+/* Docked App chrome makes the cluster wider than the fixed leading column, so
+   that column sizes to its content instead. The lights themselves never give
+   ground — only the column does. Every titlebar reads the same token, so a
+   per-App or per-breakpoint leading width still composes with this. */
+.paw-window-titlebar:has(.paw-window-leading-slot:not(:empty)) {
+  --paw-titlebar-lead: auto;
 }
 .paw-window-body {
   width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden;
@@ -1086,7 +1097,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-menu-app { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .paw-window-shell:not([data-overview]):not([data-focus-layout]) { min-width: 0; min-height: 0; width: calc(100% - 12px) !important; height: calc(100% - 70px) !important; transform: translate3d(6px, 6px, 0) !important; }
   .paw-window-shell:not([data-focus-layout]) .paw-window-resize { display: none; }
-  .paw-window-titlebar { grid-template-columns: 70px minmax(0, 1fr) minmax(0, auto); }
+  .paw-window-titlebar { grid-template-columns: var(--paw-titlebar-lead, 70px) minmax(0, 1fr) minmax(0, auto); }
   .paw-wayfinder { overflow: auto; padding-bottom: 92px; }
   /* The narrow desktop stacks: the work panel joins the flow above the dense
      App list instead of floating over it, still with its own bounded scroll. */

@@ -134,7 +134,7 @@ describe('PAWOS semantic type roles', () => {
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-shell(?:\[[^\]]+\])? \.paw-window\s*\{/);
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{/);
     expect(webmodelCss).not.toMatch(/\.paw-desktop-root \.paw-menu-bar\s*\{/);
-    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);/s);
+    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*var\(--paw-titlebar-lead, 76px\) minmax\(0, 1fr\) minmax\(0, auto\);/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*background:\s*#fff;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights > button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
@@ -628,6 +628,21 @@ describe('PAWOS semantic type roles', () => {
     expect(roomMigratedCss).toMatch(
       /\.paw-window-layer\[data-room-focus\]:not\(:has\(\.paw-room-window-chrome\[data-coordinator\]\)\) \.paw-room-focus-modebar strong\s*\{[^}]*display:\s*none;/s,
     );
+  });
+
+  it('keeps one 12px traffic-light hit target on every window that docks App chrome', () => {
+    // A light never flex-shrinks, so the main Room's close target measures the
+    // same as a satellite's even when the cluster outgrows its column.
+    expect(pawOsCss).toMatch(/\.paw-traffic-lights > button\s*\{[^}]*flex:\s*0 0 12px;/s);
+    // Only the column gives ground, through one token every titlebar reads.
+    expect(pawOsCss).toMatch(
+      /\.paw-window-titlebar:has\(\.paw-window-leading-slot:not\(:empty\)\)\s*\{[^}]*--paw-titlebar-lead:\s*auto;/s,
+    );
+    for (const css of [pawOsCss, roomMigratedCss, agentMigratedCss, toolsMigratedCss]) {
+      // No titlebar may pin its leading track past the shared token, or its
+      // lights start shrinking again the moment an App docks a control.
+      expect(css).not.toMatch(/\.paw-window-titlebar[^{]*\{[^}]*grid-template-columns:\s*\d+px/s);
+    }
   });
 
   it('preserves explicit Focus frames and resize handles throughout the 721–820px gap', () => {

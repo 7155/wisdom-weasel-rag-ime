@@ -77,7 +77,7 @@
 }
 
 .paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] {
-  grid-template-columns: 68px minmax(112px, .45fr) minmax(204px, 1fr);
+  grid-template-columns: var(--paw-titlebar-lead, 68px) minmax(112px, .45fr) minmax(204px, 1fr);
   gap: 10px;
   padding-inline: 11px;
   border-bottom-color: #f0efed;
@@ -1065,7 +1065,7 @@
 
 @container paw-window (max-width: 700px) {
   .paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] {
-    grid-template-columns: 64px 28px minmax(0, 1fr);
+    grid-template-columns: var(--paw-titlebar-lead, 64px) 28px minmax(0, 1fr);
     gap: 6px;
     padding-inline: 9px;
   }
@@ -1083,7 +1083,7 @@
 
 @container paw-window (max-width: 430px) {
   .paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] {
-    grid-template-columns: 60px 22px minmax(0, 1fr);
+    grid-template-columns: var(--paw-titlebar-lead, 60px) 22px minmax(0, 1fr);
     gap: 4px;
     padding-inline: 7px;
   }
