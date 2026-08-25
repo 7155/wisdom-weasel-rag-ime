@@ -12,5 +12,6 @@ export {
 } from './blockScanner';
 export { detectOpenFenceTail, type OpenFenceTail } from './openFence';
 export { normalizeStreamingMarkdown } from './normalizeStreamingMarkdown';
+export { useDeferredStreaming } from './useDeferredStreaming';
 export { useProgressiveChunks } from './useProgressiveChunks';
 export type { MarkdownChunk, MarkdownScanState } from './types';

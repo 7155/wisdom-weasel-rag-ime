@@ -1,6 +1,9 @@
 const BARE_LIST_MARKER = /^[ \t]*(?:[-*+]|\d{1,9}[.)]?)$/;
 const BARE_HEADING_MARKER = /^ {0,3}#{1,6}[ \t]*$/;
 const WORD_CHAR = /[\w-]/;
+/** CJK ideographs/kana are complete display units; the "do not show half a
+ * word" space-seek below is meaningless for them (PAW adaptation). */
+const CJK_TAIL = /[\u2e80-\u303f\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/;
 
 function avoidBrokenSurrogate(text: string, offset: number): number {
   if (offset <= 0 || offset >= text.length) return offset;
@@ -131,7 +134,11 @@ export function findSafeInlineBoundary(
     text[boundary - 1] !== "\t"
   ) {
     const space = text.lastIndexOf(" ", boundary - 1);
-    if (space >= Math.max(lineStart, lastClosedBoundary) && boundary - space <= 24) {
+    if (
+      space >= Math.max(lineStart, lastClosedBoundary) &&
+      boundary - space <= 24 &&
+      !CJK_TAIL.test(text.slice(space + 1, boundary))
+    ) {
       boundary = space + 1;
     }
   }
