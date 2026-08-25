@@ -29,7 +29,12 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { ControlRequest, PickedFile } from '@/platform/transport';
 import { GenericUserInputCard } from '@/features/agent/review/AgentReviewDialogs';
 import { publicAgentErrorText } from '@/features/agent/public-error';
+import { PublicToolOutput } from '@/features/agent/timeline/ActivitySummary';
 import { MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
+import {
+  publicToolResultView,
+  type PublicToolResultView,
+} from '@/features/agent/timeline/public-tool-result';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
@@ -72,6 +77,10 @@ import {
 } from './room-gravity-projection';
 import { RoomActivityGlyph } from './room-tool-glyph';
 import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
+/* Shared conversation modules (.agent-smooth-reveal 220ms spring, tool result
+ * panels, diff reader) style the Room chronology too; the Room window must not
+ * depend on a Session window having loaded them first. */
+import '@/features/agent/agent.css';
 import '@/features/rooms/rooms.css';
 
 type RoomToolPanel = 'focus' | 'governance';
@@ -852,9 +861,11 @@ function PawRoomInlineActivity({ activity, dispatchPlans = [], onApprovalDecisio
       room={room}
     />;
   }
-  const toolFacts = !approvalId && (eventType === 'tool' || eventType.startsWith('tool_'))
+  const isToolActivity = !approvalId && (eventType === 'tool' || eventType.startsWith('tool_'));
+  const toolFacts = isToolActivity
     ? roomToolEvidence(activity.payload)?.facts ?? []
     : [];
+  const toolView = isToolActivity ? pawRoomToolResultView(activity, eventType) : null;
   const rawBody = rawDetail && rawDetail !== summary ? rawDetail : '';
   return <article className="paw-room-chronology__activity" data-kind={approvalId ? 'approval' : eventType} data-status={activity.status}>
     <span aria-hidden="true">{approvalId ? <ShieldAlert size={14} /> : activity.status === 'completed' ? <CheckCircle2 size={14} /> : <LoaderCircle className={activity.status === 'running' ? 'ui-spin' : undefined} size={14} />}</span>
@@ -866,7 +877,7 @@ function PawRoomInlineActivity({ activity, dispatchPlans = [], onApprovalDecisio
       <p>{summary}</p>
     </div>
     <time>{pawRoomClock(activity.createdAtMs)}</time>
-    {toolFacts.length || rawBody ? <PawRoomRawActivityDetail detail={rawBody} facts={toolFacts} /> : null}
+    {toolFacts.length || rawBody || toolView ? <PawRoomRawActivityDetail detail={rawBody} facts={toolFacts} toolView={toolView} /> : null}
     {processWindow ? <footer><button onClick={() => onOpenProcessActivity?.(activity)} type="button">查看后台 Bash</button></footer> : null}
     {approvalPending ? <footer><button disabled={Boolean(submitting)} onClick={() => decide('approved')} type="button">{submitting === 'approved' ? '正在批准' : '批准并继续'}</button><button disabled={Boolean(submitting)} onClick={() => decide('rejected')} type="button">{submitting === 'rejected' ? '正在拒绝' : '拒绝'}</button></footer> : null}
     {decisionError ? <small role="alert">{decisionError}</small> : null}
@@ -929,10 +940,33 @@ function PawRoomDispatchActivity({ activity, dispatchPlans, plan, room }: {
   </article>;
 }
 
+/** Room tool activities project through the exact Session tool-result view
+ * (`arguments` → `args`), so a diff/edit/write/read receipt expands into the
+ * same structured detail as the Session timeline — never a machine tool id
+ * (PF-CM-004/007). Only views with a concrete body earn the shared panel. */
+function pawRoomToolResultView(activity: RoomActivityProjection, eventType: string): PublicToolResultView | null {
+  const payload = activity.payload;
+  const args = payload.args ?? payload.arguments;
+  const view = publicToolResultView({
+    kind: eventType,
+    status: activity.status,
+    payload: {
+      ...payload,
+      ...(typeof args === 'object' && args !== null && !Array.isArray(args) ? { args } : {}),
+    },
+  });
+  return view.output ? view : null;
+}
+
 /** What the tool really did — sent, changed, read — as labeled facts, with
- * the public raw text folded below (Joshua5: 「要能够点开看到具体内容的，
- * 例如发送了什么，修改了什么，读取了哪些」). */
-function PawRoomRawActivityDetail({ detail, facts = [] }: { detail: string; facts?: RoomToolFact[] }) {
+ * the concrete body below: an edit's 变更差异 opens the shared structured
+ * diff reader, a write's 写入内容 the bounded written body (Joshua5: 「要能
+ * 够点开看到具体内容的，例如发送了什么，修改了什么，读取了哪些」). */
+function PawRoomRawActivityDetail({ detail, facts = [], toolView }: {
+  detail: string;
+  facts?: RoomToolFact[];
+  toolView?: PublicToolResultView | null;
+}) {
   const detailId = `paw-room-activity-detail-${useId().replaceAll(':', '')}`;
   const [open, setOpen] = useState(false);
   const [presence, setPresence] = useState(false);
@@ -942,7 +976,7 @@ function PawRoomRawActivityDetail({ detail, facts = [] }: { detail: string; fact
       aria-expanded={open}
       onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
       onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-    >{facts.length ? '查看执行详情' : '详情'}</summary>
+    >{facts.length || toolView ? '查看执行详情' : '详情'}</summary>
     <SmoothDisclosureReveal
       className="paw-room-chronology__detail-reveal"
       id={detailId}
@@ -954,7 +988,7 @@ function PawRoomRawActivityDetail({ detail, facts = [] }: { detail: string; fact
           {facts.map((fact) => <div key={`${fact.label}:${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
         </dl>
       ) : null}
-      {detail ? <p>{detail}</p> : null}
+      {toolView ? <PublicToolOutput view={toolView} /> : detail ? <p>{detail}</p> : null}
     </SmoothDisclosureReveal>
   </details>;
 }

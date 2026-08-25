@@ -44,9 +44,32 @@
   --room-review: #7956e8;
   --room-complete: #1f9d4d;
   --room-failed: #cd3c3a;
+
+  /* Session ↔ Room 消息流视觉统一：the chronology consumes the exact
+   * conversation tokens .paw-session-workspace declares (surface, text,
+   * border, accent, spring), so both streams read as one PAWOS conversation
+   * material instead of a second Room skin. */
+  --paw-chat-surface: #fff;
+  --paw-chat-surface-subtle: #f6f8fb;
+  --paw-chat-surface-hover: rgb(24 32 43 / 5%);
+  --paw-chat-user-bubble: #edf3ff;
+  --paw-chat-text: #18202b;
+  --paw-chat-text-secondary: #526174;
+  --paw-chat-text-tertiary: #7b8798;
+  --paw-chat-icon: #6f7d8e;
+  --paw-chat-border: #e5eaf0;
+  --paw-chat-border-translucent: rgb(24 32 43 / 10%);
+  --paw-chat-accent: #2f6bff;
+  --paw-chat-ok: #128a52;
+  --paw-chat-warn: #b66b05;
+  --paw-chat-violet: #8944ab;
+  --paw-chat-danger: #cd3c3a;
+  --paw-chat-radius-message: 16px;
+  --paw-chat-radius-tool: 10px;
+  --paw-chat-spring: cubic-bezier(.34, 1.4, .64, 1);
   grid-template-rows: 44px auto minmax(0, 1fr);
-  color: #2c2c2b;
-  background: #f9f8f7;
+  color: var(--paw-chat-text);
+  background: var(--paw-chat-surface);
 }
 
 .paw-desktop-root .paw-room-workspace--migrated-v1[data-window-chrome='portal'] {
@@ -327,7 +350,7 @@
 
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__body {
   grid-template-columns: minmax(0, 1fr);
-  background: #f9f8f7;
+  background: var(--paw-chat-surface);
 }
 
 .paw-desktop-root .paw-room-workspace--migrated-v1:not([data-panel='none']) .paw-room-workspace__body {
@@ -474,10 +497,10 @@
   to { opacity: 1; transform: translateX(0); }
 }
 
+/* 与 Session 同一张安静白底：去掉紫色 radial 洗光（prototype chrome），
+   叙事层次交给排版与留白。 */
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline {
-  background:
-    radial-gradient(48rem 26rem at 50% -8%, rgb(121 86 232 / .04), transparent 68%),
-    #f8f9fb;
+  background: var(--paw-chat-surface);
 }
 
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline__canvas {
@@ -486,124 +509,123 @@
 }
 
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer {
-  border-top-color: rgb(29 36 48 / .07);
-  background: #fff;
-  box-shadow: 0 -8px 22px rgb(35 47 66 / .045);
+  border-top-color: var(--paw-chat-border);
+  background: var(--paw-chat-surface);
+  box-shadow: none;
 }
 
 /* PAWOS owns one chronological conversation DOM. Public messages are the
  * reading surface; real reducer activities remain compact inline receipts. */
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__main { isolation: isolate; grid-template-rows: minmax(0, 1fr) auto; }
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline { overscroll-behavior: contain; }
-.paw-desktop-root .paw-room-chronology { display: grid; align-content: start; gap: 14px; }
-/* 一次真实 loop 一张安静白卡；卡内按 sequence 排列，工具/分派/进度折叠进
-   对应 Turn（UR-004 一次 loop 一张卡；WEB-DATA-005 中央只显示公开叙事）。 */
-.paw-desktop-root .paw-room-chronology__turn { display: grid; align-content: start; gap: 2px; padding: 10px 14px 12px; border: 1px solid rgb(29 36 48 / .08); border-radius: 14px; background: #fff; box-shadow: 0 1px 3px rgb(35 47 66 / .05); }
-.paw-desktop-root .paw-room-chronology__turn[data-status='failed'] { border-color: color-mix(in srgb, #c53d46 26%, rgb(29 36 48 / .08)); }
-.paw-desktop-root .paw-room-chronology__message { display: grid; min-width: 0; gap: 4px; max-width: 76ch; padding: 8px 0; }
+.paw-desktop-root .paw-room-chronology { display: grid; align-content: start; gap: 26px; }
+/* 一次真实 loop 一段安静的叙事：与 Session 一致，Turn 之间靠留白分节，
+   不再包一层白卡（UR-004 一次 loop 一段；WEB-DATA-005 中央只显示公开叙事）。 */
+.paw-desktop-root .paw-room-chronology__turn { display: grid; align-content: start; gap: 4px; }
+.paw-desktop-root .paw-room-chronology__message { display: grid; min-width: 0; gap: 4px; max-width: 76ch; padding: 4px 0; }
 .paw-desktop-root .paw-room-chronology__message > header { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
-.paw-desktop-root .paw-room-chronology__message > header strong { overflow: hidden; color: #6b7686; font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__message > header small { color: var(--room-violet); font-size: 12px; }
-.paw-desktop-root .paw-room-chronology__message > header time { margin-left: auto; color: #9aa3b2; font-size: 12px; font-variant-numeric: tabular-nums; }
-.paw-desktop-root .paw-room-chronology__message > div { min-width: 0; color: #232a35; font-size: 15.5px; line-height: 1.68; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-chronology__message > header strong { overflow: hidden; color: var(--paw-chat-text-secondary); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__message > header small { color: var(--paw-chat-violet); font-size: 12px; }
+.paw-desktop-root .paw-room-chronology__message > header time { margin-left: auto; color: var(--paw-chat-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-chronology__message > div { min-width: 0; color: var(--paw-chat-text); font-size: 16px; line-height: 24px; overflow-wrap: anywhere; }
 .paw-desktop-root .paw-room-chronology__message .agent-markdown { font-size: inherit; line-height: inherit; }
 .paw-desktop-root .paw-room-chronology__message .agent-markdown > :first-child { margin-top: 0; }
 .paw-desktop-root .paw-room-chronology__message .agent-markdown > :last-child { margin-bottom: 0; }
-/* 输入/输出分家：用户输入右对齐气泡；伙伴与 Root 输出保持文档级独立区域 */
-.paw-desktop-root .paw-room-chronology__message[data-role='user'] { justify-self: end; max-width: min(560px, 88%); padding: 9px 13px; border: 1px solid color-mix(in srgb, var(--room-violet) 20%, transparent); border-radius: 13px 13px 4px 13px; background: color-mix(in srgb, var(--room-violet) 7%, #fff); }
+/* 输入/输出分家：用户输入右对齐气泡，与 Session 的 paw-user-message 同一
+   张落款（冷钴微渐变 + hairline 边 + 收紧右下角）；伙伴与 Root 输出保持
+   文档级独立区域。 */
+.paw-desktop-root .paw-room-chronology__message[data-role='user'] {
+  justify-self: end;
+  max-width: min(560px, 88%);
+  padding: 8px 15px;
+  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
+  border-radius: 18px 18px 6px 18px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
+}
 .paw-desktop-root .paw-room-chronology__message[data-role='user'] > header { justify-content: flex-end; }
 .paw-desktop-root .paw-room-chronology__message[data-role='user'] > header time { margin-left: 0; }
-.paw-desktop-root .paw-room-chronology__message[data-role='user'] > div { font-size: 14.5px; line-height: 1.6; }
-.paw-desktop-root .paw-room-chronology__live { color: var(--room-blue); font-size: 12px; }
-/* 过程折叠条：摘要 chip 常驻；展开只改投影，不动事件顺序（UR-085） */
-.paw-desktop-root .paw-room-chronology__fold { margin: 4px 0 2px; border-top: 1px dashed rgb(29 36 48 / .12); }
+.paw-desktop-root .paw-room-chronology__live { color: var(--paw-chat-accent); font-size: 12px; }
+/* 过程折叠条：摘要 chip 常驻；展开只改投影，不动事件顺序（UR-085）。
+   展开/收起动画由共享 .agent-smooth-reveal（220ms 弹簧）统一负责，
+   本文件不再声明第二套 reveal 时序。 */
+.paw-desktop-root .paw-room-chronology__fold { margin: 4px 0 2px; border-top: 1px solid var(--paw-chat-border); }
 .paw-desktop-root .paw-room-chronology__fold > summary { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 6px 2px; cursor: pointer; list-style: none; }
 .paw-desktop-root .paw-room-chronology__fold > summary::-webkit-details-marker { display: none; }
-.paw-desktop-root .paw-room-chronology__fold > summary:focus-visible { border-radius: 6px; outline: 2px solid #7956e8; outline-offset: 2px; }
-.paw-desktop-root .paw-room-chronology__fold > summary > svg { flex: 0 0 auto; color: #8a94a3; transition: transform 160ms cubic-bezier(.2, .8, .2, 1); }
+.paw-desktop-root .paw-room-chronology__fold > summary:focus-visible { border-radius: 6px; outline: 2px solid color-mix(in srgb, var(--paw-chat-accent) 66%, transparent); outline-offset: 2px; }
+.paw-desktop-root .paw-room-chronology__fold > summary > svg { flex: 0 0 auto; color: var(--paw-chat-icon); transition: transform 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)); }
 .paw-desktop-root .paw-room-chronology__fold > summary[aria-expanded='true'] > svg { transform: rotate(90deg); }
-.paw-desktop-root .paw-room-chronology__fold > summary strong { flex: 0 0 auto; color: #5f6b7c; font-size: 12.5px; font-weight: 600; }
-.paw-desktop-root .paw-room-chronology__fold > summary small { min-width: 0; overflow: hidden; color: #8a94a3; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__fold[data-active] > summary strong { color: var(--room-blue); }
-.paw-desktop-root .paw-room-chronology__reveal,
-.paw-desktop-root .paw-room-chronology__detail-reveal {
-  min-width: 0;
-  overflow: hidden;
-  overflow: clip;
-  opacity: 0;
-  transition: height 180ms cubic-bezier(.23, 1, .32, 1), opacity 120ms cubic-bezier(.23, 1, .32, 1);
-  will-change: height;
-}
-.paw-desktop-root .paw-room-chronology__reveal[data-state='opening'],
-.paw-desktop-root .paw-room-chronology__reveal[data-state='open'],
-.paw-desktop-root .paw-room-chronology__detail-reveal[data-state='opening'],
-.paw-desktop-root .paw-room-chronology__detail-reveal[data-state='open'] { opacity: 1; }
-.paw-desktop-root .paw-room-chronology__reveal[data-state='open'],
-.paw-desktop-root .paw-room-chronology__detail-reveal[data-state='open'] { overflow: visible; will-change: auto; }
+.paw-desktop-root .paw-room-chronology__fold > summary strong { flex: 0 0 auto; color: var(--paw-chat-text-secondary); font-size: 12.5px; font-weight: 600; }
+.paw-desktop-root .paw-room-chronology__fold > summary small { min-width: 0; overflow: hidden; color: var(--paw-chat-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__fold[data-active] > summary strong { color: var(--paw-chat-accent); }
 .paw-desktop-root .paw-room-chronology__fold-content { display: grid; gap: 2px; padding: 4px 0 6px 19px; }
 .paw-desktop-root .paw-room-chronology__activity { display: grid; min-width: 0; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; gap: 7px; padding: 5px 0; }
-.paw-desktop-root .paw-room-chronology__activity > span { display: grid; width: 22px; height: 22px; place-items: center; color: var(--room-green); }
+.paw-desktop-root .paw-room-chronology__activity > span { display: grid; width: 22px; height: 22px; place-items: center; color: var(--paw-chat-ok); }
 .paw-desktop-root .paw-room-chronology__activity[data-status='running'] > span,
-.paw-desktop-root .paw-room-chronology__activity[data-status='waiting'] > span { color: var(--room-blue); }
-.paw-desktop-root .paw-room-chronology__activity[data-status='failed'] > span { color: var(--room-red); }
-.paw-desktop-root .paw-room-chronology__activity[data-kind='approval'] > span { color: var(--room-red); }
+.paw-desktop-root .paw-room-chronology__activity[data-status='waiting'] > span { color: var(--paw-chat-accent); }
+.paw-desktop-root .paw-room-chronology__activity[data-status='failed'] > span { color: var(--paw-chat-danger); }
+.paw-desktop-root .paw-room-chronology__activity[data-kind='approval'] > span { color: var(--paw-chat-danger); }
 .paw-desktop-root .paw-room-chronology__activity > div { min-width: 0; display: grid; gap: 1px; }
-.paw-desktop-root .paw-room-chronology__activity > div strong { display: flex; align-items: center; gap: 5px; overflow: hidden; color: #4e5a6b; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__activity > div strong { display: flex; align-items: center; gap: 5px; overflow: hidden; color: var(--paw-chat-text-secondary); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 /* 类别 logo 替代「工具/进展」等字（Joshua5 图4）；完整含义在 aria-label/title。 */
-.paw-desktop-root .paw-room-chronology__activity .paw-room-activity-glyph { display: grid; flex-shrink: 0; width: 15px; height: 15px; place-items: center; color: #8b95a5; }
-.paw-desktop-root .paw-room-chronology__activity > div p { margin: 0; color: #687486; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
-.paw-desktop-root .paw-room-chronology__activity > time { color: #9aa3b2; font-size: 12px; font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-chronology__activity .paw-room-activity-glyph { display: grid; flex-shrink: 0; width: 15px; height: 15px; place-items: center; color: var(--paw-chat-icon); }
+.paw-desktop-root .paw-room-chronology__activity > div p { margin: 0; color: var(--paw-chat-text-secondary); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-chronology__activity > time { color: var(--paw-chat-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .paw-desktop-root .paw-room-chronology__activity-detail { min-width: 0; grid-column: 2 / -1; font-size: 13px; }
-.paw-desktop-root .paw-room-chronology__activity-detail > summary { width: fit-content; cursor: pointer; color: #758092; }
-.paw-desktop-root .paw-room-chronology__activity-detail p { max-height: 160px; margin: 6px 0 0; padding: 8px; overflow: auto; border-radius: 8px; background: #f2f4f7; font: 12px/18px var(--font-mono); white-space: pre-wrap; }
+.paw-desktop-root .paw-room-chronology__activity-detail > summary { width: fit-content; cursor: pointer; color: var(--paw-chat-text-tertiary); }
+.paw-desktop-root .paw-room-chronology__activity-detail > summary:hover { color: var(--paw-chat-text-secondary); }
+.paw-desktop-root .paw-room-chronology__activity-detail p { max-height: 160px; margin: 6px 0 0; padding: 8px; overflow: auto; border-radius: 8px; background: var(--paw-chat-surface-subtle); font: 12px/18px var(--font-mono); white-space: pre-wrap; }
+/* 展开后的共享工具面板（调用参数/变更差异/写入内容）与 Session 同源；
+   只需要一点上缘呼吸间距。 */
+.paw-desktop-root .paw-room-chronology__activity-detail .agent-tool-result-panel { margin-top: 6px; }
 /* 执行详情 — 发送了什么、修改了什么、读取了哪些，作为带标签的事实表。 */
-.paw-desktop-root .paw-room-chronology__tool-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; margin: 6px 0 0; padding: 7px 9px; border: 1px solid rgb(42 45 52 / .08); border-radius: 8px; background: #f7f8fa; font-size: 12px; line-height: 17px; }
+.paw-desktop-root .paw-room-chronology__tool-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; margin: 6px 0 0; padding: 7px 9px; border: 1px solid var(--paw-chat-border); border-radius: 8px; background: var(--paw-chat-surface-subtle); font-size: 12px; line-height: 17px; }
 .paw-desktop-root .paw-room-chronology__tool-facts > div { display: contents; }
-.paw-desktop-root .paw-room-chronology__tool-facts dt { color: #8b95a5; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__tool-facts dd { min-width: 0; margin: 0; color: #4e5a6b; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-chronology__tool-facts dt { color: var(--paw-chat-text-tertiary); white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__tool-facts dd { min-width: 0; margin: 0; color: var(--paw-chat-text-secondary); overflow-wrap: anywhere; }
 .paw-desktop-root .paw-room-chronology__tool-facts + p { margin-top: 5px; }
 .paw-desktop-root .paw-room-chronology__activity > footer { grid-column: 2 / -1; display: flex; gap: 7px; }
 .paw-desktop-root .paw-room-chronology__activity > footer button,
-.paw-desktop-root .paw-room-chronology__terminal > button { min-height: 30px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--room-violet); font-size: 14px; cursor: pointer; }
-.paw-desktop-root .paw-room-chronology__activity > footer button + button { color: #5f6b7c; background: #edf1f6; }
-.paw-desktop-root .paw-room-chronology__activity > small[role='alert'] { grid-column: 2 / -1; color: var(--room-red); font-size: 13px; }
+.paw-desktop-root .paw-room-chronology__terminal > button { min-height: 30px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--paw-chat-accent); font-size: 14px; cursor: pointer; }
+.paw-desktop-root .paw-room-chronology__activity > footer button + button { color: var(--paw-chat-text-secondary); background: var(--paw-chat-surface-subtle); }
+.paw-desktop-root .paw-room-chronology__activity > small[role='alert'] { grid-column: 2 / -1; color: var(--paw-chat-danger); font-size: 13px; }
 
 /* Dispatch card: a route_decision reads as source → target under Sol gravity
  * with reason, routing policy, parallel track and the real task text. */
-.paw-desktop-root .paw-room-chronology__activity--dispatch { padding: 7px 9px; border: 1px solid rgb(90 145 222 / .22); border-radius: 10px; background: rgb(90 145 222 / .05); }
-.paw-desktop-root .paw-room-chronology__activity--dispatch > span { color: var(--room-blue); }
-.paw-desktop-root .paw-room-chronology__activity--dispatch > div strong { color: #37445a; }
+.paw-desktop-root .paw-room-chronology__activity--dispatch { padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 20%, transparent); border-radius: var(--paw-chat-radius-tool, 10px); background: color-mix(in srgb, var(--paw-chat-accent) 4%, transparent); }
+.paw-desktop-root .paw-room-chronology__activity--dispatch > span { color: var(--paw-chat-accent); }
+.paw-desktop-root .paw-room-chronology__activity--dispatch > div strong { color: var(--paw-chat-text); }
 .paw-desktop-root .paw-room-chronology__dispatch-meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .paw-desktop-root .paw-room-chronology__dispatch-meta em {
   padding: 1px 7px;
-  border: 1px solid rgb(29 36 48 / .1);
+  border: 1px solid var(--paw-chat-border);
   border-radius: 999px;
-  color: #5f6b7c;
-  background: rgb(255 255 255 / .8);
+  color: var(--paw-chat-text-secondary);
+  background: var(--paw-chat-surface);
   font-size: 12px;
   font-style: normal;
   font-weight: 600;
   line-height: 16px;
   white-space: nowrap;
 }
-.paw-desktop-root .paw-room-chronology__dispatch-meta em[data-lane] { border-color: rgb(90 145 222 / .34); color: #2f6cb8; background: rgb(90 145 222 / .1); font-variant-numeric: tabular-nums; }
-.paw-desktop-root .paw-room-chronology__dispatch-objective { display: -webkit-box; overflow: hidden; margin-top: 3px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #687486 !important; font-size: 13px !important; }
+.paw-desktop-root .paw-room-chronology__dispatch-meta em[data-lane] { border-color: color-mix(in srgb, var(--paw-chat-accent) 34%, transparent); color: var(--paw-chat-accent); background: color-mix(in srgb, var(--paw-chat-accent) 10%, transparent); font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-chronology__dispatch-objective { display: -webkit-box; overflow: hidden; margin-top: 3px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--paw-chat-text-secondary) !important; font-size: 13px !important; }
 .paw-desktop-root .paw-room-chronology__dispatch-detail { margin-top: 3px; }
 .paw-desktop-root .paw-room-chronology__dispatch-candidates { display: grid; gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; }
 .paw-desktop-root .paw-room-chronology__dispatch-candidates li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; padding: 3px 7px; border-radius: 6px; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li[data-selected] { background: rgb(90 145 222 / .1); }
+.paw-desktop-root .paw-room-chronology__dispatch-candidates li[data-selected] { background: color-mix(in srgb, var(--paw-chat-accent) 10%, transparent); }
 .paw-desktop-root .paw-room-chronology__dispatch-candidates li strong { font-size: 12.5px; font-weight: 640; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li small { overflow: hidden; color: #8a94a3; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li span { color: #758092; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__dispatch-candidates li small { overflow: hidden; color: var(--paw-chat-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__dispatch-candidates li span { color: var(--paw-chat-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .paw-desktop-root .paw-room-chronology__dispatch-ids { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 6px 0 0; font-size: 12px; }
 .paw-desktop-root .paw-room-chronology__dispatch-ids > div { display: contents; }
-.paw-desktop-root .paw-room-chronology__dispatch-ids dt { color: #939ca3; }
-.paw-desktop-root .paw-room-chronology__dispatch-ids dd { min-width: 0; overflow: hidden; margin: 0; color: #5f6b7c; font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__terminal { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 4px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #c53d46 24%, rgb(29 36 48 / .08)); border-radius: 10px; background: color-mix(in srgb, #c53d46 5%, #fff); color: #c53d46; }
-.paw-desktop-root .paw-room-chronology__terminal[data-status='aborted'] { border-color: color-mix(in srgb, #b56808 26%, rgb(29 36 48 / .08)); background: color-mix(in srgb, #b56808 5%, #fff); color: #b56808; }
+.paw-desktop-root .paw-room-chronology__dispatch-ids dt { color: var(--paw-chat-text-tertiary); }
+.paw-desktop-root .paw-room-chronology__dispatch-ids dd { min-width: 0; overflow: hidden; margin: 0; color: var(--paw-chat-text-secondary); font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__terminal { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 4px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--paw-chat-danger) 24%, var(--paw-chat-border)); border-radius: var(--paw-chat-radius-tool, 10px); background: color-mix(in srgb, var(--paw-chat-danger) 5%, #fff); color: var(--paw-chat-danger); }
+.paw-desktop-root .paw-room-chronology__terminal[data-status='aborted'] { border-color: color-mix(in srgb, var(--paw-chat-warn) 26%, var(--paw-chat-border)); background: color-mix(in srgb, var(--paw-chat-warn) 5%, #fff); color: var(--paw-chat-warn); }
 .paw-desktop-root .paw-room-chronology__terminal > span { display: grid; gap: 2px; }
 .paw-desktop-root .paw-room-chronology__terminal strong { font-size: 14px; }
-.paw-desktop-root .paw-room-chronology__terminal small { color: #687486; font-size: 13px; line-height: 1.5; }
+.paw-desktop-root .paw-room-chronology__terminal small { color: var(--paw-chat-text-secondary); font-size: 13px; line-height: 1.5; }
 
 /* Room Focus: one light collaboration plane, a complete main window and
  * participant/tool satellites in two information rails. */
@@ -1008,7 +1030,7 @@
   .paw-desktop-root .paw-room-workspace__focus svg { width: 14px; height: 14px; }
   .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline__canvas { width: calc(100% - 12px); padding: 12px 3px 18px; }
   .paw-desktop-root .paw-room-chronology__message[data-role='user'] { max-width: 88%; }
-  .paw-desktop-root .paw-room-chronology__message > div { font-size: 15px; }
+  .paw-desktop-root .paw-room-chronology__message > div { font-size: 15px; line-height: 23px; }
   .paw-desktop-root .paw-room-chronology__activity,
   .paw-desktop-root .paw-room-chronology__terminal { grid-template-columns: 22px minmax(0, 1fr); }
   .paw-desktop-root .paw-room-chronology__activity > time { display: none; }
@@ -1053,9 +1075,10 @@
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-room-tools { animation: none; }
   .paw-desktop-root .paw-room-tools__tabs > button::after { transition: none; }
-  .paw-desktop-root .paw-room-chronology__reveal,
-  .paw-desktop-root .paw-room-chronology__detail-reveal { transition: opacity 90ms linear; }
+  .paw-desktop-root .paw-room-chronology__fold > summary > svg { transition: none; }
 }
+
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-room-chronology__fold > summary > svg { transition: none; }
 
 @media (max-width: 720px) {
   .paw-desktop-root .paw-window-layer[data-room-focus] .paw-window-shell[data-focus-layout] {
