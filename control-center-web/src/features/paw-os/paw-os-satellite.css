@@ -228,6 +228,9 @@
 .paw-participant-chat__timeline article[data-kind='activity'] { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; padding-block: 3px; }
 .paw-participant-chat__activity-state { display: grid; width: 16px; height: 16px; flex: 0 0 16px; place-items: center; }
 .paw-participant-chat__timeline article[data-kind='activity'] > strong { flex: 0 0 auto; color: var(--paw-muted); font-size: 12px; font-weight: 600; line-height: 18px; }
+/* 类别 logo 替代文字（框小，图4）：完整含义在 aria-label/title 里。 */
+.paw-participant-chat__activity-glyph { display: grid; place-items: center; }
+.paw-participant-chat__activity-glyph .paw-room-activity-glyph { display: grid; width: 16px; height: 16px; place-items: center; color: var(--paw-muted); }
 .paw-participant-chat__activity-message { flex: 1 1 0; min-width: 0; overflow: hidden; color: color-mix(in srgb, var(--paw-ink) 82%, var(--paw-muted)); font-size: 12.5px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .paw-participant-chat__timeline article[data-kind='activity'] > time { flex: 0 0 auto; color: color-mix(in srgb, var(--paw-muted) 74%, transparent); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
 .paw-participant-chat__timeline article[data-kind='activity'][data-status='failed'] .paw-participant-chat__activity-message,

@@ -27,6 +27,7 @@ import {
   roomToolEvidence,
   type RoomToolFact,
 } from '@/paw-os/apps/room-gravity-projection';
+import { RoomActivityGlyph } from '@/paw-os/apps/room-tool-glyph';
 import './paw-os-satellite.css';
 
 export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
@@ -439,6 +440,7 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
           role: 'assistant' as const,
           status: activity.status,
           eventType,
+          toolName: stringValue(activity.payload.toolName, stringValue(activity.payload.toolId)),
           text: detail,
           summary: dispatch || conciseParticipantActivity(eventType, activity.status, activity.payload, detail),
           facts,
@@ -531,6 +533,8 @@ type ParticipantTimelineEntryData = {
   role: string;
   status: string;
   eventType: string;
+  /** Runtime tool identity, so the tight row can show a glyph, not a word. */
+  toolName?: string;
   text: string;
   summary: string;
   /** Structured tool evidence (op, arguments, result digest) for disclosure. */
@@ -605,6 +609,7 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
       rawText={entry.text}
       status={entry.status}
       time={entry.time}
+      toolName={entry.toolName}
     />;
   }
   const sourceLabel = fromParticipant
@@ -623,10 +628,11 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
   </article>;
 }
 
-/** 工具/运行事件压成一行：状态 · 类型 · 消息（可截断）· 时间弱化在行尾。
+/** 工具/运行事件压成一行：状态 · 类别 logo · 消息（可截断）· 时间弱化在行尾。
+ *  类别用 logo 替代文字（框本来就小，图4）；完整含义留在 aria-label/title。
  *  失败沿用红色警示图标；披露展开为结构化执行详情（操作、参数、结果），
  *  超出摘要的公开原文仍折在同一披露里（共享 Agent 对话的披露工艺）。 */
-function SatelliteActivityRow({ direction, eventType, facts, message, rawContentId, rawLabel, rawText, status, time }: {
+function SatelliteActivityRow({ direction, eventType, facts, message, rawContentId, rawLabel, rawText, status, time, toolName }: {
   direction: 'in' | 'out';
   eventType: string;
   facts?: RoomToolFact[];
@@ -636,12 +642,13 @@ function SatelliteActivityRow({ direction, eventType, facts, message, rawContent
   rawText: string;
   status: string;
   time: number;
+  toolName?: string;
 }) {
   const hasRaw = rawText.trim() !== message.trim();
   const hasFacts = Boolean(facts?.length);
   return <article data-direction={direction} data-event-type={eventType} data-kind="activity" data-status={status}>
     <span className="paw-participant-chat__activity-state"><SatelliteRunState eventType={eventType} status={status} /></span>
-    <strong>{roomSatelliteEntryLabel(eventType)}</strong>
+    <strong className="paw-participant-chat__activity-glyph"><RoomActivityGlyph eventType={eventType} toolName={toolName} /></strong>
     <span className="paw-participant-chat__activity-message" title={message}>{message}</span>
     <time>{time ? formatTime(time) : ''}</time>
     {hasRaw || hasFacts ? (
@@ -829,12 +836,6 @@ function roomSatelliteActivityText(
   return `${tool} 已返回`;
 }
 
-function roomSatelliteEntryLabel(eventType: string): string {
-  if (eventType === 'tool' || eventType.startsWith('tool_')) return '工具';
-  if (eventType === 'reasoning_summary' || eventType === 'thinking') return '思考摘要';
-  if (eventType.includes('route') || eventType.includes('dispatch')) return '任务分派';
-  return '进展';
-}
 
 function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'subagent' }> }) {
   const transport = useControlTransport();

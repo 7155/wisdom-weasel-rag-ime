@@ -282,7 +282,10 @@ describe('PawOsSatelliteHost', () => {
     expect(row).not.toBeNull();
     expect(row?.querySelector('header')).toBeNull();
     expect(row?.querySelector('p')).toBeNull();
-    expect(row?.querySelector('strong')).toHaveTextContent('工具');
+    // The category is a glyph in the tight frame; the full meaning stays in
+    // the accessible label and names the concrete tool (图4, PF-CM-013).
+    expect(row?.querySelector('strong')).not.toHaveTextContent('工具');
+    expect(row?.querySelector('strong .paw-room-activity-glyph')).toHaveAttribute('aria-label', '工具 · 读取文件');
     expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveTextContent('已创建 interface.js');
     expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveAttribute('title', '已创建 interface.js');
     expect(row?.querySelector('time')).toHaveTextContent(/\d/);

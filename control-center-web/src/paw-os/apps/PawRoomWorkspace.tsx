@@ -64,8 +64,11 @@ import {
   roomDispatchPlanFromActivity,
   roomDispatchSourceParticipantId,
   roomGravityToolLabel,
+  roomToolEvidence,
   type RoomDispatchPlan,
+  type RoomToolFact,
 } from './room-gravity-projection';
+import { RoomActivityGlyph } from './room-tool-glyph';
 import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
 import '@/features/rooms/rooms.css';
 
@@ -847,11 +850,21 @@ function PawRoomInlineActivity({ activity, dispatchPlans = [], onApprovalDecisio
       room={room}
     />;
   }
+  const toolFacts = !approvalId && (eventType === 'tool' || eventType.startsWith('tool_'))
+    ? roomToolEvidence(activity.payload)?.facts ?? []
+    : [];
+  const rawBody = rawDetail && rawDetail !== summary ? rawDetail : '';
   return <article className="paw-room-chronology__activity" data-kind={approvalId ? 'approval' : eventType} data-status={activity.status}>
     <span aria-hidden="true">{approvalId ? <ShieldAlert size={14} /> : activity.status === 'completed' ? <CheckCircle2 size={14} /> : <LoaderCircle className={activity.status === 'running' ? 'ui-spin' : undefined} size={14} />}</span>
-    <div><strong title={participant?.displayName}>{participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'} · {pawRoomActivityKindLabel(eventType, approvalId)}</strong><p>{summary}</p></div>
+    <div>
+      <strong title={participant?.displayName}>
+        {participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'}
+        {approvalId ? ' · 审批' : <RoomActivityGlyph eventType={eventType} toolName={roomText(activity.payload.toolName, roomText(activity.payload.toolId))} />}
+      </strong>
+      <p>{summary}</p>
+    </div>
     <time>{pawRoomClock(activity.createdAtMs)}</time>
-    {rawDetail && rawDetail !== summary ? <PawRoomRawActivityDetail detail={rawDetail} /> : null}
+    {toolFacts.length || rawBody ? <PawRoomRawActivityDetail detail={rawBody} facts={toolFacts} /> : null}
     {processWindow ? <footer><button onClick={() => onOpenProcessActivity?.(activity)} type="button">查看后台 Bash</button></footer> : null}
     {approvalPending ? <footer><button disabled={Boolean(submitting)} onClick={() => decide('approved')} type="button">{submitting === 'approved' ? '正在批准' : '批准并继续'}</button><button disabled={Boolean(submitting)} onClick={() => decide('rejected')} type="button">{submitting === 'rejected' ? '正在拒绝' : '拒绝'}</button></footer> : null}
     {decisionError ? <small role="alert">{decisionError}</small> : null}
@@ -914,7 +927,10 @@ function PawRoomDispatchActivity({ activity, dispatchPlans, plan, room }: {
   </article>;
 }
 
-function PawRoomRawActivityDetail({ detail }: { detail: string }) {
+/** What the tool really did — sent, changed, read — as labeled facts, with
+ * the public raw text folded below (Joshua5: 「要能够点开看到具体内容的，
+ * 例如发送了什么，修改了什么，读取了哪些」). */
+function PawRoomRawActivityDetail({ detail, facts = [] }: { detail: string; facts?: RoomToolFact[] }) {
   const detailId = `paw-room-activity-detail-${useId().replaceAll(':', '')}`;
   const [open, setOpen] = useState(false);
   const [presence, setPresence] = useState(false);
@@ -924,14 +940,19 @@ function PawRoomRawActivityDetail({ detail }: { detail: string }) {
       aria-expanded={open}
       onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
       onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-    >详情</summary>
+    >{facts.length ? '查看执行详情' : '详情'}</summary>
     <SmoothDisclosureReveal
       className="paw-room-chronology__detail-reveal"
       id={detailId}
       onPresenceChange={setPresence}
       open={open}
     >
-      <p>{detail}</p>
+      {facts.length ? (
+        <dl className="paw-room-chronology__tool-facts">
+          {facts.map((fact) => <div key={`${fact.label}:${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
+        </dl>
+      ) : null}
+      {detail ? <p>{detail}</p> : null}
     </SmoothDisclosureReveal>
   </details>;
 }
@@ -970,13 +991,6 @@ function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: str
   return detail && !pawRoomRawDetail(detail) ? pawRoomCompactText(detail) : '公开进展已更新';
 }
 
-function pawRoomActivityKindLabel(eventType: string, approvalId: string): string {
-  if (approvalId) return '审批';
-  if (eventType.startsWith('tool_')) return '工具';
-  if (eventType.includes('reasoning') || eventType.includes('thinking')) return '思考摘要';
-  if (eventType.includes('route') || eventType.includes('dispatch')) return '任务分派';
-  return '进展';
-}
 
 function pawRoomRawDetail(value: string): boolean {
   return value.includes('\n')

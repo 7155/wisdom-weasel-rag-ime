@@ -548,12 +548,20 @@
 .paw-desktop-root .paw-room-chronology__activity[data-status='failed'] > span { color: var(--room-red); }
 .paw-desktop-root .paw-room-chronology__activity[data-kind='approval'] > span { color: var(--room-red); }
 .paw-desktop-root .paw-room-chronology__activity > div { min-width: 0; display: grid; gap: 1px; }
-.paw-desktop-root .paw-room-chronology__activity > div strong { overflow: hidden; color: #4e5a6b; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__activity > div strong { display: flex; align-items: center; gap: 5px; overflow: hidden; color: #4e5a6b; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* 类别 logo 替代「工具/进展」等字（Joshua5 图4）；完整含义在 aria-label/title。 */
+.paw-desktop-root .paw-room-chronology__activity .paw-room-activity-glyph { display: grid; flex-shrink: 0; width: 15px; height: 15px; place-items: center; color: #8b95a5; }
 .paw-desktop-root .paw-room-chronology__activity > div p { margin: 0; color: #687486; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .paw-desktop-root .paw-room-chronology__activity > time { color: #9aa3b2; font-size: 12px; font-variant-numeric: tabular-nums; }
 .paw-desktop-root .paw-room-chronology__activity-detail { min-width: 0; grid-column: 2 / -1; font-size: 13px; }
 .paw-desktop-root .paw-room-chronology__activity-detail > summary { width: fit-content; cursor: pointer; color: #758092; }
 .paw-desktop-root .paw-room-chronology__activity-detail p { max-height: 160px; margin: 6px 0 0; padding: 8px; overflow: auto; border-radius: 8px; background: #f2f4f7; font: 12px/18px var(--font-mono); white-space: pre-wrap; }
+/* 执行详情 — 发送了什么、修改了什么、读取了哪些，作为带标签的事实表。 */
+.paw-desktop-root .paw-room-chronology__tool-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; margin: 6px 0 0; padding: 7px 9px; border: 1px solid rgb(42 45 52 / .08); border-radius: 8px; background: #f7f8fa; font-size: 12px; line-height: 17px; }
+.paw-desktop-root .paw-room-chronology__tool-facts > div { display: contents; }
+.paw-desktop-root .paw-room-chronology__tool-facts dt { color: #8b95a5; white-space: nowrap; }
+.paw-desktop-root .paw-room-chronology__tool-facts dd { min-width: 0; margin: 0; color: #4e5a6b; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-chronology__tool-facts + p { margin-top: 5px; }
 .paw-desktop-root .paw-room-chronology__activity > footer { grid-column: 2 / -1; display: flex; gap: 7px; }
 .paw-desktop-root .paw-room-chronology__activity > footer button,
 .paw-desktop-root .paw-room-chronology__terminal > button { min-height: 30px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--room-violet); font-size: 14px; cursor: pointer; }
