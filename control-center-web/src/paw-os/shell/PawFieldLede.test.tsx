@@ -8,15 +8,23 @@ afterEach(cleanup);
 describe('Project Field lede', () => {
   it('states what the machine is for in real product nouns and offers one way in', () => {
     const onOpen = vi.fn();
-    render(<PawFieldLede onOpen={onOpen} />);
+    const { container } = render(<PawFieldLede onOpen={onOpen} />);
 
-    // The first viewport's subject names the things the product actually has
-    // — a Session, its receipts, the two governed stores — instead of generic
-    // workspace copy.
+    // The heading claims the outcome; the sentence under it names the things
+    // the product actually has — a Session, its receipts, the two governed
+    // stores — instead of generic workspace copy.
     const heading = screen.getByRole('heading', { level: 2 });
-    expect(heading).toHaveTextContent('交给 Session 一件事。');
-    expect(screen.getByText(/回执/)).toHaveTextContent('记忆与知识');
-    expect(screen.getByText(/回执/)).toHaveTextContent('上下文');
+    expect(heading).toHaveTextContent('做过的事，下次不用重讲。');
+    // The heading must not repeat the Agent home title the button leads to;
+    // the two lines are one path, not an echo.
+    expect(heading.textContent).not.toContain('交给 Agent');
+    const copy = container.querySelector('.paw-field-lede__copy');
+    for (const noun of ['Session', '回执', '记忆与知识', '上下文']) {
+      expect(copy).toHaveTextContent(noun);
+    }
+    // Emphasis is spent on the three real things on that path, nothing else.
+    expect([...container.querySelectorAll('.paw-field-lede__copy b')].map((node) => node.textContent))
+      .toEqual(['回执', '记忆与知识', '上下文']);
 
     // Exactly one action: the desktop is a way into work, never a second
     // place to configure or start it.

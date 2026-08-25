@@ -11,6 +11,10 @@ import { PawBrandMark } from './PawAppIcon';
  * 品牌语法（钴蓝短杠的眉标、重字重标题、标题里一处钴蓝 em），所以桌面和 App
  * 读起来是同一个产品，而不是两套设计。
  *
+ * 标题说结果，副句说这个结果是怎么来的：三个加重的词就是那条路径上真实存在的
+ * 三样东西。标题刻意不与 Agent 首页的「交给 Agent 一件事。」同句——按钮通向那
+ * 一屏，两句连起来读是一条路，重复一遍就只是回声。
+ *
  * 边界：
  * - 只做导航，不持有任何状态、不发请求、不缓存任何进度。项目场是进入工作的
  *   入口，永远不是开始 Session 的前置条件（PROJECT.md 非目标）。
@@ -29,9 +33,10 @@ export const PawFieldLede = memo(function PawFieldLede({ onOpen }: { onOpen: (ap
         <b className="paw-brand-wordmark">PAW</b>
         <span>项目场</span>
       </p>
-      <h2 className="paw-field-lede__title">交给 Session <em>一件事</em>。</h2>
+      <h2 className="paw-field-lede__title">做过的事，下次<em>不用重讲</em>。</h2>
       <p className="paw-field-lede__copy">
-        做完之后留下回执；被接受的那部分才进入记忆与知识，下一次工作从更短的上下文开始。
+        交给 Session 一件事；做完留下<b>回执</b>，被接受的那部分进入
+        <b>记忆与知识</b>，下一次工作从更短的<b>上下文</b>开始。
       </p>
       <button className="paw-field-lede__start" onClick={() => onOpen('agent')} type="button">
         开始一件事<ArrowRight aria-hidden="true" size={15} />

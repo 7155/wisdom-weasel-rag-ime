@@ -423,6 +423,9 @@
    gives its own title — deep enough to clear AA against the veil floor. */
 .paw-desktop-root .paw-field-lede__title em { color: #1e50d8; }
 .paw-desktop-root .paw-field-lede__copy { color: #2c3645; }
+/* The keyed nouns step up to the deepest proven ink rather than taking a
+   second accent: the composition keeps exactly one cobalt word. */
+.paw-desktop-root .paw-field-lede__copy b { color: #171a21; }
 .paw-desktop-root .paw-field-lede__start {
   color: #fff;
   background: #1e50d8;

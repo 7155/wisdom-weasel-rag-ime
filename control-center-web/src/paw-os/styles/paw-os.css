@@ -363,13 +363,22 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-field-lede__title {
   margin: 0 0 10px;
   font-size: clamp(27px, 2.5vw, 38px); font-weight: 720; letter-spacing: -.035em; line-height: 1.14;
+  text-wrap: balance;
 }
 .paw-field-lede__title em { font-style: normal; }
 .paw-field-lede__copy {
-  max-width: 32em;
+  max-width: 31em;
   margin: 0 0 18px;
-  font-size: 13.5px; font-weight: 450; line-height: 1.66;
+  font-size: 14px; font-weight: 450; line-height: 1.68;
+  text-wrap: pretty;
 }
+/* The three things that actually exist on the path the sentence describes.
+   Weight and ink only — no chip, no rule, no colour of their own — so the
+   line still reads as one sentence while those three words survive being
+   read from across a room. CJK breaks between any two characters, so each
+   keyed noun is held together: a term split down the middle stops being a
+   term. */
+.paw-field-lede__copy b { font-weight: 620; white-space: nowrap; }
 .paw-field-lede__start {
   display: inline-flex; align-items: center; gap: 8px;
   min-height: 36px; padding: 0 16px 0 18px;
