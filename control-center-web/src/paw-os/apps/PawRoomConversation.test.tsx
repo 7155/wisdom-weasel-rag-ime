@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoomProjection } from '@/contracts/room-reducer';
@@ -179,6 +179,55 @@ describe('PawRoomConversation', () => {
     expect(reveal).toHaveAttribute('data-state', 'closing');
     fireEvent.transitionEnd(reveal, { propertyName: 'height' });
     expect(detail).not.toHaveAttribute('open');
+  });
+
+  it('expands an edit receipt into the shared structured diff reader, not a flat text wall', async () => {
+    const user = userEvent.setup();
+    const { projection, room } = roomConversation();
+    const diff = [
+      '--- a/src/example.ts',
+      '+++ b/src/example.ts',
+      '@@ -1,3 +1,4 @@',
+      ' export function greet() {',
+      "-  return 'hi';",
+      "+  const name = 'PAW';",
+      '+  return `hi ${name}`;',
+      ' }',
+    ].join('\n');
+    projection.activityOrder.push('edit-a');
+    projection.activitiesById['edit-a'] = {
+      id: 'edit-a', turnId: 'root-a', participantId: 'participant-a', sourceSessionId: 'session-a',
+      kind: 'tool', status: 'completed', summary: 'edit',
+      payload: {
+        sourceEventType: 'tool_finished',
+        toolCallId: 'call-edit-a',
+        toolName: 'edit',
+        arguments: { path: 'src/example.ts' },
+        result: { details: { ok: true, diff } },
+      },
+      sequence: 6, createdAtMs: 150, updatedAtMs: 150,
+    };
+
+    render(<PawRoomConversation
+      onApprovalDecision={async () => undefined}
+      onRetryTurn={() => undefined}
+      projection={projection}
+      retryingTurn={false}
+      room={room}
+    />);
+
+    // The reader line derives from real evidence, never the machine tool id.
+    const editFold = screen.getByText('编辑文件 已完成').closest('details') as HTMLDetailsElement;
+    await user.click(editFold.querySelector('summary')!);
+    await user.click(within(editFold).getByText('查看执行详情'));
+
+    const output = within(editFold).getByLabelText('工具变更差异');
+    expect(output.querySelector(':scope > pre')).toBeNull();
+    const preview = output.querySelector<HTMLElement>('.agent-diff-preview')!;
+    expect(preview).not.toBeNull();
+    expect(preview).toHaveTextContent('src/example.ts');
+    expect(preview.querySelector('tr[data-kind="add"]')).toHaveTextContent("const name = 'PAW';");
+    expect(preview.querySelector('tr[data-kind="remove"]')).toHaveTextContent("return 'hi';");
   });
 
   it('opens a Room background Bash only from an explicit activity action', async () => {
