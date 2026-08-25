@@ -96,6 +96,9 @@ describe('starfield scene model', () => {
       expect(body.speedFactor).toBeGreaterThanOrEqual(0.85);
       expect(body.speedFactor).toBeLessThanOrEqual(1.15);
       expect(Math.abs(body.inclinationRad)).toBeLessThan(0.2);
+      expect(body.eccentricity).toBeGreaterThanOrEqual(0);
+      expect(body.eccentricity).toBeLessThanOrEqual(0.18);
+      expect(Math.abs(body.axialTiltRad)).toBeLessThanOrEqual(0.2);
     }
     // Deterministic: the same projection always yields the same sky.
     expect(buildSessionSceneModel(sessionModel(), { busy: true, sessionTitle: '当前 Session' })).toEqual(scene);
@@ -128,6 +131,11 @@ describe('starfield scene model', () => {
       label: '交接复核',
     }]);
     expect(scene.ringRadii).toHaveLength(2);
+    for (const body of scene.bodies) {
+      expect(body.eccentricity).toBeGreaterThanOrEqual(0);
+      expect(body.eccentricity).toBeLessThanOrEqual(0.36);
+      expect(Math.abs(body.axialTiltRad)).toBeLessThanOrEqual(0.3);
+    }
   });
 
   it('maps every Room in the galaxy to a star with polar world coordinates', () => {

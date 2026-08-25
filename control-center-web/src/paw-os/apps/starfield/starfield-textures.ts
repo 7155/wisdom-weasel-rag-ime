@@ -363,6 +363,36 @@ export function normalMapFromHeight(
 }
 
 /* ------------------------------------------------------------------ */
+/* Cloud / atmosphere shell maps                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Soft translucent cloud sheet for terra/ocean bodies — q-jade Earth
+ * cloud layer seasoning, generated procedurally so nothing is fetched.
+ */
+export function generateCloudMap(seed: string, width = 256, height?: number): GeneratedTextureData {
+  const heightPx = height ?? Math.max(4, width >> 1);
+  const s = textureSeed(`cloud|${seed}`);
+  const data = new Uint8ClampedArray(width * heightPx * 4);
+  for (let py = 0; py < heightPx; py += 1) {
+    const v = (py + 0.5) / heightPx;
+    for (let px = 0; px < width; px += 1) {
+      const u = (px + 0.5) / width;
+      const banks = periodicFbm(u * 10, v * 5, 10, s + 17, 5);
+      const wisps = periodicFbm(u * 22, v * 11, 22, s + 41, 3);
+      const coverage = smoothstep(0.48, 0.78, banks * 0.72 + wisps * 0.28);
+      const brightness = 210 + wisps * 45;
+      const offset = (py * width + px) * 4;
+      data[offset] = brightness;
+      data[offset + 1] = brightness;
+      data[offset + 2] = Math.min(255, brightness + 8);
+      data[offset + 3] = coverage * 170;
+    }
+  }
+  return { width, height: heightPx, data };
+}
+
+/* ------------------------------------------------------------------ */
 /* Sun / star granulation                                              */
 /* ------------------------------------------------------------------ */
 
@@ -454,11 +484,11 @@ export function generateSkyMap(seed: string, width = 768, height?: number): Gene
       const nebulaViolet = smoothstep(0.58, 0.94, periodicFbm(u * 8, v * 4, 8, s + 41, 5));
       const dust = periodicFbm(u * 10, v * 5, 10, s + 51, 3);
 
-      let red = 5 + nebulaBlue * 24 + nebulaViolet * 52 + band * (34 + 30 * bandTexture);
-      let green = 7 + nebulaBlue * 38 + nebulaViolet * 30 + band * (30 + 26 * bandTexture);
-      let blue = 16 + nebulaBlue * 88 + nebulaViolet * 86 + band * (38 + 30 * bandTexture);
+      let red = 4 + nebulaBlue * 28 + nebulaViolet * 58 + band * (42 + 38 * bandTexture);
+      let green = 6 + nebulaBlue * 44 + nebulaViolet * 34 + band * (36 + 32 * bandTexture);
+      let blue = 14 + nebulaBlue * 96 + nebulaViolet * 92 + band * (48 + 36 * bandTexture);
       // Dark dust lanes threading the bright band.
-      const lane = 1 - band * smoothstep(0.55, 0.85, dust) * 0.5;
+      const lane = 1 - band * smoothstep(0.52, 0.88, dust) * 0.58;
       red *= lane;
       green *= lane;
       blue *= lane;
@@ -472,7 +502,7 @@ export function generateSkyMap(seed: string, width = 768, height?: number): Gene
   }
 
   // Scattered stars, denser inside the band (rejection sampling by hash).
-  const starCount = Math.round(width * heightPx * 0.0045);
+  const starCount = Math.round(width * heightPx * 0.0058);
   for (let index = 0; index < starCount; index += 1) {
     const h1 = hashUint(s ^ Math.imul(index + 1, 0x27d4eb2f));
     const h2 = hashUint(h1 + 0x9e3779b9);
@@ -630,6 +660,11 @@ export class StarfieldTextureFactory {
 
   sky(seed: string): THREE.DataTexture {
     return this.acquire(`sky:${seed}`, { srgb: true, wrapX: true }, () => generateSkyMap(seed));
+  }
+
+  cloud(seed: string, width = 256): THREE.DataTexture {
+    return this.acquire(`cloud:${textureSeed(seed)}:${width}`, { srgb: true, wrapX: true }, () =>
+      generateCloudMap(seed, width));
   }
 
   ring(seed: string): THREE.DataTexture {

@@ -41,9 +41,17 @@ export interface SceneBody {
   subtitle: string;
   /** One-line honest description for hover / feed cross-reference. */
   detail: string;
+  /** Semi-major axis in world units (circular when eccentricity is 0). */
   orbitRadius: number;
   phaseRad: number;
   inclinationRad: number;
+  /**
+   * Visual eccentricity 0..~0.45 (q-jade solar-system seasoning). Never
+   * claims real ephemeris — only decorates the sky from a stable seed.
+   */
+  eccentricity: number;
+  /** Axial tilt applied before self-spin, radians. */
+  axialTiltRad: number;
   size: number;
   /** Stable palette slot 0..5 — also keys the surface archetype/texture. */
   paletteIndex: number;
@@ -105,6 +113,15 @@ function inclination(seed: string, spreadRad = 0.24): number {
   return Math.round((starfieldUnit(seed) - 0.5) * spreadRad * 1000) / 1000;
 }
 
+/** Mild eccentricity so orbits read as ellipses without crushing the stage. */
+function eccentricity(seed: string, max = 0.32): number {
+  return Math.round(starfieldUnit(seed) * max * 1000) / 1000;
+}
+
+function axialTilt(seed: string, spreadRad = 0.45): number {
+  return Math.round((starfieldUnit(seed) - 0.5) * spreadRad * 1000) / 1000;
+}
+
 function uniqueSortedRadii(bodies: readonly SceneBody[]): number[] {
   return [...new Set(bodies.map((body) => Math.round(body.orbitRadius * 100) / 100))]
     .sort((left, right) => left - right);
@@ -127,6 +144,8 @@ export function buildSessionSceneModel(
     orbitRadius: Math.round(moon.orbit.radius * VIEWBOX_TO_WORLD * 100) / 100,
     phaseRad: Math.round((moon.orbit.angleDeg * Math.PI) / 180 * 1000) / 1000,
     inclinationRad: inclination(`${model.sessionId}:ring:${moon.orbit.ring}`),
+    eccentricity: eccentricity(`${moon.runId}:e`, 0.18),
+    axialTiltRad: axialTilt(`${moon.runId}:tilt`, 0.35),
     size: 0.3,
     paletteIndex: Math.floor(starfieldUnit(`${moon.runId}:hue`) * 6),
     speedFactor: speedFactor(moon.runId),
@@ -166,6 +185,9 @@ export function buildRoomSceneModel(
     orbitRadius: Math.round(planet.radius * VIEWBOX_TO_WORLD * 100) / 100,
     phaseRad: Math.round((planet.angleDeg * Math.PI) / 180 * 1000) / 1000,
     inclinationRad: inclination(`${roomId}:orbit:${planet.orbitIndex}`, 0.18),
+    // Room solar system: slightly more eccentric so partner paths diverge.
+    eccentricity: eccentricity(`${planet.participantId}:e`, 0.36),
+    axialTiltRad: axialTilt(`${planet.participantId}:tilt`, 0.55),
     size: 0.56,
     paletteIndex: planet.orbitIndex % 6,
     speedFactor: speedFactor(planet.participantId),
@@ -213,6 +235,9 @@ export function buildGalaxySceneModel(model: GalaxyStarfieldModel): StarfieldSce
       orbitRadius: Math.round(Math.hypot(dx, dy) * VIEWBOX_TO_WORLD * 100) / 100,
       phaseRad: Math.round(Math.atan2(dy, dx) * 1000) / 1000,
       inclinationRad: inclination(`${system.roomId}:tilt`, 0.14),
+      // Galaxy stars sit on fixed polar positions — keep circular.
+      eccentricity: 0,
+      axialTiltRad: axialTilt(`${system.roomId}:spin`, 0.4),
       size: Math.round((0.42 + system.scale * 0.28) * 100) / 100,
       paletteIndex: system.hueIndex,
       speedFactor: speedFactor(system.roomId),
