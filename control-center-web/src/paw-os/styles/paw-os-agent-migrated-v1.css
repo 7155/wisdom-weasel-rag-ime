@@ -984,16 +984,17 @@
   outline-offset: 1px;
 }
 
+/* 选中的筛选此前用一枚暖炭灰，落在这套冷调蓝灰表面上是另一种黑。 */
 .paw-agent-trace-v1__filters button[aria-pressed='true'] {
-  border-color: #2c2c2b;
+  border-color: var(--paw-chat-text);
   color: #fff;
-  background: #2c2c2b;
+  background: var(--paw-chat-text);
 }
 
 .paw-agent-trace-v1__filters button[aria-pressed='true']:hover {
-  border-color: #3d3d3b;
+  border-color: color-mix(in srgb, var(--paw-chat-text) 84%, #fff);
   color: #fff;
-  background: #3d3d3b;
+  background: color-mix(in srgb, var(--paw-chat-text) 84%, #fff);
 }
 
 .paw-agent-trace-v1__filters button span {
@@ -1004,27 +1005,35 @@
 
 .paw-agent-trace-v1__turns {
   display: grid;
-  gap: 16px;
+  gap: 0;
   width: min(860px, 100%);
   margin: 0 auto;
 }
 
+/* 一轮是文档里的一节，不是一张卡片。外框、圆角、阴影和头部底色一共叠了四层
+   chrome 去说明「这些行属于同一轮」，而一条规则线加一个标题就说完了；省下的
+   宽度和高度全部还给事件行。 */
 .paw-agent-trace-v1__turn {
   overflow: hidden;
-  border: 1px solid var(--paw-chat-border);
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 2%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .paw-agent-trace-v1__turn > header {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-height: 38px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--paw-chat-border);
-  background: #f8f8f7;
+  min-height: 30px;
+  padding: 10px 3px 4px;
+  border-top: 1px solid var(--paw-chat-border);
+  background: transparent;
+}
+
+.paw-agent-trace-v1__turn:first-child > header {
+  padding-top: 2px;
+  border-top: 0;
 }
 
 .paw-agent-trace-v1__turn > header strong {
@@ -1045,12 +1054,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 状态是一个词，不是一枚徽章：每行一枚填充胶囊，在密集的事件树里既是卡片
+   语汇，也吃掉标题与摘要的可读宽度。颜色本身已经说清了状态。 */
 .paw-agent-trace-v1__turn > header > i,
 .paw-agent-trace-v1__event > summary > i {
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: 0;
+  border-radius: 0;
   color: var(--paw-chat-text-secondary);
-  background: var(--paw-chat-surface-subtle);
+  background: transparent;
   font-size: 12px;
   font-style: normal;
   white-space: nowrap;
@@ -1059,33 +1070,31 @@
 .paw-agent-trace-v1__turn > header > i[data-status='completed'],
 .paw-agent-trace-v1__turn li[data-status='completed'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-ok);
-  background: rgb(31 157 77 / 9%);
 }
 
 .paw-agent-trace-v1__turn > header > i[data-status='running'],
 .paw-agent-trace-v1__turn li[data-status='running'] .paw-agent-trace-v1__event > summary > i,
 .paw-agent-trace-v1__turn li[data-status='streaming'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-accent);
-  background: rgb(39 131 222 / 9%);
 }
 
 .paw-agent-trace-v1__turn > header > i[data-status='waiting'],
 .paw-agent-trace-v1__turn li[data-status='waiting'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-warn);
-  background: rgb(178 106 0 / 9%);
 }
 
 .paw-agent-trace-v1__turn > header > i[data-status='failed'],
 .paw-agent-trace-v1__turn li[data-status='failed'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-danger);
-  background: rgb(205 60 58 / 9%);
 }
 
 .paw-agent-trace-v1__turn ol {
   position: relative;
   display: grid;
   margin: 0;
-  padding: 8px 12px 10px;
+  /* Inline padding holds the tree spine's 75px offset; only the vertical
+     padding is the turn card's leftover breathing room. */
+  padding: 2px 12px 6px;
   list-style: none;
 }
 
@@ -1166,19 +1175,21 @@
   background: #fff;
 }
 
+/* 节点的填充必须由描边的那枚 token 调出来。写死的 rgb() 与它旁边的
+   token 是两种蓝、两种紫，同一枚小圆点上就能看出色板对不齐。 */
 .paw-agent-trace-v1__turn li[data-category='tool'] .paw-agent-trace-v1__node {
   border-color: var(--paw-chat-accent);
-  background: rgb(39 131 222 / 12%);
+  background: color-mix(in srgb, var(--paw-chat-accent) 12%, #fff);
 }
 
 .paw-agent-trace-v1__turn li[data-category='appr'] .paw-agent-trace-v1__node {
   border-color: var(--paw-chat-warn);
-  background: rgb(178 106 0 / 12%);
+  background: color-mix(in srgb, var(--paw-chat-warn) 12%, #fff);
 }
 
 .paw-agent-trace-v1__turn li[data-category='sub'] .paw-agent-trace-v1__node {
   border-color: var(--paw-chat-violet);
-  background: rgb(137 68 171 / 12%);
+  background: color-mix(in srgb, var(--paw-chat-violet) 12%, #fff);
 }
 
 .paw-agent-trace-v1__event-type {

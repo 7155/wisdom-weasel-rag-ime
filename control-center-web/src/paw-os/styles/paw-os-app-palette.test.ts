@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import agentAppSource from '../apps/PawAgentApp.tsx?raw';
+import contextTraceSource from '../apps/PawContextTrace.tsx?raw';
 import appCss from '../apps/paw-apps.css?raw';
 import agentNextCss from './paw-os-agent-next.css?raw';
 import pawOsCss from './paw-os.css?raw';
@@ -82,5 +83,26 @@ describe('UR-104 PAWOS App color identities', () => {
     expect(appCss).not.toContain('.paw-agent-flow-map');
     expect(agentNextCss).toContain('.an-home');
     expect(agentNextCss).toContain('.an-composer');
+  });
+
+  it('draws Agent 轨迹 assembly stages from the workspace palette, not a private one', () => {
+    /* The tokenbar and its legend are the only place seven hues appear at
+       once. When they came from literals in the component, the view carried a
+       second violet, red, cobalt and teal alongside the status dots that use
+       the real tokens. */
+    for (let stage = 1; stage <= 7; stage += 1) {
+      const declaration = agentNextCss.match(new RegExp(`--an-stage-${stage}:\\s*([^;]+);`));
+      expect(declaration?.[1], `--an-stage-${stage}`).toMatch(/^var\(--an-[a-z0-9-]+\)$/);
+      expect(contextTraceSource).toContain(`var(--an-stage-${stage})`);
+    }
+
+    const traceColorLiterals = contextTraceSource.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
+    expect(traceColorLiterals).toEqual([]);
+
+    /* The retired palette also survived in the stylesheet, so the same three
+       hues sat next to their token twins. */
+    for (const retired of ['rgba(47, 77, 164', 'rgba(209, 52, 44', 'rgba(106, 61, 154']) {
+      expect(agentNextCss).not.toContain(retired);
+    }
   });
 });

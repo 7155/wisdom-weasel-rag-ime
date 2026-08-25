@@ -17,6 +17,16 @@
   --an-violet: #7a4db2;
   --an-teal: #128a52;
   --an-rose: #bd4c76;
+  /* The assembly tokenbar is the only place seven hues appear at once, so it
+     spends this palette rather than a private one. A second violet or red
+     sitting beside the status dots reads as two designs sharing a window. */
+  --an-stage-1: var(--an-ink);
+  --an-stage-2: var(--an-violet);
+  --an-stage-3: var(--an-rose);
+  --an-stage-4: var(--an-cobalt);
+  --an-stage-5: var(--an-yellow);
+  --an-stage-6: var(--an-red);
+  --an-stage-7: var(--an-teal);
   --an-mono: "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
   --an-ease-out: cubic-bezier(.16, 1, .3, 1);
   --an-spring: cubic-bezier(.22, 1, .36, 1);
@@ -35,7 +45,7 @@
 .paw-agent-next button:disabled { cursor: default; }
 .paw-agent-next summary { cursor: pointer; list-style: none; }
 .paw-agent-next summary::-webkit-details-marker { display: none; }
-.paw-agent-next ::selection { background: rgba(47, 77, 164, .2); }
+.paw-agent-next ::selection { background: color-mix(in srgb, var(--an-cobalt) 20%, transparent); }
 .paw-agent-next :focus-visible { outline: 2px solid var(--an-cobalt); outline-offset: 2px; }
 .paw-agent-next .mono { font-family: var(--an-mono); }
 .paw-agent-next .ui-spin { animation: an-spin .8s linear infinite; }
@@ -261,7 +271,7 @@
 .an-crumb h1 { margin: 0; overflow: hidden; font-size: 14px; font-weight: 680; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
 .an-crumb-sub { display: flex; align-items: center; gap: 6px; overflow: hidden; color: var(--an-ink-3); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .an-topbar .an-seg { margin-left: auto; }
-.an-trace-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 16px; border-bottom: 1px solid rgba(209, 52, 44, .28); background: rgba(209, 52, 44, .055); color: var(--an-red); font-size: 12.5px; }
+.an-trace-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--an-red) 28%, transparent); background: color-mix(in srgb, var(--an-red) 6%, transparent); color: var(--an-red); font-size: 12.5px; }
 .an-trace-notice button { padding: 4px 9px; border: 1px solid currentColor; border-radius: 6px; background: transparent; font-weight: 650; }
 .an-trace-body { display: flex; min-height: 0; flex: 1; }
 .an-trace-center { min-width: 0; flex: 1; padding: 17px 20px 24px; overflow: auto; }
@@ -292,9 +302,13 @@
 .an-stage-group { margin: 17px 0 7px; }
 .an-stage-group::after,
 .an-side-h::after { height: 1px; flex: 1; background: var(--an-hairline); content: ""; }
-.an-node { margin: 6px 0; overflow: hidden; border: 1px solid var(--an-hairline); border-radius: 8px; background: var(--an-paper-bright); }
-.an-node[data-disp="omitted"] { opacity: .64; background: var(--an-paper); }
-.an-node > summary { display: flex; align-items: center; gap: 10px; min-height: 51px; padding: 8px 12px; cursor: pointer; list-style: none; transition: background 140ms ease; }
+/* 节点是一串按装配顺序读下去的行，不是一摞卡片。每个节点一圈边框、一层底色
+   和 51px 的行高，把通道让给了 chrome，也让二十个节点读成二十个各自独立的
+   对象。行现在挂在同一条分隔线上，只有展开的那一行浮起自己的表面。 */
+.an-node { margin: 0; overflow: hidden; border: 0; border-bottom: 1px solid var(--an-hairline); border-radius: 0; background: transparent; }
+.an-node:last-of-type { border-bottom: 0; }
+.an-node[data-disp="omitted"] { opacity: .64; background: transparent; }
+.an-node > summary { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 3px 6px; border-radius: 6px; cursor: pointer; list-style: none; transition: background 140ms ease; }
 .an-node > summary::-webkit-details-marker { display: none; }
 .an-node > summary:hover,
 .an-node[data-expanded='true'] > summary { background: var(--an-paper-soft); }
@@ -312,7 +326,8 @@
 .an-node .n-tok small { color: var(--an-ink-3); font-weight: 400; }
 .an-disclosure-caret { width: 16px; flex: none; color: var(--an-ink-3); font-size: 20px; line-height: 1; text-align: center; transform: rotate(0deg); transition: transform 160ms ease, color 160ms ease; }
 .an-node[data-expanded='true'] > summary .an-disclosure-caret { color: var(--an-ink); transform: rotate(90deg); }
-.an-node-body { padding: 10px 14px 12px; border-top: 1px dashed var(--an-hairline); }
+/* 展开体挂在序号列右侧，读起来是这一行的续文，而不是它下面的另一块。 */
+.an-node-body { padding: 6px 6px 12px 34px; }
 .an-node-body .nb-row { display: flex; flex-wrap: wrap; gap: 7px 15px; color: var(--an-ink-2); font-size: 12px; }
 .an-node-body .nb-row + .nb-row { margin-top: 7px; }
 .an-node-body .nb-row b { color: var(--an-ink); font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -325,21 +340,25 @@
 .an-assembly-evidence > pre:focus-visible { outline: 2px solid var(--an-cobalt); outline-offset: -3px; }
 .an-side-h { margin: 18px 0 8px; }
 .an-side-h:first-child { margin-top: 0; }
-.an-call { margin-bottom: 10px; overflow: hidden; border: 1px solid var(--an-rule); border-radius: 9px; background: var(--an-paper-bright); }
-.an-call > summary { display: flex; align-items: center; gap: 8px; min-height: 41px; padding: 8px 11px; font-size: 12.5px; font-weight: 650; transition: background 140ms ease; }
+/* 侧栏本身就是 --an-paper-bright：同色卡片只剩下一圈边框在起作用，
+   于是每个模型调用都被一条边框包起来，却没有换来任何区分。 */
+.an-call { margin: 0; overflow: hidden; border: 0; border-bottom: 1px solid var(--an-hairline); border-radius: 0; background: transparent; }
+.an-call:last-of-type { border-bottom: 0; }
+.an-call > summary { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 3px 4px; border-radius: 6px; font-size: 12.5px; font-weight: 650; transition: background 140ms ease; }
 .an-call > summary:hover { background: var(--an-paper-soft); }
 .an-call .c-idx { padding: 2px 6px; border-radius: 5px; background: var(--an-ink); color: var(--an-paper-bright); font-family: var(--an-mono); font-size: 12px; }
 .an-call .c-time { margin-left: auto; color: var(--an-ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-.an-call-body { padding: 10px 11px 12px; border-top: 1px dashed var(--an-hairline); }
+.an-call-body { padding: 6px 4px 12px 12px; }
 .an-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 11px; margin: 0; font-size: 12px; }
 .an-kv dt { color: var(--an-ink-3); }
 .an-kv dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.an-mini-tools { display: flex; margin-top: 9px; flex-direction: column; gap: 5px; }
-.an-mini-tool { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--an-hairline); border-radius: 7px; background: var(--an-paper); font-size: 12px; }
+.an-mini-tools { display: flex; margin-top: 7px; flex-direction: column; gap: 0; }
+/* 一次调用里的并行工具是一份清单，给每一项加一枚圆角方块只会把清单变成贴纸墙。 */
+.an-mini-tool { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 2px 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; }
 .an-mini-tool .mt-name { flex: none; font-family: var(--an-mono); font-size: 12px; font-weight: 680; }
 .an-mini-tool .mt-key { min-width: 0; flex: 1; overflow: hidden; color: var(--an-ink-2); font-family: var(--an-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .an-mini-tool .mt-dur { flex: none; color: var(--an-ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-.an-batch-tag { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid rgba(106, 61, 154, .42); border-radius: 5px; color: var(--an-violet); font-size: 12px; font-weight: 750; letter-spacing: .05em; }
+.an-batch-tag { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--an-violet) 42%, transparent); border-radius: 5px; color: var(--an-violet); font-size: 12px; font-weight: 750; letter-spacing: .05em; }
 .an-events { padding: 4px 2px 18px; }
 .an-ev { display: grid; grid-template-columns: 68px 128px minmax(0, 1fr) auto; gap: 11px; align-items: baseline; padding: 8px 3px; border-bottom: 1px dashed var(--an-hairline); font-size: 12.5px; }
 .an-ev .ev-time { color: var(--an-ink-3); font-family: var(--an-mono); font-size: 12px; }

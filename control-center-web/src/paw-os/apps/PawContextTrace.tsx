@@ -93,8 +93,18 @@ type ProjectedTraceTurn = {
   events: ProjectedTraceEvent[];
 };
 
-/* 阶段色板：与 tokenbar 段一一对应 */
-const STAGE_COLORS = ['#1b1512', '#6a3d9a', '#c04a68', '#2f4da4', '#e3a91c', '#d1342c', '#2f9d8f'];
+/* 阶段色板：与 tokenbar 段一一对应。取值来自 paw-os-agent-next.css 的
+   --an-stage-*，而不是本文件里的私有 hex——同一屏里的状态点、阶段标记与
+   节点条必须来自同一套色板，否则第二种紫色或红色会读成第二套设计。 */
+const STAGE_COLORS = [
+  'var(--an-stage-1)',
+  'var(--an-stage-2)',
+  'var(--an-stage-3)',
+  'var(--an-stage-4)',
+  'var(--an-stage-5)',
+  'var(--an-stage-6)',
+  'var(--an-stage-7)',
+];
 const traceEventDisclosureOverrides = new Map<string, boolean>();
 const traceEventDisclosureOverrideLimit = 512;
 
