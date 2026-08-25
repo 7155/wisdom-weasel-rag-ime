@@ -39,6 +39,9 @@ export interface PublicToolResultView {
     text: string;
     truncated: boolean;
   };
+  /** Human heading for `output` when it is not a generic return snippet,
+   * e.g. a posted Room message, a delegated TaskBrief, or written content. */
+  outputLabel?: string;
   resultItems: PublicToolResultItem[];
   rawResult?: {
     format: 'json' | 'text';
@@ -73,7 +76,8 @@ export interface PublicToolResultItem {
 }
 
 export interface PublicToolSemanticPreview {
-  kind: 'atom' | 'book' | 'collection' | 'evidence' | 'timeline' | 'role_book';
+  kind: 'atom' | 'book' | 'collection' | 'evidence' | 'timeline' | 'role_book'
+    | 'collaboration' | 'delegation' | 'goal';
   title: string;
   description?: string;
   badges: string[];
@@ -100,7 +104,9 @@ const toolDestinations: Record<string, { href: string; label: string }> = {
   models: { href: '#/configuration', label: '打开模型与连接' },
   runtime: { href: '#/diagnostics', label: '打开运行检查' },
   configuration: { href: '#/configuration', label: '打开设置' },
-  agents: { href: '#/rooms', label: '打开多人协作' },
+  // `agents` delegates private subagents inside this Session; it must not
+  // deep-link to Rooms, which is a different collaboration surface.
+  room_partner: { href: '#/rooms', label: '打开多人协作' },
 };
 
 const operationLabels: Record<string, string> = {
@@ -143,7 +149,18 @@ const operationLabels: Record<string, string> = {
   diagnose: '运行诊断',
   history: '查看历史摘要',
   audit: '查看审计记录',
-  delegate: '委派协作任务',
+  delegate: '委派子 Agent',
+  abort: '停止子 Agent',
+  results: '收取子 Agent 结果',
+  post: '发布协作消息',
+  peer_send: '私信伙伴',
+  peer_reply: '回复伙伴消息',
+  peer_list: '查看伙伴消息',
+  complete: '标记目标达成',
+  configure: '设定长期目标',
+  progress: '记录目标进展',
+  'authority.context': '查询文档授权',
+  register: '登记工作文档',
   artifact: '查看协作产物',
   list: '浏览工作区',
   run: '运行受控命令',
@@ -232,13 +249,17 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
 
   append('status', '状态', activityStatusLabel(activity.status));
 
-  const operation = firstText([envelope, carrier, payload], ['operation']);
+  const args = record(payload.args);
+  const operation = firstText([envelope, carrier, payload], ['operation'])
+    || (collaborationToolIds.has(toolId) ? firstText([args], ['op']) : '');
+  const collaboration = collaborationToolResult(toolId, operation, args, layers);
   if (operation) {
     const operationLabel = toolId === 'todo'
       ? ({ init: '建立 Todo', start: '开始任务', done: '完成任务', drop: '放弃任务', append: '追加任务', view: '查看 Todo', rm: '移除 Todo' } as Record<string, string>)[operation]
-      : operationLabels[operation];
+      : collaboration?.operationLabel ?? operationLabels[operation];
     append('operation', '操作', operationLabel ?? '受控操作');
   }
+  for (const field of collaboration?.fields ?? []) append(field.id, field.label, field.value);
 
   const ok = firstBoolean([envelope, domain, carrier], ['ok']);
   if (!expectedNoop && ok !== undefined) append('ok', '执行结果', ok ? '成功' : '未成功');
@@ -371,7 +392,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   const writePolicy = firstPublicText(layers, ['writePolicy', 'safety']);
   if (writePolicy) append('writePolicy', '写入保护', writePolicy);
 
-  const codeResult = publicCodeToolResult(toolId, record(payload.args), publicResult, envelope, carrier);
+  const codeResult = publicCodeToolResult(toolId, args, publicResult, envelope, carrier);
   if (codeResult.file) append('file', '文件', codeResult.file);
   if (codeResult.lines !== undefined) append('lineCount', '行数', `${codeResult.lines} 行`);
   if (codeResult.additions !== undefined || codeResult.deletions !== undefined) {
@@ -381,7 +402,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   const sources = toolId === 'knowledge'
     ? safeKnowledgeSourceLabels(items)
     : safeSourceLabels(payload.sources ?? payload.documents ?? payload.books);
-  const preview = semanticToolPreview(toolId, operation, layers);
+  const preview = collaboration?.preview ?? semanticToolPreview(toolId, operation, layers);
   const resultKind = publicToolResultKind(toolId, Boolean(preview));
   const resultItems = publicToolResultItems(resultKind, layers, codeResult.output?.text ?? '');
   const rawResult = inspectableRawResult(payload);
@@ -392,13 +413,13 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     ? publicToolError(layers, carrier)
     : '';
   const recovery = error ? publicToolRecovery(error, payload) : undefined;
-  const output = subagentResult?.output ?? codeResult.output;
+  const output = subagentResult?.output ?? codeResult.output ?? collaboration?.output;
 
   return {
     toolId,
     toolLabel,
     operation,
-    summary: subagentResult?.summary || summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
+    summary: subagentResult?.summary || summary || collaboration?.summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
     resultKind,
     ...(codeResult.file ? { target: codeResult.file } : {}),
     ...(codeResult.additions !== undefined || codeResult.deletions !== undefined ? {
@@ -408,8 +429,11 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
       },
     } : {}),
     fields,
-    request: codeResult.request,
+    request: collaboration ? collaboration.request : codeResult.request,
     ...(output ? { output } : {}),
+    ...(output && (collaboration?.outputLabel || codeResult.outputLabel)
+      ? { outputLabel: collaboration?.outputLabel ?? codeResult.outputLabel }
+      : {}),
     resultItems,
     ...(rawResult ? { rawResult } : {}),
     ...(resultKind === 'code' && codeResult.file ? { language: publicCodeLanguage(codeResult.file) } : {}),
@@ -476,6 +500,383 @@ function publicSubagentStatus(value: string): string {
     aborted: '已停止',
     timeout: '超时',
   } as Record<string, string>)[value.toLowerCase()] ?? '已返回';
+}
+
+/**
+ * Collaboration Tools carry their real payload in the call arguments and the
+ * structured receipt, not in a printable stdout. Without a dedicated
+ * projection these rows render as empty cards ("工具 agents") although the
+ * durable event contains the posted message, the delegated TaskBrief, the
+ * goal audit, or the WorkDocument authority receipt (PF-CM-007 / PF-CM-010).
+ */
+const collaborationToolIds = new Set(['room_partner', 'agents', 'agent_goal', 'work_documents']);
+
+interface CollaborationToolResult {
+  summary: string;
+  operationLabel?: string;
+  request: PublicToolRequestField[];
+  fields: PublicToolResultField[];
+  output?: {
+    text: string;
+    truncated: boolean;
+  };
+  outputLabel?: string;
+  preview?: PublicToolSemanticPreview;
+}
+
+function collaborationToolResult(
+  toolId: string,
+  operation: string,
+  args: Record<string, unknown>,
+  layers: Record<string, unknown>[],
+): CollaborationToolResult | undefined {
+  if (toolId === 'room_partner') return roomPartnerToolResult(operation, args, layers);
+  if (toolId === 'agents') return agentsDelegationToolResult(operation, args, layers);
+  if (toolId === 'agent_goal') return agentGoalToolResult(operation, args, layers);
+  if (toolId === 'work_documents') return workDocumentsToolResult(operation, args, layers);
+  return undefined;
+}
+
+function roomPartnerToolResult(
+  operation: string,
+  args: Record<string, unknown>,
+  layers: Record<string, unknown>[],
+): CollaborationToolResult {
+  const kindLabel = roomPostKindLabel(text(args.kind) || firstText(layers, ['kind']));
+  const message = firstRecord(layers, ['message']);
+  const messages = firstArray(layers, ['messages']);
+  const published = firstBoolean(layers, ['published']);
+  const settled = firstArray(layers, ['settledWorkItems']);
+
+  const request: PublicToolRequestField[] = [];
+  if (kindLabel) request.push({ id: 'kind', label: '消息类型', value: kindLabel });
+  const replyTo = text(args.replyTo);
+  if (replyTo) request.push({ id: 'replyTo', label: '回复目标', value: replyTo, code: true });
+
+  const sentBody = text(args.content) || text(message.content);
+  const output = sentBody
+    ? { text: publicToolOutputText(sentBody), truncated: publicToolOutputWasTruncated(sentBody) }
+    : undefined;
+
+  const fields: PublicToolResultField[] = [];
+  if (published !== undefined) {
+    fields.push({ id: 'published', label: '发布状态', value: published ? '已发布到 Room' : '尚未发布' });
+  }
+  const messageStatus = text(message.status);
+  if (messageStatus) fields.push({ id: 'messageStatus', label: '送达状态', value: intercomStatusLabel(messageStatus) });
+  if (settled.length > 0) fields.push({ id: 'settledWorkItems', label: '结清工作项', value: `${settled.length} 项` });
+
+  const items: PublicToolSemanticPreview['items'] = [];
+  if (operation === 'peer_list') {
+    messages.slice(0, 8).forEach((value, index) => {
+      const item = record(value);
+      const body = publicLongText(item.content);
+      if (!body) return;
+      const label = [
+        intercomKindLabel(text(item.kind)),
+        workActionLabel(text(item.workAction)),
+        intercomStatusLabel(text(item.status)),
+      ].filter(Boolean).join(' · ');
+      items.push({ id: text(item.id) || `intercom:${index}`, label, text: body });
+    });
+  }
+  const summary = operation === 'peer_list'
+    ? messages.length ? `伙伴消息 ${messages.length} 条` : '暂无伙伴消息'
+    : operation === 'peer_reply'
+      ? '已回复伙伴消息'
+      : operation === 'peer_send'
+        ? '已私信伙伴'
+        : published !== undefined
+          ? published ? `已向 Room 发布${kindLabel || '协作消息'}` : `${kindLabel || '协作消息'}尚未发布`
+          : sentBody
+            ? `正在发送${kindLabel || '协作消息'}`
+            : '伙伴协作操作';
+  return {
+    summary,
+    request,
+    fields,
+    ...(output ? {
+      output,
+      outputLabel: operation === 'peer_reply' ? '回复内容' : operation === 'peer_send' ? '私信内容' : '发送内容',
+    } : {}),
+    ...(items.length ? {
+      preview: {
+        kind: 'collaboration' as const,
+        title: '伙伴消息',
+        badges: [`${messages.length} 条`],
+        items,
+      },
+    } : {}),
+  };
+}
+
+function agentsDelegationToolResult(
+  operation: string,
+  args: Record<string, unknown>,
+  layers: Record<string, unknown>[],
+): CollaborationToolResult {
+  const batch = firstRecord(layers, ['batch']);
+  const runs = (Array.isArray(batch.runs) ? batch.runs : []).map(record);
+  const stateLabel = subagentBatchStateLabel(text(batch.state));
+
+  const request: PublicToolRequestField[] = [];
+  const template = text(args.agent);
+  if (template) request.push({ id: 'agent', label: '子 Agent 模板', value: template, code: true });
+  const contextMode = text(args.contextMode) || text(batch.contextMode);
+  if (contextMode) {
+    request.push({
+      id: 'contextMode',
+      label: '上下文模式',
+      value: ({ fresh: '全新上下文', inherit: '继承上下文' } as Record<string, string>)[contextMode] ?? contextMode,
+    });
+  }
+  const allowedTools = firstArray([args], ['allowedTools']).map((value) => text(value)).filter(Boolean);
+  if (allowedTools.length) {
+    request.push({
+      id: 'allowedTools',
+      label: '允许的工具',
+      value: boundedList(allowedTools.map((id) => publicToolName(id)), 8),
+    });
+  }
+  const batchId = text(args.batchId) || text(batch.id);
+  if (batchId) request.push({ id: 'batchId', label: '批次', value: batchId, code: true });
+
+  const taskBody = text(args.task) || text(runs[0]?.task);
+  const output = taskBody
+    ? { text: publicToolOutputText(taskBody), truncated: publicToolOutputWasTruncated(taskBody) }
+    : undefined;
+
+  const fields: PublicToolResultField[] = [];
+  if (stateLabel) fields.push({ id: 'batchState', label: '批次状态', value: stateLabel });
+  if (runs.length) fields.push({ id: 'runCount', label: '子任务数量', value: `${runs.length} 项` });
+  const accepted = firstBoolean(layers, ['accepted']);
+  if (accepted !== undefined) fields.push({ id: 'accepted', label: '受理状态', value: accepted ? '已受理' : '未受理' });
+
+  const items: PublicToolSemanticPreview['items'] = [];
+  const briefSources = runs.length ? runs.slice(0, 4) : [args];
+  briefSources.forEach((source, index) => {
+    const runTemplate = text(source.templateId) || template;
+    const runState = subagentBatchStateLabel(text(source.state) || text(source.status));
+    const expected = publicLongText(source.expectedOutput);
+    if (expected) {
+      items.push({
+        id: `${text(source.id) || `run:${index}`}:expected`,
+        label: `预期产出${briefSources.length > 1 ? ` ${index + 1}` : ''}${runTemplate ? ` · ${runTemplate}` : ''}${runState ? ` · ${runState}` : ''}`,
+        text: expected,
+      });
+    }
+    const criteria = Array.isArray(source.acceptanceCriteria) ? source.acceptanceCriteria : [];
+    criteria.slice(0, 4).forEach((value, criterionIndex) => {
+      const body = publicLongText(value);
+      if (!body) return;
+      items.push({
+        id: `${text(source.id) || `run:${index}`}:criterion:${criterionIndex}`,
+        label: '验收标准',
+        text: body,
+      });
+    });
+  });
+  const summary = operation === 'abort'
+    ? '已请求停止子 Agent'
+    : operation === 'status'
+      ? stateLabel ? `子 Agent 批次${stateLabel}` : '查询子 Agent 状态'
+      : `已委派 ${runs.length || 1} 个子 Agent${stateLabel ? ` · ${stateLabel}` : ''}`;
+  return {
+    summary,
+    request,
+    fields,
+    ...(output ? { output, outputLabel: '任务简报' } : {}),
+    ...(items.length ? {
+      preview: {
+        kind: 'delegation' as const,
+        title: '子 Agent 委派',
+        badges: [stateLabel, runs.length ? `${runs.length} 个子任务` : ''].filter(Boolean),
+        items: items.slice(0, 10),
+      },
+    } : {}),
+  };
+}
+
+function agentGoalToolResult(
+  operation: string,
+  args: Record<string, unknown>,
+  layers: Record<string, unknown>[],
+): CollaborationToolResult {
+  const goal = firstRecord(layers, ['goal']);
+  const audit = record(goal.completionAudit);
+  const objective = publicLongText(goal.objective ?? args.objective);
+  const successCriteria = publicLongText(goal.successCriteria ?? args.successCriteria);
+  const status = text(goal.status);
+  const statusLabel = goalStatusLabel(status);
+  const revision = finiteNumber(goal.revision);
+  const evidenceValues = Array.isArray(audit.evidence)
+    ? audit.evidence
+    : Array.isArray(args.evidence) ? args.evidence : [];
+  const evidence = evidenceValues.map(record);
+
+  const items: PublicToolSemanticPreview['items'] = [];
+  if (successCriteria) items.push({ id: 'success-criteria', label: '成功标准', text: successCriteria });
+  const auditSummary = publicLongText(audit.summary ?? args.summary);
+  if (auditSummary) items.push({ id: 'completion-summary', label: '达成结论', text: auditSummary });
+  evidence.slice(0, 6).forEach((item, index) => {
+    const summaryText = publicLongText(item.summary);
+    const reference = publicLongText(item.reference);
+    if (!summaryText && !reference) return;
+    items.push({
+      id: `goal-evidence:${index}`,
+      label: goalEvidenceKindLabel(text(item.kind)),
+      text: [summaryText, reference].filter(Boolean).join(' · '),
+    });
+  });
+
+  const fields: PublicToolResultField[] = [];
+  if (statusLabel) fields.push({ id: 'goalStatus', label: '目标状态', value: statusLabel });
+  if (revision !== undefined) fields.push({ id: 'goalRevision', label: '目标修订', value: `第 ${revision} 版` });
+  if (evidence.length) fields.push({ id: 'goalEvidence', label: '达成证据', value: `${evidence.length} 项` });
+
+  return {
+    summary: status === 'completed'
+      ? '长期目标已达成'
+      : statusLabel ? `长期目标${statusLabel}` : '长期目标已更新',
+    operationLabel: ({
+      complete: '标记目标达成',
+      configure: '设定长期目标',
+      progress: '记录目标进展',
+      list: '查看长期目标',
+      status: '查看长期目标',
+    } as Record<string, string>)[operation],
+    request: [],
+    fields,
+    ...(objective || items.length ? {
+      preview: {
+        kind: 'goal' as const,
+        title: '长期目标',
+        ...(objective ? { description: objective } : {}),
+        badges: [statusLabel, evidence.length ? `证据 ${evidence.length} 项` : ''].filter(Boolean),
+        items,
+      },
+    } : {}),
+  };
+}
+
+function workDocumentsToolResult(
+  operation: string,
+  args: Record<string, unknown>,
+  layers: Record<string, unknown>[],
+): CollaborationToolResult {
+  const authorityKind = firstText(layers, ['authorityKind']) || text(args.authorityKind);
+  const authorityId = firstText(layers, ['authorityId']) || text(args.authorityId);
+  const authorityKindLabel = workAuthorityKindLabel(authorityKind);
+  const state = firstText(layers, ['state', 'terminalState']);
+  const stateLabel = state ? publicStatusLabel(state) || state : '';
+  const authorityRevision = firstFiniteNumber(layers, ['authorityRevision']);
+  const documentRevision = firstFiniteNumber(layers, ['documentRevision']);
+  const documentId = firstText(layers, ['documentId']);
+
+  const request: PublicToolRequestField[] = [];
+  if (authorityKindLabel) request.push({ id: 'authorityKind', label: '授权归属', value: authorityKindLabel });
+  if (authorityId) request.push({ id: 'authorityId', label: '授权标识', value: authorityId, code: true });
+
+  const fields: PublicToolResultField[] = [];
+  if (stateLabel) fields.push({ id: 'documentState', label: '授权状态', value: stateLabel });
+  if (authorityRevision !== undefined) fields.push({ id: 'authorityRevision', label: '授权修订', value: `第 ${authorityRevision} 版` });
+  if (documentRevision !== undefined) fields.push({ id: 'documentRevision', label: '文档修订', value: `第 ${documentRevision} 版` });
+  if (documentId) fields.push({ id: 'documentId', label: '文档标识', value: documentId });
+
+  return {
+    summary: authorityKindLabel
+      ? `${authorityKindLabel}的工作文档${stateLabel ? ` · ${stateLabel}` : ''}`
+      : '工作文档操作',
+    operationLabel: ({
+      'authority.context': '查询文档授权',
+      register: '登记工作文档',
+      update: '更新工作文档',
+      bind: '绑定工作文档',
+      read: '读取工作文档',
+      list: '查看工作文档',
+    } as Record<string, string>)[operation],
+    request,
+    fields,
+  };
+}
+
+function roomPostKindLabel(value: string): string {
+  const normalized = value.toLowerCase();
+  if (!normalized) return '';
+  return ({
+    result: '结果通报',
+    work_result: '工作成果',
+    update: '进展更新',
+    question: '提问',
+    blocker: '阻塞通报',
+    status: '状态通报',
+  } as Record<string, string>)[normalized] ?? '协作消息';
+}
+
+function intercomKindLabel(value: string): string {
+  return ({
+    send: '私信',
+    reply: '回复',
+    broadcast: '广播',
+  } as Record<string, string>)[value.toLowerCase()] ?? (value ? '消息' : '');
+}
+
+function intercomStatusLabel(value: string): string {
+  return ({
+    queued: '排队中',
+    delivered: '已送达',
+    replied: '已回复',
+    failed: '发送失败',
+  } as Record<string, string>)[value.toLowerCase()] ?? publicStatusLabel(value);
+}
+
+function workActionLabel(value: string): string {
+  return ({
+    accepted: '验收通过',
+    rejected: '验收退回',
+    submitted: '已提交',
+    assigned: '已指派',
+  } as Record<string, string>)[value.toLowerCase()] ?? '';
+}
+
+function subagentBatchStateLabel(value: string): string {
+  return ({
+    pending: '等待启动',
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    aborted: '已停止',
+    timeout: '超时',
+  } as Record<string, string>)[value.toLowerCase()] ?? '';
+}
+
+function goalStatusLabel(value: string): string {
+  return ({
+    configured: '已设定',
+    active: '进行中',
+    in_progress: '进行中',
+    completed: '已达成',
+    paused: '已暂停',
+    abandoned: '已放弃',
+    failed: '未达成',
+  } as Record<string, string>)[value.toLowerCase()] ?? '';
+}
+
+function goalEvidenceKindLabel(value: string): string {
+  return ({
+    test: '测试证据',
+    receipt: '执行回执',
+    artifact: '交付产物',
+    document: '文档证据',
+  } as Record<string, string>)[value.toLowerCase()] ?? '证据';
+}
+
+function workAuthorityKindLabel(value: string): string {
+  return ({
+    session_goal: '会话目标',
+    room_work_item: 'Room 工作项',
+    turn: '当前回合',
+  } as Record<string, string>)[value.toLowerCase()] ?? (value ? '受控授权' : '');
 }
 
 function inspectableRawResult(
@@ -943,6 +1344,7 @@ interface PublicCodeToolResult {
     text: string;
     truncated: boolean;
   };
+  outputLabel?: string;
   lines?: number;
   additions?: number;
   deletions?: number;
@@ -1023,9 +1425,18 @@ function publicCodeToolResult(
   if (['write', 'write_file', 'workspace_write', 'workspace_write_file'].includes(toolId)) {
     const lines = firstFiniteNumber([publicResult], ['lineCount']) ?? publicLineCount(text(args.content));
     const additions = firstFiniteNumber([publicResult], ['additions']) ?? lines;
+    // The written body lives in the call arguments; expose the bounded
+    // content so expanding a write row shows what was written, not an
+    // empty change card (PF-CM-007).
+    const contentSource = text(args.content);
+    const contentBody = contentSource ? publicToolOutputText(contentSource) : '';
+    const contentOutput = contentBody
+      ? { text: contentBody, truncated: publicToolOutputWasTruncated(contentSource) }
+      : output;
     return {
       file,
       request,
+      ...(contentOutput ? { output: contentOutput, outputLabel: '写入内容' } : {}),
       ...(lines !== undefined ? { lines } : {}),
       ...(additions !== undefined ? { additions } : {}),
       summary: file ? `${file}${lines !== undefined ? ` +${lines}` : ' 已写入'}` : '文件已写入',
@@ -1045,7 +1456,17 @@ function publicCodeToolResult(
     const changeLabel = changes.additions !== undefined || changes.deletions !== undefined
       ? ` +${changes.additions ?? 0} / -${changes.deletions ?? 0}`
       : ' 已更新';
-    return { file, request, summary: file ? `${file}${changeLabel}` : '文件已更新', ...changes };
+    const diffBody = diff ? publicToolOutputText(diff) : '';
+    const diffOutput = diffBody
+      ? { text: diffBody, truncated: publicToolOutputWasTruncated(diff) }
+      : output;
+    return {
+      file,
+      request,
+      ...(diffOutput ? { output: diffOutput, outputLabel: '变更差异' } : {}),
+      summary: file ? `${file}${changeLabel}` : '文件已更新',
+      ...changes,
+    };
   }
   if (['read', 'read_file', 'workspace_read'].includes(toolId)) {
     const truncation = firstRecord([envelope, carrier], ['truncation']);
