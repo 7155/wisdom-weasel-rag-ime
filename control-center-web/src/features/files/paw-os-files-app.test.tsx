@@ -201,6 +201,59 @@ describe('PawOsFilesApp', () => {
     expect(await within(tree).findByRole('treeitem', { name: '打开文件 guide.md' })).toBeInTheDocument();
   });
 
+  it('starts keyboard focus on the tree once the first listing lands', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 }],
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+
+    const tree = await screen.findByRole('tree', { name: '项目文件' });
+    const root = await within(tree).findByRole('treeitem', { name: /收起工作区 paw/ });
+    await waitFor(() => expect(root).toHaveFocus());
+  });
+
+  it('never steals initial focus from a field the person is already typing in', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 }],
+        },
+      },
+    });
+
+    renderApp(transport, (
+      <>
+        <input aria-label="外部输入" />
+        <PawOsFilesApp />
+      </>
+    ));
+    const field = screen.getByRole('textbox', { name: '外部输入' });
+    field.focus();
+
+    const tree = await screen.findByRole('tree', { name: '项目文件' });
+    await within(tree).findByRole('treeitem', { name: /收起工作区 paw/ });
+    expect(field).toHaveFocus();
+  });
+
   it('renders binary payloads as an explicit state and preserves full truncated labels', async () => {
     const user = userEvent.setup();
     const binaryPath = '/workspace/paw/assets/a-very-long-preview-file-name.png';
