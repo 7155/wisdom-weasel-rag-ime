@@ -70,18 +70,19 @@ describe('Minecraft harness conversation depth', () => {
   it('expands room_partner into the concrete sent content and publication receipt', () => {
     const view = publicToolResultView(settledToolActivity(coordinatorActivities(), 'room_partner'));
     expect(view.toolLabel).toBe('协作发言');
-    expect(requestValue(view, 'op')).toBe('发布协作消息');
+    expect(view.operation).toBe('post');
+    expect(fieldValue(view, 'operation')).toBe('发布协作消息');
     expect(requestValue(view, 'kind')).toBe('成果通报');
     expect(view.outputLabel).toBe('发送内容');
     expect(view.output?.text).toContain('真实浏览器 smoke 通过');
-    expect(fieldValue(view, 'published')).toBe('已发布');
+    expect(fieldValue(view, 'published')).toBe('已发布到 Room');
     expect(view.rawResult?.format).toBe('json');
   });
 
   it('expands a delegation call into task brief, acceptance criteria, and run receipts', () => {
     const view = publicToolResultView(settledToolActivity(coreSpecialistActivities(), 'agents'));
     expect(view.toolLabel).toBe('委派协作');
-    expect(requestValue(view, 'op')).toBe('委派协作任务');
+    expect(fieldValue(view, 'operation')).toBe('委派协作任务');
     expect(requestValue(view, 'agent')).toContain('worker');
     expect(requestValue(view, 'task')).toContain('Bounded registration repair');
     expect(requestValue(view, 'acceptanceCriteria')).toContain('1. ');
@@ -96,8 +97,9 @@ describe('Minecraft harness conversation depth', () => {
   it('expands agent_goal into objective, state, and the recorded evidence list', () => {
     const view = publicToolResultView(settledToolActivity(coordinatorActivities(), 'agent_goal'));
     expect(view.toolLabel).toBe('长期目标');
-    expect(requestValue(view, 'op')).toBe('标记目标完成');
+    expect(fieldValue(view, 'operation')).toBe('标记目标完成');
     expect(fieldValue(view, 'objective')).toContain('方块生存游戏');
+    expect(fieldValue(view, 'successCriteria')).toContain('第一人称移动');
     expect(fieldValue(view, 'goalState')).toBe('已完成');
     expect(view.resultItemsLabel).toBe('完成证据');
     const testEvidence = view.resultItems.find((item) => item.text.includes('npm test'));
@@ -107,9 +109,17 @@ describe('Minecraft harness conversation depth', () => {
   it('expands work_documents into the authority target and document state', () => {
     const view = publicToolResultView(settledToolActivity(coordinatorActivities(), 'work_documents'));
     expect(view.toolLabel).toBe('工作文档');
-    expect(requestValue(view, 'op')).toBe('读取权威上下文');
+    expect(fieldValue(view, 'operation')).toBe('读取权威上下文');
     expect(requestValue(view, 'authorityKind')).toBe('会话目标');
     expect(fieldValue(view, 'documentState')).toBe('已完成');
+  });
+
+  it('expands a write receipt into the real written body, not an empty change card', () => {
+    const view = publicToolResultView(settledToolActivity(coordinatorActivities(), 'write'));
+    expect(view.target).toContain('workdoc_');
+    expect(view.outputLabel).toBe('写入内容');
+    expect(view.output?.text).toContain('方块生存游戏');
+    expect(view.change?.additions).toBeGreaterThan(0);
   });
 
   it('expands workspace_job into the real command and live job state', () => {

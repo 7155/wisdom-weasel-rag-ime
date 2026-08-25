@@ -109,7 +109,7 @@ describe('Minecraft harness collaboration flow', () => {
       (candidate.payload.result as Record<string, unknown> | undefined)?.operation === 'peer_reply'
     )));
     expect(view.summary).toContain('回复伙伴消息');
-    expect(view.outputLabel).toBe('发送内容');
+    expect(view.outputLabel).toBe('回复内容');
     expect(view.output?.text).toContain('复核结论');
   });
 

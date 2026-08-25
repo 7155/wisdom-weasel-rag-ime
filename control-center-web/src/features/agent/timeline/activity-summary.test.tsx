@@ -1178,8 +1178,16 @@ describe('Agent tool activity details', () => {
     expect(dialog).toHaveTextContent('335 行');
     expect(dialog).toHaveTextContent('+335 / -0');
     expect(dialog).not.toHaveTextContent('/Users/private/project');
-    expect(dialog).not.toHaveTextContent('line 1');
     expect(dialog).not.toHaveTextContent('Successfully wrote');
+
+    // The written body is a concrete payload the reader may inspect, shown as
+    // a bounded, redacted fragment instead of an empty change card.
+    const written = within(dialog).getByLabelText('工具写入内容');
+    const writtenBody = within(written).getByLabelText('写入内容正文');
+    expect(writtenBody).toHaveTextContent('line 1');
+    expect(writtenBody.textContent?.split('\n')).toHaveLength(40);
+    expect(writtenBody).not.toHaveTextContent('line 41');
+    expect(written).toHaveTextContent('完整结果仍由本机工具回执保留');
   });
 
   it('shows the sanitized permission failure and opens the real permission picker entry point', () => {

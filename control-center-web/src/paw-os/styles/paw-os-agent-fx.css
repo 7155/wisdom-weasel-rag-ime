@@ -397,6 +397,40 @@
   background: color-mix(in srgb, var(--paw-chat-text-tertiary) 9%, transparent);
 }
 
+/* 稳定的语义色族：协作、思考、委派、规划、审批在密集步骤树里靠色调分组。
+   运行中/等待/失败的状态色在下方以更高优先级覆盖。 */
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='thinking'],
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='collaboration'] {
+  color: var(--paw-chat-accent);
+  background: color-mix(in srgb, var(--paw-chat-accent) 11%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='delegation'] {
+  color: var(--paw-chat-violet);
+  background: color-mix(in srgb, var(--paw-chat-violet) 12%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='plan'] {
+  color: var(--paw-chat-ok);
+  background: color-mix(in srgb, var(--paw-chat-ok) 12%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='approval'] {
+  color: var(--paw-chat-warn);
+  background: color-mix(in srgb, var(--paw-chat-warn) 13%, transparent);
+}
+
+/* 步骤的具体对象（文件、消息、结果摘要）随行内提示直接可扫读，
+   不必逐行展开披露（PF-CM-007）。 */
+.paw-desktop-root .paw-chatfx .paw-activity__hint {
+  overflow: hidden;
+  max-width: min(46ch, 52vw);
+  color: var(--paw-chat-text-tertiary);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__glyph {
   color: var(--paw-chat-accent);
   background: color-mix(in srgb, var(--paw-chat-accent) 10%, transparent);
