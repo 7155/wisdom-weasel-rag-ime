@@ -24,7 +24,6 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
-  Folder,
   LoaderCircle,
   Users,
 } from 'lucide-react';
@@ -38,6 +37,11 @@ import {
   supportedPiThinkingLevels,
   type PiModelOption,
 } from '@/features/agent/model-catalog-options';
+import {
+  PermissionMark,
+  ProviderMark,
+  WorkspaceMark,
+} from '@/features/agent/marks/ConversationMarks';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { SessionSummary } from '@/features/agent/types';
 import type { RoomSummary } from '@/features/rooms/room-types';
@@ -355,19 +359,43 @@ export function PawAgentHome({
             />
             <div className="an-composer-foot">
               <span className="an-mode-seg" role="radiogroup" aria-label="工作类型">
-                <button aria-checked={mode === 'session'} onClick={() => setMode('session')} role="radio" type="button"><PawAppIcon appId="agent" size={14} />Session</button>
-                <button aria-checked={mode === 'room'} onClick={() => setMode('room')} role="radio" type="button"><PawAppIcon appId="room" size={14} />Room</button>
+                <button
+                  aria-checked={mode === 'session'}
+                  aria-label="Session"
+                  onClick={() => setMode('session')}
+                  role="radio"
+                  title="Session"
+                  type="button"
+                >
+                  <PawAppIcon appId="agent" size={14} />
+                  <span className="an-chip-text">Session</span>
+                </button>
+                <button
+                  aria-checked={mode === 'room'}
+                  aria-label="Room"
+                  onClick={() => setMode('room')}
+                  role="radio"
+                  title="Room"
+                  type="button"
+                >
+                  <PawAppIcon appId="room" size={14} />
+                  <span className="an-chip-text">Room</span>
+                </button>
               </span>
 
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'permission'}
+                  aria-label={`权限 · ${permission.label}`}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'permission' ? null : 'permission')}
                   ref={(node) => { chipRefs.current.permission = node; }}
+                  title={`权限 · ${permission.label}`}
                   type="button"
                 >
-                  <span className="mini-dot" data-execution-mode={executionMode} />{permission.label}<ChevronDown className="caret" size={13} />
+                  <PermissionMark mode={executionMode} size={14} />
+                  <span className="an-chip-text">{permission.label}</span>
+                  <ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'permission' ? (
                   <div className="an-menu" role="menu">
@@ -399,12 +427,20 @@ export function PawAgentHome({
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'model'}
+                  aria-label={`模型 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
                   ref={(node) => { chipRefs.current.model = node; }}
+                  title={`模型 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
                   type="button"
                 >
-                  {selectedModel?.name ?? '自动模型'} · {thinkingLabel(thinking)}<ChevronDown className="caret" size={13} />
+                  <ProviderMark
+                    providerId={selectedModel?.provider}
+                    size={14}
+                  />
+                  <span className="an-chip-text">{selectedModel?.name ?? '自动模型'}</span>
+                  <span className="an-chip-detail"> · {thinkingLabel(thinking)}</span>
+                  <ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'model' ? (
                   <div className="an-menu" role="menu">
@@ -455,12 +491,16 @@ export function PawAgentHome({
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'project'}
+                  aria-label={workspaceRoot ? `工作目录 · ${projectName([workspaceRoot])}` : '选择工作目录'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'project' ? null : 'project')}
                   ref={(node) => { chipRefs.current.project = node; }}
+                  title={workspaceRoot || '选择工作目录'}
                   type="button"
                 >
-                  <Folder size={12} />{workspaceRoot ? projectName([workspaceRoot]) : '选择工作目录'}<ChevronDown className="caret" size={13} />
+                  <WorkspaceMark bound={Boolean(workspaceRoot)} size={14} />
+                  <span className="an-chip-text">{workspaceRoot ? projectName([workspaceRoot]) : '选择工作目录'}</span>
+                  <ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'project' ? (
                   <div className="an-menu" role="menu">
