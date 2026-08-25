@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   fallbackSurfaceTextureSize,
+  ladderedPixelRatio,
   MAX_PIXEL_RATIO,
   MAX_RENDER_PIXELS,
+  nextSlowFrameCount,
+  PIXEL_RATIO_LADDER,
+  SLOW_FRAME_S,
+  SLOW_FRAMES_BEFORE_STEP,
   SPHERE_SEGMENTS,
   sphereLodLevels,
   starfieldAntialias,
@@ -36,6 +41,34 @@ describe('starfield render budget', () => {
     expect(starfieldPixelRatio(2, 4000, 3000)).toBe(1);
     // Monotonic: a bigger viewport never gets a bigger ratio.
     expect(starfieldPixelRatio(2, 2560, 1440)).toBeLessThanOrEqual(ratio);
+  });
+
+  it('steps the adaptive ladder down monotonically and clamps out-of-range steps', () => {
+    expect(PIXEL_RATIO_LADDER[0]).toBe(MAX_PIXEL_RATIO);
+    for (let index = 1; index < PIXEL_RATIO_LADDER.length; index += 1) {
+      expect(PIXEL_RATIO_LADDER[index]!).toBeLessThan(PIXEL_RATIO_LADDER[index - 1]!);
+    }
+    expect(PIXEL_RATIO_LADDER[PIXEL_RATIO_LADDER.length - 1]).toBe(1);
+    // Step 0 equals the plain pixel-budgeted ratio.
+    expect(ladderedPixelRatio(2, 800, 600, 0)).toBe(starfieldPixelRatio(2, 800, 600));
+    // Deeper steps lower the ceiling below the budgeted value.
+    expect(ladderedPixelRatio(2, 800, 600, 1)).toBe(1.25);
+    // Bottom of the ladder is native resolution, never below 1.
+    expect(ladderedPixelRatio(3, 800, 600, 99)).toBe(1);
+    expect(ladderedPixelRatio(2, 800, 600, -5)).toBe(starfieldPixelRatio(2, 800, 600));
+    // The ladder never raises a ratio the pixel budget already lowered.
+    expect(ladderedPixelRatio(2, 4000, 3000, 1)).toBe(1);
+  });
+
+  it('counts only sustained slow frames toward a quality step', () => {
+    const slow = SLOW_FRAME_S + 0.01;
+    const fast = SLOW_FRAME_S - 0.01;
+    expect(nextSlowFrameCount(0, slow)).toBe(1);
+    // Healthy frames pay the counter down twice as fast, floored at zero.
+    expect(nextSlowFrameCount(5, fast)).toBe(3);
+    expect(nextSlowFrameCount(1, fast)).toBe(0);
+    // A single GC pause cannot reach the step threshold on its own.
+    expect(nextSlowFrameCount(0, slow)).toBeLessThan(SLOW_FRAMES_BEFORE_STEP);
   });
 
   it('drops multisampling only where supersampling already covers the edges', () => {
