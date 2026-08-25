@@ -4,9 +4,6 @@
  * - three.js is loaded lazily so the main bundle never pays for the sky;
  * - every celestial body also exists as a real DOM button in the label
  *   layer (keyboard and screen-reader access), positioned by the stage;
- * - the render loop only runs while the host is actually on screen: the
- *   `running` prop (page visible + sky watched) is combined with an
- *   IntersectionObserver so a scrolled-away or covered sky costs zero rAF;
  * - WebGL setup failure or context loss reports through `onFallback` so the
  *   host can swap in the fullscreen 2D sky without losing any state.
  */
@@ -24,30 +21,36 @@ export function webglAvailable(): boolean {
   }
 }
 
-/** System preference or the PAWOS-level `:root[data-reduce-motion]` switch. */
-function motionCurrentlyReduced(): boolean {
-  if (document.documentElement.getAttribute('data-reduce-motion') === 'true') return true;
-  return typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+/**
+ * True while the host element is actually on screen. Off-screen skies (e.g.
+ * the inline galaxy scrolled away) stop their render loop entirely; where
+ * IntersectionObserver is unavailable the sky counts as watched.
+ */
+function useInViewport(ref: { current: HTMLElement | null }): boolean {
+  const [inView, setInView] = useState(true);
+  useEffect(() => {
+    const host = ref.current;
+    if (!host || typeof IntersectionObserver !== 'function') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      setInView(entries[entries.length - 1]?.isIntersecting ?? true);
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [ref]);
+  return inView;
 }
 
 export function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(motionCurrentlyReduced);
+  const [reduced, setReduced] = useState(() => (
+    typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ));
   useEffect(() => {
-    const update = () => setReduced(motionCurrentlyReduced());
-    const media = typeof window.matchMedia === 'function'
-      ? window.matchMedia('(prefers-reduced-motion: reduce)')
-      : null;
-    media?.addEventListener('change', update);
-    const observer = new MutationObserver(update);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-reduce-motion'],
-    });
-    return () => {
-      media?.removeEventListener('change', update);
-      observer.disconnect();
-    };
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setReduced(media.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
   }, []);
   return reduced;
 }
@@ -75,20 +78,8 @@ export function Starfield3D({
   const onFallbackRef = useRef(onFallback);
   onFallbackRef.current = onFallback;
   const [stageReady, setStageReady] = useState(0);
-  const [inView, setInView] = useState(true);
   const reducedMotion = useReducedMotion();
-
-  // Deepened pause: a sky scrolled out of the viewport stops its loop even
-  // while the page itself stays visible.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || typeof IntersectionObserver !== 'function') return undefined;
-    const observer = new IntersectionObserver((entries) => {
-      setInView(entries[entries.length - 1]?.isIntersecting ?? true);
-    });
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, []);
+  const watched = useInViewport(hostRef);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -137,13 +128,12 @@ export function Starfield3D({
     stageRef.current?.setSelected(selectedId);
   }, [selectedId, stageReady]);
   useEffect(() => {
-    stageRef.current?.setRunning(running && inView);
-  }, [running, inView, stageReady]);
+    stageRef.current?.setRunning(running && watched);
+  }, [running, stageReady, watched]);
 
   return (
     <div className="paw-sf__stage3d" ref={hostRef}>
       <canvas aria-hidden="true" className="paw-sf__canvas" ref={canvasRef} />
-      <div aria-hidden="true" className="paw-sf__vignette" />
       <div className="paw-sf__labels" ref={labelsRef}>
         {model.center ? (
           <button

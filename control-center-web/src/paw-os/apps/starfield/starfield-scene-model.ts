@@ -33,6 +33,33 @@ export type SceneBodyKind = 'moon' | 'planet' | 'star';
 export type SceneCenterKind = 'planet' | 'sun' | 'core';
 export type SceneMode = 'session' | 'room' | 'galaxy';
 
+/**
+ * NASA-style surface map slot for prominent bodies. Renderer-agnostic: the
+ * WebGL stage resolves keys to downscaled 1k assets and keeps a procedural
+ * color until the map arrives; the 2D fallback ignores keys entirely.
+ */
+export type SceneTextureKey =
+  | 'sun'
+  | 'mercury'
+  | 'venus'
+  | 'earth'
+  | 'mars'
+  | 'jupiter'
+  | 'saturn'
+  | 'uranus'
+  | 'neptune'
+  | 'moon';
+
+const CELESTIAL_TEXTURE_KEYS: readonly SceneTextureKey[] = [
+  'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune',
+];
+
+/** Room partners carry real planet names (Earth, Mars…) → real planet maps. */
+export function sceneTextureKeyForCelestial(name: string): SceneTextureKey | null {
+  const key = name.trim().toLowerCase();
+  return CELESTIAL_TEXTURE_KEYS.find((candidate) => candidate === key) ?? null;
+}
+
 export interface SceneBody {
   /** Real Runtime identity: subagent run id / participant id / Room id. */
   id: string;
@@ -45,10 +72,12 @@ export interface SceneBody {
   phaseRad: number;
   inclinationRad: number;
   size: number;
-  /** Stable palette slot 0..5 — also keys the surface archetype/texture. */
+  /** Stable palette slot 0..5 for body hue variety. */
   paletteIndex: number;
   /** Deterministic 0.85..1.15 so working bodies never move in lockstep. */
   speedFactor: number;
+  /** Real surface map for prominent bodies; null keeps the procedural look. */
+  textureKey: SceneTextureKey | null;
   motion: StarfieldMotion;
 }
 
@@ -58,6 +87,7 @@ export interface SceneCenter {
   title: string;
   subtitle: string;
   size: number;
+  textureKey: SceneTextureKey | null;
   motion: StarfieldMotion;
 }
 
@@ -85,16 +115,6 @@ export function sceneBodyAriaLabel(mode: SceneMode, body: SceneBody): string {
   if (mode === 'session') return `${body.title} 卫星 · ${body.detail} · ${body.subtitle}`;
   if (mode === 'room') return `${body.title}，${body.subtitle}`;
   return `${body.title} · ${body.subtitle}`;
-}
-
-/**
- * Content signature of a scene model. The model is plain deterministic data
- * built in stable key order, so equal content always serializes equally —
- * the WebGL stage uses this to skip a full scene rebuild (geometry, GPU
- * uploads) when a poll tick returned an unchanged sky.
- */
-export function sceneModelSignature(model: StarfieldSceneModel): string {
-  return JSON.stringify(model);
 }
 
 function speedFactor(id: string): number {
@@ -130,6 +150,7 @@ export function buildSessionSceneModel(
     size: 0.3,
     paletteIndex: Math.floor(starfieldUnit(`${moon.runId}:hue`) * 6),
     speedFactor: speedFactor(moon.runId),
+    textureKey: 'moon',
     motion: subagentMotion(moon.state, moon.attention),
   }));
   return {
@@ -141,6 +162,7 @@ export function buildSessionSceneModel(
       title: options.sessionTitle,
       subtitle: options.busy ? '正在执行' : 'Session 主星',
       size: 1.2,
+      textureKey: 'jupiter',
       motion: sessionCoreMotion(options.busy),
     },
     bodies,
@@ -169,6 +191,7 @@ export function buildRoomSceneModel(
     size: 0.56,
     paletteIndex: planet.orbitIndex % 6,
     speedFactor: speedFactor(planet.participantId),
+    textureKey: sceneTextureKeyForCelestial(planet.celestialName),
     motion: roomBodyMotion(planet.state),
   }));
   return {
@@ -180,6 +203,7 @@ export function buildRoomSceneModel(
       title: 'Sol',
       subtitle: model.goal.title,
       size: 1.5,
+      textureKey: 'sun',
       motion: roomBodyMotion(model.goal.state),
     },
     bodies,
@@ -216,6 +240,7 @@ export function buildGalaxySceneModel(model: GalaxyStarfieldModel): StarfieldSce
       size: Math.round((0.42 + system.scale * 0.28) * 100) / 100,
       paletteIndex: system.hueIndex,
       speedFactor: speedFactor(system.roomId),
+      textureKey: null,
       motion: galaxySystemMotion(system.active),
     };
   });

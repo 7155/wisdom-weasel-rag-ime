@@ -6,7 +6,6 @@ import {
   buildRoomSceneModel,
   buildSessionSceneModel,
   SCENE_STAGE_RADIUS,
-  sceneModelSignature,
 } from './starfield-scene-model';
 import { WORKING_ORBIT_RAD_PER_S } from './starfield-motion';
 
@@ -85,6 +84,9 @@ describe('starfield scene model', () => {
     expect(scene.mode).toBe('session');
     expect(scene.center).toMatchObject({ id: 'center', kind: 'planet', title: '当前 Session', subtitle: '正在执行' });
     expect(scene.center?.motion.working).toBe(true);
+    // Prominent bodies carry real surface maps: gas-giant core, lunar moons.
+    expect(scene.center?.textureKey).toBe('jupiter');
+    expect(scene.bodies.every((body) => body.textureKey === 'moon')).toBe(true);
     expect(scene.bodies.map((body) => body.id)).toEqual(['run-live', 'run-done']);
     const live = scene.bodies[0]!;
     const done = scene.bodies[1]!;
@@ -101,21 +103,14 @@ describe('starfield scene model', () => {
     expect(buildSessionSceneModel(sessionModel(), { busy: true, sessionTitle: '当前 Session' })).toEqual(scene);
   });
 
-  it('signs equal skies equally and motion changes distinctly', () => {
-    const base = sessionModel();
-    const same = sceneModelSignature(buildSessionSceneModel(base, { busy: true, sessionTitle: 'S' }));
-    expect(sceneModelSignature(buildSessionSceneModel(sessionModel(), { busy: true, sessionTitle: 'S' }))).toBe(same);
-    const flipped = sessionModel();
-    flipped.moons[0]!.state = 'completed';
-    flipped.moons[0]!.active = false;
-    expect(sceneModelSignature(buildSessionSceneModel(flipped, { busy: true, sessionTitle: 'S' }))).not.toBe(same);
-  });
-
   it('projects the Room into Sol, partner planets and real handoff links', () => {
     const scene = buildRoomSceneModel(roomModel(), 'room-1');
 
     expect(scene.center).toMatchObject({ kind: 'sun', title: 'Sol', subtitle: '交付星空 v2' });
     expect(scene.center?.motion.working).toBe(true);
+    // Partners named after real planets get the matching NASA-style map.
+    expect(scene.center?.textureKey).toBe('sun');
+    expect(scene.bodies.map((body) => body.textureKey)).toEqual(['earth', 'mars']);
     expect(scene.bodies.map((body) => body.id)).toEqual(['participant-earth', 'participant-mars']);
     expect(scene.bodies[0]?.motion.working).toBe(true);
     expect(scene.bodies[1]?.motion.ring).toBe('attention');
@@ -145,5 +140,7 @@ describe('starfield scene model', () => {
     expect(scene.bodies[1]?.orbitRadius).toBeGreaterThan(0);
     expect(scene.bodies[0]?.motion.working).toBe(false);
     expect(scene.bodies[1]?.motion.tone).toBe('muted');
+    // Galaxy stars stay emissive points of light — no surface maps to fetch.
+    expect(scene.bodies.every((body) => body.textureKey === null)).toBe(true);
   });
 });
