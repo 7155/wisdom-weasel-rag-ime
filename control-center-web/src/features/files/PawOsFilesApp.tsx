@@ -237,6 +237,27 @@ export function PawOsFilesApp() {
     });
   }, [selectedFile, visibleTreeNodes]);
 
+  // The App opens as rail + reader with the rail as the working object: once
+  // the first listing lands, keyboard focus starts on the tree so ↑/↓/→/Enter
+  // work immediately. One shot only, and never stolen from another window or
+  // from a field the person is already typing in.
+  const initialTreeFocusDone = useRef(false);
+  useEffect(() => {
+    if (initialTreeFocusDone.current || !visibleTreeNodes.length) return;
+    initialTreeFocusDone.current = true;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) {
+      const ownShell = treeRef.current?.closest('.paw-window-shell') ?? null;
+      const activeShell = active.closest('.paw-window-shell');
+      if (activeShell && activeShell !== ownShell) return;
+      if (active.matches('input, textarea, select, [contenteditable="true"]')) return;
+    }
+    const node = treeItemRefs.current.get(visibleTreeNodes[0]?.path ?? '');
+    if (!node || window.getComputedStyle(node).display === 'none') return;
+    setTreeFocusPath(visibleTreeNodes[0]?.path ?? '');
+    node.focus();
+  }, [visibleTreeNodes]);
+
   const loadPreview = useCallback(async (file: WorkspaceEntry) => {
     if (!selectedSessionId) return;
     const generation = ++generationRef.current;

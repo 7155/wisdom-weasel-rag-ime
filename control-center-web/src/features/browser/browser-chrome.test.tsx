@@ -227,6 +227,51 @@ describe('BrowserOmnibox', () => {
     expect(committedUrlParts('not a url')).toBeNull();
     expect(committedUrlParts('https://user:pass@example.com/')).toBeNull();
   });
+
+  it('hands the caret to the address bar on first open with nothing committed', () => {
+    render(<BrowserOmnibox committedUrl="about:blank" onNavigate={() => undefined} tabKey="tab-1" />);
+    expect(screen.getByRole('textbox', { name: '页面地址' })).toHaveFocus();
+  });
+
+  it('focuses the address bar when a fresh blank tab becomes current, not for pages', () => {
+    const { rerender } = render(
+      <BrowserOmnibox committedUrl="https://example.com/" onNavigate={() => undefined} tabKey="tab-1" />,
+    );
+    const input = screen.getByRole('textbox', { name: '页面地址' });
+    expect(input).not.toHaveFocus();
+
+    rerender(<BrowserOmnibox committedUrl="about:blank" onNavigate={() => undefined} tabKey="tab-2" />);
+    expect(input).toHaveFocus();
+
+    // Switching onward to a tab that already shows a page leaves focus alone…
+    input.blur();
+    rerender(<BrowserOmnibox committedUrl="https://example.com/" onNavigate={() => undefined} tabKey="tab-3" />);
+    expect(input).not.toHaveFocus();
+    // …and coming back to the still-blank tab hands the caret over again,
+    // exactly like returning to a desktop browser's new-tab page.
+    rerender(<BrowserOmnibox committedUrl="about:blank" onNavigate={() => undefined} tabKey="tab-2" />);
+    expect(input).toHaveFocus();
+  });
+
+  it('never pulls the caret out of a field the person is already typing in', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <>
+        <input aria-label="外部输入" />
+        <BrowserOmnibox committedUrl="https://example.com/" onNavigate={() => undefined} tabKey="tab-1" />
+      </>,
+    );
+    const field = screen.getByRole('textbox', { name: '外部输入' });
+    await user.click(field);
+
+    rerender(
+      <>
+        <input aria-label="外部输入" />
+        <BrowserOmnibox committedUrl="about:blank" onNavigate={() => undefined} tabKey="tab-2" />
+      </>,
+    );
+    expect(field).toHaveFocus();
+  });
 });
 
 describe('BrowserPageStatus', () => {
