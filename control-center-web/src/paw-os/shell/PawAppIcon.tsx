@@ -99,6 +99,17 @@ export function PawAppIcon({ appId, className = '', size = 24, style, title, ...
   );
 }
 
+/** Eight rounded gear teeth as one path; the base circle unions them visually. */
+const GEAR_TEETH =
+  'M23.1 2.4L24.9 2.4A3.4 3.4 0 0 1 28.3 5.8L28.3 7.6A3.4 3.4 0 0 1 24.9 11L23.1 11A3.4 3.4 0 0 1 19.7 7.6L19.7 5.8A3.4 3.4 0 0 1 23.1 2.4Z'
+  + 'M38.64 8.09L39.91 9.36A3.4 3.4 0 0 1 39.91 14.17L38.64 15.44A3.4 3.4 0 0 1 33.83 15.44L32.56 14.17A3.4 3.4 0 0 1 32.56 9.36L33.83 8.09A3.4 3.4 0 0 1 38.64 8.09Z'
+  + 'M45.6 23.1L45.6 24.9A3.4 3.4 0 0 1 42.2 28.3L40.4 28.3A3.4 3.4 0 0 1 37 24.9L37 23.1A3.4 3.4 0 0 1 40.4 19.7L42.2 19.7A3.4 3.4 0 0 1 45.6 23.1Z'
+  + 'M39.91 38.64L38.64 39.91A3.4 3.4 0 0 1 33.83 39.91L32.56 38.64A3.4 3.4 0 0 1 32.56 33.83L33.83 32.56A3.4 3.4 0 0 1 38.64 32.56L39.91 33.83A3.4 3.4 0 0 1 39.91 38.64Z'
+  + 'M24.9 45.6L23.1 45.6A3.4 3.4 0 0 1 19.7 42.2L19.7 40.4A3.4 3.4 0 0 1 23.1 37L24.9 37A3.4 3.4 0 0 1 28.3 40.4L28.3 42.2A3.4 3.4 0 0 1 24.9 45.6Z'
+  + 'M9.36 39.91L8.09 38.64A3.4 3.4 0 0 1 8.09 33.83L9.36 32.56A3.4 3.4 0 0 1 14.17 32.56L15.44 33.83A3.4 3.4 0 0 1 15.44 38.64L14.17 39.91A3.4 3.4 0 0 1 9.36 39.91Z'
+  + 'M2.4 24.9L2.4 23.1A3.4 3.4 0 0 1 5.8 19.7L7.6 19.7A3.4 3.4 0 0 1 11 23.1L11 24.9A3.4 3.4 0 0 1 7.6 28.3L5.8 28.3A3.4 3.4 0 0 1 2.4 24.9Z'
+  + 'M8.09 9.36L9.36 8.09A3.4 3.4 0 0 1 14.17 8.09L15.44 9.36A3.4 3.4 0 0 1 15.44 14.17L14.17 15.44A3.4 3.4 0 0 1 9.36 15.44L8.09 14.17A3.4 3.4 0 0 1 8.09 9.36Z';
+
 /** The two blades of the plug an App Center package is installed with. */
 const PLUG_PRONGS =
   'M18.5 4h1a3 3 0 0 1 3 3V16.5h-7V7a3 3 0 0 1 3-3Z'
@@ -126,11 +137,12 @@ const silhouettes: Record<PawIdentityIconId, ReactNode> = {
     <ellipse className="paw-app-icon__ring" cx="21.5" cy="26" rx="17" ry="6.5" strokeWidth="3.2" transform="rotate(-24 21.5 26)" />
     <circle className="paw-app-icon__secondary" cx="38.5" cy="11.5" r="4.6" />
   </>,
-  /* Browser chrome: window, address pill, live globe ring. */
+  /* Globe with a two-tone compass needle. A window with an address bar was the
+     fourth rounded rectangle in the set and read as an appliance at 16px. */
   browser: <>
-    <path className="paw-app-icon__primary" d="M4 10.5C4 7.2 6.7 4.5 10 4.5h28c3.3 0 6 2.7 6 6v27c0 3.3-2.7 6-6 6H10c-3.3 0-6-2.7-6-6z" />
-    <rect className="paw-app-icon__paper" height="5.2" rx="2.6" width="22" x="13" y="9.6" />
-    <circle className="paw-app-icon__secondary paw-app-icon__outlined" cx="24" cy="28.8" r="9.2" strokeWidth="4" />
+    <circle className="paw-app-icon__primary" cx="24" cy="24" r="20" />
+    <path className="paw-app-icon__paper" d="M34.9 13.1 27.4 27.4l-6.8-6.8z" />
+    <path className="paw-app-icon__secondary" d="M13.1 34.9l7.5-14.3 6.8 6.8z" />
   </>,
   /* A naked prompt: rounded chevron plus the live cursor. */
   terminal: <>
@@ -182,12 +194,12 @@ const silhouettes: Record<PawIdentityIconId, ReactNode> = {
     <path className="paw-app-icon__stroke-accent" d="M24 30.5 13.5 16.5" strokeLinecap="round" strokeWidth="5" />
     <circle className="paw-app-icon__paper" cx="24" cy="30.5" r="4.2" />
   </>,
-  /* Preference rails with knobs — settings as tunable controls, not a stock gear. */
+  /* Rounded-tooth gear. Slider rails carry no mass at 16px, where a settings
+     mark has to survive the menu bar. */
   'system-settings': <>
-    <rect className="paw-app-icon__primary" height="8" rx="4" width="38" x="5" y="9" />
-    <circle className="paw-app-icon__secondary" cx="31.5" cy="13" r="6.2" />
-    <rect className="paw-app-icon__primary" height="8" rx="4" width="38" x="5" y="31" />
-    <circle className="paw-app-icon__paper" cx="16.5" cy="35" r="6.2" />
+    <path className="paw-app-icon__primary" d={GEAR_TEETH} />
+    <circle className="paw-app-icon__primary" cx="24" cy="24" r="16.6" />
+    <circle className="paw-app-icon__paper" cx="24" cy="24" r="7.2" />
   </>,
 };
 
