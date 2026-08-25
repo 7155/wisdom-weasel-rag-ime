@@ -119,3 +119,50 @@ OK
 - 独立 Reviewer 是按风险/文档需要条件式创建，不是每个任务强制增加一层。
 - Browser 后端与同窗控制已验证；旧前端 stale-running P0 需最新 `main` 修复后再验收。
 - 本记录没有把黑盒项目加入产品 Git 历史；它是隔离测试数据与审计证据。
+
+## 面试叙事：PAW 如何形成工程飞轮
+
+PAW 的核心不是“同时启动很多 Agent”，而是把一次自然语言目标变成可追踪、可恢复、可验收的工程闭环。Pi 始终是唯一 Agent Runtime，拥有 Session、Provider、Tool loop、上下文、Steer、Stop 与恢复；Room 只组合普通 Pi Session，维护 Partner 身份、WorkItem、公开事件和唯一 Root 结果，避免再造第二套 Runtime。
+
+完整飞轮是：
+
+```text
+自然目标
+→ 权威 WorkDocument 与无损需求账本
+→ 依赖感知的动态拆分和有界上下文
+→ 异步 dispatch receipt
+→ Partner / 私有 Tool Agent 执行
+→ durable wake + collect 汇合
+→ Browser / Terminal / Files 现实证据
+→ Facilitator 双轴 accept / return
+→ retry / resume / redelegate 恢复
+→ 文档、测试和失败分类反哺下一轮合同
+```
+
+这条链路解决了多 Agent 产品中最难的三个问题：并发不能靠复制完整上下文；伙伴自报完成不能自动成为事实；应用退出、重复 wake、超时或取消后不能丢掉唯一任务身份。面试时可以用本次黑盒说明：8 个参与者只是容量上限，Facilitator 根据依赖只建立两条真正独立的生产线；Partner 的 proposed verdict 被主管显式验收；Reviewer 发现 Root 文档终态 revision 缺失后，系统修复并再次汇合，而不是把有缺陷的结果包装成成功。
+
+## 建议继续加入的三个场景
+
+1. **混沌恢复**：分别在 prepared、dispatched、Partner 完成但 wake 未投递、等待 review、retry 中途重启 Host/Gateway，同时注入重复 wake 与取消。验收 stale generation 被拦截、同一 WorkItem 不重复 accepted、最终只有一个 Root terminal。
+2. **反虚假通过**：让 Partner 声称成功，但注入错误 revision、非零命令退出、文件 hash 不符、Browser DOM 失败或过期 evidence ref。验收 Facilitator 必须 return/block，并在新 revision 和新证据到达后才可 accept。
+3. **动态规模与上下文压力**：给出最多 8 个角色、仅 2–3 条 Ready lane、一个跨 Partner 问题、一个私有 Tool Agent 上限和一个条件 Reviewer。验收不为凑人数派发、上下文不复制整段 transcript、Intercom 身份与 reply 链一致。
+
+## 建议长期测量的指标
+
+- 自治：Goal 到首个 dispatch 的时间、人工介入次数、无效/重复派发率、实际并发重叠率。
+- 异步可靠性：receipt 延迟、completion 到 wake 延迟、重复 wake 抑制率、重启恢复率、orphan WorkItem 数、每个 Root terminal 数（目标为 1）。
+- 验收诚实度：evidence ref 可解析率、hash 匹配率、双轴分别通过率、return 后修订成功率、false accept rate（目标为 0）。
+- 上下文与成本：每个 Partner 的 TaskBrief token、ContextRef 重复率、上下文溢出率、Tool Agent 有效产出率、总调用数和总耗时。
+- 产品现实性：Browser DOM 断言率、Terminal/Files receipt 完整率、外部浏览器误用次数（目标为 0）、SSE 重连恢复率、前后端终态一致率。
+
+## 主线集成复验
+
+2026-08-25 已将 Room 恢复分支合并到最新前端 `main`，并保留 PAW 管理的 Browser/Ego 实现；远端主线终点为 `0489d2d1`。合并后证据：
+
+- Room、Intercom、异步 dispatch/wake、重启恢复、双轴验收、Browser/Ego、Pi v1/v2：383 tests / OK。
+- TypeScript：通过；Room 前端聚焦测试 5 files、145 tests / OK。
+- Squirrel/Host/TUI/Voice 差异回归：95 tests 中唯一 Swift/Python route manifest 差异修正后，专项 3/3 通过。
+- Project Harness、import boundaries、route ownership、发布/Host 单元测试：通过；release candidate scope 为 1012/1012。
+- 安装版最近 5 个 Pi settlement 均为 natural completed，Gateway 最近样本无 5xx；未做新的 3–5 条 Session 压测，因为 Data 卷只余约 5.9 GiB、SQLite 已约 6.6 GiB。
+
+Room 的 `status=active` 表示这个长期协作房间仍可继续对话，不表示当前 Goal 未结束；单次工作闭环以唯一 Root `turn_completed` 和 Goal receipt 为准。最新 `main` 已合入刷新后从权威 Root 重建终态的前端修复。仓库级公开发布审计仍会报告最新前端 handoff 中的机器路径/禁止发布文档；这些是已知发布卫生边界，不被本次 Room 合并冒充为已解决。
