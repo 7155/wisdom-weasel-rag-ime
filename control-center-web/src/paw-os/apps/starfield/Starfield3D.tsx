@@ -4,6 +4,9 @@
  * - three.js is loaded lazily so the main bundle never pays for the sky;
  * - every celestial body also exists as a real DOM button in the label
  *   layer (keyboard and screen-reader access), positioned by the stage;
+ * - the render loop only runs while the host is actually on screen: the
+ *   `running` prop (page visible + sky watched) is combined with an
+ *   IntersectionObserver so a scrolled-away or covered sky costs zero rAF;
  * - WebGL setup failure or context loss reports through `onFallback` so the
  *   host can swap in the fullscreen 2D sky without losing any state.
  */
@@ -59,7 +62,20 @@ export function Starfield3D({
   const onFallbackRef = useRef(onFallback);
   onFallbackRef.current = onFallback;
   const [stageReady, setStageReady] = useState(0);
+  const [inView, setInView] = useState(true);
   const reducedMotion = useReducedMotion();
+
+  // Deepened pause: a sky scrolled out of the viewport stops its loop even
+  // while the page itself stays visible.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof IntersectionObserver !== 'function') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      setInView(entries[entries.length - 1]?.isIntersecting ?? true);
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -108,12 +124,13 @@ export function Starfield3D({
     stageRef.current?.setSelected(selectedId);
   }, [selectedId, stageReady]);
   useEffect(() => {
-    stageRef.current?.setRunning(running);
-  }, [running, stageReady]);
+    stageRef.current?.setRunning(running && inView);
+  }, [running, inView, stageReady]);
 
   return (
     <div className="paw-sf__stage3d" ref={hostRef}>
       <canvas aria-hidden="true" className="paw-sf__canvas" ref={canvasRef} />
+      <div aria-hidden="true" className="paw-sf__vignette" />
       <div className="paw-sf__labels" ref={labelsRef}>
         {model.center ? (
           <button

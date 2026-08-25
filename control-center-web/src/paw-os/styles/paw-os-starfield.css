@@ -69,6 +69,14 @@
   touch-action: none;
 }
 
+/* Static depth vignette over the canvas, under the labels. Pure light. */
+.paw-sf__vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(140% 120% at 50% 46%, transparent 58%, rgb(2 4 10 / .4) 100%);
+  pointer-events: none;
+}
+
 .paw-sf__labels {
   position: absolute;
   inset: 0;
