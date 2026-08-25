@@ -248,10 +248,16 @@
 
 .paw-session-workspace__composer { position: relative; z-index: 8; width: 100%; padding: 7px clamp(14px, 4vw, 44px) 13px; background: linear-gradient(transparent, var(--paw-panel-strong) 20%); }
 .paw-session-workspace__composer > .agent-composer-wrap { width: min(900px, 100%); margin: 0 auto; padding: 0; }
-.paw-session-workspace__composer .agent-composer { overflow: visible; border-color: color-mix(in srgb, var(--paw-accent) 18%, var(--paw-line)); border-radius: 15px; background: color-mix(in srgb, var(--paw-panel) 97%, transparent); box-shadow: 0 14px 38px rgb(15 23 42 / 11%), 0 2px 6px rgb(15 23 42 / 5%); }
-.paw-session-workspace__composer .agent-composer:focus-within { border-color: color-mix(in srgb, var(--paw-accent) 48%, var(--paw-line)); box-shadow: 0 18px 46px rgb(15 23 42 / 13%), 0 0 0 3px color-mix(in srgb, var(--paw-accent) 8%, transparent); }
-.paw-session-workspace__composer .agent-composer textarea { min-height: 52px; padding: 12px 13px 38px; font-size: 12px; }
-.paw-session-workspace__composer .agent-composer__toolbar { bottom: 5px; padding-inline: 6px; }
+/* UR-042：Session 与 Room 同一只 Composer——两个工作面的输入船坞共用
+   同一组规则，Room 不再持有第二套视觉系统。 */
+.paw-session-workspace__composer .agent-composer,
+.paw-room-workspace__composer .agent-composer { overflow: visible; border-color: color-mix(in srgb, var(--paw-accent) 18%, var(--paw-line)); border-radius: 15px; background: color-mix(in srgb, var(--paw-panel) 97%, transparent); box-shadow: 0 14px 38px rgb(15 23 42 / 11%), 0 2px 6px rgb(15 23 42 / 5%); }
+.paw-session-workspace__composer .agent-composer:focus-within,
+.paw-room-workspace__composer .agent-composer:focus-within { border-color: color-mix(in srgb, var(--paw-accent) 48%, var(--paw-line)); box-shadow: 0 18px 46px rgb(15 23 42 / 13%), 0 0 0 3px color-mix(in srgb, var(--paw-accent) 8%, transparent); }
+.paw-session-workspace__composer .agent-composer textarea,
+.paw-room-workspace__composer .agent-composer textarea { min-height: 52px; padding: 12px 13px 38px; font-size: 12px; }
+.paw-session-workspace__composer .agent-composer__toolbar,
+.paw-room-workspace__composer .agent-composer__toolbar { bottom: 5px; padding-inline: 6px; }
 .paw-session-workspace__composer .agent-command-palette { bottom: calc(100% + 6px); }
 .paw-session-workspace__error { width: min(900px, 100%); display: flex; align-items: center; gap: 7px; margin: 0 auto 6px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--paw-danger) 30%, var(--paw-line)); border-radius: 9px; color: var(--paw-danger); background: color-mix(in srgb, var(--paw-danger) 7%, var(--paw-panel)); }
 .paw-session-workspace__error span { min-width: 0; flex: 1; }
@@ -336,9 +342,8 @@
 .paw-room-workspace__composer { position: relative; z-index: 8; width: 100%; padding: 7px clamp(14px, 4vw, 44px) 13px; background: linear-gradient(transparent, var(--paw-panel-strong) 20%); }
 .paw-room-workspace__composer > .room-composer-shell,
 .paw-room-workspace__composer > .agent-user-input-card { width: min(900px, 100%); margin: 0 auto; }
-.paw-room-workspace__composer .room-composer { border-color: color-mix(in srgb, var(--paw-success) 20%, var(--paw-line)); border-radius: 15px; background: color-mix(in srgb, var(--paw-panel) 97%, transparent); box-shadow: 0 14px 38px rgb(15 23 42 / 11%), 0 2px 6px rgb(15 23 42 / 5%); }
-.paw-room-workspace__composer .room-composer:focus-within { border-color: color-mix(in srgb, var(--paw-success) 48%, var(--paw-line)); box-shadow: 0 18px 46px rgb(15 23 42 / 13%), 0 0 0 3px color-mix(in srgb, var(--paw-success) 8%, transparent); }
-.paw-room-workspace__composer .room-composer textarea { min-height: 52px; padding: 12px 13px 38px; font-size: 15px; line-height: 25px; }
+/* Room 输入船坞的绿色第二视觉已删除；它与 Session 共用上方的统一规则
+   （UR-042），Room 专属的只剩上下文控件（Sol/点名）。 */
 .paw-room-workspace__error { width: min(900px, 100%); display: flex; align-items: center; gap: 7px; margin: 0 auto 6px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--paw-danger) 30%, var(--paw-line)); border-radius: 9px; color: var(--paw-danger); background: color-mix(in srgb, var(--paw-danger) 7%, var(--paw-panel)); font-size: 9px; }
 .paw-room-workspace__error span { min-width: 0; flex: 1; }
 .paw-room-workspace__error button { color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
@@ -1342,7 +1347,9 @@
 .paw-agent-rail-toggle,
 .paw-agent-rail-backdrop { display: none; }
 .paw-session-workspace__composer .agent-composer::before,
-.paw-session-workspace__composer .agent-composer::after {
+.paw-session-workspace__composer .agent-composer::after,
+.paw-room-workspace__composer .agent-composer::before,
+.paw-room-workspace__composer .agent-composer::after {
   display: none;
 }
 .paw-session-workspace[data-status='busy'] .paw-session-workspace__composer .agent-composer::before,
@@ -1397,18 +1404,21 @@
   background: var(--paw-panel-strong);
 }
 .paw-session-workspace__composer > .agent-composer-wrap { width: min(760px, 100%); }
-.paw-session-workspace__composer .agent-composer {
+.paw-session-workspace__composer .agent-composer,
+.paw-room-workspace__composer .agent-composer {
   position: relative;
   isolation: isolate;
   border-color: var(--paw-line);
   border-radius: 12px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 5%);
 }
-.paw-session-workspace__composer .agent-composer:focus-within {
+.paw-session-workspace__composer .agent-composer:focus-within,
+.paw-room-workspace__composer .agent-composer:focus-within {
   border-color: var(--paw-line);
   box-shadow: 0 8px 24px rgb(0 0 0 / 7%);
 }
-.paw-session-workspace__composer .agent-composer textarea { min-height: 64px; padding: 12px 13px 41px; }
+.paw-session-workspace__composer .agent-composer textarea,
+.paw-room-workspace__composer .agent-composer textarea { min-height: 64px; padding: 12px 13px 41px; }
 
 .paw-room-workspace { grid-template-rows: 44px 34px minmax(0, 1fr); }
 .paw-room-workspace__header { min-height: 44px; padding: 0 10px 0 14px; background: var(--paw-panel-strong); }
@@ -1462,13 +1472,16 @@
   .paw-session-workspace__identity small { display: none; }
   .paw-session-workspace__actions button:nth-child(2),
   .paw-room-workspace__header nav button:nth-child(2) { display: none; }
-  .paw-session-workspace__composer .agent-composer textarea { min-height: 42px; }
+  .paw-session-workspace__composer .agent-composer textarea,
+  .paw-room-workspace__composer .agent-composer textarea { min-height: 42px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .paw-agent-rail { transition: none !important; }
   .paw-session-workspace__composer .agent-composer::before,
-.paw-session-workspace__composer .agent-composer::after { animation: none !important; opacity: 0 !important; }
+  .paw-session-workspace__composer .agent-composer::after,
+  .paw-room-workspace__composer .agent-composer::before,
+  .paw-room-workspace__composer .agent-composer::after { animation: none !important; opacity: 0 !important; }
 }
 
 /* Tutti rail behavior: the conversation list is an on-demand overlay at every
@@ -1555,7 +1568,8 @@
 .paw-session-workspace__error,
 .paw-session-workspace__conversation .agent-message-usage { font-size: 13px; }
 .paw-unified-composer > textarea,
-.paw-session-workspace__composer .agent-composer textarea { font-size: 15px; }
+.paw-session-workspace__composer .agent-composer textarea,
+.paw-room-workspace__composer .agent-composer textarea { font-size: 15px; }
 .paw-agent-row strong,
 .paw-agent-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container paw-agent-shell (max-width: 700px) {

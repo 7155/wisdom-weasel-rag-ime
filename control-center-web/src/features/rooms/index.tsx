@@ -24,6 +24,11 @@ import {
   SegmentedControl,
   Select,
 } from '@/components/primitives';
+import {
+  MAX_COMPOSER_ATTACHMENTS,
+  MAX_COMPOSER_ATTACHMENT_BYTES,
+  isComposerAttachmentMimeType,
+} from '@/contracts/attachment-policy';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { PickedFile } from '@/platform/transport';
 import {
@@ -106,14 +111,8 @@ const ROOM_WORK_ITEM_STATES: Record<string, true> = {
   failed: true,
   cancelled: true,
 };
-const ROOM_IMAGE_MIME_TYPES: Record<string, true> = {
-  'image/png': true,
-  'image/jpeg': true,
-  'image/gif': true,
-  'image/webp': true,
-};
-const ROOM_IMAGE_LIMIT = 8;
-const ROOM_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const ROOM_ATTACHMENT_LIMIT = MAX_COMPOSER_ATTACHMENTS;
+const ROOM_ATTACHMENT_MAX_BYTES = MAX_COMPOSER_ATTACHMENT_BYTES;
 const roomTimelineComponents = {
   Header: RoomTimelineScrollHeader,
   Footer: RoomTimelineScrollFooter,
@@ -464,23 +463,23 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
     updateRoomAttachments(roomId, (current) => {
       const merged = new Map(current.map((item) => [item.mediaId, item]));
       for (const receipt of receipts) merged.set(receipt.mediaId, receipt);
-      return [...merged.values()].slice(0, ROOM_IMAGE_LIMIT);
+      return [...merged.values()].slice(0, ROOM_ATTACHMENT_LIMIT);
     });
   }
 
   async function pasteRoomImages(roomId: string, files?: File[]): Promise<void> {
     const current = roomAttachmentsRef.current.get(roomId) ?? [];
-    const remaining = ROOM_IMAGE_LIMIT - current.length;
+    const remaining = ROOM_ATTACHMENT_LIMIT - current.length;
     if (remaining < 1) {
-      setRoomError(roomId, `每条消息最多添加 ${ROOM_IMAGE_LIMIT} 张图片。`);
+      setRoomError(roomId, `每条消息最多添加 ${ROOM_ATTACHMENT_LIMIT} 个附件。`);
       return;
     }
     if (!transport.pasteImages) {
-      setRoomError(roomId, '当前平台暂不支持从剪贴板导入图片。');
+      setRoomError(roomId, '当前平台暂不支持从剪贴板导入附件。');
       return;
     }
     try {
-      validateRoomImageFiles(files ?? [], remaining);
+      validateRoomAttachmentFiles(files ?? [], remaining);
       const imported = await transport.pasteImages({
         roomId,
         ...(files?.length ? { files } : {}),
@@ -489,33 +488,32 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
       mergeRoomAttachments(roomId, imported);
       setRoomError(roomId, '');
     } catch (requestError) {
-      setRoomError(roomId, publicErrorText(requestError, '图片没有导入，请重试。'));
+      setRoomError(roomId, publicErrorText(requestError, '附件没有导入，请重试。'));
     }
   }
 
   async function pickRoomImages(roomId: string): Promise<void> {
     const current = roomAttachmentsRef.current.get(roomId) ?? [];
-    const remaining = ROOM_IMAGE_LIMIT - current.length;
+    const remaining = ROOM_ATTACHMENT_LIMIT - current.length;
     if (remaining < 1) {
-      setRoomError(roomId, `每条消息最多添加 ${ROOM_IMAGE_LIMIT} 张图片。`);
+      setRoomError(roomId, `每条消息最多添加 ${ROOM_ATTACHMENT_LIMIT} 个附件。`);
       return;
     }
     if (!transport.pickFiles) {
-      setRoomError(roomId, '当前平台暂不支持选择图片。');
+      setRoomError(roomId, '当前平台暂不支持选择附件。');
       return;
     }
     try {
       const imported = await transport.pickFiles({
         purpose: 'attachment',
         roomId,
-        accepts: Object.keys(ROOM_IMAGE_MIME_TYPES),
         multiple: true,
         maxFiles: remaining,
       });
       mergeRoomAttachments(roomId, imported);
       setRoomError(roomId, '');
     } catch (requestError) {
-      setRoomError(roomId, publicErrorText(requestError, '图片没有导入，请重试。'));
+      setRoomError(roomId, publicErrorText(requestError, '附件没有导入，请重试。'));
     }
   }
 
@@ -859,7 +857,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
             for (const item of selectedAttachments) {
               if (!restored.has(item.mediaId)) restored.set(item.mediaId, item);
             }
-            return [...restored.values()].slice(0, ROOM_IMAGE_LIMIT);
+            return [...restored.values()].slice(0, ROOM_ATTACHMENT_LIMIT);
           });
         }
       }
@@ -1615,35 +1613,32 @@ function roomAttachmentFromPicked(file: PickedFile, roomId: string): RoomAttachm
     file.roomId !== roomId
     || file.sessionId !== undefined
     || !/^media_[A-Za-z0-9_-]{12,80}$/u.test(file.id)
-    || ROOM_IMAGE_MIME_TYPES[file.mimeType] !== true
+    || !isComposerAttachmentMimeType(file.mimeType)
     || !Number.isSafeInteger(file.byteSize)
     || file.byteSize < 1
-    || file.byteSize > ROOM_IMAGE_MAX_BYTES
+    || file.byteSize > ROOM_ATTACHMENT_MAX_BYTES
     || !file.sha256
     || !/^[0-9a-f]{64}$/u.test(file.sha256)
     || file.path !== undefined
   ) {
-    throw new TypeError('Room 图片导入返回了无效的受管回执。');
+    throw new TypeError('Room 附件导入返回了无效的受管回执。');
   }
   return {
     mediaId: file.id,
     roomId,
-    fileName: file.name.slice(0, 160) || '图片',
-    mimeType: file.mimeType as RoomAttachmentReceipt['mimeType'],
+    fileName: file.name.slice(0, 160) || '附件',
+    mimeType: file.mimeType.toLowerCase(),
     byteSize: file.byteSize,
     sha256: file.sha256,
   };
 }
 
-function validateRoomImageFiles(files: File[], remaining: number): void {
+function validateRoomAttachmentFiles(files: File[], remaining: number): void {
   if (!files.length) return;
-  if (files.length > remaining) throw new TypeError(`本条消息还能添加 ${remaining} 张图片。`);
+  if (files.length > remaining) throw new TypeError(`本条消息还能添加 ${remaining} 个附件。`);
   for (const file of files) {
-    if (ROOM_IMAGE_MIME_TYPES[file.type.toLowerCase()] !== true) {
-      throw new TypeError('仅支持 PNG、JPEG、GIF 和 WebP 图片。');
-    }
-    if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > ROOM_IMAGE_MAX_BYTES) {
-      throw new TypeError('每张图片必须小于 20 MiB。');
+    if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > ROOM_ATTACHMENT_MAX_BYTES) {
+      throw new TypeError('每个附件必须小于 20 MiB 且不能为空。');
     }
   }
 }

@@ -508,10 +508,18 @@
   padding: 22px 12px 32px;
 }
 
+/* UR-042：Room 的输入船坞与 Session 同一只 Composer——同 dock 间距、同列宽，
+   输入卡本体的白卡/聚焦/文字排印由 paw-os-agent-migrated-v1 的统一规则负责。 */
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer {
+  padding: 14px 24px 16px;
   border-top-color: var(--paw-chat-border);
   background: var(--paw-chat-surface);
   box-shadow: none;
+}
+
+.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer > .room-composer-shell {
+  width: min(742px, 100%);
+  margin: 0 auto;
 }
 
 /* PAWOS owns one chronological conversation DOM. Public messages are the
@@ -1036,7 +1044,8 @@
   .paw-desktop-root .paw-room-chronology__activity > time { display: none; }
   .paw-desktop-root .paw-room-chronology__terminal > button { width: fit-content; grid-column: 2; }
   .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer { padding: 5px 7px 7px; }
-  .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer .room-composer textarea { min-height: 44px; font-size: 14px; line-height: 22px; }
+  /* 窄窗与 Session 同一档收窄（agent-migrated 在 680px 下取 54px）。 */
+  .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer .room-composer textarea { min-height: 54px; }
 }
 
 @container paw-window (max-width: 700px) {

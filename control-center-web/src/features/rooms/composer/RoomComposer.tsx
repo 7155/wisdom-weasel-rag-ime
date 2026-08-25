@@ -1,4 +1,4 @@
-import { AtSign, Paperclip, Send, X } from 'lucide-react';
+import { AtSign, Plus, Send } from 'lucide-react';
 import {
   startTransition,
   useCallback,
@@ -12,6 +12,7 @@ import {
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
+import { ComposerShell } from '@/features/composer/ComposerShell';
 import { roomCollaborationRoleLabel } from '../room-copy';
 
 interface ComposerParticipant {
@@ -174,17 +175,19 @@ export function RoomComposer({
   }
 
   function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    // Any pasted file — image, PDF, code, archive — rides the managed
+    // attachment path; plain text keeps the browser's default insertion.
     const files = [...event.clipboardData.files];
-    let hasImageItem = files.some((file) => file.type.toLowerCase().startsWith('image/'));
+    let hasFileItem = files.length > 0;
     if (!files.length) {
       for (const item of event.clipboardData.items ?? []) {
         if (item.kind !== 'file') continue;
-        hasImageItem = hasImageItem || item.type.toLowerCase().startsWith('image/');
+        hasFileItem = true;
         const file = item.getAsFile();
         if (file) files.push(file);
       }
     }
-    if (!files.length && !hasImageItem) {
+    if (!files.length && !hasFileItem) {
       const text = event.clipboardData.getData?.('text/plain') ?? '';
       if (text) return;
       event.preventDefault();
@@ -237,103 +240,108 @@ export function RoomComposer({
         </button>;
         })}
       </div> : null}
-      {attachments.length ? <div className="room-composer__attachments" aria-label="待发送图片">
-        {attachments.map((attachment) => <span key={attachment.mediaId}>
-          <Paperclip size={13} aria-hidden="true" />
-          <span title={attachment.fileName}>{attachment.fileName}</span>
-          <button
-            type="button"
-            aria-label={`移除图片：${attachment.fileName}`}
-            onClick={() => onAttachmentsChange(
-              attachments.filter((item) => item.mediaId !== attachment.mediaId),
+      <ComposerShell
+        surface="room"
+        className="room-composer"
+        onSurfacePress={() => textareaRef.current?.focus()}
+        banner={taskBusyState || pendingAnswerMode ? (
+          <p className="room-composer__task-lock" role="status">
+            {pendingAnswerMode
+              ? '当前任务正在等待你的回答。这里只发送文字回答；点名和附件不会随回答发送。'
+              : taskBusyState === 'blocked'
+                ? '当前任务已暂停。发送文字可以告诉主持伙伴怎样继续，停止按钮会终止整条协作。'
+                : '当前任务仍在执行。现在发送文字会立即干预主持伙伴的当前回合。'}
+          </p>
+        ) : undefined}
+        attachments={attachments.map((attachment) => ({
+          id: attachment.mediaId,
+          name: attachment.fileName,
+          mimeType: attachment.mimeType,
+          byteSize: attachment.byteSize,
+          sha256: attachment.sha256,
+          roomId: attachment.roomId,
+        }))}
+        onRemoveAttachment={(id) => onAttachmentsChange(
+          attachments.filter((item) => item.mediaId !== id),
+        )}
+        textarea={(
+          <textarea
+            ref={setTextareaRef}
+            rows={1}
+            maxLength={8_000}
+            value={composerDraft}
+            disabled={!roomCanCompose}
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            onPaste={paste}
+            onChange={(event) => {
+              setComposerDraft(event.target.value);
+              if (!composingRef.current) publishDraft(event.target.value);
+              syncMention(event.target.value, event.target.selectionStart);
+            }}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={endComposition}
+            onClick={(event) => (
+              syncMention(event.currentTarget.value, event.currentTarget.selectionStart)
             )}
-          ><X size={12} /></button>
-        </span>)}
-      </div> : null}
-      {taskBusyState || pendingAnswerMode ? <p className="room-composer__task-lock" role="status">
-        {pendingAnswerMode
-          ? '当前任务正在等待你的回答。这里只发送文字回答；点名和附件不会随回答发送。'
-          : taskBusyState === 'blocked'
-            ? '当前任务已暂停。发送文字可以告诉主持伙伴怎样继续，停止按钮会终止整条协作。'
-            : '当前任务仍在执行。现在发送文字会立即干预主持伙伴的当前回合。'}
-      </p> : null}
-      <div className="room-composer paw-unified-composer">
-        <textarea
-          ref={setTextareaRef}
-          rows={1}
-          maxLength={8_000}
-          value={composerDraft}
-          disabled={!roomCanCompose}
-          autoCapitalize="none"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          onPaste={paste}
-          onChange={(event) => {
-            setComposerDraft(event.target.value);
-            if (!composingRef.current) publishDraft(event.target.value);
-            syncMention(event.target.value, event.target.selectionStart);
-          }}
-          onCompositionStart={() => { composingRef.current = true; }}
-          onCompositionEnd={endComposition}
-          onClick={(event) => (
-            syncMention(event.currentTarget.value, event.currentTarget.selectionStart)
-          )}
-          onKeyUp={(event) => {
-            if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) {
-              syncMention(event.currentTarget.value, event.currentTarget.selectionStart);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (
-              composingRef.current
-              || event.nativeEvent.isComposing
-              || event.nativeEvent.keyCode === 229
-            ) return;
-            if (mention && mentionCandidates.length) {
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                setActiveIndex((current) => (
-                  current
-                  + (event.key === 'ArrowDown' ? 1 : -1)
-                  + mentionCandidates.length
-                ) % mentionCandidates.length);
-                return;
+            onKeyUp={(event) => {
+              if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) {
+                syncMention(event.currentTarget.value, event.currentTarget.selectionStart);
               }
-              if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                chooseParticipant(mentionCandidates[activeIndex] ?? mentionCandidates[0]);
-                return;
+            }}
+            onKeyDown={(event) => {
+              if (
+                composingRef.current
+                || event.nativeEvent.isComposing
+                || event.nativeEvent.keyCode === 229
+              ) return;
+              if (mention && mentionCandidates.length) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setActiveIndex((current) => (
+                    current
+                    + (event.key === 'ArrowDown' ? 1 : -1)
+                    + mentionCandidates.length
+                  ) % mentionCandidates.length);
+                  return;
+                }
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                  event.preventDefault();
+                  chooseParticipant(mentionCandidates[activeIndex] ?? mentionCandidates[0]);
+                  return;
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setMention(undefined);
+                  return;
+                }
               }
-              if (event.key === 'Escape') {
+              if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                setMention(undefined);
-                return;
+                submit();
               }
-            }
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              submit();
-            }
-          }}
-          placeholder={pendingAnswerMode
-            ? '回答伙伴正在等待的问题…'
-            : taskBusyState
-              ? '立即干预当前回合…'
-              : composerPlaceholder(room)}
-          aria-label="协作消息"
-          aria-autocomplete="list"
-          aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
-          aria-activedescendant={mention && mentionCandidates.length
-            ? `room-mention-${mentionCandidates[activeIndex]?.id}`
-            : undefined}
-        />
-        <div className="room-composer__toolbar">
-          <div className="room-composer__controls">
+            }}
+            placeholder={pendingAnswerMode
+              ? '回答伙伴正在等待的问题…'
+              : taskBusyState
+                ? '立即干预当前回合…'
+                : composerPlaceholder(room)}
+            aria-label="协作消息"
+            aria-autocomplete="list"
+            aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
+            aria-activedescendant={mention && mentionCandidates.length
+              ? `room-mention-${mentionCandidates[activeIndex]?.id}`
+              : undefined}
+          />
+        )}
+        controls={(
+          <>
             <IconButton
-              className="room-composer__attachment"
-              label="添加图片"
-              icon={<Paperclip size={16} />}
+              className="agent-composer__attachment room-composer__attachment"
+              label="添加附件"
+              icon={<Plus size={18} />}
               disabled={!roomCanCompose || sending || pendingAnswerMode || Boolean(taskBusyState) || attachments.length >= 8}
               onClick={onPickAttachments}
               tooltip
@@ -346,9 +354,11 @@ export function RoomComposer({
               onClick={openMentionMenu}
               tooltip
             /> : null}
-          </div>
+          </>
+        )}
+        actions={(
           <IconButton
-            className="room-composer__send"
+            className="agent-composer__send room-composer__send"
             label={pendingAnswerMode
               ? '发送问题回答'
               : taskBusyState === 'blocked'
@@ -356,13 +366,13 @@ export function RoomComposer({
                 : taskBusyState
                   ? '立即干预当前回合'
                   : '发送消息'}
-            icon={<Send size={17} />}
+            icon={<Send size={18} />}
             disabled={!canSend}
             onClick={submit}
             tooltip
           />
-        </div>
-      </div>
+        )}
+      />
     </div>
   </div>;
 }

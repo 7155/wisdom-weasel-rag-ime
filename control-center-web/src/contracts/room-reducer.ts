@@ -1,5 +1,10 @@
 import type { ProjectionDiagnostic, ProjectionGap, ProjectionReduction } from './agent-reducer';
 import { approvalNeedsHumanDecision } from './approval-decision';
+import {
+  MAX_COMPOSER_ATTACHMENT_BYTES,
+  isComposerAttachmentMimeType,
+  isComposerImageMimeType,
+} from './attachment-policy';
 import type { AgentRoomEventPageV1, AgentRoomSnapshotV1, RoomPostV2 } from './generated';
 import type { UiAgentMessage, UiRoomEvent } from './ui-events';
 import { parseContract, parseRoomEvent, tryParseAgentMessage } from './validators';
@@ -165,7 +170,8 @@ export interface RoomAttachmentReceipt {
   mediaId: string;
   roomId: string;
   fileName: string;
-  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  /** Any valid managed-media MIME type; images additionally render thumbnails. */
+  mimeType: string;
   byteSize: number;
   sha256: string;
   width?: number | null;
@@ -822,17 +828,17 @@ function roomAttachmentReceipts(value: unknown, roomId: string): RoomAttachmentR
       item.ownerType !== 'room'
       || ownerRoomId !== roomId
       || !/^media_[A-Za-z0-9_-]{12,80}$/u.test(mediaId)
-      || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mimeType)
+      || !isComposerAttachmentMimeType(mimeType)
       || !Number.isInteger(byteSize)
       || byteSize < 1
-      || byteSize > 20 * 1024 * 1024
+      || byteSize > MAX_COMPOSER_ATTACHMENT_BYTES
       || !/^[0-9a-f]{64}$/u.test(sha256)
     ) continue;
     result.push({
       mediaId,
       roomId,
-      fileName: text(item.fileName).slice(0, 160) || '图片',
-      mimeType: mimeType as RoomAttachmentReceipt['mimeType'],
+      fileName: text(item.fileName).slice(0, 160) || '附件',
+      mimeType: mimeType.toLowerCase(),
       byteSize,
       sha256,
       width: finiteDimension(item.width),
@@ -876,11 +882,13 @@ function roomUserMessage({
         presentationKind: 'markdown',
         data: { text: content },
       },
+      // Images stay inline thumbnails; every other file renders through the
+      // managed file card so a pasted PDF never shows a broken image frame.
       ...attachments.map((attachment) => ({
         id: `${id}:attachment:${attachment.mediaId}`,
-        type: 'image' as const,
+        type: isComposerImageMimeType(attachment.mimeType) ? ('image' as const) : ('file' as const),
         status,
-        presentationKind: 'managed_image',
+        presentationKind: isComposerImageMimeType(attachment.mimeType) ? 'managed_image' : 'managed_file',
         data: {
           mediaId: attachment.mediaId,
           fileName: attachment.fileName,

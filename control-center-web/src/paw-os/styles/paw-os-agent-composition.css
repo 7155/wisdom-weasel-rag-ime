@@ -32,24 +32,8 @@
   border-bottom: 1px solid var(--paw-line);
   background: transparent;
 }
-.paw-desktop-root .paw-session-workspace__view-switch {
-  gap: 2px;
-}
-.paw-desktop-root .paw-session-workspace__view-switch button {
-  border-radius: 7px;
-  color: var(--paw-muted);
-  font-weight: 600;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-.paw-desktop-root .paw-session-workspace__view-switch button:hover {
-  background: rgb(23 26 33 / .06);
-  color: var(--comp8-ink);
-}
-.paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'],
-.paw-desktop-root .paw-session-workspace__view-switch button[data-active] {
-  background: var(--comp8-ink);
-  color: var(--comp8-paper-hi);
-}
+/* 视图切换分段控件由 paw-os-agent-migrated-v1 单一负责（与 Room 窗口
+   chrome 同一语言）；此处旧的墨底活动片覆写已删除（UR-042）。 */
 .paw-desktop-root .paw-session-workspace__runtime > span {
   border: 1px solid var(--paw-line);
   border-radius: 999px;

@@ -204,17 +204,19 @@
   white-space: nowrap;
 }
 
-/* 视图切换：一枚分段控件——冷灰槽、白色活动片、极小投影，
-   「对话 / 轨迹 / 星空」一眼可辨且有物理感。 */
+/* 视图切换：与 Room 窗口 chrome（.paw-room-window-chrome > nav）同一枚
+   分段控件语言——同槽色、同活动白片、同尺寸，portal 进标题栏后
+   「对话 / Agent 轨迹 / 星空」与 Room 的「对话 / 星图 / 治理」不再是两套 UI。 */
 .paw-desktop-root .paw-session-workspace__view-switch {
   flex: 0 0 auto;
   display: inline-flex;
-  gap: 2px;
+  align-items: center;
+  gap: 1px;
   padding: 2px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--paw-chat-surface-subtle);
-  box-shadow: inset 0 0 0 1px var(--paw-chat-border);
+  border: 1px solid rgb(42 28 0 / .055);
+  border-radius: 8px;
+  background: rgb(42 28 0 / .035);
+  box-shadow: none;
 }
 
 .paw-desktop-root .paw-session-workspace__tools {
@@ -224,41 +226,42 @@
 
 .paw-desktop-root .paw-session-workspace__view-switch button,
 .paw-desktop-root .paw-session-workspace__tools > button {
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 7px;
-  color: var(--paw-chat-text-secondary);
-  background: transparent;
-  font-size: 13px;
-  font-weight: 540;
-  transition: color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
-}
-
-.paw-desktop-root .paw-session-workspace__view-switch button {
   min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  color: #7d7a75;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 16px;
+  white-space: nowrap;
+  transition: color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, transform 100ms ease;
 }
 
 .paw-desktop-root .paw-session-workspace__view-switch button:hover,
 .paw-desktop-root .paw-session-workspace__tools > button:hover {
-  color: var(--paw-chat-text);
-  background: var(--paw-chat-surface-hover);
+  color: #2c2c2b;
+}
+
+.paw-desktop-root .paw-session-workspace__view-switch button:active,
+.paw-desktop-root .paw-session-workspace__tools > button:active {
+  transform: scale(.97);
 }
 
 .paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'] {
-  color: var(--paw-chat-text);
+  color: #2c2c2b;
   background: #fff;
-  box-shadow: 0 1px 3px rgb(24 32 43 / 12%), 0 0 0 1px rgb(24 32 43 / 5%);
-  font-weight: 620;
+  box-shadow: 0 1px 2px rgb(42 28 0 / .08), 0 0 0 1px rgb(42 28 0 / .04);
 }
 
 .paw-desktop-root .paw-session-workspace__tools[data-open] > button {
-  color: var(--paw-chat-text);
-  background: var(--paw-chat-user-bubble);
-  box-shadow: 0 0 0 1px rgb(24 32 43 / 5%);
+  color: #2c2c2b;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(42 28 0 / .08), 0 0 0 1px rgb(42 28 0 / .04);
 }
 
 .paw-desktop-root .paw-session-workspace__tools > nav {
@@ -638,7 +641,7 @@
 }
 
 /* 输入船坞：白卡 + 分层投影悬浮；聚焦时亮起冷钴描边与光环。 */
-.paw-desktop-root .paw-session-workspace__composer .agent-composer {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer {
   border: 0;
   border-radius: 18px;
   background: #fff;
@@ -649,7 +652,7 @@
   transition: box-shadow 160ms ease;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer:focus-within {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer:focus-within {
   box-shadow:
     0 1px 2px rgb(24 32 43 / 5%),
     0 12px 36px rgb(24 32 43 / 10%),
@@ -666,11 +669,11 @@
   initial-value: 0deg;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer {
   position: relative;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer::before {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer::before {
   content: '';
   position: absolute;
   inset: -1px;
@@ -696,11 +699,11 @@
   transition: opacity 200ms ease;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer:focus-within::before {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer:focus-within::before {
   opacity: .45;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer[data-busy]::before {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer[data-busy]::before {
   opacity: .9;
   animation: paw-composer-glow 3.2s linear infinite;
 }
@@ -711,18 +714,18 @@
 
 /* 减少动效：光环不转但仍在——busy 状态保持可读（PF-CM-011）。 */
 @media (prefers-reduced-motion: reduce) {
-  .paw-desktop-root .paw-session-workspace__composer .agent-composer[data-busy]::before {
+  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer[data-busy]::before {
     animation: none;
     opacity: .6;
   }
 }
 
-:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace__composer .agent-composer[data-busy]::before {
+:root[data-reduce-motion='true'] .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer[data-busy]::before {
   animation: none;
   opacity: .6;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer textarea {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer textarea {
   min-height: 64px;
   padding: 13px 15px 41px;
   color: var(--paw-chat-text);
@@ -734,7 +737,7 @@
 /* Send is the composer's one primary action: a filled accent circle
    (baseline .send-btn), so it never competes with the quiet pickers on the
    same row. Disabled keeps the quiet outline so an empty draft doesn't shout. */
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__send:not(:disabled) {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__send:not(:disabled) {
   border-radius: 50%;
   background: var(--paw-chat-accent);
   color: #fff;
@@ -744,39 +747,39 @@
     color 120ms ease;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__send:hover:not(:disabled) {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__send:hover:not(:disabled) {
   background: color-mix(in srgb, var(--paw-chat-accent) 88%, #18202b);
   transform: translateY(-1px);
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__send:active:not(:disabled) {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__send:active:not(:disabled) {
   background: color-mix(in srgb, var(--paw-chat-accent) 80%, #18202b);
   transform: scale(.94);
 }
 
-:root[data-reduce-motion='true'] .paw-desktop-root .paw-session-workspace__composer .agent-composer__send:not(:disabled) {
+:root[data-reduce-motion='true'] .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__send:not(:disabled) {
   transition: none;
   transform: none;
 }
 
 /* 忙碌时的停止钮：红色语义圆点，与发送钮同排但绝不混淆。 */
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__stop {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__stop {
   border-radius: 50%;
   color: var(--paw-chat-danger);
   background: color-mix(in srgb, var(--paw-chat-danger) 8%, transparent);
   transition: background-color 130ms ease, transform 120ms ease;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__stop:hover:not(:disabled) {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__stop:hover:not(:disabled) {
   background: color-mix(in srgb, var(--paw-chat-danger) 14%, transparent);
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__stop:active:not(:disabled) {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__stop:active:not(:disabled) {
   transform: scale(.94);
 }
 
 /* 干预 / 接续：忙碌时的投递选择也是一枚小分段控件。 */
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__delivery {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__delivery {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
@@ -785,7 +788,7 @@
   box-shadow: inset 0 0 0 1px var(--paw-chat-border);
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__delivery button {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__delivery button {
   min-height: 24px;
   padding: 1px 9px;
   border: 0;
@@ -797,7 +800,7 @@
   transition: color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
 }
 
-.paw-desktop-root .paw-session-workspace__composer .agent-composer__delivery button[aria-checked='true'] {
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__delivery button[aria-checked='true'] {
   color: var(--paw-chat-text);
   background: #fff;
   box-shadow: 0 1px 3px rgb(24 32 43 / 12%), 0 0 0 1px rgb(24 32 43 / 5%);
@@ -1530,12 +1533,12 @@
     animation-name: paw-session-sheet-in;
   }
 
-  .paw-desktop-root .paw-session-workspace__composer .agent-composer__toolbar {
+  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px;
   }
 
-  .paw-desktop-root .paw-session-workspace__composer .agent-composer__picker {
+  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__picker {
     width: 32px;
     min-width: 32px;
     max-width: 32px;
@@ -1544,7 +1547,7 @@
     padding-inline: 0;
   }
 
-  .paw-desktop-root .paw-session-workspace__composer .agent-composer__picker .ui-button__label {
+  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__picker .ui-button__label {
     display: none;
   }
 }
@@ -1610,7 +1613,7 @@
     padding: 7px 9px 9px;
   }
 
-  .paw-desktop-root .paw-session-workspace__composer .agent-composer textarea {
+  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer textarea {
     min-height: 54px;
   }
 

@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { useComposerClearance } from '@/components/layout/use-composer-clearance';
 import { IconButton } from '@/components/primitives';
+import { isComposerImageMimeType } from '@/contracts/attachment-policy';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import type { UiAgentEvent } from '@/contracts/ui-events';
@@ -909,9 +910,9 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
         setSessionError(session.id, '正在定位这条历史消息，请稍候。');
         return;
       }
-      if (attachments.length && imageSupport !== 'supported') {
+      if (attachments.some((item) => isComposerImageMimeType(item.mimeType)) && imageSupport !== 'supported') {
         setError(imageSupport === 'unsupported'
-          ? '当前模型不支持图片，请移除图片或切换到支持图片的模型。'
+          ? '当前模型不支持图片，请移除图片附件或切换到支持图片的模型。'
           : '尚未确认当前模型的图片能力，请稍后再发送。');
         return;
       }
@@ -1034,9 +1035,9 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
       setError('这个命令不在当前对话的控制中心或 Pi RPC 命令目录中，未发送给模型。');
       return;
     }
-    if (attachments.length && imageSupport !== 'supported') {
+    if (attachments.some((item) => isComposerImageMimeType(item.mimeType)) && imageSupport !== 'supported') {
       setError(imageSupport === 'unsupported'
-        ? '当前模型不支持图片，请移除图片或切换到支持图片的模型。'
+        ? '当前模型不支持图片，请移除图片附件或切换到支持图片的模型。'
         : '尚未确认当前模型的图片能力，请稍后再发送。');
       return;
     }
@@ -1541,18 +1542,12 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
 
   async function pasteImages(files?: File[]): Promise<void> {
     if (!session) { setError('请先选择一个对话。'); return; }
-    if (imageSupport !== 'supported') {
-      setError(imageSupport === 'unsupported' ? '当前模型不支持图片，请先切换模型。' : '正在确认当前模型的图片能力。');
-      return;
-    }
-    if (!transport.pasteImages) { setError('当前平台暂不支持从剪贴板导入图片。'); return; }
+    if (!transport.pasteImages) { setError('当前平台暂不支持从剪贴板导入附件。'); return; }
     const remaining = 8 - attachments.length;
-    if (remaining <= 0) { setError('单次消息最多支持 8 张图片。'); return; }
-    if (files && files.length > remaining) { setError(`当前消息还可以粘贴 ${remaining} 张图片。`); return; }
-    const unsupported = files?.find((file) => !PASTED_IMAGE_MIME_TYPES.has(file.type.toLowerCase()));
-    if (unsupported) { setError(`不支持粘贴 ${unsupported.type || unsupported.name}；仅支持 PNG、JPEG、GIF 和 WebP。`); return; }
+    if (remaining <= 0) { setError('单次消息最多支持 8 个附件。'); return; }
+    if (files && files.length > remaining) { setError(`当前消息还可以粘贴 ${remaining} 个附件。`); return; }
     const oversized = files?.find((file) => file.size <= 0 || file.size > MAX_AGENT_IMAGE_BYTES);
-    if (oversized) { setError(`${oversized.name || '图片'} 必须小于 20 MiB 且不能为空。`); return; }
+    if (oversized) { setError(`${oversized.name || '附件'} 必须小于 20 MiB 且不能为空。`); return; }
     try {
       const maxFiles = files?.length || remaining;
       const imported = await transport.pasteImages({
@@ -1561,7 +1556,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
         maxFiles,
       });
       if (!imported.length) {
-        setSessionError(session.id, '剪贴板里没有可导入的 PNG、JPEG、GIF 或 WebP 图片。');
+        setSessionError(session.id, '剪贴板里没有可导入的文件。');
         return;
       }
       const attachmentsWithPreviews = files && transport.kind !== 'native'
@@ -1582,16 +1577,11 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
 
   async function pickAttachments(): Promise<void> {
     if (!session) { setError('请先选择一个对话。'); return; }
-    if (imageSupport !== 'supported') {
-      setError(imageSupport === 'unsupported' ? '当前模型不支持图片，请先切换模型。' : '正在确认当前模型的图片能力。');
-      return;
-    }
-    if (!transport.pickFiles) { setError('当前平台暂不支持选择图片。'); return; }
+    if (!transport.pickFiles) { setError('当前平台暂不支持选择附件。'); return; }
     const remaining = 8 - attachments.length;
-    if (remaining <= 0) { setError('单次消息最多支持 8 张图片。'); return; }
+    if (remaining <= 0) { setError('单次消息最多支持 8 个附件。'); return; }
     try {
       const imported = await transport.pickFiles({
-        accepts: [...PASTED_IMAGE_MIME_TYPES],
         multiple: true,
         purpose: 'attachment',
         sessionId: session.id,
@@ -2224,7 +2214,6 @@ function shouldOpenTaskCenterByDefault(): boolean {
     && !window.matchMedia('(max-width: 1360px)').matches;
 }
 
-const PASTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
 const STOP_RECONCILE_BUDGET_MS = 1_450;
 const STOP_RECONCILE_CHECKPOINTS_MS = [0, 180, 420, 760, 1_100, 1_320] as const;

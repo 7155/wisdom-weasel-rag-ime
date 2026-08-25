@@ -1565,12 +1565,11 @@
 .room-composer-dock > * { pointer-events: auto; }
 .room-composer-wrap { position: relative; min-width: 0; }
 .room-composer textarea:disabled { cursor: not-allowed; }
-.room-composer__attachments { display: flex; min-width: 0; gap: 5px; padding: 7px 9px 0; overflow-x: auto; scrollbar-width: thin; }
-.room-composer__attachments > span { display: inline-flex; max-width: 240px; min-height: 28px; flex: 0 0 auto; align-items: center; gap: 5px; border: 1px solid var(--color-border); border-radius: var(--radius-round); padding: 2px 4px 2px 8px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; }
-.room-composer__attachments > span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.room-composer__attachments button { display: grid; width: 24px; height: 24px; flex: 0 0 24px; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--color-text-tertiary); cursor: pointer; }
-.room-composer__attachments button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
-.room-composer__task-lock { margin: 0 10px 4px; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.45; }
+/* Attachment chips now render inside the shared composer shell using the
+   canonical agent-composer chip classes (UR-042). */
+/* Lives inside the shared composer box as a banner strip, mirroring the
+   Session edit banner's placement. */
+.room-composer__task-lock { margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.45; }
 .room-composer__mention[aria-pressed='true'] { background: var(--color-accent-soft); color: var(--color-accent); }
 .room-mention-menu { position: absolute; z-index: 8; bottom: calc(100% + 7px); left: 0; display: grid; width: min(420px, 100%); overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: 7px; padding: 4px; background: var(--color-surface); box-shadow: var(--shadow-menu); }
 .room-mention-menu > header { display: flex; min-height: 38px; align-items: center; gap: 8px; padding: 5px 8px; color: var(--color-text-tertiary); }
