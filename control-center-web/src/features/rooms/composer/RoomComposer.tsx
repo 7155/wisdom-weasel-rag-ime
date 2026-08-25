@@ -1,4 +1,4 @@
-import { AtSign, Plus, Send } from 'lucide-react';
+import { AtSign, ListPlus, Plus, Send } from 'lucide-react';
 import {
   startTransition,
   useCallback,
@@ -48,7 +48,9 @@ export function RoomComposer({
   taskBusyState,
   pendingUserAnswer = false,
   inputRef,
+  queueDepth = 0,
   onDraftChange,
+  onQueue,
   onSend,
   onAttachmentsChange,
   onPasteImages,
@@ -64,6 +66,11 @@ export function RoomComposer({
   taskBusyState?: 'running' | 'blocked';
   pendingUserAnswer?: boolean;
   inputRef?: { current: HTMLTextAreaElement | null };
+  /** How many follow-ups the host is already holding for this Room. */
+  queueDepth?: number;
+  /** Hold this draft until the running turn settles. Returns false when the
+   *  queue cap refused it, in which case the text stays in the composer. */
+  onQueue?: (value: string) => boolean;
   onDraftChange: (value: string) => void;
   onAttachmentsChange: (value: RoomAttachmentReceipt[]) => void;
   onPasteImages: (files: File[]) => void;
@@ -98,6 +105,11 @@ export function RoomComposer({
     roomCanSend
     && (pendingAnswerMode ? composerDraft.trim() : composerDraft.trim() || attachments.length)
     && !sending,
+  );
+  /* Queueing is offered only where it is the real alternative to steering: a
+     running turn, plain text, and no question waiting on this answer. */
+  const canQueue = Boolean(
+    onQueue && taskBusyState === 'running' && !pendingAnswerMode && composerDraft.trim() && !sending,
   );
 
   useEffect(() => {
@@ -199,14 +211,25 @@ export function RoomComposer({
     else onPasteFromClipboard();
   }
 
-  function submit(): void {
-    if (!canSend) return;
-    const value = composerDraft;
+  function clearDraft(): void {
     setComposerDraft('');
     setMention(undefined);
     setActiveIndex(0);
     publishDraft('');
+  }
+
+  function submit(): void {
+    if (!canSend) return;
+    const value = composerDraft;
+    clearDraft();
     onSend(value);
+  }
+
+  /* Queueing never reaches Runtime, so a refused draft must stay visible and
+     editable rather than vanish into a full queue. */
+  function queueDraft(): void {
+    if (!canQueue || !onQueue) return;
+    if (onQueue(composerDraft)) clearDraft();
   }
 
   return <div className="room-composer-shell">
@@ -357,6 +380,15 @@ export function RoomComposer({
           </>
         )}
         actions={(
+          <>
+            {onQueue && taskBusyState === 'running' && !pendingAnswerMode ? <IconButton
+              className="room-composer__queue"
+              label={queueDepth ? `排到当前回合之后（已排 ${queueDepth} 条）` : '排到当前回合之后'}
+              icon={<ListPlus size={18} />}
+              disabled={!canQueue}
+              onClick={queueDraft}
+              tooltip
+            /> : null}
           <IconButton
             className="agent-composer__send room-composer__send"
             label={pendingAnswerMode
@@ -371,6 +403,7 @@ export function RoomComposer({
             onClick={submit}
             tooltip
           />
+          </>
         )}
       />
     </div>

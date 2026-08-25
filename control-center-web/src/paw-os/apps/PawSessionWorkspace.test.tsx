@@ -442,6 +442,87 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
+  it('holds a follow-up beside the composer and gives it back when the turn is stopped', async () => {
+    const sessionId = 'session-queue';
+    const transport = busySessionTransport(sessionId);
+    useAgentLiveStore.getState().clear(sessionId);
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    act(() => { emitStreamDelta(transport, sessionId); });
+
+    const user = userEvent.setup();
+    // 干预/接续 reach Runtime now; 排队 is the composer's own hold.
+    await user.click(await screen.findByRole('radio', { name: '排队' }));
+    await user.type(composer, '等这轮结束再看依赖图');
+    await user.click(screen.getByRole('button', { name: '排队，当前回合结束后发送' }));
+
+    expect(await screen.findByText('1 条排队中')).toBeInTheDocument();
+    expect(composer).toHaveValue('');
+    // Nothing was handed to Runtime: the hold is entirely reversible.
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.prompt')).toEqual([]);
+    expect(screen.getByRole('radio', { name: '排队 1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '停止本轮' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('等这轮结束再看依赖图'));
+    expect(screen.queryByText('1 条排队中')).not.toBeInTheDocument();
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.prompt')).toEqual([]);
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('sends exactly one held follow-up once the running turn settles', async () => {
+    const sessionId = 'session-queue-drain';
+    const transport = busySessionTransport(sessionId);
+    useAgentLiveStore.getState().clear(sessionId);
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    act(() => { emitStreamDelta(transport, sessionId); });
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('radio', { name: '排队' }));
+    for (const text of ['第一条排队', '第二条排队']) {
+      await user.type(composer, text);
+      await user.click(screen.getByRole('button', { name: '排队，当前回合结束后发送' }));
+    }
+    expect(await screen.findByText('2 条排队中')).toBeInTheDocument();
+
+    act(() => { emitTurnCompleted(transport, sessionId); });
+
+    // Exactly one draft drains per settled turn, in the order it was held.
+    await waitFor(() => expect(
+      transport.requests.filter((request) => request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(1));
+    expect(transport.requests.find((request) => request.pathId === 'agent.session.prompt')?.body)
+      .toMatchObject({ message: '第一条排队' });
+    await waitFor(() => expect(screen.getByText(/1 条排队中/)).toBeInTheDocument());
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('uses one compact on-demand row when the Session has no subagents', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const transport = new StubControlTransport('mock', {
@@ -469,6 +550,76 @@ describe('PAWOS Agent Session structural migration', () => {
   });
 
 });
+
+/** A Session whose snapshot opens on one running turn, so the composer offers
+ *  the busy delivery choices a queued follow-up competes with. */
+function busySessionTransport(sessionId: string): StubControlTransport {
+  return new StubControlTransport('mock', {
+    'agent.session.snapshot': {
+      messages: [{
+        schemaVersion: 'rag-ime.agent-message.v1',
+        id: `${sessionId}:user`,
+        sessionId,
+        turnId: 'turn-busy',
+        role: 'user',
+        status: 'completed',
+        blocks: [{
+          id: `${sessionId}:user:text`,
+          type: 'text',
+          status: 'completed',
+          presentationKind: 'markdown',
+          data: { text: '请开始这轮实现' },
+        }],
+        attachments: [],
+        citations: [],
+        createdAtMs: 1,
+        completedAtMs: 1,
+      }],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'busy',
+    },
+    'agent.session.models': {},
+    'agent.session.commands': {},
+    'agent.tools.list': {},
+    'agent.runtime.get': {},
+    'agent.session.prompt': { ok: true },
+    'agent.session.abort': { ok: true },
+  });
+}
+
+function emitStreamDelta(transport: StubControlTransport, sessionId: string): void {
+  transport.emit('agent.session.events', parseAgentEvent({
+    schemaVersion: 'rag-ime.agent-event.v1',
+    eventId: `${sessionId}:1`,
+    sessionId,
+    turnId: 'turn-busy',
+    sequence: 1,
+    createdAtMs: 5,
+    eventType: 'text_delta',
+    payload: {
+      messageId: 'turn-busy:assistant',
+      blockId: 'turn-busy:assistant:text',
+      delta: '正在推进…',
+    },
+    resumeToken: `${sessionId}:1`,
+  }));
+}
+
+function emitTurnCompleted(transport: StubControlTransport, sessionId: string): void {
+  transport.emit('agent.session.events', parseAgentEvent({
+    schemaVersion: 'rag-ime.agent-event.v1',
+    eventId: `${sessionId}:2`,
+    sessionId,
+    turnId: 'turn-busy',
+    sequence: 2,
+    createdAtMs: 10,
+    eventType: 'turn_completed',
+    payload: { messageId: 'turn-busy:assistant', status: 'completed' },
+    resumeToken: `${sessionId}:2`,
+  }));
+}
 
 function liveSession(): SessionSummary {
   return {

@@ -1,8 +1,6 @@
 import {
-  ChevronRight,
   Archive,
   CircleAlert,
-  CheckCircle2,
   ExternalLink,
   Focus,
   GitBranch,
@@ -10,9 +8,7 @@ import {
   MessageCircle,
   Orbit,
   Plus,
-  Route,
   Settings2,
-  ShieldAlert,
   StopCircle,
   UserMinus,
   UserPlus,
@@ -23,24 +19,12 @@ import {
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
-import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 import { isComposerAttachmentMimeType } from '@/contracts/attachment-policy';
-import type { RoomActivityProjection, RoomAttachmentReceipt, RoomMessageProjection, RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
+import type { RoomActivityProjection, RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { ControlRequest, PickedFile } from '@/platform/transport';
 import { GenericUserInputCard } from '@/features/agent/review/AgentReviewDialogs';
-import { publicAgentErrorText } from '@/features/agent/public-error';
-import { PublicToolOutput } from '@/features/agent/timeline/ActivitySummary';
-import { MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
-import {
-  publicToolResultView,
-  type PublicToolResultView,
-} from '@/features/agent/timeline/public-tool-result';
-import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
-import {
-  toggleDisclosureOnKeyPreservingAnchor,
-  toggleDisclosurePreservingAnchor,
-} from '@/features/agent/timeline/disclosure-anchor';
+import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomComposer, roomMentionedParticipants } from '@/features/rooms/composer/RoomComposer';
@@ -57,32 +41,24 @@ import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-sessi
 import { pulsePawCompositionForRuntimeEvents } from '../runtime/composition-pulse';
 import {
   createRuntimeToolWindowProjector,
-  runtimeToolWindowRequest,
   shouldAutoOpenRuntimeToolWindow,
 } from '../runtime/runtime-tool-window';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-store';
 import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
+import { PawRoomConversation, roomProcessWindowRequest } from './PawRoomConversation';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 /* 星空按钮按下之前，星空代码不进入 Room 默认对话的 bundle 路径。 */
 import { LazyPawRoomStarfield } from './PawStarfieldLazy';
-import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
-import {
-  roomDispatchPlanFromActivity,
-  roomDispatchSourceParticipantId,
-  roomToolActivityLine,
-  roomToolEvidence,
-  roomToolSummaryIsMachine,
-  type RoomDispatchPlan,
-  type RoomToolFact,
-} from './room-gravity-projection';
-import { RoomActivityGlyph } from './room-tool-glyph';
+import { buildRoomFocusProjection, roomFocusHasCoordinator, roomFocusOriginLabel, type RoomFocusProjection } from './room-focus-projection';
 import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
-/* Shared conversation modules (.agent-smooth-reveal 220ms spring, tool result
- * panels, diff reader) style the Room chronology too; the Room window must not
- * depend on a Session window having loaded them first. */
+/* Shared conversation modules (tool result panels, diff reader) style the
+ * Room's tool receipts too; the Room window must not depend on a Session
+ * window having loaded them first. */
 import '@/features/agent/agent.css';
 import '@/features/rooms/rooms.css';
+
+export { PawRoomConversation } from './PawRoomConversation';
 
 type RoomToolPanel = 'focus' | 'governance';
 
@@ -161,6 +137,16 @@ export function PawRoomWorkspace({
       : activeTurn || activeWork
         ? 'running' as const
         : undefined;
+  /* Sending into a running Room steers the active partner. Queueing is the
+   * other honest choice: the follow-up stays in the browser, ahead of the
+   * Runtime send path, until this turn settles — so it can still be reordered,
+   * edited, or pulled back into the composer on stop. */
+  const queue = useConversationQueue({
+    busy: Boolean(activeTurn) || sending,
+    conversationId: recordId,
+    send: (value) => { void send(value); },
+  });
+  const queueFollowUp = useCallback((value: string) => queue.enqueue(value), [queue]);
 
   const retrySnapshot = useRoomLiveSession({
     roomId: recordId,
@@ -280,6 +266,9 @@ export function PawRoomWorkspace({
 
   async function abortTurn(rootId: string): Promise<void> {
     if (!rootId || abortingTurnIds.has(rootId)) return;
+    /* Stopping must not silently discard held follow-ups: the queue only ever
+     * held them, so they go back to the composer the user can still edit. */
+    if (queue.queue.length) setDraft(queue.restoreToDraft(draft));
     setAbortingTurnIds((current) => new Set(current).add(rootId));
     try {
       const receipt = await transport.request<Record<string, unknown>>({
@@ -402,8 +391,12 @@ export function PawRoomWorkspace({
     ['blocked', focusProjection?.counts.blocked ?? 0, '受阻'],
     ['complete', focusProjection?.counts.completed ?? 0, '完成'],
   ] as const).filter(([, count]) => count > 0);
-  const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
-    <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span>
+  /* 没有主持就没有 Sol：signal chrome 只有在真的有伙伴担任 coordinator 时
+     才用 Sol 命名这个 Room 的原点，否则统一叫「主 Room」。 */
+  const coordinatorActive = focusProjection ? roomFocusHasCoordinator(focusProjection.partners) : false;
+  const originLabel = roomFocusOriginLabel(coordinatorActive);
+  const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
+    {coordinatorActive ? <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span> : null}
     <nav aria-label="Room 工作台视图">
       <button aria-pressed={panel === 'none' && view === 'conversation'} onClick={() => { setView('conversation'); setPanel('none'); }} type="button"><MessageCircle size={14} /><span>公开对话</span></button>
       <button aria-pressed={panel !== 'none'} onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : current); }} type="button"><Focus size={14} /><span>协作态势</span></button>
@@ -428,7 +421,7 @@ export function PawRoomWorkspace({
           <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
           <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 项任务</span>
         </div>
-        {signalChips.length ? <div aria-label="Sol 当前状态" className="paw-room-workspace__signal-status">
+        {signalChips.length ? <div aria-label={`${originLabel} 当前状态`} className="paw-room-workspace__signal-status">
           {signalChips.map(([tone, count, label]) => <span data-tone={tone} key={tone}><i />{count} {label}</span>)}
         </div> : null}
       </section>
@@ -442,40 +435,44 @@ export function PawRoomWorkspace({
               onExit={() => setView('conversation')}
               onOpenParticipant={openParticipantById}
             />
-          ) : <div aria-label="公开对话时间线" className="paw-room-timeline" ref={timelineRef} role="log">
-              <div className="paw-room-timeline__canvas">
-                {loading && !turnOrder.length ? <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div> : null}
-                {!loading && !turnOrder.length ? <div className="paw-room-workspace__empty"><Users size={24} /><strong>Room 已准备好</strong><p>发送目标，伙伴会分工、执行并汇合结果。</p></div> : null}
-                {projection && record ? <PawRoomConversation
-                  onApprovalDecision={decideApproval}
-                  onOpenProcessActivity={openProcessActivity}
-                  onRetryTurn={(message, retryOfRootId) => void send(message, { retryOfRootId, preserveDraft: true })}
-                  projection={projection}
-                  retryingTurn={sending}
-                  room={record}
-                /> : null}
-              </div>
+          ) : <div className="paw-room-timeline" ref={timelineRef}>
+              {projection && record ? <PawRoomConversation
+                empty={loading
+                  ? <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div>
+                  : <div className="paw-room-workspace__empty"><Users size={24} /><strong>Room 已准备好</strong><p>发送目标，伙伴会分工、执行并汇合结果。</p></div>}
+                onApprovalDecision={decideApproval}
+                onOpenProcessActivity={openProcessActivity}
+                onRetryTurn={(message, retryOfRootId) => void send(message, { retryOfRootId, preserveDraft: true })}
+                projection={projection}
+                retryingTurn={sending}
+                room={record}
+              /> : null}
           </div>}
 
           <div className="paw-room-workspace__composer">
               {error ? <div className="paw-room-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); retrySnapshot(); }} type="button">重新同步</button></div> : null}
               {pendingGroupedInput ? <GenericUserInputCard activity={pendingGroupedInput} sessionId={pendingGroupedInput.sourceSessionId} onError={setError} /> : (
-                <RoomComposer
-                  room={record}
-                  participantAliases={participantAliases}
-                  personas={personas}
-                  draft={draft}
-                  attachments={attachments}
-                  sending={sending}
-                  taskBusyState={taskBusyState}
-                  pendingUserAnswer={pendingQuestion?.roomId === recordId}
-                  onDraftChange={setDraft}
-                  onSend={(value) => void send(value, { question: pendingQuestion?.roomId === recordId ? pendingQuestion : undefined })}
-                  onAttachmentsChange={setAttachments}
-                  onPasteImages={(files) => void pasteFiles(files)}
-                  onPasteFromClipboard={() => void pasteFiles()}
-                  onPickAttachments={() => void pickAttachments()}
-                />
+                <>
+                  <QueueTray busy={sending} controller={queue} />
+                  <RoomComposer
+                    room={record}
+                    participantAliases={participantAliases}
+                    personas={personas}
+                    draft={draft}
+                    attachments={attachments}
+                    sending={sending}
+                    taskBusyState={taskBusyState}
+                    pendingUserAnswer={pendingQuestion?.roomId === recordId}
+                    queueDepth={queue.queue.length}
+                    onDraftChange={setDraft}
+                    onQueue={queueFollowUp}
+                    onSend={(value) => void send(value, { question: pendingQuestion?.roomId === recordId ? pendingQuestion : undefined })}
+                    onAttachmentsChange={setAttachments}
+                    onPasteImages={(files) => void pasteFiles(files)}
+                    onPasteFromClipboard={() => void pasteFiles()}
+                    onPickAttachments={() => void pickAttachments()}
+                  />
+                </>
               )}
           </div>
         </main>
@@ -524,7 +521,9 @@ function PawRoomToolWorkspace({
   room: RoomSummary;
 }) {
   const tabId = useId();
-  return <aside aria-label="Room 协作态势" className="paw-room-tools">
+  /* 空间指向：协作态势键在标题栏尾端，面板也必须从尾端展开。data-side 把这个
+     朝向写成契约而不是 DOM 顺序的副作用，CSS 用同名网格区落位。 */
+  return <aside aria-label="Room 协作态势" className="paw-room-tools" data-side="trailing">
     <header className="paw-room-tools__header">
       <span><Focus aria-hidden="true" size={15} /><strong>协作态势</strong></span>
       <div className="paw-room-tools__actions">
@@ -552,502 +551,6 @@ function PawRoomToolWorkspace({
       {panel === 'governance' ? <PawRoomGovernance personas={personas} room={room} onError={onError} onRefresh={onRefresh} onRoomUpdated={onRoomUpdated} /> : null}
     </div>
   </aside>;
-}
-
-type PawRoomChronologyEntry =
-  | { id: string; kind: 'message'; message: RoomMessageProjection; order: number }
-  | { id: string; kind: 'activity'; activity: RoomActivityProjection; order: number }
-  | { id: string; kind: 'terminal'; turn: RoomTurnProjection; order: number };
-
-/** PAWOS-owned public chronology. It consumes the production Room projection
- * directly, but deliberately does not inherit the legacy RoomTurn card DOM.
- * 中央叙事按真实 Turn 分组：一次 loop 一张卡；Tool/分派/进度折叠进对应
- * Turn（UR-085 折叠不丢 trace）；待决审批永不折叠（UR-004 审批在 Room 内）。 */
-export function PawRoomConversation({
-  onApprovalDecision,
-  onOpenProcessActivity,
-  onRetryTurn,
-  projection,
-  retryingTurn,
-  room,
-}: {
-  onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => Promise<void>;
-  onOpenProcessActivity?: (activity: RoomActivityProjection) => void;
-  onRetryTurn: (message: string, rootId: string) => void;
-  projection: RoomProjectionState;
-  retryingTurn: boolean;
-  room: RoomSummary;
-}) {
-  const turnGroups = useMemo(() => pawRoomTurnGroups(projection), [projection]);
-  /* Every routing decision in the projection, so a child dispatch can name
-   * the planet that exerted the gravity (target of its parent dispatch). */
-  const dispatchPlans = useMemo(() => projection.activityOrder
-    .map((activityId) => projection.activitiesById[activityId])
-    .filter((activity): activity is RoomActivityProjection => Boolean(activity))
-    .map((activity) => roomDispatchPlanFromActivity(activity))
-    .filter((plan): plan is RoomDispatchPlan => Boolean(plan)), [projection]);
-  return <section aria-label="Room 公开对话" className="paw-room-chronology">
-    {turnGroups.map((group) => (
-      <section className="paw-room-chronology__turn" data-status={group.status} key={group.id}>
-        {group.items.map((item) => {
-          if (item.kind === 'fold') {
-            return <PawRoomActivityFold
-              activities={item.activities}
-              dispatchPlans={dispatchPlans}
-              foldId={item.id}
-              key={item.id}
-              onApprovalDecision={onApprovalDecision}
-              onOpenProcessActivity={onOpenProcessActivity}
-              room={room}
-            />;
-          }
-          if (item.kind === 'activity') return <PawRoomInlineActivity activity={item.activity} dispatchPlans={dispatchPlans} key={item.id} onApprovalDecision={onApprovalDecision} onOpenProcessActivity={onOpenProcessActivity} room={room} />;
-          if (item.kind === 'terminal') {
-            const retrySource = roomTurnSupersededByUserInput(item.turn, projection)
-              ? undefined
-              : item.turn.messageIds
-                  .map((messageId) => projection.messagesById[messageId])
-                  .find((message) => message?.role === 'user' && message.text.trim());
-            return <section className="paw-room-chronology__terminal" data-status={item.turn.status} key={item.id} role="status">
-              <CircleAlert aria-hidden="true" size={15} />
-              <span><strong>{item.turn.status === 'aborted' ? '这轮协作已停止' : '这轮协作未完成'}</strong><small>{publicAgentErrorText(item.turn.failure, '可以保留原请求并开始一次新的尝试。')}</small></span>
-              {retrySource ? <button disabled={retryingTurn} onClick={() => onRetryTurn(retrySource.text, item.turn.rootId || item.turn.id)} type="button">{retryingTurn ? '正在重试' : '再试一次'}</button> : null}
-            </section>;
-          }
-          const { message } = item;
-          const participant = message.participantId ? room.participants.find((candidate) => candidate.id === message.participantId) : undefined;
-          const actor = participant ? roomFocusCelestialName(participant.ordinal) : 'Sol';
-          return <article className="paw-room-chronology__message" data-role={message.role} data-status={message.status} key={item.id}>
-            {message.role === 'user' ? (
-              <time className="sr-only" dateTime={new Date(message.createdAtMs).toISOString()}>用户消息，发送于 {pawRoomClock(message.createdAtMs)}</time>
-            ) : <header><strong title={participant?.displayName}>{actor}</strong>{participant ? <small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small> : null}<time>{pawRoomClock(message.createdAtMs)}</time></header>}
-            <div><MarkdownBody text={message.text || '这条公开消息没有正文。'} /></div>
-            {message.status === 'streaming' ? <small className="paw-room-chronology__live">正在生成公开回复</small> : null}
-          </article>;
-        })}
-      </section>
-    ))}
-  </section>;
-}
-
-/**
- * A Room turn can contain many pages of routing and tool activity. The summary
- * stays in the native `details` shell for its familiar semantics, while the
- * measured reveal owns opening, closing, and a reversible in-flight transition.
- * A running fold opens once by default, but a user's later choice always wins.
- */
-function PawRoomActivityFold({
-  activities,
-  dispatchPlans,
-  foldId,
-  onApprovalDecision,
-  onOpenProcessActivity,
-  room,
-}: {
-  activities: RoomActivityProjection[];
-  dispatchPlans: RoomDispatchPlan[];
-  foldId: string;
-  onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => Promise<void>;
-  onOpenProcessActivity?: (activity: RoomActivityProjection) => void;
-  room: RoomSummary;
-}) {
-  const active = activities.some((activity) => activity.status === 'running' || activity.status === 'waiting');
-  const latest = activities.at(-1)!;
-  const latestEventType = roomText(latest.payload.sourceEventType, latest.kind);
-  const disclosureId = `paw-room-fold-${useId().replaceAll(':', '')}`;
-  const [open, setOpen] = useState(active);
-  const [presence, setPresence] = useState(active);
-  const userChoiceRef = useRef(false);
-  const wasActiveRef = useRef(active);
-
-  useEffect(() => {
-    const wasActive = wasActiveRef.current;
-    wasActiveRef.current = active;
-    // A new running phase should reveal itself once, unless the reader has
-    // already chosen the compact view. Completion deliberately changes nothing.
-    if (active && !wasActive && !userChoiceRef.current) setOpen(true);
-  }, [active]);
-
-  const markUserChoice = () => { userChoiceRef.current = true; };
-  return <details
-    className="paw-room-chronology__fold"
-    data-active={active || undefined}
-    data-fold-id={foldId}
-    open={open || presence}
-  >
-    <summary
-      aria-controls={disclosureId}
-      aria-expanded={open}
-      onClick={(event) => {
-        markUserChoice();
-        toggleDisclosurePreservingAnchor(event, setOpen);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') markUserChoice();
-        toggleDisclosureOnKeyPreservingAnchor(event, setOpen);
-      }}
-    >
-      <ChevronRight aria-hidden="true" size={13} />
-      <strong>过程 {activities.length} 步</strong>
-      <small>{pawRoomActivitySummary(latest, latestEventType)}</small>
-    </summary>
-    <SmoothDisclosureReveal
-      className="paw-room-chronology__reveal"
-      id={disclosureId}
-      onPresenceChange={setPresence}
-      open={open}
-    >
-      <div className="paw-room-chronology__fold-content">
-        {activities.map((activity) => <PawRoomInlineActivity activity={activity} dispatchPlans={dispatchPlans} key={activity.id} onApprovalDecision={onApprovalDecision} onOpenProcessActivity={onOpenProcessActivity} room={room} />)}
-      </div>
-    </SmoothDisclosureReveal>
-  </details>;
-}
-
-type PawRoomChronologyItem =
-  | PawRoomChronologyEntry
-  | { id: string; kind: 'fold'; activities: RoomActivityProjection[]; order: number };
-
-type PawRoomTurnGroup = { id: string; status?: string; items: PawRoomChronologyItem[] };
-
-/** Group the public chronology by real Room turn (sequence first), then fold
- * each turn's tool/route/progress runs into one disclosure. Folding changes
- * projection only: no trace is deleted, no event is reordered. */
-function pawRoomTurnGroups(projection: RoomProjectionState): PawRoomTurnGroup[] {
-  const groups: PawRoomTurnGroup[] = [];
-  const groupById = new Map<string, PawRoomTurnGroup>();
-  for (const entry of pawRoomChronologyEntries(projection)) {
-    const turnId = entry.kind === 'message'
-      ? entry.message.turnId || entry.message.rootId
-      : entry.kind === 'activity'
-        ? entry.activity.turnId || roomText(entry.activity.payload.rootId)
-        : entry.turn.id;
-    const key = turnId || 'room:ungrouped';
-    let group = groupById.get(key);
-    if (!group) {
-      group = { id: key, status: projection.turnsById[key]?.status, items: [] };
-      groupById.set(key, group);
-      groups.push(group);
-    }
-    group.items.push(entry);
-  }
-  for (const group of groups) {
-    const folded: PawRoomChronologyItem[] = [];
-    for (const item of group.items) {
-      if (item.kind === 'activity' && !pawRoomActivityNeedsInlineDecision(item.activity)) {
-        const previous = folded.at(-1);
-        if (previous?.kind === 'fold') {
-          previous.activities.push(item.activity);
-        } else {
-          folded.push({ id: `fold:${item.id}`, kind: 'fold', activities: [item.activity], order: item.order });
-        }
-      } else {
-        folded.push(item);
-      }
-    }
-    group.items = folded;
-  }
-  return groups;
-}
-
-/** Pending approvals stay inline so the Room resolves them where they happen. */
-function pawRoomActivityNeedsInlineDecision(activity: RoomActivityProjection): boolean {
-  const approvalId = roomText(activity.payload.approvalId);
-  const approvalHash = roomText(activity.payload.payloadSha256);
-  const resolutionState = roomText(activity.payload.resolutionState || activity.payload.state);
-  return Boolean(
-    approvalId
-    && approvalHash
-    && approvalNeedsHumanDecision(activity.payload)
-    && !['approved', 'rejected', 'applied', 'resolved', 'cancelled'].includes(resolutionState),
-  );
-}
-
-function roomTurnSupersededByUserInput(
-  turn: RoomTurnProjection,
-  projection: RoomProjectionState,
-): boolean {
-  const turnMessageIndexes = turn.messageIds
-    .map((messageId) => projection.messageOrder.indexOf(messageId))
-    .filter((index) => index >= 0);
-  const messageBoundary = turnMessageIndexes.length ? Math.max(...turnMessageIndexes) : -1;
-  if (messageBoundary >= 0) {
-    return projection.messageOrder.slice(messageBoundary + 1).some((messageId) => {
-      const message = projection.messagesById[messageId];
-      return message?.role === 'user' && message.text.trim().length > 0;
-    });
-  }
-  const turnIndex = projection.turnOrder.indexOf(turn.id);
-  if (turnIndex < 0) return false;
-  return projection.turnOrder.slice(turnIndex + 1).some((turnId) => {
-    const laterTurn = projection.turnsById[turnId];
-    return laterTurn?.messageIds.some((messageId) => {
-      const message = projection.messagesById[messageId];
-      return message?.role === 'user' && message.text.trim().length > 0;
-    }) ?? false;
-  });
-}
-
-function pawRoomChronologyEntries(projection: RoomProjectionState): PawRoomChronologyEntry[] {
-  const entries: PawRoomChronologyEntry[] = [];
-  for (const messageId of projection.messageOrder) {
-    const message = projection.messagesById[messageId];
-    if (!message || message.projectionKind === 'execution' || (!message.text.trim() && !message.question)) continue;
-    entries.push({ id: `message:${message.id}`, kind: 'message', message, order: message.sequence ?? message.createdAtMs });
-  }
-  for (const activityId of projection.activityOrder) {
-    const activity = projection.activitiesById[activityId];
-    if (!activity || !pawRoomInlineActivityVisible(activity)) continue;
-    entries.push({ id: `activity:${activity.id}`, kind: 'activity', activity, order: activity.sequence ?? activity.createdAtMs });
-  }
-  for (const turnId of projection.turnOrder) {
-    const turn = projection.turnsById[turnId];
-    if (!turn || (turn.status !== 'failed' && turn.status !== 'aborted')) continue;
-    entries.push({ id: `terminal:${turn.id}`, kind: 'terminal', turn, order: (turn.updatedAtMs || turn.createdAtMs) + .75 });
-  }
-  return entries.sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
-}
-
-function pawRoomInlineActivityVisible(activity: RoomActivityProjection): boolean {
-  const eventType = roomText(activity.payload.sourceEventType, activity.kind);
-  return Boolean(roomText(activity.payload.approvalId))
-    || eventType.startsWith('tool_')
-    || ['reasoning', 'progress', 'route', 'route_decision', 'dispatch', 'status'].includes(activity.kind)
-    || eventType.includes('route')
-    || eventType.includes('dispatch');
-}
-
-function PawRoomInlineActivity({ activity, dispatchPlans = [], onApprovalDecision, onOpenProcessActivity, room }: {
-  activity: RoomActivityProjection;
-  dispatchPlans?: RoomDispatchPlan[];
-  onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => Promise<void>;
-  onOpenProcessActivity?: (activity: RoomActivityProjection) => void;
-  room: RoomSummary;
-}) {
-  const approvalId = roomText(activity.payload.approvalId);
-  const approvalHash = roomText(activity.payload.payloadSha256);
-  const resolutionState = roomText(activity.payload.resolutionState || activity.payload.state);
-  const approvalPending = Boolean(
-    approvalId
-    && approvalHash
-    && approvalNeedsHumanDecision(activity.payload)
-    && !['approved', 'rejected', 'applied', 'resolved', 'cancelled'].includes(resolutionState),
-  );
-  const [submitting, setSubmitting] = useState<'' | 'approved' | 'rejected'>('');
-  const [decisionError, setDecisionError] = useState('');
-  const participant = activity.participantId ? room.participants.find((item) => item.id === activity.participantId) : undefined;
-  const eventType = roomText(activity.payload.sourceEventType, activity.kind);
-  const dispatchPlan = approvalId ? undefined : roomDispatchPlanFromActivity(activity);
-  const summary = pawRoomActivitySummary(activity, eventType);
-  const rawDetail = activity.summary.trim();
-  const processWindow = onOpenProcessActivity
-    ? roomProcessWindowRequest(activity, room.id)
-    : null;
-  const decide = (decision: 'approved' | 'rejected') => {
-    if (!approvalPending || submitting) return;
-    setDecisionError('');
-    setSubmitting(decision);
-    void onApprovalDecision(approvalId, decision, approvalHash)
-      .catch((error: unknown) => setDecisionError(publicAgentErrorText(error)))
-      .finally(() => setSubmitting(''));
-  };
-  if (dispatchPlan) {
-    return <PawRoomDispatchActivity
-      activity={activity}
-      dispatchPlans={dispatchPlans}
-      plan={dispatchPlan}
-      room={room}
-    />;
-  }
-  const isToolActivity = !approvalId && (eventType === 'tool' || eventType.startsWith('tool_'));
-  const toolFacts = isToolActivity
-    ? roomToolEvidence(activity.payload)?.facts ?? []
-    : [];
-  const toolView = isToolActivity ? pawRoomToolResultView(activity, eventType) : null;
-  const rawBody = rawDetail && rawDetail !== summary ? rawDetail : '';
-  return <article className="paw-room-chronology__activity" data-kind={approvalId ? 'approval' : eventType} data-status={activity.status}>
-    <span aria-hidden="true">{approvalId ? <ShieldAlert size={14} /> : activity.status === 'completed' ? <CheckCircle2 size={14} /> : <LoaderCircle className={activity.status === 'running' ? 'ui-spin' : undefined} size={14} />}</span>
-    <div>
-      <strong title={participant?.displayName}>
-        {participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'}
-        {approvalId ? ' · 审批' : <RoomActivityGlyph eventType={eventType} toolName={roomText(activity.payload.toolName, roomText(activity.payload.toolId))} />}
-      </strong>
-      <p>{summary}</p>
-    </div>
-    <time>{pawRoomClock(activity.createdAtMs)}</time>
-    {toolFacts.length || rawBody || toolView ? <PawRoomRawActivityDetail detail={rawBody} facts={toolFacts} toolView={toolView} /> : null}
-    {processWindow ? <footer><button onClick={() => onOpenProcessActivity?.(activity)} type="button">查看后台 Bash</button></footer> : null}
-    {approvalPending ? <footer><button disabled={Boolean(submitting)} onClick={() => decide('approved')} type="button">{submitting === 'approved' ? '正在批准' : '批准并继续'}</button><button disabled={Boolean(submitting)} onClick={() => decide('rejected')} type="button">{submitting === 'rejected' ? '正在拒绝' : '拒绝'}</button></footer> : null}
-    {decisionError ? <small role="alert">{decisionError}</small> : null}
-  </article>;
-}
-
-/** A route_decision rendered as the real dispatch: which planet pulled which,
- * why, on which parallel track, for which task — never a dead「分派」label.
- * WorkItem IDs, dispatch IDs and candidate scores stay reachable in the
- * disclosure so no Runtime contract detail is lost. */
-function PawRoomDispatchActivity({ activity, dispatchPlans, plan, room }: {
-  activity: RoomActivityProjection;
-  dispatchPlans: RoomDispatchPlan[];
-  plan: RoomDispatchPlan;
-  room: RoomSummary;
-}) {
-  const sourceParticipantId = roomDispatchSourceParticipantId(plan, dispatchPlans);
-  const source = sourceParticipantId ? room.participants.find((item) => item.id === sourceParticipantId) : undefined;
-  const target = room.participants.find((item) => item.id === plan.targetParticipantId);
-  const sourceName = source ? roomFocusCelestialName(source.ordinal) : 'Sol';
-  const targetName = target ? roomFocusCelestialName(target.ordinal) : plan.targetDisplayName || '伙伴';
-  const objective = room.workItems?.find((item) => item.id === plan.workItemId)?.objective;
-  const celestialOf = (participantId: string) => {
-    const candidate = room.participants.find((item) => item.id === participantId);
-    return candidate ? roomFocusCelestialName(candidate.ordinal) : '';
-  };
-  return <article className="paw-room-chronology__activity paw-room-chronology__activity--dispatch" data-kind="dispatch" data-status={activity.status}>
-    <span aria-hidden="true"><Route size={14} /></span>
-    <div>
-      <strong title={target?.displayName}>{sourceName} → {targetName} · 任务分派</strong>
-      <span className="paw-room-chronology__dispatch-meta">
-        <em>{plan.reasonLabel}</em>
-        {plan.routingPolicyLabel ? <em>{plan.routingPolicyLabel}</em> : null}
-        {plan.parallelIndex >= 0 && plan.parallelSize > 1 ? <em data-lane="">∥ 轨道 {plan.parallelIndex + 1}/{plan.parallelSize}</em> : null}
-        {plan.phaseName ? <em>{plan.phaseName}</em> : null}
-      </span>
-      {objective ? <p className="paw-room-chronology__dispatch-objective">{objective}</p> : null}
-    </div>
-    <time>{pawRoomClock(activity.createdAtMs)}</time>
-    {plan.candidates.length || plan.dispatchId || plan.workItemId ? (
-      <details className="paw-room-chronology__activity-detail paw-room-chronology__dispatch-detail">
-        <summary>路由依据</summary>
-        {plan.candidates.length ? (
-          <ul className="paw-room-chronology__dispatch-candidates">
-            {plan.candidates.map((candidate) => (
-              <li data-selected={candidate.selected || undefined} key={candidate.participantId}>
-                <strong>{celestialOf(candidate.participantId) || candidate.displayName}</strong>
-                <small>{candidate.displayName}</small>
-                <span>{candidate.signals.length ? candidate.signals.join('、') : '无信号'} · {candidate.score.toFixed(1)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <dl className="paw-room-chronology__dispatch-ids">
-          {plan.dispatchId ? <div><dt>分派</dt><dd>{plan.dispatchId}</dd></div> : null}
-          {plan.workItemId ? <div><dt>任务</dt><dd>{plan.workItemId}</dd></div> : null}
-        </dl>
-      </details>
-    ) : null}
-  </article>;
-}
-
-/** Room tool activities project through the exact Session tool-result view
- * (`arguments` → `args`), so a diff/edit/write/read receipt expands into the
- * same structured detail as the Session timeline — never a machine tool id
- * (PF-CM-004/007). Only views with a concrete body earn the shared panel. */
-function pawRoomToolResultView(activity: RoomActivityProjection, eventType: string): PublicToolResultView | null {
-  const payload = activity.payload;
-  const args = payload.args ?? payload.arguments;
-  const view = publicToolResultView({
-    kind: eventType,
-    status: activity.status,
-    payload: {
-      ...payload,
-      ...(typeof args === 'object' && args !== null && !Array.isArray(args) ? { args } : {}),
-    },
-  });
-  return view.output ? view : null;
-}
-
-/** What the tool really did — sent, changed, read — as labeled facts, with
- * the concrete body below: an edit's 变更差异 opens the shared structured
- * diff reader, a write's 写入内容 the bounded written body (Joshua5: 「要能
- * 够点开看到具体内容的，例如发送了什么，修改了什么，读取了哪些」). */
-function PawRoomRawActivityDetail({ detail, facts = [], toolView }: {
-  detail: string;
-  facts?: RoomToolFact[];
-  toolView?: PublicToolResultView | null;
-}) {
-  const detailId = `paw-room-activity-detail-${useId().replaceAll(':', '')}`;
-  const [open, setOpen] = useState(false);
-  const [presence, setPresence] = useState(false);
-  return <details className="paw-room-chronology__activity-detail" open={open || presence}>
-    <summary
-      aria-controls={detailId}
-      aria-expanded={open}
-      onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
-      onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-    >{facts.length || toolView ? '查看执行详情' : '详情'}</summary>
-    <SmoothDisclosureReveal
-      className="paw-room-chronology__detail-reveal"
-      id={detailId}
-      onPresenceChange={setPresence}
-      open={open}
-    >
-      {facts.length ? (
-        <dl className="paw-room-chronology__tool-facts">
-          {facts.map((fact) => <div key={`${fact.label}:${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
-        </dl>
-      ) : null}
-      {toolView ? <PublicToolOutput view={toolView} /> : detail ? <p>{detail}</p> : null}
-    </SmoothDisclosureReveal>
-  </details>;
-}
-
-function roomProcessWindowRequest(activity: RoomActivityProjection, roomId: string) {
-  const request = runtimeToolWindowRequest({
-    eventType: 'participant_activity',
-    roomId,
-    participantId: activity.participantId ?? undefined,
-    sourceSessionId: activity.sourceSessionId,
-    payload: {
-      sourceEventType: roomText(activity.payload.sourceEventType, activity.kind),
-      data: activity.payload,
-    },
-  });
-  return request?.target.kind === 'process-terminal'
-    && Boolean(request.target.runId || request.target.terminalId)
-    ? request
-    : null;
-}
-
-function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: string): string {
-  const detail = activity.summary.trim();
-  if (roomText(activity.payload.approvalId)) return detail && !pawRoomRawDetail(detail) ? detail : '等待你确认这项受控操作';
-  const plan = roomDispatchPlanFromActivity(activity);
-  if (plan) {
-    const lane = plan.parallelIndex >= 0 && plan.parallelSize > 1 ? ` · 并行轨道 ${plan.parallelIndex + 1}/${plan.parallelSize}` : '';
-    return `${plan.reasonLabel}${plan.targetDisplayName ? ` · 交给 ${plan.targetDisplayName}` : ''}${lane}${plan.phaseName ? ` · ${plan.phaseName}` : ''}`;
-  }
-  if (eventType.startsWith('tool_')) {
-    /* Runtime often echoes only the machine tool id (`agents`, `room_partner`)
-       as the summary; the reader line then derives from real evidence
-       (行星协调 · 批量并行委派 已完成), never the bare id (Joshua5 mandate). */
-    if (detail && !pawRoomRawDetail(detail) && !roomToolSummaryIsMachine(detail, activity.payload)) {
-      return pawRoomCompactText(detail);
-    }
-    return roomToolActivityLine('', activity.payload, activity.status);
-  }
-  return detail && !pawRoomRawDetail(detail) ? pawRoomCompactText(detail) : '公开进展已更新';
-}
-
-
-function pawRoomRawDetail(value: string): boolean {
-  return value.includes('\n')
-    || /```|(?:^|\s)[{[]\s*["']/u.test(value)
-    || /\/(?:Users|Volumes|home|private|tmp|var)\//u.test(value)
-    || /\b[a-f\d]{48,}\b/iu.test(value)
-    || value.length > 180;
-}
-
-function pawRoomCompactText(value: string): string {
-  const compact = value.replace(/\s+/gu, ' ').trim();
-  return compact.length > 180 ? `${compact.slice(0, 177).trimEnd()}…` : compact;
-}
-
-function pawRoomClock(timestamp: number): string {
-  return timestamp ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp)) : '';
-}
-
-function roomText(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback;
 }
 
 export function PawRoomGovernance({

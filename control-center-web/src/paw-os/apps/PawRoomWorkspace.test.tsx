@@ -42,7 +42,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
     expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
-    const timeline = screen.getByRole('log', { name: '公开对话时间线' });
+    const timeline = screen.getByRole('log', { name: 'Room 公开对话时间线' });
     const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
     expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();
@@ -148,11 +148,58 @@ describe('PAWOS Room collaboration tools', () => {
       }),
     });
   });
+  it('opens the tools panel on the same edge as the control that opens it', async () => {
+    /* 按钮在右、面板在左 was the complaint: the 协作态势 control portals into
+       the titlebar's trailing chrome slot, so the aside it opens has to land
+       on the trailing edge too — declared, not left to DOM order. */
+    const { container } = renderRoom(900);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    const chromeSlot = container.querySelector('.paw-window-titlebar > .paw-window-chrome-slot')!;
+    expect(chromeSlot).not.toBeNull();
+    expect(chromeSlot.querySelector('.paw-room-window-chrome')).not.toBeNull();
+    expect(container.querySelector('.paw-window-leading-slot .paw-room-window-chrome')).toBeNull();
+
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    expect(tools).toHaveAttribute('data-side', 'trailing');
+    const body = container.querySelector('.paw-room-workspace__body')!;
+    expect(body.lastElementChild).toBe(tools);
+    expect(body.firstElementChild).toHaveClass('paw-room-workspace__main');
+  });
+
+  it('names the Room origin Sol only while a connected coordinator hosts it', async () => {
+    const hosted = renderRoom(900);
+    await screen.findByRole('textbox', { name: '协作消息' });
+    expect(screen.getByLabelText('Agent 中的 Sol 协作模式')).toBeInTheDocument();
+    expect(hosted.container.querySelector('.paw-room-window-chrome'))
+      .toHaveAttribute('data-coordinator', 'true');
+    expect(screen.getByLabelText('Sol 当前状态')).toBeInTheDocument();
+
+    cleanup();
+
+    const unhosted = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+    const demoted = {
+      ...unhosted,
+      participants: unhosted.participants.map((participant) => ({
+        ...participant,
+        collaborationRole: participant.collaborationRole === 'coordinator'
+          ? 'implementer'
+          : participant.collaborationRole,
+      })),
+    };
+    const { container } = renderRoom(900, vi.fn(), demoted);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    expect(screen.queryByLabelText('Agent 中的 Sol 协作模式')).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-room-window-chrome')).not.toHaveAttribute('data-coordinator');
+    expect(screen.queryByLabelText('Sol 当前状态')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('主 Room 当前状态')).toBeInTheDocument();
+  });
 });
 
-function renderRoom(width: number, openWindow = vi.fn()) {
+function renderRoom(width: number, openWindow = vi.fn(), record?: RoomSummary) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+  const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
   return {
     ...render(
       <QueryClientProvider client={queryClient}>

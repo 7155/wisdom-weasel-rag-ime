@@ -142,10 +142,25 @@ describe('PAWOS compositor window frame', () => {
       const shell = await screen.findByLabelText('伙伴 1窗口');
       expect(shell).not.toHaveAttribute('data-focus-locked');
       expect(shell).toHaveAttribute('data-frame-mode', 'focus-card');
-      expect(shell.querySelector('.paw-traffic-lights')).not.toBeInTheDocument();
-      expect(within(shell).queryByRole('button', { name: '最小化窗口' })).not.toBeInTheDocument();
-      expect(within(shell).getByRole('button', { name: '关闭伙伴窗口：伙伴 1' })).toBeInTheDocument();
-      expect((await screen.findByLabelText('Room A窗口')).querySelectorAll('.paw-traffic-lights')).toHaveLength(1);
+      /* One chrome language: a focus-card satellite carries the same
+         traffic-light cluster, in the same slot and the same order, as the
+         Room window it orbits — never a lone top-right X. Inside the focus
+         layout both drop maximize together, because the layout owns
+         geometry, so the two clusters stay verb-for-verb identical. */
+      const roomShell = await screen.findByLabelText('Room A窗口');
+      expect(roomShell.querySelectorAll('.paw-traffic-lights')).toHaveLength(1);
+      const clusterVerbs = (host: HTMLElement) => [...host.querySelectorAll('.paw-traffic-lights button')]
+        .map((button) => button.getAttribute('data-action'));
+      expect(clusterVerbs(shell)).toEqual(['close', 'minimize']);
+      expect(clusterVerbs(roomShell)).toEqual(['close', 'minimize']);
+      expect(within(shell).getByRole('button', { name: '关闭窗口' })).toBeInTheDocument();
+      expect(within(shell).getByRole('button', { name: '最小化窗口' })).toBeInTheDocument();
+      /* The lights stay the first children so the shared nth-child
+         red/yellow/green rules never slide onto the wrong verb. */
+      expect(shell.querySelector('.paw-traffic-lights')!.firstElementChild)
+        .toHaveAttribute('data-action', 'close');
+      expect(roomShell.querySelector('.paw-traffic-lights')!.firstElementChild)
+        .toHaveAttribute('data-action', 'close');
       expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(8);
 
       const initialTransform = shell.style.transform;
@@ -172,7 +187,7 @@ describe('PAWOS compositor window frame', () => {
       fireEvent.pointerUp(window, { clientX: 228, clientY: 500, pointerId: 43 });
       await waitFor(() => expect(transformCoordinate(lastShell.style.transform, 'x')).toBe(lastInitialX + 8));
 
-      fireEvent.click(within(shell).getByRole('button', { name: '关闭伙伴窗口：伙伴 1' }));
+      fireEvent.click(within(shell).getByRole('button', { name: '关闭窗口' }));
       await waitFor(() => expect(screen.queryByLabelText('伙伴 1窗口')).not.toBeInTheDocument());
       await waitFor(() => expect(screen.queryByRole('region', { name: 'Sol 行星窗口，横向滚动查看全部 5 个窗口' })).not.toBeInTheDocument());
       expect(screen.getByLabelText('伙伴 2窗口')).toBeInTheDocument();

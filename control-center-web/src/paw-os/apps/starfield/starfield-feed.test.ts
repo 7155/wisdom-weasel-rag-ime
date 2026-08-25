@@ -80,9 +80,9 @@ describe('starfield feed', () => {
     expect(buildSessionFeed(runs, { busy: true, sessionTitle: 'S', nowMs: 100 })).toHaveLength(STARFIELD_FEED_LIMIT);
   });
 
-  it('tells the Room story with live partner actions first, then real handoffs', () => {
+  it('leads the Room feed with the shared objective, then live work, then real handoffs', () => {
     const focus: RoomFocusProjection = {
-      goal: { title: '目标', description: '', rootId: 'root', state: 'running' },
+      goal: { title: '交付星空 v2', description: '把真实工作放到星空前面', rootId: 'root', state: 'running' },
       workItems: [],
       flow: [],
       partners: [
@@ -106,6 +106,16 @@ describe('starfield feed', () => {
           currentAction: '等待新的工作项',
           unread: false,
         },
+        {
+          participantId: 'p-venus',
+          sessionId: 's-venus',
+          displayName: 'Venus 伙伴',
+          celestialName: 'Venus',
+          state: 'blocked',
+          ownedWorkItemIds: ['w2'],
+          currentAction: '等待工作目录授权',
+          unread: false,
+        },
       ],
       handoffs: [
         { id: 'h-old', sourceParticipantId: 'p-earth', targetParticipantId: 'p-mars', task: '早期交接', state: 'completed', createdAtMs: 1_000 },
@@ -114,12 +124,39 @@ describe('starfield feed', () => {
       rootEvidence: [],
       counts: { active: 1, review: 0, blocked: 0, completed: 1 },
     };
-    const feed = buildRoomFeed(focus);
+    const feed = buildRoomFeed(focus, { hosted: true });
 
-    expect(feed.map((item) => item.id)).toEqual(['partner:p-earth', 'handoff:h-live', 'handoff:h-old']);
-    expect(feed[0]).toMatchObject({ actor: 'Earth', text: '正在实现依赖图', tone: 'working', bodyId: 'p-earth' });
-    expect(feed[1]).toMatchObject({ actor: 'Earth → Mars', stateLabel: '交接中', tone: 'working', bodyId: 'p-mars' });
-    expect(feed[2]).toMatchObject({ stateLabel: '已交付', tone: 'done' });
+    // Objective first, then the partner who needs the user, then live work.
+    expect(feed.map((item) => item.id)).toEqual([
+      'room:goal', 'partner:p-venus', 'partner:p-earth', 'handoff:h-live', 'handoff:h-old',
+    ]);
+    expect(feed[0]).toMatchObject({
+      actor: 'Sol · 交付星空 v2',
+      text: '把真实工作放到星空前面',
+      stateLabel: '进行中',
+      bodyId: 'center',
+    });
+    expect(feed[1]).toMatchObject({ actor: 'Venus', text: '等待工作目录授权', tone: 'attention' });
+    expect(feed[2]).toMatchObject({ actor: 'Earth', text: '正在实现依赖图', tone: 'working', bodyId: 'p-earth' });
+    expect(feed[3]).toMatchObject({ actor: 'Earth → Mars', stateLabel: '交接中', tone: 'working', bodyId: 'p-mars' });
+    expect(feed[4]).toMatchObject({ stateLabel: '已交付', tone: 'done' });
+  });
+
+  it('drops the Sol reference from the goal row when nobody hosts the Room', () => {
+    const focus: RoomFocusProjection = {
+      goal: { title: '无主持人的目标', description: '', rootId: 'root', state: 'waiting' },
+      workItems: [],
+      flow: [],
+      partners: [],
+      handoffs: [],
+      rootEvidence: [],
+      counts: { active: 0, review: 0, blocked: 0, completed: 0 },
+    };
+    const [goal] = buildRoomFeed(focus, { hosted: false });
+
+    expect(goal).toMatchObject({ actor: '无主持人的目标', text: '这间 Room 的共同目标' });
+    // No Sol on stage means no body to highlight from the goal row.
+    expect(goal?.bodyId).toBeUndefined();
   });
 
   it('formats feed timestamps as short user words', () => {

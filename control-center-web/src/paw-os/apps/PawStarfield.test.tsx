@@ -252,6 +252,74 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     expect(onOpenParticipant).toHaveBeenCalledWith(mars.participantId);
   });
 
+  it('foregrounds the real work: task lines on working planets, quiet idle ones', async () => {
+    const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+    const focus = buildRoomFocusProjection(room);
+    render(<PawRoomStarfield focus={focus} roomId={room.id} />);
+    const sky = screen.getByRole('region', { name: 'Room 星空' });
+
+    // Every partner planet says what it is working on, from the real
+    // projection — the task is part of the accessible name, not decoration.
+    const owner = focus.partners.find((partner) => partner.state !== 'idle')!;
+    expect(within(sky).getByRole('button', {
+      name: new RegExp(`^${owner.celestialName}，.*，${owner.currentAction}$`),
+    })).toBeInTheDocument();
+    expect(within(sky).getAllByText(owner.currentAction).length).toBeGreaterThan(0);
+
+    // Partners with nothing live keep their identity but stop competing:
+    // the preview Room's third partner owns no WorkItem at all.
+    const idle = focus.partners.find((partner) => partner.state === 'idle')!;
+    const quiet = within(sky).getByRole('button', { name: new RegExp(`^${idle.celestialName}，`) });
+    expect(quiet).toHaveAttribute('data-idle');
+    expect(within(quiet).queryByText(idle.currentAction)).toBeNull();
+
+    // The feed leads with the shared objective before any partner row.
+    const feed = within(sky).getByRole('complementary', { name: '星空信息流' });
+    const rows = within(feed).getAllByRole('listitem');
+    expect(rows[0]).toHaveTextContent(`Sol · ${focus.goal.title}`);
+
+    // Picking a planet names the WorkItems it actually owns.
+    const withWork = focus.partners.find((partner) => partner.ownedWorkItemIds.length)!;
+    await userEvent.setup().click(
+      within(sky).getByRole('button', { name: new RegExp(`^${withWork.celestialName}，`) }),
+    );
+    const work = within(sky).getByRole('list', { name: '负责的工作项' });
+    const objective = focus.workItems.find((item) => item.id === withWork.ownedWorkItemIds[0])!;
+    expect(work).toHaveTextContent(objective.objective);
+  });
+
+  it('keeps Sol dark when no facilitator hosts the Room', () => {
+    const snapshot = previewRoomSnapshot('room-unhosted');
+    const room = snapshot.room as unknown as RoomSummary;
+    // Same real Room, only the hosting role removed: nobody coordinates.
+    const unhosted: RoomSummary = {
+      ...room,
+      participants: room.participants.map((participant) => ({
+        ...participant,
+        collaborationRole: 'implementer' as const,
+      })),
+    };
+    const focus = buildRoomFocusProjection(unhosted);
+    render(<PawRoomStarfield focus={focus} roomId={unhosted.id} />);
+    const sky = screen.getByRole('region', { name: 'Room 星空' });
+
+    // No Sol body, and the sky says why instead of faking a center.
+    expect(within(sky).queryByText('Sol')).toBeNull();
+    expect(sky.querySelector('.paw-sf2__center')).toBeNull();
+    expect(sky).toHaveTextContent('这间 Room 没有主持人');
+
+    // Partner-only constellation: every real planet and orbit still stands.
+    for (const partner of focus.partners) {
+      expect(within(sky).getByRole('button', { name: new RegExp(`^${partner.celestialName}，`) })).toBeInTheDocument();
+    }
+    expect(sky.querySelectorAll('.paw-sf2__ring').length).toBe(focus.partners.length);
+
+    // The feed keeps the objective but stops pointing at a star that is gone.
+    const feed = within(sky).getByRole('complementary', { name: '星空信息流' });
+    expect(feed).toHaveTextContent(focus.goal.title);
+    expect(feed).not.toHaveTextContent('Sol ·');
+  });
+
   it('renders every Room as a star system inline and expands to a fullscreen galaxy', async () => {
     const onOpenRoom = vi.fn();
     const room = (id: string, status: string, updatedAtMs: number): RoomSummary => ({

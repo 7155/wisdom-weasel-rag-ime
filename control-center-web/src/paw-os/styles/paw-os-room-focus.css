@@ -62,6 +62,13 @@
 .paw-desktop-root .paw-room-focus-overview__mission strong { overflow: hidden; font-size: 14px; font-weight: 680; letter-spacing: -.008em; text-overflow: ellipsis; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-overview__mission p { margin: 0; overflow: hidden; color: #666e7a; font-size: 12px; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
 
+.paw-desktop-root .paw-room-focus-overview__mission--dormant {
+  border-style: dashed;
+  background: rgb(251 252 254 / .92);
+}
+
+.paw-desktop-root .paw-room-focus-overview__mission--dormant strong { color: #4a5564; }
+
 .paw-desktop-root .paw-room-focus-overview__mission-state,
 .paw-desktop-root .paw-room-focus-overview__state {
   display: inline-flex;
@@ -188,7 +195,7 @@
   margin: 2px auto 0;
   padding: 0 8px;
   color: #9197a1;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 

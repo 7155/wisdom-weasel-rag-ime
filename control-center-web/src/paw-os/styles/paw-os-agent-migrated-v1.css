@@ -101,7 +101,7 @@
   --paw-chat-border: #e5eaf0;
   --paw-chat-accent: #2f6bff;
   --paw-chat-ok: #128a52;
-  grid-template-columns: 68px minmax(112px, .45fr) minmax(204px, 1fr);
+  grid-template-columns: var(--paw-titlebar-lead, 68px) minmax(112px, .45fr) minmax(204px, 1fr);
   gap: 10px;
 }
 

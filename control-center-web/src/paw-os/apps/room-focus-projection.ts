@@ -276,6 +276,25 @@ export function buildRoomFocusProjection(
   };
 }
 
+/**
+ * Sol is the coordinator's chair, not a decoration. Until a real participant
+ * is still connected and actually holds `collaborationRole === 'coordinator'`,
+ * no surface may draw a Sol origin, mission header or centre body — an
+ * unhosted Room has no centre to orbit (Joshua5: 没有主持时不要画 Sol 原点).
+ */
+export function roomFocusHasCoordinator(
+  partners: readonly { collaborationRole?: string; state: RoomFocusState }[],
+): boolean {
+  return partners.some((partner) => (
+    partner.collaborationRole === 'coordinator' && partner.state !== 'disconnected'
+  ));
+}
+
+/** What the shared origin is called wherever a packet or fallback names it. */
+export function roomFocusOriginLabel(hasCoordinator: boolean): string {
+  return hasCoordinator ? 'Sol' : '主 Room';
+}
+
 export function roomFocusStateLabel(state: RoomFocusState): string {
   return ({
     idle: '待命',

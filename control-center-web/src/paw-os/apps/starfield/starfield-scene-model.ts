@@ -41,6 +41,17 @@ export interface SceneBody {
   subtitle: string;
   /** One-line honest description for hover / feed cross-reference. */
   detail: string;
+  /**
+   * The real work this body is carrying right now — a WorkItem objective, a
+   * partner's current action, a subagent's task. Empty when the Runtime does
+   * not report any; both renderers then simply omit the task line.
+   */
+  task: string;
+  /**
+   * No live work behind this body (settled, stopped, offline, or never
+   * assigned). Both renderers quiet it down so the working bodies read first.
+   */
+  idle: boolean;
   /** Semi-major axis in world units (circular when eccentricity is 0). */
   orbitRadius: number;
   phaseRad: number;
@@ -88,10 +99,23 @@ export interface StarfieldSceneModel {
   links: SceneLink[];
 }
 
+/**
+ * Only handoffs actually in flight earn a beam label, and only the newest few:
+ * more than three floating strings turn the work chart back into noise. Both
+ * renderers read this so the 2D fallback names exactly the same beams.
+ */
+export const LIVE_BEAM_LABEL_LIMIT = 3;
+
+export function liveBeamLinks(model: StarfieldSceneModel): SceneLink[] {
+  return model.links
+    .filter((link) => link.live && link.label)
+    .slice(-LIVE_BEAM_LABEL_LIMIT);
+}
+
 /** One accessible-name convention shared by the 3D label layer and 2D sky. */
 export function sceneBodyAriaLabel(mode: SceneMode, body: SceneBody): string {
   if (mode === 'session') return `${body.title} 卫星 · ${body.detail} · ${body.subtitle}`;
-  if (mode === 'room') return `${body.title}，${body.subtitle}`;
+  if (mode === 'room') return `${body.title}，${body.subtitle}${body.task ? `，${body.task}` : ''}`;
   return `${body.title} · ${body.subtitle}`;
 }
 
@@ -141,6 +165,10 @@ export function buildSessionSceneModel(
     title: moon.templateLabel,
     subtitle: moon.stateLabel,
     detail: moon.task || '未公开任务说明',
+    task: moon.task.trim(),
+    // A returned or aborted run is history: it keeps its identity and ring
+    // but must not compete with the runs still doing work.
+    idle: !moon.active && !moon.attention,
     orbitRadius: Math.round(moon.orbit.radius * VIEWBOX_TO_WORLD * 100) / 100,
     phaseRad: Math.round((moon.orbit.angleDeg * Math.PI) / 180 * 1000) / 1000,
     inclinationRad: inclination(`${model.sessionId}:ring:${moon.orbit.ring}`),
@@ -172,6 +200,13 @@ export function buildSessionSceneModel(
 /* Room: Sol + partner planets + handoff beams                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Sol is the Room facilitator's star, not scenery: it only lights when a
+ * participant is actually hosting this Room. `model.hasCoordinator` carries
+ * that one shared decision (`roomFocusHasCoordinator`) down from the Room
+ * focus projection; a Room where nobody hosts renders a partner-only
+ * constellation around an empty origin instead of inventing a center.
+ */
 export function buildRoomSceneModel(
   model: RoomStarfieldModel,
   roomId: string,
@@ -182,6 +217,11 @@ export function buildRoomSceneModel(
     title: planet.celestialName,
     subtitle: `${planet.displayName} · ${planet.stateLabel}`,
     detail: planet.currentAction,
+    // What this partner is actually working on — the headline of the sky.
+    task: planet.currentAction.trim(),
+    // Settled, stopped or offline partners still hold their orbit; they just
+    // stop competing with the partners carrying live work.
+    idle: !planet.active && !planet.attention,
     orbitRadius: Math.round(planet.radius * VIEWBOX_TO_WORLD * 100) / 100,
     phaseRad: Math.round((planet.angleDeg * Math.PI) / 180 * 1000) / 1000,
     inclinationRad: inclination(`${roomId}:orbit:${planet.orbitIndex}`, 0.18),
@@ -193,27 +233,38 @@ export function buildRoomSceneModel(
     speedFactor: speedFactor(planet.participantId),
     motion: roomBodyMotion(planet.state),
   }));
+  const hosted = model.hasCoordinator;
+  const bodyIds = new Set(bodies.map((body) => body.id));
   return {
     seed: roomId,
     mode: 'room',
-    center: {
-      id: 'center',
-      kind: 'sun',
-      title: 'Sol',
-      subtitle: model.goal.title,
-      size: 1.5,
-      motion: roomBodyMotion(model.goal.state),
-    },
+    center: hosted
+      ? {
+        id: 'center',
+        kind: 'sun',
+        title: 'Sol',
+        subtitle: model.goal.title,
+        size: 1.5,
+        motion: roomBodyMotion(model.goal.state),
+      }
+      : null,
     bodies,
     ringRadii: uniqueSortedRadii(bodies),
-    links: model.beams.map((beam) => ({
-      id: beam.id,
-      fromId: beam.sourceParticipantId,
-      toId: beam.targetParticipantId,
-      live: beam.live,
-      failed: beam.state === 'failed',
-      label: beam.label,
-    })),
+    // A beam must leave something the user can see. Without Sol, a handoff
+    // whose source is not a planet on stage has no honest origin to draw.
+    links: model.beams
+      .filter((beam) => (
+        bodyIds.has(beam.targetParticipantId)
+        && (hosted || bodyIds.has(beam.sourceParticipantId))
+      ))
+      .map((beam) => ({
+        id: beam.id,
+        fromId: beam.sourceParticipantId,
+        toId: beam.targetParticipantId,
+        live: beam.live,
+        failed: beam.state === 'failed',
+        label: beam.label,
+      })),
   };
 }
 
@@ -232,6 +283,10 @@ export function buildGalaxySceneModel(model: GalaxyStarfieldModel): StarfieldSce
       title: system.title,
       subtitle: `${system.participantCount} 位伙伴 · ${system.active ? '活跃' : '已归档'}`,
       detail: system.active ? '这间 Room 正在使用中' : '这间 Room 已归档',
+      // A galaxy star stands for a whole Room, not one task: the sky never
+      // claims to know what that Room is working on this second.
+      task: '',
+      idle: !system.active,
       orbitRadius: Math.round(Math.hypot(dx, dy) * VIEWBOX_TO_WORLD * 100) / 100,
       phaseRad: Math.round(Math.atan2(dy, dx) * 1000) / 1000,
       inclinationRad: inclination(`${system.roomId}:tilt`, 0.14),

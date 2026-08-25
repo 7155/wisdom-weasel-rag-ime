@@ -1,0 +1,717 @@
+/* Clean-room conversation surface — see ./ATTRIBUTION.md.
+ *
+ * The vendored `ccui-*` namespace is kept intact so the surface stays
+ * self-contained, but every colour resolves through PAWOS desktop tokens
+ * (`--paw-*`) instead of the reference package's own palette. A host window
+ * therefore themes the conversation by theming itself. */
+
+.ccui-conversation-surface {
+  --ccui-surface: var(--paw-panel, #ffffff);
+  --ccui-surface-2: var(--paw-panel-soft, #f1f5fa);
+  --ccui-surface-3: color-mix(in srgb, var(--paw-panel-soft, #f1f5fa) 70%, var(--paw-ink, #0f172a) 6%);
+  --ccui-text: var(--paw-ink, #0f172a);
+  --ccui-muted: var(--paw-muted, #64748b);
+  --ccui-faint: color-mix(in srgb, var(--paw-muted, #64748b) 74%, transparent);
+  --ccui-border: var(--paw-line, rgba(0, 0, 0, 0.08));
+  --ccui-border-strong: color-mix(in srgb, var(--paw-line, rgba(0, 0, 0, 0.08)) 100%, var(--paw-ink, #0f172a) 8%);
+  --ccui-accent: var(--paw-accent, #2563eb);
+  --ccui-accent-soft: var(--paw-accent-soft, #eff6ff);
+  --ccui-danger: var(--paw-danger, #ef4444);
+  --ccui-warning: var(--paw-warning, #f59e0b);
+  --ccui-success: var(--paw-success, #10b981);
+  --ccui-reading-width: 760px;
+
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--ccui-text);
+}
+
+.ccui-conversation-surface[data-density='compact'] {
+  --ccui-reading-width: 100%;
+}
+
+.ccui-conversation-surface *,
+.ccui-conversation-surface *::before,
+.ccui-conversation-surface *::after {
+  box-sizing: border-box;
+}
+
+.ccui-conversation-surface button,
+.ccui-conversation-surface textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Transcript ------------------------------------------------------------- */
+
+.ccui-transcript-shell {
+  position: relative;
+  min-height: 0;
+}
+
+.ccui-transcript-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* `overflow-anchor: none` is load-bearing: the virtualizer compensates
+     scrollTop itself when a measured row above the viewport changes height,
+     and browser scroll anchoring would fight that correction. */
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  outline: none;
+}
+
+.ccui-transcript-scroll:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ccui-accent) 55%, transparent);
+  outline-offset: -2px;
+}
+
+.ccui-transcript-lead {
+  width: min(var(--ccui-reading-width), calc(100% - 40px));
+  margin: 0 auto;
+  padding-top: 14px;
+}
+
+.ccui-transcript-sizer {
+  position: relative;
+  width: 100%;
+}
+
+.ccui-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  will-change: transform;
+}
+
+.ccui-turn {
+  position: relative;
+  width: min(var(--ccui-reading-width), calc(100% - 40px));
+  margin: 0 auto;
+  padding: 10px 2px;
+}
+
+.ccui-conversation-surface[data-density='compact'] .ccui-turn {
+  width: calc(100% - 20px);
+  padding: 7px 0;
+}
+
+/* User turn -------------------------------------------------------------- */
+
+.ccui-user-turn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.ccui-user-bubble {
+  max-width: min(620px, 90%);
+  padding: 9px 13px;
+  border: 1px solid var(--ccui-border);
+  border-radius: 13px 13px 4px 13px;
+  background: var(--ccui-surface-2);
+}
+
+.ccui-user-turn[data-delivery='sending'] .ccui-user-bubble { opacity: .68; }
+.ccui-user-turn[data-delivery='failed'] .ccui-user-bubble {
+  border-color: color-mix(in srgb, var(--ccui-danger) 40%, var(--ccui-border));
+}
+
+.ccui-user-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--paw-type-ui, 14px);
+  line-height: 1.55;
+}
+
+.ccui-attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+
+.ccui-attachment-chip {
+  max-width: 220px;
+  overflow: hidden;
+  padding: 3px 6px;
+  border: 1px solid var(--ccui-border);
+  border-radius: 5px;
+  background: var(--ccui-surface);
+  font-size: 11px;
+  color: var(--ccui-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccui-user-footer,
+.ccui-assistant-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--ccui-faint);
+}
+
+.ccui-user-footer { justify-content: flex-end; }
+.ccui-delivery-failed { color: var(--ccui-danger); }
+
+.ccui-user-turn .ccui-message-actions,
+.ccui-assistant-turn .ccui-message-actions {
+  opacity: 0;
+  transition: opacity 140ms var(--paw-ease-out, ease);
+}
+
+.ccui-user-turn:hover .ccui-message-actions,
+.ccui-user-turn:focus-within .ccui-message-actions,
+.ccui-assistant-turn:hover .ccui-message-actions,
+.ccui-assistant-turn:focus-within .ccui-message-actions { opacity: 1; }
+
+/* Assistant turn --------------------------------------------------------- */
+
+.ccui-assistant-turn { padding-bottom: 14px; }
+
+.ccui-assistant-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.ccui-assistant-head strong {
+  font-size: var(--paw-type-meta, 13px);
+  font-weight: 640;
+  letter-spacing: -.005em;
+}
+
+.ccui-assistant-head small,
+.ccui-assistant-head time {
+  font-size: 11px;
+  color: var(--ccui-faint);
+}
+
+.ccui-assistant-head time { margin-left: auto; }
+
+.ccui-assistant-body {
+  font-size: var(--paw-type-ui, 14px);
+  line-height: var(--paw-leading-body, 1.65);
+  color: var(--ccui-text);
+}
+
+.ccui-assistant-body > * + * { margin-top: 8px; }
+
+/* Markdown arrives through this app's shared renderer, so the surface only
+   trims the block margins the reading column would otherwise double up. */
+.ccui-markdown > .agent-markdown { font-size: inherit; line-height: inherit; }
+.ccui-markdown > .agent-markdown > :first-child { margin-top: 0; }
+.ccui-markdown > .agent-markdown > :last-child { margin-bottom: 0; }
+.ccui-host-block { min-width: 0; }
+.ccui-assistant-host-footer { margin-top: 8px; }
+
+.ccui-live-hint {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--ccui-muted);
+}
+
+.ccui-error-card {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--ccui-danger) 25%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ccui-danger) 7%, transparent);
+  font-size: 12px;
+  color: var(--ccui-danger);
+}
+
+.ccui-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ccui-message-actions button,
+.ccui-queue-actions button {
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 11px;
+  color: var(--ccui-faint);
+  cursor: pointer;
+}
+
+.ccui-message-actions button:hover,
+.ccui-queue-actions button:hover {
+  background: var(--ccui-surface-2);
+  color: var(--ccui-text);
+}
+
+/* Thinking --------------------------------------------------------------- */
+
+.ccui-thinking { margin: 2px 0 6px; color: var(--ccui-muted); }
+
+.ccui-thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ccui-thinking-summary:disabled { cursor: default; }
+
+.ccui-thinking-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ccui-faint);
+}
+
+.ccui-thinking.is-running .ccui-thinking-dot {
+  background: var(--ccui-accent);
+  animation: ccui-pulse 1.2s ease-in-out infinite;
+}
+
+.ccui-caret { margin-left: auto; font-size: 11px; }
+
+.ccui-thinking-detail {
+  margin: 6px 0 4px 15px;
+  padding-left: 11px;
+  border-left: 1px solid var(--ccui-border);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  color: var(--ccui-muted);
+}
+
+@keyframes ccui-pulse {
+  0%, 100% { opacity: .35; transform: scale(.86); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* Tool card -------------------------------------------------------------- */
+
+.ccui-tool-card {
+  overflow: hidden;
+  margin: 6px 0;
+  border: 1px solid var(--ccui-border);
+  border-radius: 8px;
+  background: var(--ccui-surface-2);
+}
+
+.ccui-tool-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ccui-tool-head:disabled { cursor: default; }
+
+.ccui-tool-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ccui-faint);
+}
+
+.ccui-tool-card.status-running .ccui-tool-status {
+  background: var(--ccui-accent);
+  animation: ccui-pulse 1.2s infinite;
+}
+
+.ccui-tool-card.status-success .ccui-tool-status { background: var(--ccui-success); }
+.ccui-tool-card.status-error .ccui-tool-status { background: var(--ccui-danger); }
+.ccui-tool-card.status-cancelled .ccui-tool-status { background: var(--ccui-warning); }
+
+.ccui-tool-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ccui-tool-main strong { font-size: 12px; font-weight: 620; }
+
+.ccui-tool-main span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--ccui-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccui-tool-meta { display: flex; gap: 6px; font-size: 11px; color: var(--ccui-faint); }
+.ccui-tool-meta i { font-style: normal; }
+
+/* An action a Runtime contract owns — a pending approval, a background
+   process link — stays outside the disclosure so it can never fold away. */
+.ccui-tool-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0 10px 9px 26px;
+}
+
+.ccui-tool-action button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ccui-border);
+  border-radius: 7px;
+  background: var(--ccui-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ccui-tool-action button:first-child {
+  border-color: transparent;
+  background: var(--ccui-accent);
+  color: #fff;
+}
+
+.ccui-tool-action button:disabled { opacity: .5; cursor: default; }
+.ccui-tool-action [role='alert'] { flex: 1 0 100%; font-size: 11px; color: var(--ccui-danger); }
+
+.ccui-tool-body {
+  display: grid;
+  gap: 8px;
+  padding: 9px 10px 10px 26px;
+  border-top: 1px solid var(--ccui-border);
+  background: var(--ccui-surface);
+}
+
+.ccui-tool-label {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ccui-faint);
+}
+
+.ccui-tool-body pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  font: var(--paw-type-mono, 12px)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  color: var(--ccui-muted);
+}
+
+/* Steer receipt ---------------------------------------------------------- */
+
+.ccui-steer-receipt {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--ccui-muted);
+}
+
+.ccui-steer-receipt[data-receipt='unread'] > span { color: var(--ccui-accent); }
+
+.ccui-text-action,
+.ccui-icon-action {
+  border: 0;
+  background: transparent;
+  color: var(--ccui-muted);
+  cursor: pointer;
+}
+
+.ccui-text-action {
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.ccui-text-action:hover {
+  background: var(--ccui-accent-soft);
+  color: var(--ccui-accent);
+}
+
+.ccui-icon-action {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.ccui-icon-action:hover { background: var(--ccui-surface-2); color: var(--ccui-text); }
+.ccui-receipt-time { font-size: 11px; color: var(--ccui-faint); }
+.ccui-fade-in { animation: ccui-fade 400ms ease both; }
+
+@keyframes ccui-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Jump to latest / empty ------------------------------------------------- */
+
+.ccui-jump-bottom {
+  position: absolute;
+  z-index: 8;
+  bottom: 12px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  transform: translateX(-50%);
+  border: 1px solid var(--ccui-border-strong);
+  border-radius: 99px;
+  background: var(--ccui-surface);
+  box-shadow: 0 5px 18px rgba(15, 23, 42, .12);
+  font-size: 11px;
+  color: var(--ccui-muted);
+  cursor: pointer;
+}
+
+.ccui-jump-bottom:hover {
+  border-color: color-mix(in srgb, var(--ccui-accent) 40%, var(--ccui-border));
+  color: var(--ccui-text);
+}
+
+.ccui-empty-transcript {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 28px;
+  text-align: center;
+  color: var(--ccui-muted);
+}
+
+/* Queue tray ------------------------------------------------------------- */
+
+.ccui-surface-foot { min-width: 0; }
+.ccui-queue-tray { min-width: 0; }
+
+.ccui-queue-inline-editor {
+  width: 100%;
+  min-height: 44px;
+  padding: 5px 7px;
+  border: 1px solid var(--ccui-border-strong);
+  border-radius: 7px;
+  background: var(--ccui-surface);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.ccui-queue-single,
+.ccui-queue-collapsed,
+.ccui-queue-panel {
+  width: 100%;
+  margin: 0 0 6px;
+}
+
+.ccui-queue-single {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--ccui-border);
+  border-radius: 9px;
+  background: var(--ccui-surface-2);
+}
+
+.ccui-queue-count { flex: 0 0 auto; font-size: 11px; font-weight: 620; color: var(--ccui-text); }
+
+.ccui-queue-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--ccui-muted);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ccui-queue-collapsed {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1px solid var(--ccui-border);
+  border-radius: 9px;
+  background: var(--ccui-surface-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ccui-queue-collapsed strong { font-size: 11px; }
+
+.ccui-queue-collapsed span {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--ccui-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccui-queue-panel {
+  overflow: hidden;
+  border: 1px solid var(--ccui-border);
+  border-radius: 10px;
+  background: var(--ccui-surface-2);
+}
+
+.ccui-queue-header,
+.ccui-queue-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 9px;
+}
+
+.ccui-queue-header { border-bottom: 1px solid var(--ccui-border); }
+.ccui-queue-header strong { font-size: 11px; }
+
+.ccui-queue-list {
+  max-height: min(38vh, 300px);
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.ccui-queue-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 7px;
+  transition: background 100ms ease, opacity 100ms ease;
+}
+
+.ccui-queue-row + .ccui-queue-row {
+  border-top: 1px solid var(--ccui-border);
+  border-radius: 0;
+}
+
+.ccui-queue-row:hover { background: var(--ccui-surface); }
+.ccui-queue-row.is-dragging { opacity: .46; }
+.ccui-queue-row.is-editing { align-items: stretch; }
+
+.ccui-drag-handle {
+  padding-top: 1px;
+  color: var(--ccui-faint);
+  user-select: none;
+  cursor: grab;
+}
+
+.ccui-queue-row-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ccui-queue-row-index {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--ccui-surface-3);
+  font-size: 10px;
+  color: var(--ccui-muted);
+}
+
+.ccui-queue-row-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccui-queue-tag {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--ccui-accent-soft);
+  font-size: 10px;
+  color: var(--ccui-accent);
+}
+
+.ccui-queue-actions {
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ccui-queue-row:hover .ccui-queue-actions,
+.ccui-queue-row:focus-within .ccui-queue-actions { opacity: 1; }
+.ccui-queue-actions button:disabled { opacity: .35; cursor: default; }
+
+.ccui-queue-footer {
+  border-top: 1px solid var(--ccui-border);
+  font-size: 10px;
+  color: var(--ccui-faint);
+}
+
+.ccui-queue-footer button {
+  border: 0;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.ccui-queue-footer .danger { color: var(--ccui-danger); }
+
+.ccui-queue-cap-notice {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--ccui-warning);
+}
+
+@media (max-width: 720px) {
+  .ccui-turn { width: calc(100% - 20px); }
+  .ccui-user-bubble { max-width: 94%; }
+  .ccui-queue-actions { opacity: 1; }
+  .ccui-queue-tag { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ccui-conversation-surface,
+  .ccui-conversation-surface *,
+  .ccui-conversation-surface *::before,
+  .ccui-conversation-surface *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}

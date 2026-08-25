@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomStarfieldModel, SessionStarfieldModel } from '../starfield-projection';
 import { buildGalaxyStarfield } from '../starfield-projection';
+import { roomFocusHasCoordinator } from '../room-focus-projection';
 import {
   buildGalaxySceneModel,
   buildRoomSceneModel,
   buildSessionSceneModel,
+  liveBeamLinks,
   SCENE_STAGE_RADIUS,
+  sceneBodyAriaLabel,
   sceneModelSignature,
 } from './starfield-scene-model';
 import { WORKING_ORBIT_RAD_PER_S } from './starfield-motion';
@@ -37,16 +40,19 @@ function sessionModel(): SessionStarfieldModel {
   };
 }
 
-function roomModel(): RoomStarfieldModel {
+function roomModel(options: { hosted?: boolean; hostState?: RoomStarfieldModel['planets'][number]['state'] } = {}): RoomStarfieldModel {
+  const hosted = options.hosted ?? true;
   const planet = (
     participantId: string,
     state: RoomStarfieldModel['planets'][number]['state'],
     orbitIndex: number,
+    collaborationRole = orbitIndex === 0 && hosted ? 'coordinator' : 'implementer',
   ): RoomStarfieldModel['planets'][number] => ({
     participantId,
     sessionId: `session:${participantId}`,
     celestialName: orbitIndex === 0 ? 'Earth' : 'Mars',
     displayName: `${participantId} 伙伴`,
+    collaborationRole,
     state,
     stateLabel: state === 'running' ? '进行中' : '阻塞',
     active: state === 'running',
@@ -59,9 +65,16 @@ function roomModel(): RoomStarfieldModel {
     ownedWorkCount: 1,
     currentAction: '正在实现投影',
   });
+  const planets = [
+    planet('participant-earth', options.hostState ?? 'running', 0),
+    planet('participant-mars', 'blocked', 1),
+  ];
   return {
     goal: { title: '交付星空 v2', state: 'running', stateLabel: '进行中' },
-    planets: [planet('participant-earth', 'running', 0), planet('participant-mars', 'blocked', 1)],
+    // Derived exactly as `buildRoomStarfield` does, so the fixture never
+    // claims a host the shared gate would not grant.
+    hasCoordinator: roomFocusHasCoordinator(planets),
+    planets,
     beams: [{
       id: 'handoff-1',
       sourceParticipantId: 'participant-earth',
@@ -90,6 +103,9 @@ describe('starfield scene model', () => {
     const done = scene.bodies[1]!;
     expect(live.motion.orbitRadPerS).toBe(WORKING_ORBIT_RAD_PER_S);
     expect(done.motion.working).toBe(false);
+    // The run's real task travels with the moon; a returned run goes quiet.
+    expect(live).toMatchObject({ task: '任务 run-live', idle: false });
+    expect(done).toMatchObject({ task: '任务 run-done', idle: true });
     for (const body of scene.bodies) {
       expect(body.orbitRadius).toBeGreaterThan(0);
       expect(body.orbitRadius).toBeLessThanOrEqual(SCENE_STAGE_RADIUS);
@@ -114,6 +130,11 @@ describe('starfield scene model', () => {
     expect(sceneModelSignature(buildSessionSceneModel(flipped, { busy: true, sessionTitle: 'S' }))).not.toBe(same);
   });
 
+  it('omits Sol until a coordinator hosts the Room', () => {
+    const dormant = buildRoomSceneModel({ ...roomModel(), hasCoordinator: false }, 'room-1');
+    expect(dormant.center).toBeNull();
+  });
+
   it('projects the Room into Sol, partner planets and real handoff links', () => {
     const scene = buildRoomSceneModel(roomModel(), 'room-1');
 
@@ -136,6 +157,49 @@ describe('starfield scene model', () => {
       expect(body.eccentricity).toBeLessThanOrEqual(0.36);
       expect(Math.abs(body.axialTiltRad)).toBeLessThanOrEqual(0.3);
     }
+  });
+
+  it('puts the real work on every partner planet and quiets the ones with none', () => {
+    const model = roomModel();
+    model.planets[1]!.state = 'completed';
+    model.planets[1]!.stateLabel = '已完成';
+    model.planets[1]!.active = false;
+    model.planets[1]!.attention = false;
+    model.planets[1]!.currentAction = '等待新的工作项';
+    const scene = buildRoomSceneModel(model, 'room-1');
+
+    const [earth, mars] = scene.bodies;
+    expect(earth).toMatchObject({ task: '正在实现投影', idle: false });
+    // Settled partners keep their identity and orbit, but read as quiet.
+    expect(mars).toMatchObject({ task: '等待新的工作项', idle: true });
+    // The task is part of the accessible name, not only a visual line.
+    expect(sceneBodyAriaLabel('room', earth!)).toBe('Earth，participant-earth 伙伴 · 进行中，正在实现投影');
+
+    // Only handoffs actually in flight are named on their beam.
+    expect(liveBeamLinks(scene).map((link) => link.label)).toEqual(['交接复核']);
+  });
+
+  it('lights Sol only while a connected coordinator hosts the Room', () => {
+    const unhosted = buildRoomSceneModel(roomModel({ hosted: false }), 'room-1');
+    expect(unhosted.center).toBeNull();
+    // Partner-only constellation: every real planet and orbit stays.
+    expect(unhosted.bodies.map((body) => body.id)).toEqual(['participant-earth', 'participant-mars']);
+    expect(unhosted.ringRadii).toHaveLength(2);
+    // A beam between two visible planets still has an honest origin.
+    expect(unhosted.links.map((link) => link.id)).toEqual(['handoff-1']);
+
+    // A coordinator who dropped off cannot host either.
+    const offline = roomModel({ hostState: 'disconnected' });
+    expect(buildRoomSceneModel(offline, 'room-1').center).toBeNull();
+
+    // With no visible source and no Sol, a handoff from off-stage is dropped.
+    const orphaned = roomModel({ hosted: false });
+    orphaned.beams[0]!.sourceParticipantId = 'participant-gone';
+    expect(buildRoomSceneModel(orphaned, 'room-1').links).toEqual([]);
+    // The same beam is drawn from Sol once a facilitator hosts the Room.
+    const hostedOrphan = roomModel();
+    hostedOrphan.beams[0]!.sourceParticipantId = 'participant-gone';
+    expect(buildRoomSceneModel(hostedOrphan, 'room-1').links).toHaveLength(1);
   });
 
   it('maps every Room in the galaxy to a star with polar world coordinates', () => {

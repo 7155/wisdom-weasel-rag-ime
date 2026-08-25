@@ -790,26 +790,28 @@
 /* Terminal chrome is dark; its title ink must be re-paired, not inherited. */
 .paw-desktop-root .paw-window-shell[data-app='terminal'] .paw-window-title { color: #8fd08a; }
 .paw-desktop-root .paw-window-shell[data-app='terminal']:not([data-active]) .paw-window-title { color: #93a0ae; }
-.paw-desktop-root .paw-traffic-lights button {
+/* Direct children only: App chrome docked beside the lights is a descendant
+   of the cluster too, and must never inherit a light's ring, fill or shape. */
+.paw-desktop-root .paw-traffic-lights > button {
   border: 1.5px solid rgb(23 26 33 / .28);
   border-radius: 50%;
   background: transparent;
   color: transparent;
 }
-.paw-desktop-root .paw-traffic-lights button:nth-child(1) { border-color: #f04438; }
-.paw-desktop-root .paw-traffic-lights button:nth-child(2) { border-color: #f5a623; }
-.paw-desktop-root .paw-traffic-lights button:nth-child(3) { border-color: #2f9e55; }
+.paw-desktop-root .paw-traffic-lights > button:nth-child(1) { border-color: #f04438; }
+.paw-desktop-root .paw-traffic-lights > button:nth-child(2) { border-color: #f5a623; }
+.paw-desktop-root .paw-traffic-lights > button:nth-child(3) { border-color: #2f9e55; }
 /* The lifted window's lights are lit; resting windows keep hollow rings, so
    focus reads across the desktop before any title is parsed. Glyphs still
    surface on group hover for the explicit affordance. */
-.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights button:nth-child(1) { border-color: color-mix(in srgb, #f04438 74%, #8a1f16); background: #ff5f57; }
-.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights button:nth-child(2) { border-color: color-mix(in srgb, #f5a623 74%, #8f5c07); background: #febc2e; }
-.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights button:nth-child(3) { border-color: color-mix(in srgb, #2f9e55 74%, #175c2f); background: #28c840; }
-.paw-desktop-root .paw-traffic-lights:hover button { border-color: transparent; color: rgb(23 26 33 / .7); }
-.paw-desktop-root .paw-traffic-lights:hover button:nth-child(1) { background: #ff5f57; }
-.paw-desktop-root .paw-traffic-lights:hover button:nth-child(2) { background: #febc2e; }
-.paw-desktop-root .paw-traffic-lights:hover button:nth-child(3) { background: #28c840; }
-.paw-desktop-root .paw-window-shell:not([data-active]) .paw-traffic-lights button { opacity: .62; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(1) { border-color: color-mix(in srgb, #f04438 74%, #8a1f16); background: #ff5f57; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(2) { border-color: color-mix(in srgb, #f5a623 74%, #8f5c07); background: #febc2e; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(3) { border-color: color-mix(in srgb, #2f9e55 74%, #175c2f); background: #28c840; }
+.paw-desktop-root .paw-traffic-lights:hover > button { border-color: transparent; color: rgb(23 26 33 / .7); }
+.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(1) { background: #ff5f57; }
+.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(2) { background: #febc2e; }
+.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(3) { background: #28c840; }
+.paw-desktop-root .paw-window-shell:not([data-active]) .paw-traffic-lights > button { opacity: .62; }
 
 @media (max-width: 820px) {
   .paw-desktop-root .paw-launchpad section > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
