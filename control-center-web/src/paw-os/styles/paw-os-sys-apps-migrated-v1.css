@@ -933,6 +933,33 @@
   font-size: 14px;
 }
 
+/* Choosing a default model is the same gesture as choosing one mid-Session, so
+   the sheet borrows the composer's option rows wholesale
+   (`agent-model-picker__list` in agent.css) and adds only the frame a settings
+   field needs: a bordered, bounded, opaque well that scrolls its own catalog
+   instead of growing the sheet. */
+.paw-desktop-root .paw-agent-model__choices {
+  max-height: 268px;
+  border: 1px solid var(--paw-control-line);
+  border-radius: var(--paw-panel-radius);
+  background: var(--paw-control-bg);
+  overscroll-behavior: contain;
+}
+
+.paw-desktop-root .paw-agent-model__choices:focus-within {
+  border-color: var(--paw-focus-line);
+  box-shadow: 0 0 0 3px var(--paw-focus-halo);
+}
+
+/* 自动选择 has no provider, so it holds the mark column open with a quiet
+   placeholder rather than letting its label slide out of the shared grid. */
+.paw-desktop-root .agent-model-picker__auto-mark {
+  width: 17px;
+  height: 17px;
+  border: 1.5px dashed var(--paw-control-line-strong);
+  border-radius: 5px;
+}
+
 .paw-desktop-root :is(.paw-agent-model__field, .paw-agent-model__thinking) small {
   color: var(--paw-system-muted);
   font-size: 12px;

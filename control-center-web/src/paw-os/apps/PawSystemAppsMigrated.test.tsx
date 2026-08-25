@@ -252,8 +252,13 @@ describe('PawSystemAppsMigrated', () => {
     });
     renderSystemApp('system-settings', '/configuration?view=agent', transport);
 
-    const model = await screen.findByRole('combobox', { name: 'Agent 模型' });
-    expect(model).toHaveTextContent('GPT-5.6 Terra · openai-codex');
+    // Same smooth gesture as the Session composer: real models are rows on the
+    // surface under their provider, not entries hidden inside a native field.
+    const models = await screen.findByRole('listbox', { name: 'Agent 模型' });
+    expect(within(models).getByRole('group', { name: 'openai-codex' })).toBeInTheDocument();
+    expect(within(models).getByRole('option', { name: '选择模型 GPT-5.6 Terra' })).toBeInTheDocument();
+    expect(within(models).getByRole('option', { name: '选择模型 自动选择' })).toHaveAttribute('aria-selected', 'true');
+    expect(within(models).getAllByRole('option')).toHaveLength(2);
     expect(transport.requests.map(({ request }) => request.pathId)).toContain('agent.role.models');
     expect(transport.requests.map(({ request }) => request.pathId)).toContain('configuration.settings');
   });

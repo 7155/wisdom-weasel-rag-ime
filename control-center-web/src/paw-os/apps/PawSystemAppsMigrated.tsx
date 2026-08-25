@@ -35,6 +35,11 @@ import {
   useAgentPreferencesAuthority,
   type AgentExecutionMode,
 } from '@/features/agent/composer/agent-preferences-store';
+import { ModelChoiceList } from '@/features/agent/composer/ModelChoiceList';
+import {
+  countModelChoices,
+  modelChoiceGroupsFromPiOptions,
+} from '@/features/agent/composer/model-choice';
 import {
   parsePiModelCatalogOptions,
   supportedPiThinkingLevels,
@@ -296,7 +301,15 @@ function PawAgentSettings() {
   const resource = useAgentModelResource();
   const authority = useAgentPreferencesAuthority();
   const preferences = authority.preferences;
-  const catalog = parsePiModelCatalogOptions(resource.data);
+  const catalog = useMemo(
+    () => parsePiModelCatalogOptions(resource.data),
+    [resource.data],
+  );
+  const modelGroups = useMemo(
+    () => modelChoiceGroupsFromPiOptions(catalog.models),
+    [catalog.models],
+  );
+  const modelCount = countModelChoices(modelGroups);
   const selectedModel = catalog.models.find((model) => model.reference === preferences.modelReference);
   const thinkingLevels = supportedPiThinkingLevels(selectedModel, { includeOff: true });
   const controlsDisabled = authority.saving || Boolean(authority.readError);
@@ -341,14 +354,31 @@ function PawAgentSettings() {
             title="用哪个模型，想多深"
           >
             <div className="paw-agent-model">
-              <label className="paw-agent-model__field">
+              {/* Same gesture as the Session composer: every model on the
+                  surface at once under its provider, chosen with one press.
+                  A default is a choice too, so 自动选择 is a row, not a blank
+                  field the reader has to interpret. */}
+              <div className="paw-agent-model__field">
                 <span>模型</span>
-                <select aria-label="Agent 模型" disabled={controlsDisabled} onChange={(event) => selectModel(event.target.value)} value={preferences.modelReference}>
-                  <option value="">自动选择</option>
-                  {catalog.models.map((model) => <option key={model.reference} value={model.reference}>{model.name} · {model.provider}</option>)}
-                </select>
-                <small>{catalog.models.length ? `${catalog.models.length} 个可用模型` : 'Runtime 没有报告可用模型'}</small>
-              </label>
+                <ModelChoiceList
+                  ariaLabel="Agent 模型"
+                  className="paw-agent-model__choices agent-model-picker__list"
+                  disabled={controlsDisabled}
+                  emptyLabel="Runtime 没有报告可用模型"
+                  groups={modelGroups}
+                  leadingOptions={[{
+                    key: '',
+                    providerId: '',
+                    providerName: '',
+                    modelId: '',
+                    name: '自动选择',
+                    detail: '由 Runtime 为每个新对话挑选',
+                  }]}
+                  onChoose={(option) => selectModel(option.key)}
+                  selectedKey={preferences.modelReference}
+                />
+                <small>{modelCount ? `${modelCount} 个可用模型` : 'Runtime 没有报告可用模型'}</small>
+              </div>
               <div className="paw-agent-model__thinking">
                 <span>推理强度</span>
                 {selectedModel && thinkingLevels.length ? (

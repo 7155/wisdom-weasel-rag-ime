@@ -1,10 +1,10 @@
-import { Check, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent,
 } from 'react';
 
 import {
@@ -16,6 +16,8 @@ import {
 import { ProviderMark } from '../marks/ConversationMarks';
 import { modelSelectionFromCatalog } from '../model-selection';
 import type { ModelCatalog, ThinkingLevel } from '../types';
+import { ModelChoiceList, moveButtonFocus } from './ModelChoiceList';
+import { modelChoiceGroupsFromCatalog, modelChoiceKey } from './model-choice';
 
 /**
  * Model + reasoning is one decision, so it is one flat panel: every Provider's
@@ -56,7 +58,10 @@ export function ModelPicker({
     ? `${selectedModel.name} · ${providerName}`
     : '未选择';
   const levels = selectedModel?.thinkingLevels ?? [];
-  const firstOptionKey = firstModelKey(catalog);
+  const groups = useMemo(() => modelChoiceGroupsFromCatalog(catalog), [catalog]);
+  const selectedKey = selection
+    ? modelChoiceKey(selection.provider, selection.modelId)
+    : '';
 
   useEffect(() => {
     if (requestOpen > 0 && catalog && !disabled) setOpen(true);
@@ -139,80 +144,28 @@ export function ModelPicker({
               />
             ) : null}
           </header>
-          <div
-            ref={listRef}
-            className="agent-model-picker__list"
-            role="listbox"
-            aria-label="可用模型"
-            onKeyDown={moveModelFocus}
-          >
-            {catalog?.providers.map((providerItem) => (
-              <div
-                key={providerItem.id}
-                className="agent-model-picker__group"
-                role="group"
-                aria-label={providerItem.displayName}
-              >
-                <p className="agent-model-picker__group-name" aria-hidden="true">
-                  <span>{providerItem.displayName}</span>
-                  <small>{providerItem.models.length}</small>
-                </p>
-                {providerItem.models.map((modelItem) => {
-                  const selected = (
-                    providerItem.id === selection?.provider
-                    && modelItem.id === selection?.modelId
-                  );
-                  const key = `${providerItem.id}::${modelItem.id}`;
-                  return (
-                    <button
-                      type="button"
-                      role="option"
-                      id={modelOptionId(providerItem.id, modelItem.id)}
-                      key={modelItem.id}
-                      aria-selected={selected}
-                      aria-label={`选择模型 ${modelItem.name}`}
-                      tabIndex={(selectedModel ? selected : key === firstOptionKey) ? 0 : -1}
-                      onClick={() => {
-                        // Re-picking the current model is a confirmation, not a
-                        // second request: close and leave Pi's state untouched.
-                        if (selected) {
-                          setOpen(false);
-                          return;
-                        }
-                        choose(
-                          providerItem.id,
-                          modelItem.id,
-                          preferredThinkingLevel(modelItem.thinkingLevels, thinking),
-                        );
-                      }}
-                    >
-                      <ProviderMark
-                        displayName={providerItem.displayName}
-                        providerId={providerItem.id}
-                        size={17}
-                      />
-                      <span>
-                        <strong>{modelItem.name}</strong>
-                        <small>
-                          {modelItem.reasoning
-                            ? `${modelItem.thinkingLevels.length} 档推理`
-                            : '直接生成'}
-                        </small>
-                      </span>
-                      <Check
-                        aria-hidden="true"
-                        className="agent-model-picker__check"
-                        size={15}
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-            {firstOptionKey ? null : (
-              <p className="agent-model-picker__empty">当前没有可用模型</p>
-            )}
-          </div>
+          <ModelChoiceList
+            ariaLabel="可用模型"
+            groups={groups}
+            listRef={listRef}
+            selectedKey={selectedKey}
+            onChoose={(option) => {
+              // Re-picking the current model is a confirmation, not a second
+              // request: close and leave Pi's state untouched.
+              if (option.key === selectedKey) {
+                setOpen(false);
+                return;
+              }
+              const model = catalog?.providers
+                .find((item) => item.id === option.providerId)
+                ?.models.find((item) => item.id === option.modelId);
+              choose(
+                option.providerId,
+                option.modelId,
+                preferredThinkingLevel(model?.thinkingLevels ?? [], thinking),
+              );
+            }}
+          />
           <footer className="agent-model-picker__reasoning-bar">
             <p className="agent-model-picker__reasoning-copy">
               <span>推理强度</span>
@@ -262,7 +215,7 @@ function ReasoningRail({
       role="radiogroup"
       aria-label="推理强度"
       style={style}
-      onKeyDown={moveReasoningFocus}
+      onKeyDown={(event) => moveButtonFocus(event, '[role="radio"]')}
     >
       <span className="agent-model-picker__reasoning-indicator" aria-hidden="true" />
       {levels.map((level) => (
@@ -311,49 +264,6 @@ function preferredThinkingLevel(
   if (levels.includes('medium')) return 'medium';
   if (levels.includes('off')) return 'off';
   return levels[0] ?? 'off';
-}
-
-function firstModelKey(catalog: ModelCatalog | undefined): string {
-  for (const provider of catalog?.providers ?? []) {
-    const model = provider.models[0];
-    if (model) return `${provider.id}::${model.id}`;
-  }
-  return '';
-}
-
-function modelOptionId(provider: string, modelId: string): string {
-  return `agent-model-${safeId(provider)}-${safeId(modelId)}`;
-}
-
-function safeId(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]+/gu, '-');
-}
-
-function moveModelFocus(event: KeyboardEvent<HTMLDivElement>): void {
-  moveButtonFocus(event, '[role="option"]');
-}
-
-function moveReasoningFocus(event: KeyboardEvent<HTMLDivElement>): void {
-  moveButtonFocus(event, '[role="radio"]');
-}
-
-function moveButtonFocus(
-  event: KeyboardEvent<HTMLDivElement>,
-  selector: string,
-): void {
-  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-  const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(selector));
-  if (options.length === 0) return;
-  event.preventDefault();
-  const current = options.findIndex((option) => option === document.activeElement);
-  const next = event.key === 'Home'
-    ? 0
-    : event.key === 'End'
-      ? options.length - 1
-      : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-        ? Math.max(0, (current < 0 ? 0 : current) - 1)
-        : Math.min(options.length - 1, (current < 0 ? -1 : current) + 1);
-  options[next]?.focus();
 }
 
 interface ReasoningRailStyle extends CSSProperties {
