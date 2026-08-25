@@ -274,12 +274,11 @@ function RoomLaneStateIcon({
   );
 }
 
-const ROOM_LANE_REVEAL_EXIT_MS = 190;
-
 /**
- * Lane bodies stay mounted so the canonical Room timeline remains readable in
- * DOM order. Only the native `open` attribute waits for the measured exit;
- * the inner grid becomes inert immediately when the reader closes it.
+ * Lane bodies stay mounted (`keepMounted`) so the canonical Room timeline
+ * remains readable in DOM order. The lane speaks the same disclosure voice as
+ * the Session timeline — the shared SmoothDisclosureReveal spring — and only
+ * the native `open` attribute waits for the reported exit presence.
  */
 function RoomLaneDisclosure({
   children,
@@ -309,20 +308,6 @@ function RoomLaneDisclosure({
   const [exitPresence, setExitPresence] = useState(open);
   const revealId = roomLaneRevealId(laneKey);
   const setOpenFromTrigger: Dispatch<SetStateAction<boolean>> = () => onOpenChange(!open);
-  useEffect(() => {
-    if (open) {
-      setExitPresence(true);
-      return undefined;
-    }
-    if (!exitPresence) return undefined;
-    const duration = roomLaneMotionReduced() ? 0 : ROOM_LANE_REVEAL_EXIT_MS;
-    if (duration === 0) {
-      setExitPresence(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => setExitPresence(false), duration);
-    return () => window.clearTimeout(timer);
-  }, [exitPresence, open]);
   return <details
     className="room-agent-lane"
     data-dispatch-id={dispatchId}
@@ -341,23 +326,16 @@ function RoomLaneDisclosure({
       onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpenFromTrigger)}
       onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpenFromTrigger)}
     >{summary}</summary>
-    <div
-      aria-hidden={!open}
+    <SmoothDisclosureReveal
       className="room-agent-lane__reveal"
-      data-open={open || undefined}
       id={revealId}
-      inert={open ? undefined : true}
+      keepMounted
+      onPresenceChange={setExitPresence}
+      open={open}
     >
       <div className="room-agent-lane__body">{children}</div>
-    </div>
+    </SmoothDisclosureReveal>
   </details>;
-}
-
-function roomLaneMotionReduced(): boolean {
-  if (typeof document !== 'undefined' && document.documentElement.dataset.reduceMotion === 'true') return true;
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function roomLaneRevealId(laneKey: string): string {

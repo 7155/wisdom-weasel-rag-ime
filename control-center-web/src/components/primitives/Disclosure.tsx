@@ -7,7 +7,9 @@ import {
 } from 'react';
 import { cn } from './utils';
 
-const DEFAULT_EXIT_DURATION_MS = 190;
+/* Matches --motion-disclose / DISCLOSURE_MOTION (220ms bounded spring) so
+   closing content stays mounted through the whole shared exit transition. */
+const DEFAULT_EXIT_DURATION_MS = 220;
 const INTERACTIVE_SUMMARY_TARGET_SELECTOR = [
   'a',
   'button',

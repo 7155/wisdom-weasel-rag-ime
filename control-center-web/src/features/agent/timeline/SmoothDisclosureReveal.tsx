@@ -27,6 +27,10 @@ type DisclosurePhase = 'closed' | 'closing' | 'opening' | 'open';
  * missing target. Children mount before an opening measure and remain mounted
  * until the closing height transition finishes. Reading the current rendered
  * height on every command makes an in-flight close immediately reversible.
+ *
+ * `keepMounted` keeps the children in the DOM even while closed, for hosts
+ * whose collapsed records must remain readable in document order (e.g. the
+ * Room chronology). Presence reporting and motion behave identically.
  */
 export function SmoothDisclosureReveal({
   ariaLabel,
@@ -34,6 +38,7 @@ export function SmoothDisclosureReveal({
   className,
   id,
   innerClassName,
+  keepMounted = false,
   onPresenceChange,
   open,
   role,
@@ -43,6 +48,7 @@ export function SmoothDisclosureReveal({
   className?: string;
   id: string;
   innerClassName?: string;
+  keepMounted?: boolean;
   onPresenceChange?: (present: boolean) => void;
   open: boolean;
   role?: AriaRole;
@@ -177,7 +183,7 @@ export function SmoothDisclosureReveal({
       role={role}
       style={{ height }}
     >
-      {present ? (
+      {present || keepMounted ? (
         <div
           className={['agent-smooth-reveal__inner', innerClassName].filter(Boolean).join(' ')}
           ref={innerRef}

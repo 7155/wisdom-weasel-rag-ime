@@ -834,6 +834,10 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-tool-result-panel > pre { max-height: 260px; margin: 0; padding: 10px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border: 0; background: var(--color-surface); color: var(--color-text-secondary); font-family: var(--font-mono); font-size: var(--text-code); line-height: var(--text-code-lh); white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-tool-result-panel > pre:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .agent-tool-result-panel > small { padding: 6px 10px; color: var(--color-text-tertiary); line-height: 1.45; }
+/* An edit receipt's 变更差异 opens into the structured diff reader inside the
+   panel; bound it like the panel's pre so a large patch scrolls in place. */
+.agent-tool-diff-output > .agent-diff-preview { min-height: 0; }
+.agent-tool-diff-output .agent-diff-preview__files { max-height: 380px; overflow: auto; overscroll-behavior: contain; }
 .agent-tool-result-panel > .agent-safe-fields,
 .agent-tool-result-panel > .agent-tool-request { gap: 0; margin: 0; }
 .agent-tool-result-panel > .agent-safe-fields > div,

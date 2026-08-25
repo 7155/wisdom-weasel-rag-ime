@@ -36,7 +36,15 @@ const hiddenTechnicalFieldIds: Record<string, true> = {
 export function roomPublicToolResultView(view: PublicToolResultView): PublicToolResultView {
   const fields = view.fields.flatMap((field) => sanitizeField(field));
   const request = view.request.flatMap((field) => sanitizeRequestField(field));
-  const outputText = view.output ? sanitizeOutput(view.output.text) : '';
+  // A 变更差异 body is structural: the upstream projection already redacted
+  // secrets and machine paths, and the line-oriented sanitizer would break
+  // the unified-diff format the shared diff reader needs (PF-CM-004/008).
+  const structuralOutput = view.outputLabel === '变更差异';
+  const outputText = view.output
+    ? structuralOutput
+      ? view.output.text
+      : sanitizeOutput(view.output.text)
+    : '';
   const summary = sanitizeText(view.summary) || `${view.toolLabel}已完成`;
   const error = view.error ? sanitizeText(view.error) : '';
   const sources = view.sources.map(sanitizeText).filter(Boolean);

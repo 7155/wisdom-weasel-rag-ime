@@ -349,6 +349,56 @@ describe('RoomTurn public activity detail', () => {
     expect(failed).toHaveTextContent('后续读取已经成功');
   });
 
+  it('opens an edit Tool step into the structured diff reader shared with the Session timeline', async () => {
+    const user = userEvent.setup();
+    const projection = roomProjection();
+    projection.activitiesById['edit-a'] = {
+      id: 'edit-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '更新运行时实现',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_finished',
+        toolName: 'edit',
+        toolCallId: 'call-edit',
+        arguments: { path: 'src/runtime.ts' },
+        result: {
+          diff: [
+            '--- a/src/runtime.ts',
+            '+++ b/src/runtime.ts',
+            '@@ -1,2 +1,2 @@',
+            '-const previous = 1;',
+            '+const next = 2;',
+            ' export {};',
+          ].join('\n'),
+        },
+      },
+      createdAtMs: 3_050,
+      updatedAtMs: 3_060,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['route-a', 'wait-a', 'edit-a', 'tool-a'],
+    };
+
+    const view = render(roomTurn(projection));
+    const editRow = [...view.container.querySelectorAll<HTMLElement>('.room-agent-activity--tool')]
+      .find((row) => row.textContent?.includes('src/runtime.ts +1 / -1'))!;
+    expect(editRow).toBeDefined();
+    await user.click(editRow.querySelector('summary')!);
+
+    const preview = editRow.querySelector<HTMLElement>('.agent-diff-preview')!;
+    expect(preview).not.toBeNull();
+    expect(preview).toHaveTextContent('1 个文件 · +1 −1');
+    expect(preview.querySelector('tr[data-kind="add"]')).toHaveTextContent('const next = 2;');
+    expect(preview.querySelector('tr[data-kind="remove"]')).toHaveTextContent('const previous = 1;');
+  });
+
   it('drops repeated progress records that contain no new information', () => {
     const projection = roomProjection();
     for (const [index, id] of ['progress-empty-a', 'progress-empty-b'].entries()) {

@@ -1105,7 +1105,6 @@
   .room-cockpit__flow-contract > section:nth-child(3) { grid-column: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .room-agent-lane__reveal { transition: none; }
   .room-cockpit__document { scroll-behavior: auto; }
   .room-cockpit__plan li[data-state='active'] > span::after { animation: none; }
   .room-cockpit__plan-track i,
@@ -1222,13 +1221,8 @@
 .room-agent-lane > summary:hover { background: color-mix(in srgb, var(--room-lane-tone) 6%, var(--color-surface-hover)); }
 .room-agent-lane > summary::-webkit-details-marker { display: none; }
 .room-agent-lane > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-.room-agent-lane__reveal {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transition: grid-template-rows 190ms var(--ease-standard), opacity 150ms var(--ease-standard);
-}
-.room-agent-lane__reveal[data-open='true'] { grid-template-rows: 1fr; opacity: 1; }
+/* .room-agent-lane__reveal rides on the shared .agent-smooth-reveal spring
+   (SmoothDisclosureReveal); the lane owns only its body sizing. */
 .room-agent-lane__body {
   display: grid;
   min-width: 0;
@@ -2298,7 +2292,6 @@
 }
 
 :root[data-reduce-motion='true'] .room-agent-lane__meter-track > i { transition: opacity 200ms ease; }
-:root[data-reduce-motion='true'] .room-agent-lane__reveal { transition: none; }
 :root[data-reduce-motion='true'] .room-agent-lane__meter[data-active='true'] .room-agent-lane__meter-track::after,
 :root[data-reduce-motion='true'] .room-agent-lane__meter[data-indeterminate='true'] .room-agent-lane__meter-track > i { animation: none; }
 :root[data-reduce-motion='true'] .room-agent-lane__meter[data-indeterminate='true'] .room-agent-lane__meter-track > i {

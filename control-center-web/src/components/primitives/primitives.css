@@ -33,9 +33,9 @@
   opacity: 0;
   transform: translateY(-3px);
   transition:
-    grid-template-rows var(--motion-disclose) var(--ease-standard),
+    grid-template-rows var(--motion-disclose) var(--ease-disclose),
     opacity var(--duration-fast) var(--ease-standard),
-    transform var(--motion-disclose) var(--ease-standard);
+    transform var(--motion-disclose) var(--ease-disclose);
 }
 
 .ui-disclosure__reveal[data-open] {
