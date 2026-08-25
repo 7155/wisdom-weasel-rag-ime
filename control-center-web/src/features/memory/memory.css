@@ -50,6 +50,15 @@ main[data-route-id='memory'] {
   --memory-calm: #15803d;
   --memory-calm-strong: #166534;
   --memory-calm-soft: rgb(21 128 61 / .09);
+
+  /* One PAWOS UI system: retire the legacy near-square "paper" corner scale
+     (2/3/4px) for every consumer of --radius-1/2/3 inside Memory, including
+     shared .ui-* primitives rendered on this route. Memory now reads the
+     same rounded control/menu/panel geometry as the rest of the OS instead
+     of a second, sharper corner language. */
+  --radius-1: 6px;
+  --radius-2: 8px;
+  --radius-3: 12px;
 }
 
 /* ============================== layer identities ==============================
@@ -1778,11 +1787,13 @@ main[data-route-id='memory'] {
   padding: 10px 11px;
   border: 1px solid color-mix(in srgb, var(--memory-signal, var(--color-accent)) 34%, var(--color-border));
   border-radius: var(--radius-3);
-  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  /* Opaque floating surface: this panel sits over the live relation canvas,
+     so its text must never depend on an unknown backdrop (PAWOS control
+     contract — no glass on controls/panels, only true window chrome). */
+  background: var(--color-surface);
   box-shadow: var(--shadow-2);
   gap: 2px;
   animation: memory-relation-focus-in 180ms cubic-bezier(.23, 1, .32, 1) both;
-  backdrop-filter: blur(12px) saturate(112%);
 }
 
 .memory-relation-canvas__focus > span {
@@ -1821,7 +1832,7 @@ main[data-route-id='memory'] {
   padding: 5px 8px;
   border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
   border-radius: var(--radius-2);
-  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  background: var(--color-surface);
   box-shadow: var(--shadow-1);
   color: var(--color-text-tertiary);
   font-size: 14px;
@@ -2178,9 +2189,8 @@ main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__native-acti
   align-items: center;
   padding: 7px 14px 7px 16px;
   border-bottom: 1px solid var(--memory-line);
-  background: rgb(255 255 255 / .94);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
-  backdrop-filter: blur(18px) saturate(125%);
+  /* Opaque native action bar: PAWOS controls never blur their backdrop. */
+  background: #fff;
 }
 
 main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {

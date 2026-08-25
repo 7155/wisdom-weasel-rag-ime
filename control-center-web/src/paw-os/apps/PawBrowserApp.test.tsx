@@ -94,7 +94,7 @@ describe('PAW Browser App', () => {
     expect(within(task).getByRole('status', { name: 'Agent 浏览器任务状态' })).toHaveTextContent('Agent 正在浏览');
     expect(within(task).getByText('点击')).toBeInTheDocument();
     expect(within(task).getByText('继续按钮')).toBeInTheDocument();
-    expect(screen.queryByRole('complementary', { name: 'Agent 浏览器轨迹' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('complementary', { name: 'Agent 浏览器轨迹' })).toBeInTheDocument();
 
     await user.click(within(task).getByRole('button', { name: '接管浏览器' }));
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'browser.stop')).toBe(true));
@@ -134,7 +134,7 @@ describe('PAW Browser App', () => {
       </ControlTransportProvider>,
     );
 
-    await user.click(await screen.findByRole('button', { name: '显示 Agent 浏览器轨迹' }));
+    await waitFor(() => expect(screen.getByRole('complementary', { name: 'Agent 浏览器轨迹' })).toBeInTheDocument());
     expect(await screen.findByText('最近 4 / 已加载 6 个步骤')).toBeInTheDocument();
     expect(screen.getByText('已记录 5 / 共 8 步')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: '浏览器执行进度' })).toHaveAttribute('value', '5');
@@ -388,9 +388,13 @@ describe('PAW Browser App', () => {
       clearBrowsingData,
       clearHistory,
       getHistory,
-      getSettings: async () => ({ cacheBytes: 4096, cookieCount: 2, downloadPath: '/Users/example/Downloads', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+      getSettings: async () => ({ cacheBytes: 4096, cookieCount: 2, downloadPath: '/Users/example/Downloads', extensionCount: 0, extensionsPath: '/Users/example/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+      listExtensions: async () => [],
+      loadUnpackedExtension: async () => null,
+      openExtensionsFolder: async () => ({ opened: true, path: '/Users/example/Extensions' }),
       openDownloads: async () => ({ opened: true, path: '/Users/example/Downloads' }),
       register: () => undefined,
+      removeExtension: async () => [],
       removeHistoryEntry,
       setStartPage: async (startPage) => ({ startPage }),
       takeScreenshot: async () => ({ path: '/Users/example/Downloads/page.png', saved: true }),
@@ -428,6 +432,169 @@ describe('PAW Browser App', () => {
     expect(screen.getByRole('button', { name: '显示 Agent 浏览器轨迹' })).toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Agent 浏览器轨迹' })).not.toBeInTheDocument();
     expect(localStorage.getItem('paw.browser.history.v1')).toBeNull();
+  });
+
+  it('saves a normalized start page through the host and opens it in the blank guest', async () => {
+    const user = userEvent.setup();
+    let startPage = 'about:blank';
+    const setStartPage = vi.fn(async (value: string) => { startPage = value; return { startPage }; });
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', extensionCount: 0, extensionsPath: '/tmp/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage }),
+      setStartPage,
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    const loadURL = vi.fn(async () => undefined);
+    Object.assign(guest, { loadURL });
+
+    await user.click(await screen.findByRole('button', { name: 'Browser 设置' }));
+    const field = await screen.findByRole('textbox', { name: 'Browser 启动页' });
+    await user.clear(field);
+    await user.type(field, 'start.example/home');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    // A bare host is committed as the same absolute URL the omnibox would open.
+    await waitFor(() => expect(setStartPage).toHaveBeenCalledWith('https://start.example/home'));
+    expect(await screen.findByText('启动页已保存')).toBeInTheDocument();
+    expect(field).toHaveValue('https://start.example/home');
+    await waitFor(() => expect(loadURL).toHaveBeenCalledWith('https://start.example/home'));
+    expect(screen.getByRole('button', { name: '打开启动页' }))
+      .toHaveAttribute('title', '打开启动页 https://start.example/home');
+  });
+
+  it('manages real Electron session extensions from Browser settings', async () => {
+    const user = userEvent.setup();
+    const installed = [
+      { id: 'ext-one', name: '广告拦截', path: '/Users/example/Extensions/one', version: '1.4.0' },
+      { id: 'ext-two', name: '取色器', path: '/Users/example/Extensions/two', version: '0.9.2' },
+    ];
+    const listExtensions = vi.fn(async () => installed);
+    const loadUnpackedExtension = vi.fn(async () => installed[0]);
+    const openExtensionsFolder = vi.fn(async () => ({ opened: true, path: '/Users/example/Extensions' }));
+    const removeExtension = vi.fn(async (extensionId: string) => installed.filter((item) => item.id !== extensionId));
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', extensionCount: installed.length, extensionsPath: '/Users/example/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+      listExtensions,
+      loadUnpackedExtension,
+      openExtensionsFolder,
+      removeExtension,
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: 'Browser 设置' }));
+    const settings = await screen.findByRole('region', { name: 'Browser 设置' });
+    expect(within(settings).getByText('已安装 2 个扩展程序，与 Chrome 一样可在隔离 Browser Session 中加载。')).toBeInTheDocument();
+    expect(within(settings).getByText('/Users/example/Extensions')).toBeInTheDocument();
+    expect(within(settings).getByText('广告拦截')).toBeInTheDocument();
+    expect(within(settings).getByText('1.4.0')).toBeInTheDocument();
+    expect(within(settings).queryByText('还没有安装扩展程序')).toBeNull();
+
+    await user.click(within(settings).getByRole('button', { name: '移除扩展程序 广告拦截' }));
+    await waitFor(() => expect(removeExtension).toHaveBeenCalledWith('ext-one'));
+    expect(await within(settings).findByText('扩展程序已移除')).toBeInTheDocument();
+
+    await user.click(within(settings).getByRole('button', { name: '加载已解压的扩展程序' }));
+    await waitFor(() => expect(loadUnpackedExtension).toHaveBeenCalledTimes(1));
+    expect(await within(settings).findByText('已加载扩展程序 广告拦截')).toBeInTheDocument();
+
+    await user.click(within(settings).getByRole('button', { name: '打开扩展程序目录' }));
+    await waitFor(() => expect(openExtensionsFolder).toHaveBeenCalledTimes(1));
+    expect(await within(settings).findByText('已打开扩展程序目录 /Users/example/Extensions')).toBeInTheDocument();
+  });
+
+  it('reports a cancelled extension pick and a failed load instead of claiming success', async () => {
+    const user = userEvent.setup();
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      loadUnpackedExtension: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(new Error('manifest.json 缺失')),
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: 'Browser 设置' }));
+    const settings = await screen.findByRole('region', { name: 'Browser 设置' });
+    expect(within(settings).getByText('还没有安装扩展程序')).toBeInTheDocument();
+
+    // A cancelled directory pick loaded nothing, so no receipt is invented.
+    await user.click(within(settings).getByRole('button', { name: '加载已解压的扩展程序' }));
+    await waitFor(() => expect(within(settings).queryByRole('status')).toBeNull());
+
+    await user.click(within(settings).getByRole('button', { name: '加载已解压的扩展程序' }));
+    expect(await within(settings).findByText('加载扩展程序失败：manifest.json 缺失')).toBeInTheDocument();
+  });
+
+  it('opens a clean new-tab page and lights it only while an Agent is executing', async () => {
+    window.pawBrowserHost = electronBrowserHost();
+    const { unmount } = render(
+      <ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>,
+    );
+
+    await screen.findByRole('textbox', { name: '页面地址' });
+    const start = document.querySelector('.paw-browser-start') as HTMLElement;
+    expect(start).not.toBeNull();
+    expect(start).toHaveTextContent('新标签页');
+    expect(start).toHaveTextContent('在地址栏输入网址或搜索内容');
+    expect(start.querySelector('.paw-browser-start-logo')).not.toBeNull();
+    expect(start).not.toHaveAttribute('data-live');
+    expect(document.querySelector('.paw-browser-agent-field')).toBeNull();
+    unmount();
+
+    render(
+      <ControlTransportProvider transport={browserTransport({
+        traces: {
+          ok: true,
+          items: [{
+            commandId: 'cmd-ntp', action: 'run', sourceKind: 'agent', status: 'claimed',
+            target: '读取新闻', createdAtMs: Date.now(),
+          }],
+        },
+      })}>
+        <PawBrowserApp />
+      </ControlTransportProvider>,
+    );
+    await waitFor(() => expect(document.querySelector('.paw-browser-start')).toHaveAttribute('data-live', 'true'));
+    expect(document.querySelector('.paw-browser-agent-field')).not.toBeNull();
+  });
+
+  it('runs print, screenshot, and downloads against the real guest and host', async () => {
+    const user = userEvent.setup();
+    const openDownloads = vi.fn(async () => ({ opened: true, path: '/Users/example/Downloads' }));
+    const takeScreenshot = vi.fn(async () => ({ path: '/Users/example/Downloads/page.png', saved: true }));
+    window.pawBrowserHost = { ...electronBrowserHost(), openDownloads, takeScreenshot };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    const print = vi.fn();
+    Object.assign(guest, { print });
+
+    await user.click(await screen.findByRole('button', { name: 'Browser 菜单' }));
+    await user.click(screen.getByRole('menuitem', { name: '打印' }));
+    expect(print).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    // The guest has not reported its webContents id yet, so screenshot says so
+    // rather than silently doing nothing.
+    await user.click(screen.getByRole('button', { name: 'Browser 菜单' }));
+    await user.click(screen.getByRole('menuitem', { name: '截图' }));
+    expect(takeScreenshot).not.toHaveBeenCalled();
+    expect(await screen.findByText('页面还没有就绪，无法截图')).toBeInTheDocument();
+
+    mockGuestIdentity(guest, { title: '新标签页', url: 'about:blank', webContentsId: 512 });
+    fireEvent(guest, new Event('dom-ready'));
+    await user.click(screen.getByRole('button', { name: 'Browser 菜单' }));
+    await user.click(screen.getByRole('menuitem', { name: '截图' }));
+    await waitFor(() => expect(takeScreenshot).toHaveBeenCalledWith(512));
+    expect(await screen.findByText('截图已保存到 /Users/example/Downloads/page.png')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Browser 菜单' }));
+    await user.click(screen.getByRole('menuitem', { name: '下载' }));
+    await waitFor(() => expect(openDownloads).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('已打开下载目录 /Users/example/Downloads')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '关闭操作提示' }));
+    expect(screen.queryByText('已打开下载目录 /Users/example/Downloads')).toBeNull();
   });
 
   it('keeps History and Settings menu fallbacks narrow-only instead of duplicating wide toolbar commands', async () => {
@@ -515,7 +682,7 @@ describe('PAW Browser App', () => {
     const user = userEvent.setup();
     window.pawBrowserHost = {
       ...electronBrowserHost(),
-      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'https://start.example/' }),
+      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', extensionCount: 0, extensionsPath: '/tmp/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'https://start.example/' }),
     };
     render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
     const guest = document.querySelector('webview') as Element & Record<string, unknown>;
@@ -547,6 +714,31 @@ describe('PAW Browser App', () => {
     const headings = within(historyRegion).getAllByRole('heading', { level: 3 });
     expect(headings.map((heading) => heading.textContent)).toEqual(['今天', '昨天']);
     expect(within(historyRegion).getByText('Yesterday doc')).toBeInTheDocument();
+  });
+
+  it('reopens a history entry in the same guest and leaves History behind', async () => {
+    const user = userEvent.setup();
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getHistory: async () => [
+        { id: 'h-one', title: 'Yesterday doc', url: 'https://yesterday.example/read', visitedAt: 1 },
+      ],
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    const loadURL = vi.fn(async () => undefined);
+    Object.assign(guest, { loadURL });
+
+    await user.click(await screen.findByRole('button', { name: '浏览历史' }));
+    const historyRegion = await screen.findByRole('region', { name: '浏览历史' });
+    await user.click(within(historyRegion).getByRole('button', { name: /^Yesterday doc/ }));
+
+    expect(loadURL).toHaveBeenCalledWith('https://yesterday.example/read');
+    expect(screen.queryByRole('region', { name: '浏览历史' })).toBeNull();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '页面地址' }))
+      .toHaveValue('https://yesterday.example/read'));
+    // Reopening reuses the one visible guest instead of spawning a tab.
+    expect(document.querySelectorAll('webview')).toHaveLength(1);
   });
 
   it('clears History only through the persistent Browser host authority after an in-App confirmation', async () => {
@@ -644,9 +836,13 @@ function electronBrowserHost(): NonNullable<typeof window.pawBrowserHost> {
     clearBrowsingData: async (action) => ({ action, after: 0, before: 0, completedAt: 3 }),
     clearHistory: async () => [],
     getHistory: async () => [],
-    getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+    getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', extensionCount: 0, extensionsPath: '/tmp/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+    listExtensions: async () => [],
+    loadUnpackedExtension: async () => null,
+    openExtensionsFolder: async () => ({ opened: true, path: '/tmp/Extensions' }),
     openDownloads: async () => ({ opened: true, path: '/tmp' }),
     register: () => undefined,
+    removeExtension: async () => [],
     removeHistoryEntry: async () => [],
     setStartPage: async (startPage) => ({ startPage }),
     takeScreenshot: async () => ({ path: '/tmp/page.png', saved: true }),

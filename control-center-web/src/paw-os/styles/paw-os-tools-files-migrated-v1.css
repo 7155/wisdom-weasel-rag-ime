@@ -21,9 +21,6 @@
   --paw-browser-muted: #64737d;
   --paw-browser-accent: var(--paw-app-accent, #146f7b);
   --paw-browser-glow: rgb(20 143 158 / 26%);
-  --paw-browser-agent-blue: #5b8cff;
-  --paw-browser-agent-violet: #8b5cf6;
-  --paw-browser-agent-cyan: #52d7ff;
   grid-template-rows: 42px 1fr;
   background: var(--paw-app-surface, #fff);
   color: var(--paw-browser-ink);
@@ -262,7 +259,7 @@
   box-shadow: 0 1px 4px rgb(15 23 42 / 12%);
 }
 
-/* New-tab start field: a quiet aurora horizon under the omnibox. */
+/* New-tab start field: Chrome-like calm sheet; agent takeover adds aurora via data-live. */
 .paw-desktop-root .paw-browser-start {
   position: absolute;
   z-index: 5;
@@ -270,35 +267,31 @@
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 5px;
+  gap: 6px;
   overflow: hidden;
   padding-bottom: 6vh;
-  background:
-    radial-gradient(560px 320px at 50% 26%, rgb(20 143 158 / 8%), transparent 70%),
-    radial-gradient(760px 460px at 84% 92%, rgb(72 104 189 / 7%), transparent 64%),
-    radial-gradient(520px 380px at 8% 84%, rgb(82 197 226 / 6%), transparent 58%),
-    linear-gradient(180deg, #fdfefe, #f5f8f9);
-  color: var(--paw-browser-muted);
+  background: #fff;
+  color: #5f6368;
   text-align: center;
   pointer-events: none;
 }
 
-.paw-desktop-root .paw-browser-start::before {
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(circle, rgb(20 111 123 / 34%) 1px, transparent 1.4px);
-  background-size: 22px 22px;
-  content: '';
-  opacity: .3;
-  -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
-  mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
+.paw-desktop-root .paw-browser-start-logo {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: #f1f3f4;
+  color: #4285f4;
 }
 
 .paw-desktop-root .paw-browser-start-halo {
+  display: none;
   position: relative;
   width: 76px;
   height: 76px;
-  display: grid;
   place-items: center;
   margin-bottom: 9px;
   border-radius: 50%;
@@ -313,7 +306,19 @@
   animation: paw-browser-start-breathe 4.4s ease-in-out infinite;
 }
 
-/* One comet rides a thin orbit around the halo. */
+.paw-desktop-root .paw-browser-start::before {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgb(20 111 123 / 34%) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  content: '';
+  opacity: .3;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
+  mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
+}
+
+/* One comet rides a thin orbit around the halo — agent takeover only. */
 .paw-desktop-root .paw-browser-start-halo::after {
   position: absolute;
   inset: -8px;
@@ -335,20 +340,87 @@
 }
 
 .paw-desktop-root .paw-browser-start > strong {
-  color: var(--paw-browser-ink);
-  font-size: 19px;
+  color: #202124;
+  font-size: 18px;
   line-height: 1.4;
-  font-weight: 650;
+  font-weight: 500;
   letter-spacing: .01em;
 }
 
 .paw-desktop-root .paw-browser-start-hint {
   font-size: 13px;
   line-height: 1.5;
+  color: #80868b;
 }
 
 .paw-desktop-root .paw-browser-start[data-live] {
-  opacity: .5;
+  color: var(--paw-browser-muted);
+  background:
+    radial-gradient(560px 320px at 50% 26%, rgb(20 143 158 / 8%), transparent 70%),
+    radial-gradient(760px 460px at 84% 92%, rgb(72 104 189 / 7%), transparent 64%),
+    radial-gradient(520px 380px at 8% 84%, rgb(82 197 226 / 6%), transparent 58%),
+    linear-gradient(180deg, #fdfefe, #f5f8f9);
+}
+
+.paw-desktop-root .paw-browser-start[data-live]::before {
+  display: block;
+}
+
+.paw-desktop-root .paw-browser-start[data-live] .paw-browser-start-logo {
+  display: none;
+}
+
+.paw-desktop-root .paw-browser-start[data-live] .paw-browser-start-halo {
+  display: grid;
+}
+
+.paw-desktop-root .paw-browser-start[data-live] > strong {
+  color: var(--paw-browser-ink);
+  font-weight: 650;
+}
+
+.paw-desktop-root .paw-browser-extension-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paw-desktop-root .paw-browser-extension-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--paw-browser-line);
+}
+
+.paw-desktop-root .paw-browser-extension-list li:last-child {
+  border-bottom: 0;
+}
+
+.paw-desktop-root .paw-browser-extension-list strong {
+  display: block;
+  color: var(--paw-browser-ink);
+  font-size: 14px;
+}
+
+.paw-desktop-root .paw-browser-extension-list small {
+  color: #64737d;
+  font-size: 12px;
+}
+
+.paw-desktop-root .paw-browser-extension-empty {
+  margin-top: 8px;
+}
+
+.paw-desktop-root .paw-browser-extension-actions {
+  margin-top: 12px;
+}
+
+.paw-desktop-root .paw-browser-extension-actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Agent trace card (on demand). */

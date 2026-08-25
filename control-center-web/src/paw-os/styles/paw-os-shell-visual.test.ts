@@ -3,6 +3,7 @@ import shellCss from './paw-os-shell-migrated-v1.css?raw';
 import pawOsCss from './paw-os.css?raw';
 import motionCss from './paw-os-motion.css?raw';
 import controlsCss from './paw-os-controls.css?raw';
+import webmodelCss from './paw-os-webmodel-v1.css?raw';
 import appIconCss from '../shell/paw-app-icon.css?raw';
 
 /* The redesigned OS shell speaks one chrome language: menu bar, Dock and the
@@ -263,5 +264,71 @@ describe('PAWOS shell visual language', () => {
       .toContain('animation-delay: calc(var(--paw-tile-i, 0) * 22ms)');
     // Reduced motion silences the header cascade with everything else.
     expect(shellCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-desktop-root \.paw-launchpad-group,/);
+  });
+
+  it('keeps traffic lights the fixed leftmost column of every window titlebar', () => {
+    // The titlebar grid's first track is a fixed pixel column that always
+    // resolves to the traffic-light slot, at both the default and the narrow
+    // breakpoint, so no App can push the lights out of their left position by
+    // widening the title or chrome-slot tracks.
+    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);/s);
+    expect(pawOsCss).toMatch(/@media \(max-width: 820px\)[\s\S]*?\.paw-window-titlebar\s*\{\s*grid-template-columns:\s*70px minmax\(0, 1fr\) minmax\(0, auto\);/);
+    // No shell owner may re-key that grid per App: the recipe is one shared
+    // geometry, not a per-window rediscovery.
+    for (const [name, css] of Object.entries({
+      'paw-os.css': pawOsCss,
+      'paw-os-shell-migrated-v1.css': shellCss,
+      'paw-os-motion.css': motionCss,
+      'paw-os-controls.css': controlsCss,
+      'paw-os-webmodel-v1.css': webmodelCss,
+    })) {
+      expect(css, `${name} must not re-key the titlebar grid per data-app`)
+        .not.toMatch(/\[data-app[^\]]*\][^{]*\.paw-window-titlebar[^{]*\{[^}]*grid-template-columns/s);
+    }
+  });
+
+  it('gives every window one titlebar height and one corner radius regardless of its App', () => {
+    // --paw-titlebar-h and --paw-radius are declared exactly once each in the
+    // structure owner and (where restated) agree with the visual owner, so
+    // the chrome scale can never fork between the two files that touch it.
+    expect(pawOsCss.match(/--paw-titlebar-h:/g)).toHaveLength(1);
+    expect(pawOsCss).toContain('--paw-titlebar-h: 40px;');
+    const structureRadius = pawOsCss.match(/--paw-radius:\s*([^;]+);/)?.[1]?.trim();
+    const visualRadius = shellCss.match(/--paw-radius:\s*([^;]+);/)?.[1]?.trim();
+    expect(structureRadius, '--paw-radius in paw-os.css').toBe('12px');
+    expect(visualRadius, '--paw-radius in paw-os-shell-migrated-v1.css').toBe(structureRadius);
+    // No shell owner may give one named App's titlebar its own height or give
+    // one named App's window its own corner radius: identity speaks through
+    // ink, icon and the documented Terminal ink/aurora hairline only. The
+    // generic `[data-app]` presence selector (shared by every App, e.g. the
+    // active-window aurora hairline `::after`) is deliberately excluded here
+    // — only a selector naming one specific App value is a fork.
+    for (const [name, css] of Object.entries({
+      'paw-os.css': pawOsCss,
+      'paw-os-shell-migrated-v1.css': shellCss,
+      'paw-os-motion.css': motionCss,
+      'paw-os-webmodel-v1.css': webmodelCss,
+    })) {
+      expect(css, `${name} must not give one named App its own titlebar height`)
+        .not.toMatch(/\[data-app='[a-z-]+'\][^{]*\.paw-window-titlebar(?!::)[^{]*\{[^}]*\bheight:/s);
+      expect(css, `${name} must not give one named App its own window corner radius`)
+        .not.toMatch(/\[data-app='[a-z-]+'\][^{]*\.paw-window\b[^-][^{]*\{[^}]*border-radius/s);
+    }
+  });
+
+  it('limits window titlebar background overrides to the one documented Terminal exception', () => {
+    // Every App resolves the shared background recipe —
+    // `background: var(--paw-app-nav, #fff)` on the one `[data-app]` rule —
+    // with only the --paw-app-nav *value* changing per App palette. Terminal
+    // is the sole named exception, repainting its own obsidian material to
+    // match its whole-App dark surface; no other App may fork a second one.
+    expect(shellCss).toMatch(/\.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
+    const appSpecificTitlebarBackgrounds: string[] = [];
+    for (const css of [pawOsCss, shellCss, motionCss, webmodelCss]) {
+      appSpecificTitlebarBackgrounds.push(...[...css.matchAll(
+        /\.paw-window-shell\[data-app='([a-z-]+)'\]\s*\.paw-window-titlebar(?=\s*[,{])[^{]*\{[^}]*background:/gs,
+      )].map((match) => match[1]!));
+    }
+    expect(appSpecificTitlebarBackgrounds).toEqual(['terminal']);
   });
 });

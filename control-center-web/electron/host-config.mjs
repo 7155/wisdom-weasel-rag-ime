@@ -28,6 +28,7 @@ export function resolveHostPaths(env = process.env) {
     hostPidFile: path.join(profilePath, 'PAWBrowserHost.pid'),
     browserHistoryFile: path.join(profilePath, 'PAWBrowserHost.history.json'),
     browserSettingsFile: path.join(profilePath, 'PAWBrowserHost.settings.json'),
+    browserExtensionsDir: path.join(profilePath, 'Extensions'),
     preloadEntry: path.join(electronDirectory, 'preload.cjs'),
     profilePath,
     repositoryRoot,

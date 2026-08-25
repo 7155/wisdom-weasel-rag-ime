@@ -40,6 +40,16 @@ function contrast(a: string, b: string): number {
 }
 
 describe('PAWOS shared control language', () => {
+  it('matches the literal shared control scale: 32/8/10/12', () => {
+    // The one PAWOS control recipe is a fixed scale, not a per-surface guess:
+    // 32px control height, 8px control radius, 10px menu radius, 12px panel
+    // radius. Any drift here is a silent fork of the shared language.
+    expect(token('paw-control-h')).toBe('32px');
+    expect(token('paw-control-radius')).toBe('8px');
+    expect(token('paw-menu-radius')).toBe('10px');
+    expect(token('paw-panel-radius')).toBe('12px');
+  });
+
   it('keeps every default control and menu surface an opaque hex colour', () => {
     for (const name of [
       'paw-control-bg',

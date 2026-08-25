@@ -53,6 +53,7 @@ import { ModelPicker } from './ModelPicker';
 import { PermissionPicker } from './PermissionPicker';
 import { ToolPicker } from './ToolPicker';
 import { permissionLabel } from './permission-policy';
+import { ContextUsagePopover, type ContextUsageTelemetry } from '../status/ContextUsagePopover';
 import type {
   AgentCommand,
   AgentPermissionSelection,
@@ -140,6 +141,7 @@ export function AgentComposer({
   imageSupport = 'unknown',
   showJumpLatest = false,
   onJumpLatest,
+  contextUsage,
   queueDepth = 0,
   onQueue,
 }: {
@@ -181,6 +183,7 @@ export function AgentComposer({
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
   showJumpLatest?: boolean;
   onJumpLatest?: () => void;
+  contextUsage?: ContextUsageTelemetry | null;
   /** How many follow-ups the host is already holding for this Session. */
   queueDepth?: number;
   /** Hold this draft until the running turn settles. `false` means the cap
@@ -553,6 +556,10 @@ export function AgentComposer({
               pending={modelChanging}
               requestOpen={modelPickerRequest}
               onChange={onModelChange}
+            />
+            <ContextUsagePopover
+              sessionId={session?.id}
+              telemetry={contextUsage}
             />
             {busy ? (
               <div className="agent-composer__delivery" role="radiogroup" aria-label="消息投递方式">

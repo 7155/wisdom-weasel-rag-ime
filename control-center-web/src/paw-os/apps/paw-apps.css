@@ -913,28 +913,37 @@
 .paw-browser-setting-row button { min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--paw-line) 76%, transparent); border-radius: 10px; background: var(--paw-browser-control); color: var(--paw-ink); cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease, transform 140ms var(--paw-ease-out); }
 .paw-browser-settings-body output { display: block; margin: 12px 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--paw-success) 28%, var(--paw-line)); border-radius: 10px; background: color-mix(in srgb, var(--paw-success) 7%, var(--paw-panel-strong)); color: var(--paw-ink); font-size: 13px; animation: paw-browser-receipt-in 190ms var(--paw-ease-out) both; }
 
-/* Blank page: a quiet aurora horizon instead of a dead white sheet. */
+/* Blank page: Chrome-like white sheet; agent takeover adds aurora via data-live. */
 .paw-browser-blank-page {
   position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: #fff;
+}
+.paw-browser-blank-page::before,
+.paw-browser-blank-page::after {
+  display: none;
+  content: '';
+}
+.paw-browser-blank-page[data-live] {
   background:
     radial-gradient(560px 320px at 50% 30%, color-mix(in srgb, var(--paw-accent) 7%, transparent), transparent 70%),
     radial-gradient(720px 440px at 84% 92%, rgb(72 104 189 / 6%), transparent 64%),
     linear-gradient(180deg, var(--paw-panel-strong), color-mix(in srgb, var(--paw-panel-soft) 55%, var(--paw-panel-strong)));
 }
-.paw-browser-blank-page::before {
+.paw-browser-blank-page[data-live]::before {
+  display: block;
   position: absolute;
   inset: 0;
   background-image: radial-gradient(circle, color-mix(in srgb, var(--paw-accent) 30%, transparent) 1px, transparent 1.4px);
   background-size: 22px 22px;
-  content: '';
   opacity: .3;
   -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 0%, transparent 66%);
   mask-image: radial-gradient(ellipse at 50% 40%, #000 0%, transparent 66%);
 }
-.paw-browser-blank-page::after {
+.paw-browser-blank-page[data-live]::after {
+  display: block;
   position: absolute;
   top: calc(40% - 34px);
   left: calc(50% - 34px);
@@ -945,7 +954,6 @@
     radial-gradient(circle at 32% 28%, rgb(255 255 255 / 92%) 0%, transparent 58%),
     conic-gradient(from 210deg, color-mix(in srgb, var(--paw-accent) 24%, transparent), rgb(72 104 189 / 24%), rgb(82 197 226 / 20%), color-mix(in srgb, var(--paw-accent) 24%, transparent));
   box-shadow: 0 14px 34px rgb(15 84 93 / 14%), 0 0 0 1px color-mix(in srgb, var(--paw-accent) 14%, transparent);
-  content: '';
 }
 /* CDP Live View */
 .paw-browser-live-view {
