@@ -5,6 +5,7 @@ import {
   MAX_RENDER_PIXELS,
   SPHERE_SEGMENTS,
   sphereLodLevels,
+  starfieldAntialias,
   starfieldPixelRatio,
   surfaceTextureSize,
 } from './starfield-render-quality';
@@ -35,6 +36,16 @@ describe('starfield render budget', () => {
     expect(starfieldPixelRatio(2, 4000, 3000)).toBe(1);
     // Monotonic: a bigger viewport never gets a bigger ratio.
     expect(starfieldPixelRatio(2, 2560, 1440)).toBeLessThanOrEqual(ratio);
+  });
+
+  it('drops multisampling only where supersampling already covers the edges', () => {
+    expect(starfieldAntialias(1)).toBe(true);
+    expect(starfieldAntialias(1.25)).toBe(true);
+    expect(starfieldAntialias(1.5)).toBe(false);
+    expect(starfieldAntialias(2)).toBe(false);
+    expect(starfieldAntialias(3)).toBe(false);
+    // A missing or nonsense DPR must not silently disable antialiasing.
+    expect(starfieldAntialias(0)).toBe(true);
   });
 
   it('scales LOD switch distances with body size so moons drop detail sooner', () => {
