@@ -163,6 +163,149 @@ describe('PAWOS desktop store', () => {
     expect(store.getState().windows[sessionId]?.target?.kind).toBe('session');
   });
 
+  it('takes the satellites with it when the Room main window closes', () => {
+    const store = createPawDesktopStore();
+    const filesId = store.getState().openApp('files');
+    const otherRoomId = store.getState().openApp('agent', {
+      entityId: 'room-other',
+      target: { kind: 'room', id: 'room-other', title: '别的 Room' },
+    });
+    const otherPlanetId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'participant-other',
+      target: { kind: 'participant', id: 'participant-other', roomId: 'room-other', title: '别的伙伴' },
+    });
+    const roomId = store.getState().openApp('agent', {
+      entityId: 'room-sol',
+      target: { kind: 'room', id: 'room-sol', title: 'Sol 协作' },
+    });
+    const firstPlanetId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'participant-1',
+      target: { kind: 'participant', id: 'participant-1', roomId: 'room-sol', title: '实现伙伴' },
+    });
+    const secondPlanetId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'participant-2',
+      target: { kind: 'participant', id: 'participant-2', roomId: 'room-sol', title: '复核伙伴' },
+    });
+    const panelId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'room-sol:focus',
+      target: { kind: 'room', id: 'room-sol', title: 'Sol 态势', panel: 'focus' },
+    });
+
+    store.getState().closeWindow(roomId);
+
+    const state = store.getState();
+    expect(state.windows[firstPlanetId]).toBeUndefined();
+    expect(state.windows[secondPlanetId]).toBeUndefined();
+    expect(state.windows[panelId]).toBeUndefined();
+    expect(state.stack).not.toContain(firstPlanetId);
+    expect(Object.keys(state.windows).sort())
+      .toEqual([filesId, otherRoomId, otherPlanetId].sort());
+    expect(state.collaborationFocusGroup).toBeNull();
+  });
+
+  it('closes one dismissed planet without touching the Room it orbits', () => {
+    const store = createPawDesktopStore();
+    const roomId = store.getState().openApp('agent', {
+      entityId: 'room-sol',
+      target: { kind: 'room', id: 'room-sol', title: 'Sol 协作' },
+    });
+    const firstPlanetId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'participant-1',
+      target: { kind: 'participant', id: 'participant-1', roomId: 'room-sol', title: '实现伙伴' },
+    });
+    const secondPlanetId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'participant-2',
+      target: { kind: 'participant', id: 'participant-2', roomId: 'room-sol', title: '复核伙伴' },
+    });
+
+    store.getState().closeWindow(firstPlanetId);
+
+    const state = store.getState();
+    expect(Object.keys(state.windows).sort()).toEqual([roomId, secondPlanetId].sort());
+    expect(state.windows[roomId]?.target).toMatchObject({ kind: 'room', id: 'room-sol' });
+  });
+
+  it('drops the Room satellites when the main window navigates away from that Room', () => {
+    const store = createPawDesktopStore();
+    const mainId = store.getState().openApp('agent');
+    store.getState().bindAgentMain(mainId, { kind: 'room', id: 'room-sol', title: 'Sol 协作' });
+    const planetId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'participant-1',
+      target: { kind: 'participant', id: 'participant-1', roomId: 'room-sol', title: '实现伙伴' },
+    });
+    const filesId = store.getState().openApp('files');
+    store.getState().focusWindow(mainId);
+    store.getState().setCollaborationFocusGroup('room:room-sol');
+
+    store.getState().bindAgentMain(mainId, { kind: 'session', id: 'session-8', title: '发布检查' });
+
+    const state = store.getState();
+    expect(state.windows[planetId]).toBeUndefined();
+    expect(state.stack).not.toContain(planetId);
+    expect(Object.keys(state.windows).sort()).toEqual([mainId, filesId].sort());
+    expect(state.activeWindowId).toBe(mainId);
+    expect(state.collaborationFocusGroup).toBeNull();
+    expect(state.windows[mainId]?.target).toMatchObject({ kind: 'session', id: 'session-8' });
+  });
+
+  it('keeps Room satellites alive while another main window still holds that Room open', () => {
+    const store = createPawDesktopStore();
+    const duplicateMainId = store.getState().openApp('agent', {
+      entityId: 'room-sol',
+      target: { kind: 'room', id: 'room-sol', title: 'Sol 协作' },
+    });
+    const navigatingMainId = store.getState().openApp('agent');
+    store.getState().bindAgentMain(navigatingMainId, { kind: 'room', id: 'room-sol', title: 'Sol 协作' });
+    const planetId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'participant-1',
+      target: { kind: 'participant', id: 'participant-1', roomId: 'room-sol', title: '实现伙伴' },
+    });
+
+    store.getState().closeWindow(navigatingMainId);
+
+    expect(Object.keys(store.getState().windows).sort()).toEqual([duplicateMainId, planetId].sort());
+  });
+
+  it('closes the subagent satellites with their Session main window', () => {
+    const store = createPawDesktopStore();
+    const sessionId = store.getState().openApp('agent', {
+      entityId: 'session-8',
+      target: { kind: 'session', id: 'session-8', title: '发布检查' },
+    });
+    const subagentId = store.getState().openApp('agent', {
+      background: true,
+      entityId: 'subagent-1',
+      target: { kind: 'subagent', id: 'subagent-1', sessionId: 'session-8', title: '子 Agent' },
+    });
+    const terminalId = store.getState().openApp('terminal', {
+      entityId: 'bg_run',
+      target: {
+        kind: 'process-terminal',
+        id: 'bg_run',
+        title: 'pnpm test',
+        sessionId: 'session-8',
+        toolCallId: 'call-1',
+        command: 'pnpm test',
+      },
+    });
+
+    store.getState().closeWindow(sessionId);
+
+    const state = store.getState();
+    expect(state.windows[subagentId]).toBeUndefined();
+    /* 进程终端窗是 Runtime 自己的投影，不在这组卫星键里，Session 窗关闭
+       不代表它该消失。 */
+    expect(Object.keys(state.windows)).toEqual([terminalId]);
+  });
+
   it('closes every window for one App atomically while preserving other Apps and clearing stale focus state', () => {
     const store = createPawDesktopStore();
     const roomId = store.getState().openApp('agent', {
