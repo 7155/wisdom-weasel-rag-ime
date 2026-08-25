@@ -19,6 +19,10 @@ collaboration surfaces.
   It is the editable source; the PNG stays the release input the `.icns` build
   reads. Both files have to keep denoting one mark, so a change to either is a
   change to both.
+- `rag-ime-input-menu-icon.svg` / `.png`: the same identity redrawn for the one
+  place it appears at 18 pt, the macOS input-source menu. It is coarser than
+  the app icon on purpose; `scripts/support/build_input_menu_icon.sh` reads the
+  PNG and resizes it, and `RAG_IME_INPUT_MENU_ICON_SOURCE` still overrides it.
 - `macos/Shared/Assets/CompanionStates/`: tight UI crops for idle, listening,
   thinking, success, and warning states.
 - `macos/Shared/Assets/CompanionStatesFull/`: matching full-body art retained as
