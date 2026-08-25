@@ -5,7 +5,13 @@
  * (`--paw-*`) instead of the reference package's own palette. A host window
  * therefore themes the conversation by theming itself. */
 
-.ccui-conversation-surface {
+/* Every ccui root carries the palette, not just the transcript: the queue tray
+   mounts beside a host composer (Session, Room), outside the surface, and a
+   token that resolves nowhere takes its whole declaration down with it. */
+.ccui-conversation-surface,
+.ccui-queue-tray,
+.ccui-queue-panel,
+.ccui-queue-cap-notice {
   --ccui-surface: var(--paw-panel, #ffffff);
   --ccui-surface-2: var(--paw-panel-soft, #f1f5fa);
   --ccui-surface-3: color-mix(in srgb, var(--paw-panel-soft, #f1f5fa) 70%, var(--paw-ink, #0f172a) 6%);
@@ -21,27 +27,27 @@
   --ccui-success: var(--paw-success, #10b981);
   --ccui-reading-width: 760px;
 
+  color: var(--ccui-text);
+}
+
+.ccui-conversation-surface {
   position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  color: var(--ccui-text);
 }
 
 .ccui-conversation-surface[data-density='compact'] {
   --ccui-reading-width: 100%;
 }
 
-.ccui-conversation-surface *,
-.ccui-conversation-surface *::before,
-.ccui-conversation-surface *::after {
+:is(.ccui-conversation-surface, .ccui-queue-tray, .ccui-queue-panel) :is(*, *::before, *::after) {
   box-sizing: border-box;
 }
 
-.ccui-conversation-surface button,
-.ccui-conversation-surface textarea {
+:is(.ccui-conversation-surface, .ccui-queue-tray, .ccui-queue-panel) :is(button, textarea) {
   font: inherit;
   color: inherit;
 }
