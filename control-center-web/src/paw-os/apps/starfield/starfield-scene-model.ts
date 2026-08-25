@@ -16,6 +16,7 @@ import {
   type RoomStarfieldModel,
   type SessionStarfieldModel,
 } from '../starfield-projection';
+import { roomFocusHasCoordinator } from '../room-focus-projection';
 import {
   galaxySystemMotion,
   roomBodyMotion,
@@ -196,14 +197,14 @@ export function buildRoomSceneModel(
   return {
     seed: roomId,
     mode: 'room',
-    center: {
+    center: model.hasCoordinator ? {
       id: 'center',
       kind: 'sun',
       title: 'Sol',
       subtitle: model.goal.title,
       size: 1.5,
       motion: roomBodyMotion(model.goal.state),
-    },
+    } : null,
     bodies,
     ringRadii: uniqueSortedRadii(bodies),
     links: model.beams.map((beam) => ({

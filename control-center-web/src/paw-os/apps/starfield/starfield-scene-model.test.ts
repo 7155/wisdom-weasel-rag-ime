@@ -61,6 +61,7 @@ function roomModel(): RoomStarfieldModel {
   });
   return {
     goal: { title: '交付星空 v2', state: 'running', stateLabel: '进行中' },
+    hasCoordinator: true,
     planets: [planet('participant-earth', 'running', 0), planet('participant-mars', 'blocked', 1)],
     beams: [{
       id: 'handoff-1',
@@ -112,6 +113,11 @@ describe('starfield scene model', () => {
     flipped.moons[0]!.state = 'completed';
     flipped.moons[0]!.active = false;
     expect(sceneModelSignature(buildSessionSceneModel(flipped, { busy: true, sessionTitle: 'S' }))).not.toBe(same);
+  });
+
+  it('omits Sol until a coordinator hosts the Room', () => {
+    const dormant = buildRoomSceneModel({ ...roomModel(), hasCoordinator: false }, 'room-1');
+    expect(dormant.center).toBeNull();
   });
 
   it('projects the Room into Sol, partner planets and real handoff links', () => {

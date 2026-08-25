@@ -40,7 +40,7 @@
   --paw-browser-chrome: #f1f5f6;
   --paw-browser-control: #fff;
   --paw-browser-hover: rgb(18 96 106 / 7%);
-  grid-template-columns: 76px minmax(54px, 86px) minmax(0, 1fr);
+  grid-template-columns: var(--paw-titlebar-lead, 76px) minmax(54px, 86px) minmax(0, 1fr);
   gap: 7px;
   border-bottom-color: rgb(23 42 48 / 9%);
   background: linear-gradient(180deg, rgb(249 251 251 / 97%), rgb(242 246 247 / 97%));

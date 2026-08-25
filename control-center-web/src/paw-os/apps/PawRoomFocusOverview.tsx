@@ -18,6 +18,7 @@ import {
   roomFocusMeshEdgeKindLabel,
   type RoomFocusMeshNode,
 } from './room-focus-mesh';
+import { roomFocusHasCoordinator, roomFocusOriginLabel } from './room-focus-projection';
 import {
   roomFocusStateLabel,
   type RoomFocusPacket,
@@ -83,10 +84,15 @@ export function PawRoomFocusOverview({
     : selectedWork
       ? focus.partners.find((partner) => partner.participantId === selectedWork.ownerParticipantId)
       : undefined;
+  const coordinatorActive = roomFocusHasCoordinator(focus.partners);
+  /* Until a connected partner really holds the coordinator role there is no
+     Sol to name: the origin every surface still has to refer to is simply the
+     shared main Room. */
+  const originLabel = roomFocusOriginLabel(coordinatorActive);
 
   return (
-    <section aria-label="Sol 协作态势" className="paw-room-focus-overview">
-      {!hideMission ? <header className="paw-room-focus-overview__mission">
+    <section aria-label="Sol 协作态势" className="paw-room-focus-overview" data-coordinator={coordinatorActive || undefined}>
+      {!hideMission && coordinatorActive ? <header className="paw-room-focus-overview__mission">
         <span aria-hidden="true" className="paw-room-focus-overview__sol"><i /></span>
         <div>
           <small>Sol · 当前目标</small>
@@ -96,6 +102,12 @@ export function PawRoomFocusOverview({
         <div aria-label={`目标状态：${roomFocusStateLabel(focus.goal.state)}`} className="paw-room-focus-overview__mission-state" data-state={focus.goal.state}>
           <i aria-hidden="true" />
           <span>{roomFocusStateLabel(focus.goal.state)}</span>
+        </div>
+      </header> : !hideMission ? <header className="paw-room-focus-overview__mission paw-room-focus-overview__mission--dormant">
+        <div>
+          <small>等待主持</small>
+          <strong>{focus.goal.title}</strong>
+          <p>指定一位伙伴为「主持」后，Sol 协作态势与星空才会点亮。</p>
         </div>
       </header> : null}
 
@@ -109,6 +121,7 @@ export function PawRoomFocusOverview({
 
       <FocusFlowLedger
         flow={focus.flow}
+        originLabel={originLabel}
         partners={focus.partners}
         rootId={focus.goal.rootId}
         workItems={focus.workItems}
@@ -116,6 +129,7 @@ export function PawRoomFocusOverview({
 
       <FocusInspector
         onOpenParticipant={onOpenParticipant}
+        originLabel={originLabel}
         partner={selectedPartner}
         partners={focus.partners}
         work={selectedWork}
@@ -291,11 +305,13 @@ function FocusMeshNode({
  * revisions, in real event order. */
 function FocusFlowLedger({
   flow,
+  originLabel,
   partners,
   rootId,
   workItems,
 }: {
   flow: RoomFocusPacket[];
+  originLabel: string;
   partners: RoomFocusPartner[];
   rootId: string;
   workItems: RoomFocusWorkItem[];
@@ -309,7 +325,7 @@ function FocusFlowLedger({
   const selectedPacket = flow.find((packet) => packet.id === selectedPacketId) ?? flow.at(-1);
   const visiblePackets = showAllPackets ? flow : flow.slice(-FLOW_PACKET_WINDOW);
   const actorName = (actorId: string) => actorId === 'root'
-    ? 'Sol'
+    ? originLabel
     : partners.find((partner) => partner.participantId === actorId)?.celestialName ?? actorId;
 
   return (
@@ -426,11 +442,13 @@ function FocusDispatchPlan({
 
 function FocusInspector({
   onOpenParticipant,
+  originLabel,
   partner,
   partners,
   work,
 }: {
   onOpenParticipant?: (participantId: string) => void;
+  originLabel: string;
   partner?: RoomFocusPartner;
   partners: RoomFocusPartner[];
   work?: RoomFocusWorkItem;
@@ -449,7 +467,7 @@ function FocusInspector({
       </header>
       <div className="paw-room-focus-overview__inspector-copy">
         <small>{work ? '当前任务' : '当前伙伴'}</small>
-        <strong>{work?.objective || partner?.celestialName || 'Sol'}</strong>
+        <strong>{work?.objective || partner?.celestialName || originLabel}</strong>
         <p>{action}</p>
       </div>
       {work?.wave ? (
