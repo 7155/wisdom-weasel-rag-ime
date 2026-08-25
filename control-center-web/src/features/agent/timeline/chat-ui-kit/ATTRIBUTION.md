@@ -13,7 +13,6 @@ replace AgentTimeline, ConversationSurface, or PAWOS chrome with kit React/CSS.
 Related (outside this folder): `../../composer/composer-action-model.ts`
 adapts `projectComposerActionModel` only — never `buildComposerCommand`.
 
-
 ## Local adaptations
 
 - `layoutRevision` is dropped. Nothing in PAWOS mints a monotonic layout
@@ -26,6 +25,16 @@ adapts `projectComposerActionModel` only — never `buildComposerCommand`.
 - `TranscriptRowGeometry.index` is a local addition: a virtualizer only hands
   out geometry for its rendered window, so the position within the supplied
   rows is not the position the anchor has to remember.
+- Every telemetry entry point defaults to a sink that writes the sample *name*
+  as a `performance.mark` and drops the fields. The kit requires an explicit
+  sink, which makes each call site decide again where samples go; defaulting to
+  a field-free mark means instrumentation added in passing cannot carry prompt
+  text or identifiers out of the client. A host that wants the fields installs
+  its own sink and owns that decision.
+- Telemetry marks are wired only where a transition is rare and worth naming:
+  `../AgentTimeline.tsx` marks follow/detach mode changes. `messageLengthBucket`
+  and `observeAgentChatLongTasks` are seams for hosts, not live call sites, so
+  a long read cannot flood the performance buffer.
 
 ## Deliberately not vendored
 
@@ -38,8 +47,19 @@ adapts `projectComposerActionModel` only — never `buildComposerCommand`.
 - `src/react/useTranscriptScrollController.ts` — it installs its own scroll,
   wheel, touch, keyboard and `ResizeObserver` listeners on the scroller. The
   Session already owns those and drives `transcript-follow.ts` from them.
-- `queue.ts`, `composer.ts`, `operation.ts`, `runtime.ts`, `sideChat.ts`,
-  `draft.ts`, `timeline.ts` — the PAW Engine owns canonical send/queue/steer
-  lifecycle, and the gap analysis rules out rewriting the queue engine.
+- `queue.ts`, `operation.ts`, `runtime.ts`, `sideChat.ts`, `draft.ts`,
+  `timeline.ts` — the PAW Engine owns canonical send/queue/steer lifecycle, and
+  the gap analysis rules out rewriting the queue engine.
+- `composer.ts` is adapted in part only. `projectComposerActionModel` is a pure
+  projection over composer state, so it moved to
+  `../../composer/composer-action-model.ts` in PAW's own delivery vocabulary.
+  `buildComposerCommand`, `projectComposerFromRuntime` and the kit's
+  `ChatRuntimeSnapshot` stay out: they mint provider-neutral commands over a
+  runtime shape PAW does not have, which would put a second author next to the
+  Runtime transport the composer already calls.
+- The kit's `guide-current-turn` and `interrupt-and-send` actions are dropped.
+  PAW exposes 干预 as a Runtime steer delivery and stop as its own control; an
+  interrupt-then-resend action would claim a cancel/resend sequence the GUI
+  does not own.
 - `src/core/markdown/*` — the transcript already runs the clean-room
   progressive renderer; see `../progressive-markdown/ATTRIBUTION.md`.

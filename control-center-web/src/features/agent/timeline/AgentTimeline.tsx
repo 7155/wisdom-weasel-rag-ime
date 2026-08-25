@@ -33,6 +33,7 @@ import {
 } from './transcript-follow';
 import {
   captureTranscriptAnchor,
+  createChatPerformanceMarker,
   resolveAnchorRowIndex,
   type TranscriptAnchor,
   type TranscriptRowGeometry,
@@ -269,6 +270,11 @@ export function clearAgentTimelineScrollMemory(): void {
   timelineAnchorMemory.clear();
 }
 
+/* Follow/detach is the transcript behavior readers notice and report, and the
+   transition is rare enough to name on the performance timeline. Only the mode
+   enum is recorded — never a Session id, a turn id or any message text. */
+const transcriptTelemetry = createChatPerformanceMarker();
+
 /**
  * Row geometry for the turns Virtuoso currently has mounted. Only the rendered
  * window is measurable, which is enough: the anchor is the topmost row the
@@ -358,6 +364,9 @@ export function AgentTimeline({
   const dispatchFollow = useCallback((event: TranscriptFollowEvent) => {
     const next = reduceTranscriptFollow(followStateRef.current, event);
     if (next === followStateRef.current) return;
+    if (next.mode !== followStateRef.current.mode) {
+      transcriptTelemetry.mark(`agent-chat.transcript.${next.mode}`);
+    }
     followStateRef.current = next;
     const published = publishedFollowRef.current;
     if (
