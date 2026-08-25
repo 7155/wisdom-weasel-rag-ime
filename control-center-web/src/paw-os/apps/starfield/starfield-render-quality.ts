@@ -74,3 +74,15 @@ export function surfaceTextureSize(bodySize: number): SurfaceTextureSize {
   const width = bodySize < 0.45 ? 128 : bodySize < 1 ? 256 : 512;
   return { width, height: width / 2 };
 }
+
+/**
+ * Resolution for a body that also has a photographic map on its way: the
+ * procedural surface is only the stand-in until the file lands, so it is
+ * synthesised one tier smaller. Generation cost scales with area, making
+ * this a ~4× saving on exactly the bodies whose noise map is about to be
+ * thrown away — while an offline sky still gets a complete surface.
+ */
+export function fallbackSurfaceTextureSize(bodySize: number): SurfaceTextureSize {
+  const width = Math.max(128, surfaceTextureSize(bodySize).width >> 1);
+  return { width, height: width / 2 };
+}
