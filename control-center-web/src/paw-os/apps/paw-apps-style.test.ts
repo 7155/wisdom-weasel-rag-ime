@@ -488,6 +488,43 @@ describe('PAWOS semantic type roles', () => {
     expect(agentCompositionCss).not.toMatch(/\[data-app='agent'\] \.paw-agent-rail[^{]*\{[^}]*rgba\([^)]*,\s*\.5\)/s);
   });
 
+  it('reads activity as rows in the document flow rather than a stack of plates', () => {
+    // 「这个应该不要方框的，方框导致信息太少」: no owner of the interleaved
+    // activity group may re-declare a border, radius or card fill, and the row
+    // spends the reclaimed width on the tool name and its object.
+    for (const [, block] of agentFeatureCss.matchAll(
+      /(?:^|\n)details\.agent-activity--inline\s*\{([^}]*)\}/g,
+    )) {
+      expect(block).not.toMatch(/border(?:-left)?:(?!\s*0\s*;)/);
+      expect(block).not.toMatch(/border-radius:(?!\s*0\s*;)/);
+      expect(block).toMatch(/background:\s*transparent/);
+    }
+    expect(agentFeatureCss).toMatch(
+      /\.agent-activity-group\[data-layout='interleaved'\]\s*\{[^}]*width:\s*100%/s,
+    );
+    expect(agentFxCss).toMatch(/\.paw-chatfx \.paw-activity\s*\{[^}]*width:\s*100%/s);
+    expect(agentFxCss).toMatch(/\.paw-chatfx \.paw-activity__hint\s*\{[^}]*flex:\s*1 1 auto/s);
+    expect(agentFxCss).not.toMatch(/\.paw-chatfx \.paw-activity__glyph\s*\{[^}]*background:\s*color-mix/s);
+    expect(agentFxCss).not.toMatch(/\.paw-chatfx \.fx-pill\.\w+\s*\{[^}]*background:\s*color-mix/s);
+  });
+
+  it('stops answering hover and promoting closed reveals while the transcript scrolls', () => {
+    // A still pointer over a moving list lights every row it passes; that is
+    // the reported scrolling flicker, not a response to the reader.
+    expect(agentFeatureCss).toMatch(
+      /\.agent-timeline\[data-scrolling\][^{]*\{[^}]*transition:\s*none/s,
+    );
+    expect(agentFxCss).toMatch(
+      /\.agent-timeline\[data-scrolling\][^{]*\.paw-activity__row[^{]*\{[^}]*background:\s*transparent/s,
+    );
+    // Hundreds of collapsed reveals holding will-change each cost a layer for
+    // an animation they are not running.
+    expect(agentFeatureCss).not.toMatch(/\.agent-smooth-reveal\s*\{[^}]*will-change/s);
+    expect(agentFeatureCss).toMatch(
+      /\.agent-smooth-reveal\[data-state='closing'\]\s*\{\s*will-change:\s*height/s,
+    );
+  });
+
   it('uses one bounded motion contract without clipping open nested Tool evidence', () => {
     expect(agentFeatureCss).toMatch(
       /\.agent-smooth-reveal\s*\{[^}]*height 220ms cubic-bezier\(0\.34, 1\.4, 0\.64, 1\)/s,
