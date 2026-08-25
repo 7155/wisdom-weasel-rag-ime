@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { memo, useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -11,11 +11,18 @@ import { usePawDesktopApi } from '../runtime/desktop-context';
 import { PawWindowChromePortal } from './PawWindowChrome';
 import { PAW_WINDOW_FLOW_GEOMETRY_EVENT, PawRoomFocusRail, PawWindowFrame, PawWindowLayer, roomWindowFlowGroups } from './PawWindowLayer';
 
-vi.mock('../apps/PawApps', () => ({ PawAppProcess: () => null }));
+const appProcessRenders = vi.hoisted(() => new Map<string, number>());
+vi.mock('../apps/PawApps', () => ({
+  PawAppProcess: ({ appId }: { appId: string }) => {
+    appProcessRenders.set(appId, (appProcessRenders.get(appId) ?? 0) + 1);
+    return null;
+  },
+}));
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  appProcessRenders.clear();
 });
 
 describe('PAWOS compositor window frame', () => {
@@ -273,6 +280,60 @@ describe('PAWOS compositor window frame', () => {
     expect(lights.map((light) => light.getAttribute('aria-label'))).toEqual(['关闭窗口', '最小化窗口', '最大化窗口']);
   });
 
+  it('re-renders only the committed window App tree when one window changes bounds', async () => {
+    const windows = {
+      agent: desktopWindowNode('agent', 'agent'),
+      files: desktopWindowNode('files', 'files'),
+    };
+    window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
+      windows,
+      stack: ['agent', 'files'],
+      activeWindowId: 'files',
+    }));
+    render(
+      <ControlTransportProvider transport={createPreviewTransport()}>
+        <PawDesktopProvider>
+          <CaptureDesktopApi />
+          <PawWindowLayer />
+        </PawDesktopProvider>
+      </ControlTransportProvider>,
+    );
+    await screen.findByLabelText('agent窗口');
+    const agentBefore = appProcessRenders.get('agent') ?? 0;
+    const filesBefore = appProcessRenders.get('files') ?? 0;
+
+    act(() => capturedDesktopApi!.getState().commitBounds('files', { x: 60, y: 70, width: 480, height: 340 }));
+
+    // The committed window may re-render for its new bounds; every other
+    // window's App tree bails out at the memo boundary — a geometry commit
+    // with many windows open must never fan out into every open App.
+    expect(appProcessRenders.get('files') ?? 0).toBeGreaterThanOrEqual(filesBefore);
+    expect(appProcessRenders.get('agent') ?? 0).toBe(agentBefore);
+  });
+
+  it('marks the desktop root for the exact duration of a drag or resize so the wallpaper can pause', () => {
+    const { container } = render(
+      <div className="paw-desktop-root">
+        <FrameHarness initial={{ x: 20, y: 30, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>
+      </div>,
+    );
+    const root = container.querySelector('.paw-desktop-root') as HTMLElement;
+    const titlebar = screen.getByText('Rooms').closest('.paw-window-titlebar')!;
+
+    expect(root).not.toHaveAttribute('data-window-interaction');
+    fireEvent.pointerDown(titlebar, { button: 0, clientX: 100, clientY: 80, pointerId: 21 });
+    expect(root).toHaveAttribute('data-window-interaction', 'true');
+    fireEvent.pointerMove(window, { clientX: 130, clientY: 90, pointerId: 21 });
+    expect(root).toHaveAttribute('data-window-interaction', 'true');
+    fireEvent.pointerUp(window, { clientX: 130, clientY: 90, pointerId: 21 });
+    expect(root).not.toHaveAttribute('data-window-interaction');
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: '调整窗口右边缘' }), { button: 0, clientX: 500, clientY: 300, pointerId: 22 });
+    expect(root).toHaveAttribute('data-window-interaction', 'true');
+    fireEvent.pointerUp(window, { clientX: 520, clientY: 300, pointerId: 22 });
+    expect(root).not.toHaveAttribute('data-window-interaction');
+  });
+
   it('keeps an untracked window drag free of live flow geometry work', () => {
     const seenPoints: Array<{ x: number; y: number } | null> = [];
     const listen = (event: Event) => seenPoints.push((event as CustomEvent<{ point: { x: number; y: number } | null }>).detail.point);
@@ -446,6 +507,22 @@ function windowNode(id: string, target: NonNullable<PawWindowNode['target']>): P
     bounds: { x: 0, y: 0, width: 420, height: 300 },
     minimized: false,
   };
+}
+
+function desktopWindowNode(id: string, appId: PawAppId): PawWindowNode {
+  return {
+    id,
+    appId,
+    title: id,
+    bounds: { x: 10, y: 12, width: 420, height: 300 },
+    minimized: false,
+  };
+}
+
+let capturedDesktopApi: ReturnType<typeof usePawDesktopApi> | null = null;
+function CaptureDesktopApi() {
+  capturedDesktopApi = usePawDesktopApi();
+  return null;
 }
 
 function projectionWithActivity({ id, kind, payload, participantId = 'participant-a' }: {
