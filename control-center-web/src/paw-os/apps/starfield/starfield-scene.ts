@@ -25,6 +25,16 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  METEOR_POOL_SIZE,
+  METEOR_TRAIL_POINTS,
+  METEOR_TRAIL_SPAN_S,
+  meteorFade,
+  meteorSpawn,
+  nebulaBreath,
+  twinkleOpacity,
+  type MeteorSpawn,
+} from './starfield-flourish';
 import type { StarfieldTone } from './starfield-motion';
 import {
   SPHERE_SEGMENTS,
@@ -62,6 +72,8 @@ const SPACE_CLEAR = 0x05070f;
 const MAX_FRAME_DT = 0.1;
 /** Deep-sky dome radius: outside every orbit, inside the camera far plane. */
 const SKY_RADIUS = 170;
+/** Meteor shell: behind every orbit and star shell, in front of the dome. */
+const METEOR_SHELL_RADIUS = 84;
 
 const ARCHETYPE_ROUGHNESS: Record<PlanetArchetype, number> = {
   ocean: 0.62,
@@ -113,6 +125,33 @@ interface CenterRuntime {
   size: number;
   spinRadPerS: number;
   pulseHz: number;
+}
+
+interface MeteorRuntime {
+  line: THREE.Line;
+  head: THREE.Sprite;
+  lineMaterial: THREE.LineBasicMaterial;
+  headMaterial: THREE.SpriteMaterial;
+  positions: THREE.BufferAttribute;
+  spawn: MeteorSpawn;
+  /** Sky-time (elapsedS) when this streak ignites; negative age = waiting. */
+  igniteAtS: number;
+}
+
+interface ShellTwinkle {
+  material: THREE.PointsMaterial;
+  baseOpacity: number;
+  phase: number;
+  speed: number;
+}
+
+interface NebulaBreathRuntime {
+  sprite: THREE.Sprite;
+  material: THREE.SpriteMaterial;
+  baseScaleX: number;
+  baseScaleY: number;
+  baseOpacity: number;
+  phase: number;
 }
 
 interface LinkRuntime {
@@ -169,6 +208,10 @@ export class StarfieldStage {
 
   private modelRoot = new THREE.Group();
   private backdropRoot = new THREE.Group();
+  private shellTwinkles: ShellTwinkle[] = [];
+  private nebulaBreaths: NebulaBreathRuntime[] = [];
+  private meteors: MeteorRuntime[] = [];
+  private meteorRandom: () => number = () => 0.5;
   private bodies: BodyRuntime[] = [];
   private center: CenterRuntime | null = null;
   private links: LinkRuntime[] = [];
@@ -269,7 +312,19 @@ export class StarfieldStage {
   setReducedMotion(reduced: boolean): void {
     this.reducedMotion = reduced;
     this.controls.autoRotate = !reduced;
+    if (reduced) this.hideMeteors();
     this.markDirty();
+  }
+
+  /** A frozen mid-flight streak is wrong under reduced motion: go dark. */
+  private hideMeteors(): void {
+    for (const meteor of this.meteors) {
+      meteor.line.visible = false;
+      meteor.head.visible = false;
+      meteor.lineMaterial.opacity = 0;
+      meteor.headMaterial.opacity = 0;
+      meteor.igniteAtS = this.elapsedS + meteor.spawn.delayS;
+    }
   }
 
   setSelected(bodyId: string | null): void {
@@ -324,6 +379,18 @@ export class StarfieldStage {
     this.pmrem.dispose();
     this.textures.dispose();
     this.renderer.dispose();
+    this.shellTwinkles = [];
+    this.nebulaBreaths = [];
+    this.meteors = [];
+    this.labelById.clear();
+    // Exit must return the GPU immediately: dropping the context releases
+    // its memory now instead of whenever the canvas is garbage collected.
+    // The contextlost listener is already removed, so no fallback fires.
+    try {
+      this.renderer.forceContextLoss();
+    } catch {
+      // Context may already be lost — that is the state we want.
+    }
   }
 
   /* ------------------------------------------------------- backdrop -- */
@@ -331,6 +398,9 @@ export class StarfieldStage {
   private rebuildBackdrop(model: StarfieldSceneModel): void {
     this.disposeSubtree(this.backdropRoot);
     this.backdropRoot.clear();
+    this.shellTwinkles = [];
+    this.nebulaBreaths = [];
+    this.meteors = [];
     const random = seededRandom(`${model.seed}:backdrop`);
 
     // Deep-sky dome: seeded nebulae, milky-way band and star scatter baked
@@ -388,6 +458,13 @@ export class StarfieldStage {
         sizeAttenuation: true,
       });
       this.backdropRoot.add(new THREE.Points(geometry, material));
+      // Gentle whole-shell shimmer; each shell breathes on its own phase.
+      this.shellTwinkles.push({
+        material,
+        baseOpacity: shell.opacity,
+        phase: random() * Math.PI * 2,
+        speed: 0.7 + random() * 0.6,
+      });
     }
 
     const nebulaTints = [0x4c76ff, 0x9468eb, 0x54c4de];
@@ -411,9 +488,78 @@ export class StarfieldStage {
       const scale = 46 + random() * 30 + index * 6;
       sprite.scale.set(scale, scale * (0.6 + random() * 0.3), 1);
       this.backdropRoot.add(sprite);
+      this.nebulaBreaths.push({
+        sprite,
+        material,
+        baseScaleX: sprite.scale.x,
+        baseScaleY: sprite.scale.y,
+        baseOpacity: material.opacity,
+        phase: random() * Math.PI * 2,
+      });
     });
 
+    this.buildMeteorPool(model.seed);
     if (model.mode === 'galaxy') this.backdropRoot.add(this.buildSpiral(random));
+  }
+
+  /**
+   * A small pool of shooting stars: pure presence, no Runtime meaning.
+   * They only advance inside the motion integrator, so reduced motion
+   * (system preference or the OS-level data-reduce-motion switch) stops
+   * spawning entirely and `setReducedMotion` hides any streak mid-flight.
+   */
+  private buildMeteorPool(seed: string): void {
+    this.meteorRandom = seededRandom(`${seed}:meteor`);
+    for (let index = 0; index < METEOR_POOL_SIZE; index += 1) {
+      const positions = new THREE.BufferAttribute(new Float32Array(METEOR_TRAIL_POINTS * 3), 3);
+      const colors = new Float32Array(METEOR_TRAIL_POINTS * 3);
+      for (let point = 0; point < METEOR_TRAIL_POINTS; point += 1) {
+        // Head white-blue, tail fading to nothing — the taper lives in the
+        // vertex colors so per-frame work is position + opacity only.
+        const fade = (1 - point / (METEOR_TRAIL_POINTS - 1)) ** 1.6;
+        colors[point * 3] = 0.86 * fade;
+        colors[point * 3 + 1] = 0.92 * fade;
+        colors[point * 3 + 2] = fade;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', positions);
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      const lineMaterial = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+      });
+      const line = new THREE.Line(geometry, lineMaterial);
+      line.visible = false;
+      line.frustumCulled = false;
+      this.backdropRoot.add(line);
+      const headMaterial = new THREE.SpriteMaterial({
+        map: this.glowTexture,
+        color: 0xeaf3ff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        fog: false,
+      });
+      const head = new THREE.Sprite(headMaterial);
+      head.visible = false;
+      this.backdropRoot.add(head);
+      const spawn = meteorSpawn(this.meteorRandom, METEOR_SHELL_RADIUS);
+      this.meteors.push({
+        line,
+        head,
+        lineMaterial,
+        headMaterial,
+        positions,
+        spawn,
+        // Stagger first appearances so the pool never volleys at once.
+        igniteAtS: this.elapsedS + spawn.delayS + index * 2.4,
+      });
+    }
   }
 
   /** Image-based lighting from the sky dome so surfaces never look plastic. */
@@ -931,6 +1077,7 @@ export class StarfieldStage {
       this.backdropRoot.rotation.y += dt * 0.004;
       const spiral = this.backdropRoot.getObjectByName('sf-spiral');
       if (spiral) spiral.rotation.y += dt * 0.01;
+      this.updateFlourishes();
       animated = true;
     }
 
@@ -944,6 +1091,60 @@ export class StarfieldStage {
       this.renderer.render(this.scene, this.camera);
     }
   };
+
+  /**
+   * Advance the decorative presence layer — twinkle, nebula breathing and
+   * meteor streaks. Runs only inside the motion integrator (motionDt > 0),
+   * so reduced motion stills all of it; zero allocations per frame.
+   */
+  private updateFlourishes(): void {
+    for (const twinkle of this.shellTwinkles) {
+      twinkle.material.opacity = twinkleOpacity(
+        twinkle.baseOpacity,
+        this.elapsedS * twinkle.speed,
+        twinkle.phase,
+      );
+    }
+    for (const breath of this.nebulaBreaths) {
+      const factor = nebulaBreath(this.elapsedS, breath.phase);
+      breath.sprite.scale.set(breath.baseScaleX * factor, breath.baseScaleY * factor, 1);
+      breath.material.opacity = breath.baseOpacity * (0.88 + (factor - 1) * 3);
+    }
+    for (const meteor of this.meteors) {
+      const age = this.elapsedS - meteor.igniteAtS;
+      if (age < 0) continue;
+      if (age >= meteor.spawn.lifeS) {
+        meteor.line.visible = false;
+        meteor.head.visible = false;
+        meteor.spawn = meteorSpawn(this.meteorRandom, METEOR_SHELL_RADIUS);
+        meteor.igniteAtS = this.elapsedS + meteor.spawn.delayS;
+        continue;
+      }
+      const { origin, velocity, lifeS, headScale } = meteor.spawn;
+      const brightness = meteorFade(age, lifeS);
+      const step = METEOR_TRAIL_SPAN_S / (METEOR_TRAIL_POINTS - 1);
+      for (let point = 0; point < METEOR_TRAIL_POINTS; point += 1) {
+        const at = Math.max(age - point * step, 0);
+        meteor.positions.setXYZ(
+          point,
+          origin[0] + velocity[0] * at,
+          origin[1] + velocity[1] * at,
+          origin[2] + velocity[2] * at,
+        );
+      }
+      meteor.positions.needsUpdate = true;
+      meteor.lineMaterial.opacity = brightness * 0.9;
+      meteor.headMaterial.opacity = brightness;
+      meteor.head.position.set(
+        origin[0] + velocity[0] * age,
+        origin[1] + velocity[1] * age,
+        origin[2] + velocity[2] * age,
+      );
+      meteor.head.scale.setScalar(headScale * (1.1 + brightness * 0.9));
+      meteor.line.visible = true;
+      meteor.head.visible = true;
+    }
+  }
 
   private renderOnce(): void {
     this.controls.update();

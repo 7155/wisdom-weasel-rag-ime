@@ -12,6 +12,15 @@ import type { RoomSummary } from '@/features/rooms/room-types';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 import { PawRoomWorkspace } from './PawRoomWorkspace';
 
+/* Lazy-bundle proof: this flag flips only when the PawStarfield module is
+ * actually evaluated. Rendering the Room conversation must never flip it;
+ * only pressing the 星空 button may. */
+const starfieldChunk = vi.hoisted(() => ({ evaluated: false }));
+vi.mock('./PawStarfield', async (importOriginal) => {
+  starfieldChunk.evaluated = true;
+  return await importOriginal();
+});
+
 afterEach(cleanup);
 
 describe('PAWOS Room collaboration tools', () => {
@@ -60,6 +69,11 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
+
+    /* Default conversation path pays nothing for the sky: no region, no
+     * canvas, and the starfield module itself was never evaluated. */
+    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(starfieldChunk.evaluated).toBe(false);
   });
 
   it('turns the whole Room into one clickable solar system in 星空 mode', async () => {
@@ -68,12 +82,18 @@ describe('PAWOS Room collaboration tools', () => {
     const { container } = renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
+    // Before the explicit 星空 click nothing starfield exists — neither the
+    // region nor the module (the chunk stays un-fetched in production).
+    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(starfieldChunk.evaluated).toBe(false);
+
     await user.click(screen.getByRole('button', { name: '星空' }));
 
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'starfield');
-    // The sky is an immersive fullscreen overlay portaled to <body>; it is
-    // React.lazy, so the region resolves asynchronously after the click.
+    // The sky is an immersive fullscreen overlay portaled to <body>; it
+    // resolves through the lazy boundary, so the lookup awaits the chunk.
     const sky = await screen.findByRole('region', { name: 'Room 星空' });
+    expect(starfieldChunk.evaluated).toBe(true);
     expect(sky).toHaveAttribute('data-immersive');
     expect(within(sky).getByText('Sol')).toBeInTheDocument();
     // The workspace behind the overlay keeps its state for the way back.
@@ -95,9 +115,12 @@ describe('PAWOS Room collaboration tools', () => {
       }),
     });
 
-    // The exit control returns to the conversation view.
+    // The exit control returns to the conversation view and tears the whole
+    // stage down: no region, no leftover sky DOM, nothing left animating.
     await user.click(within(sky).getByRole('button', { name: /返回 Room/ }));
     expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(document.querySelector('.paw-sf')).toBeNull();
+    expect(document.querySelector('.paw-sf__canvas')).toBeNull();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'conversation');
   });
 

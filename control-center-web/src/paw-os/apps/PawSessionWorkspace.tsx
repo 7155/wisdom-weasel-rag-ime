@@ -55,7 +55,8 @@ import { AgentTimeline } from '@/features/agent/timeline/AgentTimeline';
 import { toolIntentPrompt } from '@/features/agent/tool-presentation';
 import { AgentFilesPanel } from '@/features/agent/workspace/AgentFilesPanel';
 import { PawContextTrace } from './PawContextTrace';
-import { PawSessionStarfield } from './PawStarfield';
+/* 星空按钮按下之前，星空代码不进入 Agent 主页/对话的 bundle 路径。 */
+import { LazyPawSessionStarfield } from './PawStarfieldLazy';
 import {
   commandItems,
   isModelCatalog,
@@ -987,7 +988,7 @@ export function PawSessionWorkspace({
                   conversation/trace stacked views keep their own state. The
                   component renders an immersive fullscreen overlay; Esc or
                   its exit control returns to the conversation. */}
-              {workspaceView === 'starfield' ? <PawSessionStarfield
+              {workspaceView === 'starfield' ? <LazyPawSessionStarfield
                 active
                 busy={busy}
                 sessionId={recordId}
