@@ -20,7 +20,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
@@ -58,7 +58,6 @@ import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWin
 import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-store';
 import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
-import { PawRoomStarfield } from './PawStarfield';
 import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
 import {
   roomDispatchPlanFromActivity,
@@ -72,6 +71,14 @@ import {
 import { RoomActivityGlyph } from './room-tool-glyph';
 import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
 import '@/features/rooms/rooms.css';
+
+/* 星空 is optional celestial spectacle, not the Room's daily path. React.lazy
+ * keeps the whole starfield module (shell, 2D sky, 3D loader) out of the
+ * default conversation render: it is fetched and evaluated only after the
+ * user actually clicks 星空, and unmounting the view disposes the stage. */
+const PawRoomStarfield = lazy(async () => ({
+  default: (await import('./PawStarfield')).PawRoomStarfield,
+}));
 
 type RoomToolPanel = 'focus' | 'governance';
 
@@ -428,12 +435,18 @@ export function PawRoomWorkspace({
       <div className="paw-room-workspace__body">
         <main aria-label={`${title} 主 Room`} className="paw-room-workspace__main">
           {view === 'starfield' && focusProjection ? (
-            <PawRoomStarfield
-              focus={focusProjection}
-              roomId={recordId}
-              onExit={() => setView('conversation')}
-              onOpenParticipant={openParticipantById}
-            />
+            <Suspense fallback={
+              <div className="paw-room-workspace__loading" role="status">
+                <LoaderCircle className="ui-spin" size={18} />正在展开星空
+              </div>
+            }>
+              <PawRoomStarfield
+                focus={focusProjection}
+                roomId={recordId}
+                onExit={() => setView('conversation')}
+                onOpenParticipant={openParticipantById}
+              />
+            </Suspense>
           ) : <div aria-label="公开对话时间线" className="paw-room-timeline" ref={timelineRef} role="log">
               <div className="paw-room-timeline__canvas">
                 {loading && !turnOrder.length ? <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div> : null}

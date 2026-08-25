@@ -14,6 +14,10 @@
  * reads the same motion profiles, so movement semantics never change:
  * fast orbit/spin = genuinely running; still or slow drift = idle/settled;
  * queue, review and failure are rings and light, never fake motion.
+ *
+ * Exit is disposal: unmounting tears down the WebGL stage (Starfield3D's
+ * cleanup calls StarfieldStage.dispose) and the shell releases any system
+ * fullscreen it itself acquired, leaving no listener, loop or context behind.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -95,14 +99,40 @@ interface BackdropStar {
   r: number;
   opacity: number;
   delayS: number;
+  tint: string;
 }
 
-function starLayers(seed: string): Record<'far' | 'mid' | 'near', BackdropStar[]> {
+interface BackdropMeteor {
+  xPct: number;
+  yPct: number;
+  angleDeg: number;
+  delayS: number;
+  durationS: number;
+  lengthPx: number;
+}
+
+/** Deterministic LCG stream seeded by a string — same seed, same sky. */
+function seededStream(seed: string): () => number {
   let state = starfieldHash(seed) || 1;
-  const next = () => {
+  return () => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
     return state / 0x100000000;
   };
+}
+
+/* A believable night sky is not monochrome: mostly ice-white stars, a band
+ * of hot blue ones, a few warm giants and a rare violet outlier. */
+const STAR_TINTS = ['#e9efff', '#bdd5ff', '#ffe2b8', '#ddc9ff'] as const;
+
+function starTint(roll: number): string {
+  if (roll < 0.56) return STAR_TINTS[0];
+  if (roll < 0.82) return STAR_TINTS[1];
+  if (roll < 0.95) return STAR_TINTS[2];
+  return STAR_TINTS[3];
+}
+
+function starLayers(seed: string): Record<'far' | 'mid' | 'near', BackdropStar[]> {
+  const next = seededStream(seed);
   const layer = (count: number, rMin: number, rMax: number, oMin: number, oMax: number) =>
     Array.from({ length: count }, () => ({
       x: Math.round(next() * STARFIELD_VIEWBOX),
@@ -110,6 +140,7 @@ function starLayers(seed: string): Record<'far' | 'mid' | 'near', BackdropStar[]
       r: Math.round((rMin + next() * (rMax - rMin)) * 100) / 100,
       opacity: Math.round((oMin + next() * (oMax - oMin)) * 100) / 100,
       delayS: Math.round(next() * 620) / 100,
+      tint: starTint(next()),
     }));
   return {
     far: layer(90, 0.5, 1.1, 0.18, 0.5),
@@ -118,30 +149,62 @@ function starLayers(seed: string): Record<'far' | 'mid' | 'near', BackdropStar[]
   };
 }
 
+/** Occasional shooting stars: pure seeded decoration, never a work signal. */
+function meteorShower(seed: string): BackdropMeteor[] {
+  const next = seededStream(`${seed}:meteors`);
+  return Array.from({ length: 3 }, (_, index) => ({
+    xPct: Math.round((6 + next() * 58) * 10) / 10,
+    yPct: Math.round((5 + next() * 36) * 10) / 10,
+    angleDeg: Math.round(16 + next() * 30),
+    delayS: Math.round((index * 6.4 + next() * 5.2) * 10) / 10,
+    durationS: Math.round((15 + next() * 9) * 10) / 10,
+    lengthPx: Math.round(86 + next() * 74),
+  }));
+}
+
 function StarfieldBackdrop2D({ seed }: { seed: string }) {
   const layers = useMemo(() => starLayers(seed), [seed]);
+  const meteors = useMemo(() => meteorShower(seed), [seed]);
   return (
-    <svg
-      aria-hidden="true"
-      className="paw-sf2__stars"
-      preserveAspectRatio="xMidYMid slice"
-      viewBox={`0 0 ${STARFIELD_VIEWBOX} ${STARFIELD_VIEWBOX}`}
-    >
-      {(['far', 'mid', 'near'] as const).map((name) => (
-        <g className="paw-sf2__star-layer" data-layer={name} key={name}>
-          {layers[name].map((star, index) => (
-            <circle
-              cx={star.x}
-              cy={star.y}
-              key={`${name}-${index}`}
-              opacity={star.opacity}
-              r={star.r}
-              style={{ animationDelay: `${star.delayS}s` }}
-            />
-          ))}
-        </g>
-      ))}
-    </svg>
+    <>
+      <svg
+        aria-hidden="true"
+        className="paw-sf2__stars"
+        preserveAspectRatio="xMidYMid slice"
+        viewBox={`0 0 ${STARFIELD_VIEWBOX} ${STARFIELD_VIEWBOX}`}
+      >
+        {(['far', 'mid', 'near'] as const).map((name) => (
+          <g className="paw-sf2__star-layer" data-layer={name} key={name}>
+            {layers[name].map((star, index) => (
+              <circle
+                cx={star.x}
+                cy={star.y}
+                key={`${name}-${index}`}
+                opacity={star.opacity}
+                r={star.r}
+                style={{ animationDelay: `${star.delayS}s`, fill: star.tint }}
+              />
+            ))}
+          </g>
+        ))}
+      </svg>
+      <div aria-hidden="true" className="paw-sf2__meteors">
+        {meteors.map((meteor, index) => (
+          <i
+            className="paw-sf2__meteor"
+            key={index}
+            style={{
+              '--sf-meteor-x': `${meteor.xPct}%`,
+              '--sf-meteor-y': `${meteor.yPct}%`,
+              '--sf-meteor-angle': `${meteor.angleDeg}deg`,
+              '--sf-meteor-delay': `${meteor.delayS}s`,
+              '--sf-meteor-duration': `${meteor.durationS}s`,
+              '--sf-meteor-length': `${meteor.lengthPx}px`,
+            } as CSSProperties}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -176,6 +239,7 @@ function Starfield2D({
     <div className="paw-sf2" data-mode={model.mode}>
       <StarfieldBackdrop2D seed={model.seed} />
       <div aria-hidden="true" className="paw-sf2__nebula" />
+      <div aria-hidden="true" className="paw-sf2__aurora" />
       {model.mode === 'galaxy' ? <div aria-hidden="true" className="paw-sf2__swirl" /> : null}
       <div className="paw-sf2__stage">
         <svg
@@ -377,10 +441,31 @@ function StarfieldShell({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [immersive, onExit]);
 
+  // Fullscreen ownership is tracked by containment, so the sky only ever
+  // manages a fullscreen session it started itself.
+  const ownsFullscreenRef = useRef(false);
   useEffect(() => {
-    const onChange = () => setBrowserFullscreen(Boolean(document.fullscreenElement));
+    const onChange = () => {
+      const element = document.fullscreenElement;
+      const root = rootRef.current;
+      const owned = Boolean(element && root && (element === root || root.contains(element)));
+      ownsFullscreenRef.current = owned;
+      setBrowserFullscreen(owned);
+    };
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  // Dispose on exit: leaving the sky releases the system fullscreen it took,
+  // otherwise the user would be stranded fullscreen with the controls gone.
+  useEffect(() => () => {
+    if (
+      ownsFullscreenRef.current
+      && document.fullscreenElement
+      && typeof document.exitFullscreen === 'function'
+    ) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
   }, []);
 
   const fullscreenApiAvailable = immersive

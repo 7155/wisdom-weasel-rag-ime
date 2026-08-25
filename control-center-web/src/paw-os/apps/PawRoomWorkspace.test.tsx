@@ -71,8 +71,9 @@ describe('PAWOS Room collaboration tools', () => {
     await user.click(screen.getByRole('button', { name: '星空' }));
 
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'starfield');
-    // The sky is an immersive fullscreen overlay portaled to <body>.
-    const sky = screen.getByRole('region', { name: 'Room 星空' });
+    // The sky is an immersive fullscreen overlay portaled to <body>; it is
+    // React.lazy, so the region resolves asynchronously after the click.
+    const sky = await screen.findByRole('region', { name: 'Room 星空' });
     expect(sky).toHaveAttribute('data-immersive');
     expect(within(sky).getByText('Sol')).toBeInTheDocument();
     // The workspace behind the overlay keeps its state for the way back.

@@ -44,6 +44,7 @@
     radial-gradient(90% 70% at 82% -12%, rgb(122 77 178 / .17), transparent 58%),
     radial-gradient(70% 55% at 12% 8%, rgb(85 195 221 / .07), transparent 60%),
     linear-gradient(180deg, var(--sf-space-deep), var(--sf-space) 46%, #090e20);
+  animation: paw-sf-enter 460ms ease both;
 }
 
 /* Immersion: the sky owns the whole viewport above every desktop layer. */
@@ -583,6 +584,46 @@
   animation: paw-sf-nebula-drift 60s ease-in-out infinite alternate;
 }
 
+/* Aurora veil above the horizon — a slow chromatic breath, pure decoration. */
+.paw-sf2__aurora {
+  position: absolute;
+  right: -8%;
+  bottom: -4%;
+  left: -8%;
+  height: 42%;
+  pointer-events: none;
+  background:
+    radial-gradient(58% 86% at 24% 100%, rgb(64 201 176 / .1), transparent 66%),
+    radial-gradient(52% 80% at 58% 104%, rgb(91 155 240 / .12), transparent 68%),
+    radial-gradient(44% 72% at 84% 100%, rgb(154 122 224 / .1), transparent 70%);
+  mix-blend-mode: screen;
+  animation: paw-sf-aurora 26s ease-in-out infinite alternate;
+}
+
+/* Seeded shooting stars: rare, brief, and only ever decoration. */
+.paw-sf2__meteors {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.paw-sf2__meteor {
+  position: absolute;
+  top: var(--sf-meteor-y, 20%);
+  left: var(--sf-meteor-x, 30%);
+  width: var(--sf-meteor-length, 120px);
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgb(189 213 255 / .55) 58%, #eef4ff);
+  filter: drop-shadow(0 0 6px rgb(214 228 255 / .85));
+  opacity: 0;
+  transform: rotate(var(--sf-meteor-angle, 24deg)) translateX(0);
+  transform-origin: left center;
+  animation: paw-sf-meteor var(--sf-meteor-duration, 18s) linear infinite;
+  animation-delay: var(--sf-meteor-delay, 0s);
+}
+
 .paw-sf2__swirl {
   position: absolute;
   top: 50%;
@@ -920,9 +961,25 @@
 
 /* ---------------------------------------------------------- motion -- */
 
+@keyframes paw-sf-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @keyframes paw-sf-twinkle {
   0%, 100% { opacity: .3; }
   50% { opacity: 1; }
+}
+
+@keyframes paw-sf-aurora {
+  from { opacity: .55; transform: translate3d(-2%, 0, 0) scaleY(1); }
+  to { opacity: 1; transform: translate3d(2%, -2%, 0) scaleY(1.08); }
+}
+
+@keyframes paw-sf-meteor {
+  0%, 86% { opacity: 0; transform: rotate(var(--sf-meteor-angle, 24deg)) translateX(0); }
+  88% { opacity: .95; }
+  94%, 100% { opacity: 0; transform: rotate(var(--sf-meteor-angle, 24deg)) translateX(52cqmin); }
 }
 
 @keyframes paw-sf-nebula-drift {
@@ -986,8 +1043,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .paw-sf,
   .paw-sf2__star-layer circle,
   .paw-sf2__nebula,
+  .paw-sf2__aurora,
+  .paw-sf2__meteor,
   .paw-sf2__swirl,
   .paw-sf2__ring-comet,
   .paw-sf2__orbiter[data-working],

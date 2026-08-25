@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -106,6 +106,90 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
 
     await user.click(exit);
     expect(onExit).toHaveBeenCalledTimes(2);
+  });
+
+  it('paints a cooler deterministic backdrop — tinted stars, meteors and an aurora', () => {
+    const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+    const focus = buildRoomFocusProjection(room);
+    const first = render(<PawRoomStarfield focus={focus} roomId={room.id} />);
+    const sky = screen.getByRole('region', { name: 'Room 星空' });
+
+    // Shooting stars and the aurora veil are aria-hidden decoration only.
+    const meteors = [...sky.querySelectorAll<HTMLElement>('.paw-sf2__meteor')];
+    expect(meteors).toHaveLength(3);
+    for (const meteor of meteors) {
+      expect(meteor.closest('[aria-hidden="true"]')).not.toBeNull();
+    }
+    expect(sky.querySelector('.paw-sf2__aurora')).not.toBeNull();
+    expect(sky.querySelector('.paw-sf2__aurora')?.getAttribute('aria-hidden')).toBe('true');
+
+    // The star scatter is no longer monochrome: seeded tints vary per star.
+    const fills = new Set(
+      [...sky.querySelectorAll<SVGCircleElement>('.paw-sf2__star-layer circle')]
+        .map((circle) => circle.style.fill),
+    );
+    expect(fills.size).toBeGreaterThan(1);
+
+    // Determinism: the same seed always deals the same meteor schedule.
+    const schedule = meteors.map((meteor) => [
+      meteor.style.getPropertyValue('--sf-meteor-x'),
+      meteor.style.getPropertyValue('--sf-meteor-y'),
+      meteor.style.getPropertyValue('--sf-meteor-delay'),
+      meteor.style.getPropertyValue('--sf-meteor-duration'),
+    ].join('@'));
+    first.unmount();
+    render(<PawRoomStarfield focus={focus} roomId={room.id} />);
+    const replay = [
+      ...screen.getByRole('region', { name: 'Room 星空' }).querySelectorAll<HTMLElement>('.paw-sf2__meteor'),
+    ].map((meteor) => [
+      meteor.style.getPropertyValue('--sf-meteor-x'),
+      meteor.style.getPropertyValue('--sf-meteor-y'),
+      meteor.style.getPropertyValue('--sf-meteor-delay'),
+      meteor.style.getPropertyValue('--sf-meteor-duration'),
+    ].join('@'));
+    expect(replay).toEqual(schedule);
+  });
+
+  it('releases only the system fullscreen it owns when the sky exits', async () => {
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+    const exitFullscreen = vi.fn().mockResolvedValue(undefined);
+    let fullscreenElement: Element | null = null;
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(document, 'exitFullscreen', { configurable: true, value: exitFullscreen });
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    try {
+      const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+      const focus = buildRoomFocusProjection(room);
+      const view = render(<PawRoomStarfield focus={focus} roomId={room.id} />);
+      const sky = screen.getByRole('region', { name: 'Room 星空' });
+
+      // The shell acquires system fullscreen on its own root element.
+      await userEvent.setup().click(screen.getByRole('button', { name: '进入系统全屏' }));
+      expect(requestFullscreen).toHaveBeenCalledTimes(1);
+      fullscreenElement = sky;
+      fireEvent(document, new Event('fullscreenchange'));
+
+      // Dispose on exit: unmounting releases the fullscreen the sky took.
+      view.unmount();
+      expect(exitFullscreen).toHaveBeenCalledTimes(1);
+
+      // A sky that never owned fullscreen leaves a foreign fullscreen alone.
+      fullscreenElement = document.createElement('div');
+      const second = render(<PawRoomStarfield focus={focus} roomId={room.id} />);
+      fireEvent(document, new Event('fullscreenchange'));
+      second.unmount();
+      expect(exitFullscreen).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (HTMLElement.prototype as { requestFullscreen?: unknown }).requestFullscreen;
+      delete (document as { exitFullscreen?: unknown }).exitFullscreen;
+      delete (document as { fullscreenElement?: unknown }).fullscreenElement;
+    }
   });
 
   it('turns the Room focus projection into a solar system with a partner detail flow', async () => {
