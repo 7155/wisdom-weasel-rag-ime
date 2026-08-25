@@ -1,9 +1,12 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CapabilityMark } from '@/features/agent/marks/ConversationMarks';
 import { pawApps } from '../runtime/app-registry';
 import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 
 afterEach(cleanup);
+
+const everyIdentity = () => [...pawApps.map((app) => app.id), 'room' as const];
 
 describe('PAWOS App identity icons', () => {
   it('ships an independent colour silhouette for every App surface plus the Room mode', () => {
@@ -47,6 +50,91 @@ describe('PAWOS App identity icons', () => {
       expect(classes.length).toBeGreaterThanOrEqual(1);
       for (const cls of classes) expect(inks).toContain(cls);
     }
+  });
+
+  it('keeps every measurable identity shape inside the 4–44 safe area', () => {
+    const { container } = render(<>{everyIdentity().map((appId) => <PawAppIcon appId={appId} key={appId} />)}</>);
+    const value = (shape: Element, name: string) => Number(shape.getAttribute(name) ?? 0);
+    const shapes = [...container.querySelectorAll('[data-paw-icon-silhouette] > circle, [data-paw-icon-silhouette] > ellipse, [data-paw-icon-silhouette] > rect')];
+    // Paths carry their own geometry and are reviewed by eye; every shape that
+    // states its extent numerically has to prove it here, because an icon that
+    // leaves the grid is clipped by any placement that cannot bleed and blooms
+    // its own drop shadow in the ones that can.
+    expect(shapes.length).toBeGreaterThanOrEqual(14);
+    for (const shape of shapes) {
+      const halfStroke = value(shape, 'stroke-width') / 2;
+      if (shape.tagName === 'rect') {
+        expect(value(shape, 'x') - halfStroke).toBeGreaterThanOrEqual(3.9);
+        expect(value(shape, 'y') - halfStroke).toBeGreaterThanOrEqual(3.9);
+        expect(value(shape, 'x') + value(shape, 'width') + halfStroke).toBeLessThanOrEqual(44.1);
+        expect(value(shape, 'y') + value(shape, 'height') + halfStroke).toBeLessThanOrEqual(44.1);
+        continue;
+      }
+      const rx = shape.tagName === 'circle' ? value(shape, 'r') : value(shape, 'rx');
+      const ry = shape.tagName === 'circle' ? value(shape, 'r') : value(shape, 'ry');
+      // Room's orbit is the one rotated element in the system, so its extent is
+      // the rotated one, not its raw radii.
+      const degrees = Number(/rotate\((-?[\d.]+)/.exec(shape.getAttribute('transform') ?? '')?.[1] ?? 0);
+      const radians = (degrees * Math.PI) / 180;
+      const spanX = Math.hypot(rx * Math.cos(radians), ry * Math.sin(radians)) + halfStroke;
+      const spanY = Math.hypot(rx * Math.sin(radians), ry * Math.cos(radians)) + halfStroke;
+      expect(value(shape, 'cx') - spanX).toBeGreaterThanOrEqual(3.9);
+      expect(value(shape, 'cx') + spanX).toBeLessThanOrEqual(44.1);
+      expect(value(shape, 'cy') - spanY).toBeGreaterThanOrEqual(3.9);
+      expect(value(shape, 'cy') + spanY).toBeLessThanOrEqual(44.1);
+    }
+  });
+
+  it('keeps App Center a figurative mark instead of the conversation tool grid', () => {
+    const { container } = render(<><PawAppIcon appId="app-center" /><CapabilityMark /></>);
+    const identity = container.querySelector('[data-paw-icon-silhouette="app-center"]');
+    const capability = container.querySelector('[data-mark="capability"]');
+    // The tool inventory owns the 2×2 tile grid. An App identity that repeated
+    // it was interchangeable with a conversation chip and with every other
+    // launcher on the machine.
+    expect(capability?.querySelectorAll('rect')).toHaveLength(4);
+    expect(identity?.querySelectorAll('rect')).toHaveLength(0);
+    expect(identity?.querySelectorAll('path')).toHaveLength(2);
+    expect(identity?.innerHTML).not.toBe(capability?.innerHTML);
+  });
+
+  it('keeps every identity on the job its own App does, not on a stock OS glyph', () => {
+    const { container } = render(<>{everyIdentity().map((appId) => <PawAppIcon appId={appId} key={appId} />)}</>);
+    const mark = (appId: string) => container.querySelector(`[data-paw-icon-silhouette="${appId}"]`);
+    const value = (shape: Element | null | undefined, name: string) => Number(shape?.getAttribute(name) ?? 0);
+
+    // Browser is a browser window — a chrome band with an address field over
+    // the page it opened. A disc that fills the whole grid is a bare globe,
+    // and the needle that used to sit on it was another vendor's browser.
+    const browserGlobe = mark('browser')?.querySelector('circle');
+    expect(mark('browser')?.querySelector('rect.paw-app-icon__secondary')).toBeInTheDocument();
+    expect(value(browserGlobe, 'r')).toBeLessThan(12);
+
+    // Settings tunes things: two full rails carrying knobs at different
+    // values. A gear says only "an OS lives here".
+    expect(mark('system-settings')?.querySelectorAll('rect.paw-app-icon__primary')).toHaveLength(2);
+    const [firstKnob, secondKnob] = [...(mark('system-settings')?.querySelectorAll('circle') ?? [])];
+    expect(value(firstKnob, 'cx')).not.toBe(value(secondKnob, 'cx'));
+
+    // An IME shows its candidates above the keyboard, never mixed into the keys.
+    const candidates = mark('input-studio')?.querySelector('rect.paw-app-icon__secondary');
+    expect(value(candidates, 'y') + value(candidates, 'height')).toBeLessThan(17);
+
+    // Agent's companion node stands clear of the Session bubble's right edge,
+    // so it is a second party in the Session and not a notification badge —
+    // which is what a corner dot knocked out of the bubble by a paper ring is.
+    const node = mark('agent')?.querySelector('circle.paw-app-icon__secondary');
+    expect(value(node, 'cx') - value(node, 'r')).toBeGreaterThan(32);
+    expect(node).not.toHaveClass('paw-app-icon__outlined');
+
+    // Room's planet rides its own orbit: the ring's major axis has to pass
+    // through the planet, or the mark is a dot floating beside a ring.
+    const orbit = mark('room')?.querySelector('ellipse.paw-app-icon__ring');
+    const planet = mark('room')?.querySelector('circle.paw-app-icon__secondary');
+    const radians = (Number(/rotate\((-?[\d.]+)/.exec(orbit?.getAttribute('transform') ?? '')?.[1] ?? 0) * Math.PI) / 180;
+    const apogeeX = value(orbit, 'cx') + value(orbit, 'rx') * Math.cos(radians);
+    const apogeeY = value(orbit, 'cy') + value(orbit, 'rx') * Math.sin(radians);
+    expect(Math.hypot(value(planet, 'cx') - apogeeX, value(planet, 'cy') - apogeeY)).toBeLessThan(1);
   });
 
   it('gives Room a visible identity while keeping it inside the Agent App registry', () => {
@@ -113,7 +201,9 @@ describe('PAWOS App identity icons', () => {
     const mark = container.querySelector('svg.paw-brand-mark');
     expect(mark).toHaveAttribute('aria-hidden', 'true');
     expect(mark).toHaveAttribute('fill', 'currentColor');
-    expect(mark?.querySelectorAll('ellipse, path')).toHaveLength(4);
+    // Four toes over one pad — a paw print, not three dots over a circle.
+    expect(mark?.querySelectorAll('ellipse')).toHaveLength(4);
+    expect(mark?.querySelectorAll('path')).toHaveLength(1);
     expect(mark?.hasAttribute('data-paw-app-icon')).toBe(false);
     rerender(<PawBrandMark title="PAW" />);
     expect(getByRole('img', { name: 'PAW' })).toBeInTheDocument();

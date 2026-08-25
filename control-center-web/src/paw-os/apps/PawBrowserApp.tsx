@@ -67,6 +67,7 @@ import {
   type BrowserRecord,
   type HostBrowserTab,
 } from './paw-browser-model';
+import { PawAppIcon } from '../shell/PawAppIcon';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 
@@ -988,7 +989,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           )) : null}
           {electronHost && isStartPage && !selectedPageFailure && !selectedPageCrash ? (
             <div aria-hidden="true" className="paw-browser-start" data-live={activeAgentTrace ? true : undefined}>
-              <span className="paw-browser-start-logo"><Globe2 size={28} /></span>
+              <span className="paw-browser-start-logo"><PawAppIcon appId="browser" size={44} /></span>
               <span className="paw-browser-start-halo"><Sparkles size={26} /></span>
               <strong>新标签页</strong>
               <span className="paw-browser-start-hint">在地址栏输入网址或搜索内容</span>
