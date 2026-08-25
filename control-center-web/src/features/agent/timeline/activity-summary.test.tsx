@@ -557,6 +557,40 @@ describe('Agent tool activity details', () => {
     expect(result).toHaveTextContent('−2');
   });
 
+  it('expands an edit receipt into the structured diff reader, not a flat text wall', () => {
+    const diff = [
+      '--- a/src/example.ts',
+      '+++ b/src/example.ts',
+      '@@ -1,3 +1,4 @@',
+      ' export function greet() {',
+      "-  return 'hi';",
+      "+  const name = 'PAW';",
+      '+  return `hi ${name}`;',
+      ' }',
+    ].join('\n');
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-edit-diff',
+      toolName: 'workspace_edit',
+      publicResult: { path: 'src/example.ts' },
+      result: { details: { ok: true, diff } },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    const output = within(row).getByLabelText('工具变更差异');
+    expect(output.querySelector(':scope > pre')).toBeNull();
+    const preview = output.querySelector<HTMLElement>('.agent-diff-preview')!;
+    expect(preview).not.toBeNull();
+    expect(preview).toHaveTextContent('1 个文件 · +2 −1');
+    expect(preview).toHaveTextContent('src/example.ts');
+    expect(preview.querySelector('tr[data-kind="add"]')).toHaveTextContent("const name = 'PAW';");
+    expect(preview.querySelector('tr[data-kind="remove"]')).toHaveTextContent("return 'hi';");
+    expect(within(output).getByRole('radiogroup', { name: 'Diff 展示方式' })).toBeInTheDocument();
+  });
+
   it('renders browser tabs as safe page cards without URL credentials or page markdown', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-browser-renderer',

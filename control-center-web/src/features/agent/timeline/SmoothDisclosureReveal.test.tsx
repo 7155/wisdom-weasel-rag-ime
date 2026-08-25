@@ -102,6 +102,42 @@ describe('SmoothDisclosureReveal', () => {
     expect(screen.queryByText('真实工具证据')).not.toBeInTheDocument();
   });
 
+  it('keeps keepMounted children in the DOM while closed yet hidden from readers', async () => {
+    const onPresenceChange = vi.fn();
+    const view = render(
+      <SmoothDisclosureReveal id="lane" keepMounted onPresenceChange={onPresenceChange} open={false}>
+        <p>时间线记录</p>
+      </SmoothDisclosureReveal>,
+    );
+    const region = document.getElementById('lane')!;
+    expect(screen.getByText('时间线记录')).toBeInTheDocument();
+    expect(region).toHaveAttribute('aria-hidden', 'true');
+    expect(region).toHaveAttribute('inert');
+    expect(region).toHaveAttribute('data-state', 'closed');
+    expect(region).toHaveStyle({ height: '0px' });
+
+    view.rerender(
+      <SmoothDisclosureReveal id="lane" keepMounted onPresenceChange={onPresenceChange} open>
+        <p>时间线记录</p>
+      </SmoothDisclosureReveal>,
+    );
+    await act(async () => { vi.advanceTimersByTime(17); });
+    fireEvent.transitionEnd(region, { propertyName: 'height' });
+    expect(region).toHaveAttribute('data-state', 'open');
+    expect(onPresenceChange).toHaveBeenLastCalledWith(true);
+
+    view.rerender(
+      <SmoothDisclosureReveal id="lane" keepMounted onPresenceChange={onPresenceChange} open={false}>
+        <p>时间线记录</p>
+      </SmoothDisclosureReveal>,
+    );
+    await act(async () => { vi.advanceTimersByTime(17); });
+    fireEvent.transitionEnd(region, { propertyName: 'height' });
+    expect(region).toHaveAttribute('data-state', 'closed');
+    expect(onPresenceChange).toHaveBeenLastCalledWith(false);
+    expect(screen.getByText('时间线记录')).toBeInTheDocument();
+  });
+
   it('uses an immediate height path when motion is reduced', () => {
     document.documentElement.dataset.reduceMotion = 'true';
     const view = render(

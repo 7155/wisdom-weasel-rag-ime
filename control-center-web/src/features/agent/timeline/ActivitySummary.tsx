@@ -11,6 +11,7 @@ import {
   Cpu,
   Database,
   ExternalLink,
+  FileDiff,
   FileText,
   GitBranch,
   Globe,
@@ -64,6 +65,7 @@ import {
   type ApprovalDecisionView,
 } from '@/contracts/approval-decision';
 import { writeClipboardText } from '@/platform/clipboard';
+import { DiffPreview } from '../file-preview/DiffPreview';
 import { SafeFieldList } from './BlockRenderer';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
@@ -1091,11 +1093,40 @@ export function PublicToolRequest({ view }: { view: PublicToolResultView }) {
   );
 }
 
+/** A unified-diff body is only worth expanding when it reads as a diff. The
+ * structured reader needs at least one hunk header or a file header pair;
+ * anything else stays in the plain bounded fragment. */
+function outputReadsAsUnifiedDiff(value: string): boolean {
+  return /^@@ -\d[\d,]* \+\d[\d,]* @@/mu.test(value)
+    || (/^--- /mu.test(value) && /^\+\+\+ /mu.test(value));
+}
+
 export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
   const outputText = view.output?.text ?? '';
   const outputLabel = view.outputLabel ?? '返回片段';
   const { copy, state } = useCopyableText(outputText);
   if (!view.output) return null;
+  // An edit/patch receipt's 变更差异 opens into the same structured diff
+  // reader the conversation diff blocks use (unified/split, per-file counts),
+  // not a flat +/- text wall. Room tool rows consume this exact component,
+  // so Session and Room chronology upgrade together (PF-CM-004/007).
+  if (view.outputLabel === '变更差异' && outputReadsAsUnifiedDiff(outputText)) {
+    return (
+      <section className="agent-tool-result-panel agent-tool-diff-output" aria-label={`工具${outputLabel}`}>
+        <header className="agent-tool-result-panel__header">
+          <strong><FileDiff size={13} />{outputLabel}</strong>
+        </header>
+        <DiffPreview
+          content={outputText}
+          disclosureRegionLabel={`${outputLabel}正文`}
+          fileName={view.target ?? ''}
+        />
+        {view.output.truncated ? (
+          <small>此处显示安全截断片段；完整结果仍由本机工具回执保留。</small>
+        ) : null}
+      </section>
+    );
+  }
   return (
     <section className="agent-tool-result-panel" aria-label={`工具${outputLabel}`}>
       <header className="agent-tool-result-panel__header">

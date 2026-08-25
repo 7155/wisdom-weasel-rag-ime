@@ -253,7 +253,10 @@
    */
   --motion-enter: 180ms;
   --motion-exit: 120ms;
-  --motion-disclose: 190ms;
+  /* Disclosure duration/easing mirror DISCLOSURE_MOTION in
+     SmoothDisclosureReveal.tsx so every expand — Session turn work, Room
+     lanes, diff/code collapses — speaks one bounded-spring voice. */
+  --motion-disclose: 220ms;
   --motion-press: 110ms;
   --distance-xs: 2px;
   --distance-enter: 4px;
@@ -262,6 +265,7 @@
   --ease-standard: cubic-bezier(.22, 1, .36, 1);
   --ease-press: cubic-bezier(.2, .8, .3, 1);
   --ease-exit: cubic-bezier(.22, 1, .36, 1);
+  --ease-disclose: cubic-bezier(.34, 1.4, .64, 1);
 
   --sidebar-wide: 220px;
   --sidebar-compact: 72px;
