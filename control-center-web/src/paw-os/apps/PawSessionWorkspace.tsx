@@ -93,11 +93,14 @@ export function PawSessionWorkspace({
   onSessionCreated,
   onSessionActivity,
   onSessionUpdated,
+  traceFocusNodeId = '',
 }: {
   persona?: AgentPersonaV1;
   record?: SessionSummary;
   recordId: string;
   initialDraft?: string;
+  /** 反向证据链落点：直接进入轨迹视图并聚焦这个装配节点。 */
+  traceFocusNodeId?: string;
   onNewWork: () => void;
   onSessionCreated: (session: SessionSummary, draft: string) => void;
   onSessionActivity?: () => void;
@@ -122,7 +125,7 @@ export function PawSessionWorkspace({
   const [modelChanging, setModelChanging] = useState(false);
   const [panel, setPanel] = useState<WorkbenchPanel>('none');
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
-  const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>('conversation');
+  const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>(traceFocusNodeId ? 'trace' : 'conversation');
   const [error, setError] = useState('');
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
@@ -146,10 +149,10 @@ export function PawSessionWorkspace({
   const runtimeToolWindow = useMemo(() => createRuntimeToolWindowProjector(), [recordId]);
 
   useEffect(() => {
-    setWorkspaceView('conversation');
+    setWorkspaceView(traceFocusNodeId ? 'trace' : 'conversation');
     setPanel('none');
     setToolMenuOpen(false);
-  }, [recordId]);
+  }, [recordId, traceFocusNodeId]);
 
   const busy = Boolean(latestActiveTurnId(projection));
   /* A held follow-up is the composer's own queue, not a Runtime delivery.
@@ -1032,6 +1035,7 @@ export function PawSessionWorkspace({
             >
               <PawContextTrace
                 active={workspaceView === 'trace'}
+                focusNodeId={traceFocusNodeId}
                 projection={projection}
                 sessionId={recordId}
               />

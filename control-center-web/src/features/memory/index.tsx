@@ -32,6 +32,7 @@ import {
   TextArea,
 } from '@/components/primitives';
 import { useControlTransport } from '@/app/control-transport';
+import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
 import { useProductIdentity } from '@/features/identity/product-identity';
 import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import {
@@ -832,6 +833,11 @@ function MemoryCatalogDetail({
           </Button>
         ) : null}
       </div>
+      <EvidenceEchoUsage
+        appId="memory"
+        entityId={stringValue(row.id)}
+        entityLabel={publicMemoryText(stringValue(row.title, '这条记忆'))}
+      />
     </section>
   );
 }

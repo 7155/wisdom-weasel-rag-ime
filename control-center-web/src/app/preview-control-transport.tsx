@@ -1431,7 +1431,7 @@ function previewResponse(pathId: ControlPathId): unknown {
             sourceKind: 'user',
             status: 'accepted',
             finalFingerprint: 'sha256:0123456789abcdef',
-            nodeCount: 5,
+            nodeCount: 6,
             createdAtMs: now - (18_000 - index * 2_000),
             updatedAtMs: now - (17_000 - index * 2_000),
           })),
@@ -2597,8 +2597,39 @@ function previewContextTrace(
     previewContextNode('node:1:input', 1, 'input', '当前消息', 'user', '收到本轮用户输入', 126, 32, 0, createdAtMs),
     previewContextNode('node:2:session', 2, 'session', '角色与会话', 'gateway', '装配角色、模型和会话策略', 860, 215, 2, createdAtMs + 2),
     previewContextNode('node:3:tools', 3, 'tools', '工具目录', 'gateway', '按权限暴露本轮可用工具', 1_420, 355, 4, createdAtMs + 4),
-    previewContextNode('node:4:inbox', 4, 'inbox', '异步上下文', 'context_runtime', '没有等待注入的异步结果', 0, 0, 1, createdAtMs + 5, 'omitted'),
-    previewContextNode('node:5:runtime-request', 5, 'runtime_request', 'Pi Runtime 请求', 'gateway', '已形成受限运行时请求', 2_406, 602, 7, createdAtMs + 7),
+    previewContextNode(
+      'node:4:memory-recall',
+      4,
+      'memory_recall',
+      '个人记忆召回',
+      'memory_bootstrap',
+      '召回 1 本主题书与 2 条已治理事实',
+      742,
+      186,
+      3,
+      createdAtMs + 5,
+      'included',
+      {
+        itemCount: 3,
+        memoryBookId: 'book-provider-context-order',
+        memoryAtomIds: 'atom-context-order-verified,atom-foreground-acceptance',
+      },
+    ),
+    previewContextNode('node:5:inbox', 5, 'inbox', '异步上下文', 'context_runtime', '没有等待注入的异步结果', 0, 0, 1, createdAtMs + 6, 'omitted'),
+    previewContextNode(
+      'node:6:runtime-request',
+      6,
+      'runtime_request',
+      'Pi Runtime 请求',
+      'gateway',
+      '已形成受限运行时请求',
+      2_406,
+      602,
+      7,
+      createdAtMs + 7,
+      'included',
+      { contextItemCount: 3, workspaceFile: '/Volumes/work/wisdom-weasel-rag-ime/README.md' },
+    ),
   ];
   return {
     schemaVersion: 'rag-ime.agent-context-trace.v1',
@@ -2613,8 +2644,10 @@ function previewContextTrace(
       { source: nodes[0].nodeId, target: nodes[1].nodeId },
       { source: nodes[1].nodeId, target: nodes[2].nodeId },
       { source: nodes[1].nodeId, target: nodes[3].nodeId },
-      { source: nodes[2].nodeId, target: nodes[4].nodeId },
-      { source: nodes[3].nodeId, target: nodes[4].nodeId },
+      { source: nodes[1].nodeId, target: nodes[4].nodeId },
+      { source: nodes[2].nodeId, target: nodes[5].nodeId },
+      { source: nodes[3].nodeId, target: nodes[5].nodeId },
+      { source: nodes[4].nodeId, target: nodes[5].nodeId },
     ],
     createdAtMs,
     updatedAtMs: createdAtMs + 7,
@@ -2904,6 +2937,10 @@ function previewContextNode(
   durationMs: number,
   createdAtMs: number,
   disposition: 'included' | 'omitted' = 'included',
+  /* 装配节点记录的证据实体引用。形状与 Runtime `_public_metadata` 允许穿过的
+     一致——只有扁平字符串，多值逗号分隔——所以预览里能点开的入口，真机
+     在同样的 metadata 下也能点开。 */
+  metadata: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
     nodeId,
@@ -2918,7 +2955,7 @@ function previewContextNode(
     durationMs,
     fingerprint: charCount ? `sha256:${String(ordinal).repeat(16)}` : '',
     reason: disposition === 'omitted' ? '本轮没有可投递项目' : '',
-    metadata: stage === 'tools' ? { toolCount: 18 } : {},
+    metadata: stage === 'tools' ? { toolCount: 18, ...metadata } : metadata,
     createdAtMs,
   };
 }
