@@ -517,7 +517,12 @@ export function PawOsTerminalApp() {
           const stateText = terminalStateText(terminal);
           const running = terminal.status === 'running';
           const tabId = `${terminalTabsId}-tab-${terminal.terminalId}`;
-          const folder = cwdBasename(terminal.cwd);
+          // Visible text collapses to the leading ordinal once the strip is too
+          // narrow, so the accessible name carries the identity and the state
+          // instead of depending on a rendered label.
+          const tabName = running ? label : `${label} ${stateText}`;
+          // A running tab shows where it runs; an ended one shows that it ended.
+          const folder = running ? cwdBasename(terminal.cwd) : '';
           return (
             <div
               className="paw-terminal-tab"
@@ -529,10 +534,7 @@ export function PawOsTerminalApp() {
             >
               <button
                 aria-controls={terminalPanelId}
-                // The label collapses to the leading ordinal once the strip is
-                // too narrow for text, so the state belongs to the accessible
-                // name rather than to a visible-text-only span.
-                aria-label={running ? label : `${label} ${stateText}`}
+                aria-label={tabName}
                 aria-selected={active}
                 className="paw-terminal-tab-main"
                 id={tabId}
@@ -550,9 +552,8 @@ export function PawOsTerminalApp() {
                 <i data-exit-failure={exitFailed(terminal) || undefined} data-state={terminal.status} />
                 <b aria-hidden className="paw-terminal-tab-ordinal">{index + 1}</b>
                 <span className="paw-terminal-tab-label">{label}</span>
-                {running
-                  ? folder ? <small aria-hidden className="paw-terminal-tab-cwd">{folder}</small> : null
-                  : <small aria-hidden className="paw-terminal-tab-exit">{terminalStateTag(terminal)}</small>}
+                {folder ? <small aria-hidden className="paw-terminal-tab-cwd">{folder}</small> : null}
+                {running ? null : <small aria-hidden className="paw-terminal-tab-exit">{terminalStateTag(terminal)}</small>}
               </button>
               <button
                 aria-busy={close.isPending && close.variables === terminal.terminalId ? true : undefined}
