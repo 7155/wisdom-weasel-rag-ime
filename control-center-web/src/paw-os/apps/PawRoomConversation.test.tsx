@@ -1,184 +1,66 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoomProjection } from '@/contracts/room-reducer';
+import { clearConversationScrollMemory } from '@/features/conversation-ui';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { PawRoomConversation } from './PawRoomWorkspace';
 
-const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
-
 afterEach(() => {
   cleanup();
+  clearConversationScrollMemory();
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
-  if (originalScrollHeightDescriptor) {
-    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeightDescriptor);
-  } else {
-    Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
-  }
 });
 
-function mockMeasuredDisclosureMotion() {
-  vi.useFakeTimers();
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => (
-    window.setTimeout(() => callback(performance.now()), 16)
-  ));
-  vi.stubGlobal('cancelAnimationFrame', (handle: number) => window.clearTimeout(handle));
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function measuredRect(this: HTMLElement) {
-    const height = this.classList.contains('agent-smooth-reveal')
-      ? Number.parseFloat(this.style.height) || (this.dataset.state === 'open' ? 240 : 0)
-      : 240;
-    return { bottom: height, height, left: 0, right: 320, top: 0, width: 320, x: 0, y: 0, toJSON: () => ({}) };
-  });
-  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 240 });
-}
-
 describe('PawRoomConversation', () => {
-  it('owns the public chronology without rendering legacy RoomTurn cards', () => {
-    const { projection, room } = roomConversation();
+  it('reads the public chronology on the shared conversation surface', () => {
+    const { container } = renderRoom();
 
-    const { container } = render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
-
-    expect(screen.getByRole('region', { name: 'Room 公开对话' })).toHaveTextContent('请完成主线迁移');
+    const surface = screen.getByRole('region', { name: 'Room 公开对话' });
+    expect(surface).toHaveTextContent('请完成主线迁移');
+    expect(surface).toHaveTextContent('已接入生产 reducer。');
     // Messages and activities share one planet identity; the real display
-    // name stays reachable as the hover title instead of a second label.
-    expect(screen.getByRole('region', { name: 'Room 公开对话' })).toHaveTextContent('Mars');
-    expect(screen.getByRole('region', { name: 'Room 公开对话' })).not.toHaveTextContent('Root');
-    const activityActor = container.querySelector('.paw-room-chronology__activity[data-kind="tool_started"] strong');
-    expect(activityActor).toHaveTextContent('Mars');
-    expect(activityActor).toHaveAttribute('title', '实现伙伴');
-    // Raw Runtime tool ids map to reader-facing labels (`read` → 读取文件).
-    expect(container.querySelector('.paw-room-chronology__activity[data-kind="tool_started"]'))
-      .toHaveTextContent('读取文件 正在执行');
-    expect(container.querySelector('.room-turn, .room-agent-lane')).toBeNull();
-    expect(container.querySelectorAll('.paw-room-chronology__message')).toHaveLength(2);
-    expect(container.querySelectorAll('.paw-room-chronology__activity')).toHaveLength(2);
+    // name stays reachable as the collaboration role beside it.
+    expect(surface).toHaveTextContent('Mars');
+    expect(surface).not.toHaveTextContent('Root');
+    // One real Runtime loop is one card, and the legacy per-event DOM is gone.
+    expect(container.querySelectorAll('.ccui-assistant-turn')).toHaveLength(1);
+    expect(container.querySelectorAll('.ccui-user-turn')).toHaveLength(1);
+    expect(container.querySelector('.room-turn, .room-agent-lane, .paw-room-chronology')).toBeNull();
   });
 
-  it('keeps raw activity detail collapsed and preserves the real approval action', async () => {
+  it('names a tool by its reader label and keeps the raw call one click away', async () => {
     const user = userEvent.setup();
-    const { projection, room } = roomConversation();
-    const decide = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderRoom();
 
-    render(<PawRoomConversation
-      onApprovalDecision={decide}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
-
-    const disclosure = screen.getByText('详情').closest('details') as HTMLDetailsElement;
-    expect(disclosure).not.toHaveAttribute('open');
+    const tool = container.querySelector<HTMLElement>('[data-tool-block="tool:tool-a"]')!;
+    // Raw Runtime tool ids map to reader-facing labels (`read` → 读取文件).
+    expect(tool).toHaveTextContent('读取文件');
+    expect(tool).toHaveTextContent('正在执行');
+    // The raw argument blob never leaks into the collapsed reading line.
     expect(screen.queryByText(/Volumes\/private\/workspace/)).not.toBeInTheDocument();
+
+    await user.click(within(tool).getByRole('button', { expanded: false }));
+    expect(tool).toHaveTextContent('/Volumes/private/workspace/PawWindowLayer.tsx');
+  });
+
+  it('keeps a pending approval decidable without expanding anything', async () => {
+    const user = userEvent.setup();
+    const decide = vi.fn().mockResolvedValue(undefined);
+    renderRoom({ onApprovalDecision: decide });
+
     await user.click(screen.getByRole('button', { name: '批准并继续' }));
     await waitFor(() => expect(decide).toHaveBeenCalledWith('approval-a', 'approved', 'a'.repeat(64)));
   });
 
-  it('smoothly closes and reopens a running activity fold without losing its exit content', async () => {
-    mockMeasuredDisclosureMotion();
-    const { projection, room } = roomConversation();
-
-    render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
-
-    const fold = screen.getByText('过程 1 步').closest('details') as HTMLDetailsElement;
-    const summary = fold.querySelector('summary')!;
-    expect(fold).toHaveAttribute('open');
-    expect(summary).toHaveAttribute('aria-expanded', 'true');
-
-    fireEvent.click(summary);
-    await act(async () => { vi.advanceTimersByTime(17); });
-    expect(summary).toHaveAttribute('aria-expanded', 'false');
-    // The native shell remains open while the measured disclosure plays out.
-    expect(fold).toHaveAttribute('open');
-    expect(fold).toHaveTextContent('读取文件 正在执行');
-    const reveal = fold.querySelector('.paw-room-chronology__reveal')!;
-    expect(reveal).toHaveAttribute('data-state', 'closing');
-    fireEvent.transitionEnd(reveal, { propertyName: 'height' });
-    expect(fold).not.toHaveAttribute('open');
-
-    fireEvent.click(summary);
-    await act(async () => { vi.advanceTimersByTime(17); });
-    expect(summary).toHaveAttribute('aria-expanded', 'true');
-    expect(fold).toHaveAttribute('open');
-  });
-
-  it('keeps a manually closed activity fold closed after its running activity completes', async () => {
+  it('surfaces an approval failure next to the decision it belongs to', async () => {
     const user = userEvent.setup();
-    const { projection, room } = roomConversation();
-    const view = render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
+    const decide = vi.fn().mockRejectedValue(new Error('approval store unreachable'));
+    renderRoom({ onApprovalDecision: decide });
 
-    const fold = screen.getByText('过程 1 步').closest('details') as HTMLDetailsElement;
-    const summary = fold.querySelector('summary')!;
-    await user.click(summary);
-    await waitFor(() => expect(fold).not.toHaveAttribute('open'));
-
-    const completedProjection = {
-      ...projection,
-      activitiesById: {
-        ...projection.activitiesById,
-        'tool-a': { ...projection.activitiesById['tool-a']!, status: 'completed' as const },
-      },
-    };
-    view.rerender(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={completedProjection}
-      retryingTurn={false}
-      room={room}
-    />);
-
-    expect(fold).not.toHaveAttribute('open');
-    expect(summary).toHaveAttribute('aria-expanded', 'false');
-  });
-
-  it('uses the same reversible reveal for an activity raw-detail leaf', async () => {
-    mockMeasuredDisclosureMotion();
-    const { projection, room } = roomConversation();
-
-    render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
-
-    const detail = screen.getByText('详情').closest('details') as HTMLDetailsElement;
-    const summary = detail.querySelector('summary')!;
-    expect(detail).not.toHaveAttribute('open');
-    fireEvent.click(summary);
-    await act(async () => { vi.advanceTimersByTime(17); });
-    expect(summary).toHaveAttribute('aria-expanded', 'true');
-    expect(detail).toHaveAttribute('open');
-    const reveal = detail.querySelector('.paw-room-chronology__detail-reveal')!;
-    fireEvent.transitionEnd(reveal, { propertyName: 'height' });
-    fireEvent.click(summary);
-    await act(async () => { vi.advanceTimersByTime(17); });
-    expect(summary).toHaveAttribute('aria-expanded', 'false');
-    expect(detail).toHaveAttribute('open');
-    expect(reveal).toHaveAttribute('data-state', 'closing');
-    fireEvent.transitionEnd(reveal, { propertyName: 'height' });
-    expect(detail).not.toHaveAttribute('open');
+    await user.click(screen.getByRole('button', { name: '拒绝' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '拒绝' })).toBeEnabled();
   });
 
   it('expands an edit receipt into the shared structured diff reader, not a flat text wall', async () => {
@@ -208,23 +90,16 @@ describe('PawRoomConversation', () => {
       sequence: 6, createdAtMs: 150, updatedAtMs: 150,
     };
 
-    render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
+    const { container } = renderRoom({ projection, room });
 
     // The reader line derives from real evidence, never the machine tool id.
-    const editFold = screen.getByText('编辑文件 已完成').closest('details') as HTMLDetailsElement;
-    await user.click(editFold.querySelector('summary')!);
-    await user.click(within(editFold).getByText('查看执行详情'));
+    const card = container.querySelector<HTMLElement>('[data-tool-block="tool:edit-a"]')!;
+    expect(card).toHaveTextContent('编辑文件');
+    await user.click(within(card).getByRole('button', { expanded: false }));
 
-    const output = within(editFold).getByLabelText('工具变更差异');
+    const output = within(card).getByLabelText('工具变更差异');
     expect(output.querySelector(':scope > pre')).toBeNull();
     const preview = output.querySelector<HTMLElement>('.agent-diff-preview')!;
-    expect(preview).not.toBeNull();
     expect(preview).toHaveTextContent('src/example.ts');
     expect(preview.querySelector('tr[data-kind="add"]')).toHaveTextContent("const name = 'PAW';");
     expect(preview.querySelector('tr[data-kind="remove"]')).toHaveTextContent("return 'hi';");
@@ -248,20 +123,10 @@ describe('PawRoomConversation', () => {
       sequence: 5, createdAtMs: 140, updatedAtMs: 140,
     };
 
-    render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onOpenProcessActivity={openProcess}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
+    renderRoom({ onOpenProcessActivity: openProcess, projection, room });
 
     expect(openProcess).not.toHaveBeenCalled();
-    const backgroundFold = screen.getByText('后台构建已启动').closest('details') as HTMLDetailsElement;
-    await user.click(backgroundFold.querySelector('summary')!);
-    const action = screen.getByRole('button', { name: '查看后台 Bash', hidden: true });
-    await user.click(action);
+    await user.click(screen.getByRole('button', { name: '查看后台 Bash' }));
     expect(openProcess).toHaveBeenCalledTimes(1);
     expect(openProcess).toHaveBeenCalledWith(projection.activitiesById['background-a']);
   });
@@ -277,14 +142,9 @@ describe('PawRoomConversation', () => {
       failure: '503 upstream request failed',
     };
 
-    render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={retry}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
+    renderRoom({ onRetryTurn: retry, projection, room });
 
+    expect(screen.getByText('503 upstream request failed')).toBeVisible();
     await user.click(screen.getByRole('button', { name: '再试一次' }));
     expect(retry).toHaveBeenCalledWith('请完成主线迁移', 'root-a');
   });
@@ -308,28 +168,42 @@ describe('PawRoomConversation', () => {
       projectionKind: 'post', sequence: 5, createdAtMs: 160,
     };
 
-    const { rerender } = render(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={projection}
-      retryingTurn={false}
-      room={room}
-    />);
+    renderRoom({ projection, room });
 
-    expect(screen.getByText('这轮协作未完成')).toBeVisible();
-    expect(screen.queryByRole('button', { name: '再试一次' })).not.toBeInTheDocument();
-
-    projection.turnsById['root-a'] = { ...projection.turnsById['root-a']!, updatedAtMs: 200 };
-    rerender(<PawRoomConversation
-      onApprovalDecision={async () => undefined}
-      onRetryTurn={() => undefined}
-      projection={{ ...projection, turnsById: { ...projection.turnsById } }}
-      retryingTurn={false}
-      room={room}
-    />);
+    expect(screen.getByText('503 upstream request failed')).toBeVisible();
     expect(screen.queryByRole('button', { name: '再试一次' })).not.toBeInTheDocument();
   });
+
+  it('scopes a partner satellite to that partner and drops the Room-wide chrome', () => {
+    const { projection, room } = roomConversation();
+    projection.activityOrder.push('tool-b');
+    projection.activitiesById['tool-b'] = {
+      id: 'tool-b', turnId: 'root-a', participantId: 'participant-b', sourceSessionId: 'session-b',
+      kind: 'tool', status: 'completed', summary: '写入完成',
+      payload: { sourceEventType: 'tool_finished', toolName: 'write' },
+      sequence: 6, createdAtMs: 150, updatedAtMs: 150,
+    };
+
+    const { container } = renderRoom({ participantId: 'participant-a', projection, room });
+
+    expect(screen.getByRole('region', { name: '伙伴公开对话' })).toBeInTheDocument();
+    expect(container.querySelector('[data-tool-block="tool:tool-a"]')).not.toBeNull();
+    expect(container.querySelector('[data-tool-block="tool:tool-b"]')).toBeNull();
+    expect(container.querySelector('.ccui-conversation-surface')).toHaveAttribute('data-density', 'compact');
+  });
 });
+
+function renderRoom(overrides: Partial<Parameters<typeof PawRoomConversation>[0]> = {}) {
+  const fixture = roomConversation();
+  return render(<PawRoomConversation
+    onApprovalDecision={async () => undefined}
+    onRetryTurn={() => undefined}
+    projection={fixture.projection}
+    retryingTurn={false}
+    room={fixture.room}
+    {...overrides}
+  />);
+}
 
 function roomConversation() {
   const room: RoomSummary = {

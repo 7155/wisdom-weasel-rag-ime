@@ -1311,7 +1311,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
    their separate wider measures. */
 .paw-desktop-root :is(
   .paw-session-workspace__conversation,
-  .paw-room-timeline__canvas,
+  .ccui-conversation-surface,
   .paw-files-preview__body
 ) :is(.agent-markdown, .agent-file-markdown) > :is(h1, h2, h3, p, ul, ol, blockquote),
 .paw-desktop-root :is(
