@@ -137,7 +137,7 @@ describe('PAWOS semantic type roles', () => {
     expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*background:\s*#fff;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
-    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights > button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock button::before\s*\{\s*content:\s*none;/s);
   });
 
@@ -610,7 +610,12 @@ describe('PAWOS semantic type roles', () => {
     // Leading App chrome docks after the lights so the shared nth-child
     // red/yellow/green rules keep landing on close/minimize/maximize.
     expect(pawOsCss).toMatch(/\.paw-window-leading-slot\s*\{[^}]*margin-inline-start:/s);
-    expect(shellMigratedCss).toMatch(/\.paw-traffic-lights button:nth-child\(1\)\s*\{[^}]*#f04438/s);
+    // Direct-child scoping, so docked App chrome never inherits a light's
+    // ring, fill or 12px circle.
+    expect(shellMigratedCss).toMatch(/\.paw-traffic-lights > button:nth-child\(1\)\s*\{[^}]*#f04438/s);
+    for (const css of [pawOsCss, shellMigratedCss, roomMigratedCss]) {
+      expect(css).not.toMatch(/\.paw-traffic-lights(?::[a-z-]+)? button/);
+    }
     // 退出协作聚焦 shares the leading edge with every window's red light.
     expect(roomMigratedCss).toMatch(
       /\.paw-collaboration-focus-exit\s*\{[^}]*right:\s*auto;[^}]*left:\s*14px;/s,
@@ -618,6 +623,10 @@ describe('PAWOS semantic type roles', () => {
     // The focus modebar reads in the same column rhythm as a titlebar.
     expect(roomMigratedCss).toMatch(
       /\.paw-room-focus-modebar\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*148px minmax\(0, 1fr\) minmax\(0, auto\);/s,
+    );
+    // The SOL badge is dormant unless the Room owner published a live host.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-window-layer\[data-room-focus\]:not\(:has\(\.paw-room-window-chrome\[data-coordinator\]\)\) \.paw-room-focus-modebar strong\s*\{[^}]*display:\s*none;/s,
     );
   });
 

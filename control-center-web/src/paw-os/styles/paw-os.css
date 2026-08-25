@@ -673,12 +673,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-window-titlebar:active { cursor: grabbing; }
 
 .paw-traffic-lights { display: flex; align-items: center; gap: 7px; }
-.paw-traffic-lights button {
+/* Direct children only: the cluster also hosts an App leading-chrome slot,
+   whose control keeps its own size and shape. */
+.paw-traffic-lights > button {
   width: 12px; height: 12px;
   display: grid; place-items: center; padding: 0;
   cursor: pointer;
 }
-.paw-traffic-lights button svg { width: 7px; height: 7px; }
+.paw-traffic-lights > button svg { width: 7px; height: 7px; }
 
 .paw-window-title { display: flex; align-items: center; justify-content: flex-start; gap: 6px; overflow: hidden; color: var(--paw-ink); text-overflow: ellipsis; white-space: nowrap; transition: opacity 120ms ease, visibility 120ms ease; }
 .paw-window-title > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

@@ -93,16 +93,18 @@
   font-weight: 620;
 }
 
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights button {
+/* Direct children only: the Room titlebar also docks App chrome inside the
+   cluster, and that control is not a traffic light. */
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button {
   border-color: rgb(42 28 0 / .12);
   box-shadow: 0 1px 1px rgb(42 28 0 / .08) inset;
 }
 
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights button:nth-child(1) { background: #ff5f57; }
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights button:nth-child(2) { background: #febc2e; }
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights button:nth-child(3) { background: #28c840; }
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(1) { background: #ff5f57; }
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(2) { background: #febc2e; }
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(3) { background: #28c840; }
 
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights:not(:hover) button {
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights:not(:hover) > button {
   color: transparent;
 }
 
@@ -725,6 +727,12 @@
 .paw-desktop-root .paw-room-focus-modebar > span:first-child { grid-column: 2; }
 .paw-desktop-root .paw-room-focus-modebar > span:last-child { grid-column: 3; justify-self: end; flex-shrink: 0; color: #74808f; font-size: 12px; }
 .paw-desktop-root .paw-room-focus-modebar strong { color: #6845d8; font: 760 12px/18px var(--font-mono); letter-spacing: .08em; }
+/* 没有主持就没有 Sol：the badge is dormant unless the Room workspace itself
+   has published a live coordinator on its portalled chrome. Absent chrome
+   means unproven, so the default is dormant rather than lit. */
+.paw-desktop-root .paw-window-layer[data-room-focus]:not(:has(.paw-room-window-chrome[data-coordinator])) .paw-room-focus-modebar strong {
+  display: none;
+}
 .paw-desktop-root .paw-room-focus-modebar b { overflow: hidden; color: #28313e; font-size: 14px; font-weight: 640; text-overflow: ellipsis; }
 .paw-desktop-root .paw-room-focus-modebar i { width: 7px; height: 7px; border-radius: 50%; background: #168c58; }
 .paw-desktop-root .paw-room-focus-modebar i[data-status='running'] { background: #1677d2; animation: paw-room-focus-status 1.45s ease-in-out infinite; }
