@@ -23,6 +23,13 @@ import { AgentBlocks } from './BlockRenderer';
 import { conversationMarkerIndexes } from './conversation-markers';
 import { AgentTurnWorkDisclosure } from './AgentTurnWorkDisclosure';
 import { ConversationPlanetMark } from './ConversationPlanetMark';
+import { SettledTurnAnnouncer } from './SettledTurnAnnouncer';
+import {
+  FOLLOWING_TRANSCRIPT,
+  reduceTranscriptFollow,
+  type TranscriptFollowEvent,
+  type TranscriptFollowState,
+} from './transcript-follow';
 import {
   buildAgentTurnWorkModel,
   type AgentTurnSequenceEntry,
@@ -260,7 +267,7 @@ export function AgentTimeline({
   rewriteAvailable = false,
   jumpRequest,
   scrollToLatestRequest = 0,
-  onAtBottomChange,
+  onFollowStateChange,
   onForkFromMessage,
   onEditMessage,
   activityPresentation = 'grouped',
@@ -287,7 +294,9 @@ export function AgentTimeline({
   rewriteAvailable?: boolean;
   jumpRequest?: { messageId: string; requestId: number };
   scrollToLatestRequest?: number;
-  onAtBottomChange?: (atBottom: boolean) => void;
+  /** Reported only when the projected value changes, so a detached reader's
+   * unseen counter never costs a host render per token batch. */
+  onFollowStateChange?: (state: { following: boolean; unseenUpdates: number }) => void;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
   activityPresentation?: 'grouped' | 'atomic';
@@ -298,7 +307,25 @@ export function AgentTimeline({
   leadingContent?: ReactNode;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const liveFollowIntentRef = useRef(true);
+  const followStateRef = useRef<TranscriptFollowState>(FOLLOWING_TRANSCRIPT);
+  const publishedFollowRef = useRef<TranscriptFollowState>(FOLLOWING_TRANSCRIPT);
+  const onFollowStateChangeRef = useRef(onFollowStateChange);
+  onFollowStateChangeRef.current = onFollowStateChange;
+  const dispatchFollow = useCallback((event: TranscriptFollowEvent) => {
+    const next = reduceTranscriptFollow(followStateRef.current, event);
+    if (next === followStateRef.current) return;
+    followStateRef.current = next;
+    const published = publishedFollowRef.current;
+    if (
+      next.mode === published.mode
+      && next.unseenUpdates === published.unseenUpdates
+    ) return;
+    publishedFollowRef.current = next;
+    onFollowStateChangeRef.current?.({
+      following: next.mode === 'following',
+      unseenUpdates: next.unseenUpdates,
+    });
+  }, []);
   const [timelineScroller, setTimelineScroller] = useState<HTMLElement | null>(null);
   const [activeTargetId, setActiveTargetId] = useState('');
   const [visibleRange, setVisibleRange] = useState({ startIndex: 0, endIndex: 0 });
@@ -365,10 +392,10 @@ export function AgentTimeline({
     [leadingContent],
   );
   useEffect(() => {
-    liveFollowIntentRef.current = true;
+    dispatchFollow({ type: 'conversation-switched' });
     const lastIndex = Math.max(0, turnOrder.length - 1);
     setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
-  }, [sessionId]);
+  }, [dispatchFollow, sessionId]);
   const handleScrollerRef = useCallback((scroller: HTMLElement | Window | null) => {
     setTimelineScroller(scroller instanceof HTMLElement ? scroller : null);
   }, []);
@@ -376,7 +403,7 @@ export function AgentTimeline({
     if (!timelineScroller) return;
     let pointerScrollActive = false;
     const leaveLiveFollow = () => {
-      liveFollowIntentRef.current = false;
+      dispatchFollow({ type: 'user-detached', reason: 'user-scroll' });
     };
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) leaveLiveFollow();
@@ -418,15 +445,15 @@ export function AgentTimeline({
       window.removeEventListener('pointerup', handlePointerEnd);
       window.removeEventListener('pointercancel', handlePointerEnd);
     };
-  }, [timelineScroller]);
+  }, [dispatchFollow, timelineScroller]);
   useEffect(() => {
     if (!timelineScroller) return;
     let pendingFrame = 0;
     const followAfterLayout = () => {
-      if (!liveFollowIntentRef.current || pendingFrame !== 0) return;
+      if (followStateRef.current.mode !== 'following' || pendingFrame !== 0) return;
       pendingFrame = window.requestAnimationFrame(() => {
         pendingFrame = 0;
-        if (!liveFollowIntentRef.current) return;
+        if (followStateRef.current.mode !== 'following') return;
         // One Runtime event can add a large Tool/Reasoning block without
         // changing Virtuoso's item count. `followOutput` alone therefore does
         // not observe every height change. Coalesce the entire event burst to
@@ -434,28 +461,39 @@ export function AgentTimeline({
         timelineScroller.scrollTop = timelineScroller.scrollHeight;
       });
     };
+    // Messages and activities are the units a reader would count as "new
+    // content". Token deltas mutate an existing row and deliberately do not
+    // advance the unseen counter.
+    const contentCount = (projection: AgentProjectionState | undefined) => (
+      projection ? projection.messageOrder.length + projection.activityOrder.length : 0
+    );
+    let previousCount = contentCount(useAgentLiveStore.getState().projections[sessionId]);
     const unsubscribe = useAgentLiveStore.subscribe((state, previousState) => {
-      if (state.projections[sessionId] === previousState.projections[sessionId]) return;
+      const projection = state.projections[sessionId];
+      if (projection === previousState.projections[sessionId]) return;
+      const count = contentCount(projection);
+      const appended = count - previousCount;
+      previousCount = count;
+      if (appended > 0) dispatchFollow({ type: 'content-appended', count: appended });
       followAfterLayout();
     });
     return () => {
       unsubscribe();
       window.cancelAnimationFrame(pendingFrame);
     };
-  }, [sessionId, timelineScroller]);
+  }, [dispatchFollow, sessionId, timelineScroller]);
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    if (atBottom) liveFollowIntentRef.current = true;
-    onAtBottomChange?.(atBottom);
-  }, [onAtBottomChange]);
+    if (atBottom) dispatchFollow({ type: 'reached-end' });
+  }, [dispatchFollow]);
   useEffect(() => {
     if (scrollToLatestRequest <= 0 || turnOrder.length === 0) return;
-    liveFollowIntentRef.current = true;
+    dispatchFollow({ type: 'jump-to-latest' });
     virtuosoRef.current?.scrollToIndex({
       index: turnOrder.length - 1,
       align: 'end',
       behavior: 'smooth',
     });
-  }, [scrollToLatestRequest, turnOrder.length]);
+  }, [dispatchFollow, scrollToLatestRequest, turnOrder.length]);
   useEffect(() => {
     if (!jumpRequest?.messageId) return;
     const projection = useAgentLiveStore.getState().projections[sessionId];
@@ -467,7 +505,7 @@ export function AgentTimeline({
       : '';
     const index = visibleTurnId ? turnOrder.indexOf(visibleTurnId) : -1;
     if (index < 0) return;
-    liveFollowIntentRef.current = false;
+    dispatchFollow({ type: 'user-detached', reason: 'jump-to-message' });
     setActiveTargetId(jumpRequest.messageId);
     virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' });
     let attempts = 0;
@@ -490,7 +528,7 @@ export function AgentTimeline({
       window.clearTimeout(focusTimer);
       window.clearTimeout(clearTimer);
     };
-  }, [jumpRequest?.messageId, jumpRequest?.requestId, sessionId]);
+  }, [dispatchFollow, jumpRequest?.messageId, jumpRequest?.requestId, sessionId]);
   if (turnOrder.length === 0) {
     if (loading) {
       return (
@@ -511,7 +549,11 @@ export function AgentTimeline({
     );
   }
   return (
-    <div className="agent-timeline" aria-label="对话时间线" role="log">
+    /* `log` describes the transcript, but its implicit polite live region made
+       a screen reader re-read the whole answer on every batched token commit.
+       The log is silent; SettledTurnAnnouncer speaks once per settled turn. */
+    <div className="agent-timeline" aria-label="对话时间线" aria-live="off" role="log">
+      <SettledTurnAnnouncer sessionId={sessionId} />
       <Virtuoso
         ref={virtuosoRef}
         key={sessionId}
@@ -521,7 +563,9 @@ export function AgentTimeline({
         // composer. While the viewport still fits, `followOutput` naturally
         // moves the transcript upward as output grows; once a user scrolls
         // away from the bottom, their reading position remains authoritative.
-        followOutput={() => liveFollowIntentRef.current ? liveFollowScrollBehavior() : false}
+        followOutput={() => (
+          followStateRef.current.mode === 'following' ? liveFollowScrollBehavior() : false
+        )}
         initialTopMostItemIndex={{ index: 'LAST', align: 'start' }}
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
@@ -605,7 +649,7 @@ export function AgentTimeline({
                 data-visible={index >= visibleRange.startIndex && index <= visibleRange.endIndex || undefined}
                 key={turnId}
                 onClick={() => {
-                  liveFollowIntentRef.current = false;
+                  dispatchFollow({ type: 'user-detached', reason: 'jump-to-message' });
                   virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' });
                 }}
                 style={{ '--agent-nav-position': `${position}%` } as CSSProperties}
@@ -1051,7 +1095,10 @@ function AssistantWorkingState({
     <div className="agent-assistant-pending" role="status" aria-live="polite">
       <ConversationPlanetMark size="lg" state={stopping ? 'waiting' : 'thinking'} />
       <span>
-        <strong>{stopping ? '正在停止' : '思考中'} <time>{formatElapsed(nowMs - startedAtMs)}</time></strong>
+        {/* The elapsed clock ticks once a second. Inside a polite live region
+            that made a screen reader read the whole strip every second, so the
+            duration stays visual and the phase text carries the spoken update. */}
+        <strong>{stopping ? '正在停止' : '思考中'} <time aria-hidden="true">{formatElapsed(nowMs - startedAtMs)}</time></strong>
         <small>{stopping ? '正在取消当前模型与工具执行。' : detail}</small>
       </span>
       <i className="agent-working-dots" aria-hidden="true"><b /><b /><b /></i>

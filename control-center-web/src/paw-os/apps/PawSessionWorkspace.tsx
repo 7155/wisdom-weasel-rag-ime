@@ -136,7 +136,7 @@ export function PawSessionWorkspace({
   const [forkDialogInitialEntryId, setForkDialogInitialEntryId] = useState('');
   const [editState, setEditState] = useState<{ entryId: string; messageId: string; resolving?: boolean }>();
   const [jumpRequest, setJumpRequest] = useState<{ messageId: string; requestId: number }>();
-  const [timelineAtBottom, setTimelineAtBottom] = useState(true);
+  const [timelineFollow, setTimelineFollow] = useState({ following: true, unseenUpdates: 0 });
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [contextSnapshotState, setContextSnapshotState] = useState<'restoring' | 'partial'>();
   const toolMenuContainerRef = useRef<HTMLDivElement>(null);
@@ -417,6 +417,10 @@ export function PawSessionWorkspace({
     setDraft('');
     setAttachments([]);
     setError('');
+    /* Submitting is a claim on the end of the transcript. Without this a reader
+       who had scrolled up to check an earlier turn watched their own message
+       land off-screen with no sign it was accepted. */
+    setScrollToLatestRequest((value) => value + 1);
     useAgentLiveStore.getState().appendOptimistic(recordId, {
       clientMessageId,
       text: message,
@@ -994,7 +998,7 @@ export function PawSessionWorkspace({
                 jumpRequest={jumpRequest}
                 leadingContent={conversationLead}
                 scrollToLatestRequest={scrollToLatestRequest}
-                onAtBottomChange={setTimelineAtBottom}
+                onFollowStateChange={setTimelineFollow}
                 onForkFromMessage={openForkDialog}
                 onEditMessage={(messageId) => void beginEditMessage(messageId)}
                 onRetryTurn={retryTurn}
@@ -1090,7 +1094,8 @@ export function PawSessionWorkspace({
                 onProductCommand={runProductCommand}
                 onSend={(delivery, value) => void send(delivery, value)}
                 onStop={() => void stop()}
-                showJumpLatest={!timelineAtBottom}
+                showJumpLatest={!timelineFollow.following}
+                unseenUpdates={timelineFollow.unseenUpdates}
                 onJumpLatest={() => setScrollToLatestRequest((value) => value + 1)}
                 onToolSelect={(tool) => setDraft((current) => `${current.trimEnd()}${current.trim() ? '\n' : ''}${toolIntentPrompt(tool.id, tool.displayName)}：`)}
                 onPermissionChange={(selection) => void changePermission(selection)}

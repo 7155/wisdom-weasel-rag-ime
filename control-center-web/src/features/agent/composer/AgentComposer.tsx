@@ -54,6 +54,7 @@ import { PermissionPicker } from './PermissionPicker';
 import { ToolPicker } from './ToolPicker';
 import { permissionLabel } from './permission-policy';
 import { ContextUsagePopover, type ContextUsageTelemetry } from '../status/ContextUsagePopover';
+import { unseenUpdatesLabel } from '../timeline/transcript-follow';
 import type {
   AgentCommand,
   AgentPermissionSelection,
@@ -140,6 +141,7 @@ export function AgentComposer({
   helpRequest = 0,
   imageSupport = 'unknown',
   showJumpLatest = false,
+  unseenUpdates = 0,
   onJumpLatest,
   contextUsage,
   queueDepth = 0,
@@ -182,6 +184,9 @@ export function AgentComposer({
   helpRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
   showJumpLatest?: boolean;
+  /** Messages and activities appended since the reader left the transcript
+   *  end. `0` means they scrolled away and nothing has arrived since. */
+  unseenUpdates?: number;
   onJumpLatest?: () => void;
   contextUsage?: ContextUsageTelemetry | null;
   /** How many follow-ups the host is already holding for this Session. */
@@ -473,9 +478,23 @@ export function AgentComposer({
         </div>
       ) : null}
       {showJumpLatest ? (
-        <button className="agent-jump-latest" onClick={onJumpLatest} type="button">
+        /* A reader who scrolled away needs to know whether anything arrived,
+           not just that a way back exists. The count is content items — new
+           messages and activities — never token deltas inside a growing row. */
+        <button
+          aria-label={unseenUpdates > 0 ? `回到最新，有 ${unseenUpdates} 条新内容` : '回到最新'}
+          className="agent-jump-latest"
+          data-unseen={unseenUpdates > 0 || undefined}
+          onClick={onJumpLatest}
+          type="button"
+        >
           <ArrowDown aria-hidden="true" size={14} />
-          <span>回到最新</span>
+          <span aria-hidden="true">回到最新</span>
+          {unseenUpdates > 0 ? (
+            <b aria-hidden="true" className="agent-jump-latest__count">
+              {unseenUpdatesLabel(unseenUpdates)}
+            </b>
+          ) : null}
         </button>
       ) : null}
       <ComposerShell

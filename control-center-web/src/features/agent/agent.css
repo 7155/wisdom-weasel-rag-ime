@@ -3918,6 +3918,36 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
 .agent-jump-latest:active { transform: translateY(1px); }
 .agent-jump-latest:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .agent-jump-latest > svg { color: var(--color-accent); }
+.agent-jump-latest[data-unseen] { border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border)); color: var(--color-text); }
+
+/* Count of content that arrived while the reader was away. Quiet ink on the
+   accent, not a notification badge — the transcript is a document. */
+.agent-jump-latest__count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-1);
+  margin-inline-start: 1px;
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--text-label-lh);
+  text-align: center;
+}
+
+/* Settle-only transcript announcement. Visually hidden, never focusable. */
+.agent-timeline__announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
 @keyframes agent-jump-latest-enter {
   from { opacity: 0; transform: translateY(5px); }
