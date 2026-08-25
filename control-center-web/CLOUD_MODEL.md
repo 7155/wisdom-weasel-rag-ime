@@ -55,3 +55,28 @@ Suggested order (parallel only with hard file ownership):
 
 Work on `main`. Path-qualified frontend commits. Preserve unrelated dirty work.
 Ignore CI billing failures when merging unless the user asks otherwise.
+
+## Reusable conversation disclosure (Agent lane → Room lane)
+
+The Session conversation-depth lane exposes these modules for reuse by the
+Room flow lane (and any surface that renders collaboration receipts). Do not
+fork a second projection of the same payloads:
+
+- `src/features/agent/timeline/public-tool-result.ts` —
+  `publicToolResultView` projects settled `room_partner` / `agents` / file /
+  shell receipts into concrete public payloads (sent messages, TaskBriefs,
+  written bodies); `publicToolOutputText` masks and bounds free text.
+- `src/features/agent/timeline/route-decision-plan.ts` —
+  `routeDecisionPlanView` turns a `rag-ime.room-route-decision.v1` event into
+  a dispatch plan (target, reason, wave, candidate scores/signals); rendered
+  by `RouteDecisionPlan.tsx` with `.agent-route-plan` styles in `agent.css`.
+- `src/features/agent/timeline/ActivitySummary.tsx` — `FxActivityStack`
+  collapsible rows plus `PublicToolFields` / `PublicToolRequest` /
+  `PublicToolOutput` detail blocks; `SmoothDisclosureReveal.tsx` owns the
+  baseline 220ms bounded-spring disclosure motion (`DISCLOSURE_MOTION`).
+- `src/features/agent/tool-presentation.ts` — `publicToolName` readable
+  labels and `publicToolFamily` one-glyph-per-tool identity for small frames
+  (replaces raw “工具 agents” text).
+
+Real-event coverage lives in `src/features/agent/timeline/harness-*.test.tsx`
+against `e2e/fixtures/minecraft-harness-20260825`.
