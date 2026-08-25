@@ -35,7 +35,7 @@ import {
   normalizeDebugContextResponse,
   type DebugContextRecord,
 } from '@/features/context-debug/model';
-import { assemblyStageEvidence } from './context-evidence';
+import { assemblyStageEvidence, orderContextTraceNodes } from './context-evidence';
 import { DebugContextInspector } from './DebugContextInspector';
 
 interface ContextTraceSummary {
@@ -517,7 +517,7 @@ export function contextTraceLayers(trace: AgentContextTraceV1): AgentContextTrac
     return value;
   };
   const layers: AgentContextTraceV1['nodes'][] = [];
-  for (const node of trace.nodes) {
+  for (const node of orderContextTraceNodes(trace.nodes)) {
     const nodeDepth = Math.min(resolveDepth(node.nodeId), 12);
     (layers[nodeDepth] ??= []).push(node);
   }

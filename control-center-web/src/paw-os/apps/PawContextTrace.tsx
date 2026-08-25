@@ -51,6 +51,7 @@ import {
   modelContextMessages,
   modelSystemPrompt,
   modelToolSchemas,
+  orderContextTraceNodes,
   type AssemblyEvidenceValue,
 } from '@/features/agent/status/context-evidence';
 import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
@@ -230,7 +231,8 @@ export function PawContextTrace({
   }, [active, loadLatest]);
 
   const description = context ? describeDebugTurn(context, turns) : undefined;
-  const stageSegments = useMemo(() => buildStageSegments(trace, context), [trace, context]);
+  const assemblyNodes = useMemo(() => orderContextTraceNodes(trace?.nodes), [trace]);
+  const stageSegments = useMemo(() => buildStageSegments(assemblyNodes, context), [assemblyNodes, context]);
   const totalTokens = stageSegments.reduce((sum, segment) => sum + segment.tokens, 0);
   const cacheSummary = useMemo(() => summarizeCache(context), [context]);
   const traceTurns = useMemo(() => projectionTraceTurns(projection), [projection]);
@@ -354,8 +356,8 @@ export function PawContextTrace({
               </div>
 
               <div className="an-stage-group">上下文节点 · 按装配顺序</div>
-              {trace?.nodes?.length
-                ? trace.nodes.map((node) => {
+              {assemblyNodes.length
+                ? assemblyNodes.map((node) => {
                     const evidence = assemblyStageEvidence(node.stage, context);
                     return (
                     <Disclosure
@@ -365,12 +367,13 @@ export function PawContextTrace({
                       key={node.nodeId}
                       summary={(
                         <>
+                        <span className="n-ord">{node.ordinal}</span>
                         <span className={`an-disp is-${node.disposition}`} />
                         <span style={{ minWidth: 0, flex: 1 }}>
                           <span className="n-label">{node.label || node.stage}</span>
                           <span className="n-sub">{node.sourceKind}{node.summary ? ` · ${node.summary}` : ''}</span>
                         </span>
-                        <span className="n-bar"><i style={{ width: `${barWidth(node.tokenEstimate, maxToken(trace))}%` }} /></span>
+                        <span className="n-bar"><i style={{ width: `${barWidth(node.tokenEstimate, maxToken(assemblyNodes))}%` }} /></span>
                         <span className="n-tok">{formatNumber(node.tokenEstimate)} <small>tok</small></span>
                         <span aria-hidden="true" className="an-disclosure-caret">›</span>
                         </>
@@ -606,12 +609,14 @@ function traceNodeCaptureRecord(node: AgentContextTraceV1['nodes'][number]): str
 /* ---------- 数据派生 ---------- */
 
 function buildStageSegments(
-  trace: AgentContextTraceV1 | undefined,
+  nodes: AgentContextTraceV1['nodes'],
   context: DebugContextRecord | undefined,
 ): Array<{ stage: string; tokens: number }> {
-  if (trace?.nodes?.length) {
+  if (nodes.length) {
+    /* Nodes arrive in assembly order, and Map keeps insertion order, so the
+       tokenbar segments read as the same sequence as the node list below. */
     const byStage = new Map<string, number>();
-    for (const node of trace.nodes) {
+    for (const node of nodes) {
       if (node.disposition !== 'included') continue;
       byStage.set(node.stage, (byStage.get(node.stage) ?? 0) + node.tokenEstimate);
     }
@@ -1113,8 +1118,8 @@ function countLines(content: string): number {
 function findCache(cache: DebugCacheEvidence[], call: DebugModelCall): DebugCacheEvidence | undefined {
   return cache.find((item) => item.requestIndex === call.index);
 }
-function maxToken(trace: AgentContextTraceV1): number {
-  return Math.max(1, ...trace.nodes.map((node) => node.tokenEstimate));
+function maxToken(nodes: AgentContextTraceV1['nodes']): number {
+  return Math.max(1, ...nodes.map((node) => node.tokenEstimate));
 }
 function barWidth(value: number, max: number): number {
   return Math.max(3, Math.round((value / max) * 100));
