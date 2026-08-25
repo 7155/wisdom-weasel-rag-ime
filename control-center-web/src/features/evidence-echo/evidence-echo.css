@@ -1,0 +1,155 @@
+/* evidence-echo — 双向证据链的两个共享外观：
+   - .evidence-echo-usage：Memory / Knowledge / Files 详情里的反向只读区块；
+   - .evidence-echo-open：Agent 轨迹装配节点上的正向跳转按钮。
+
+   两个宿主 App 各有自己的配色，所以这里只用系统级 --color-* 令牌，把强调
+   色交给宿主的 accent，不引入第二套色板。 */
+
+.evidence-echo-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 12px;
+  background: var(--color-surface-subtle);
+}
+
+.evidence-echo-usage > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.evidence-echo-usage__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-text-secondary);
+}
+
+.evidence-echo-usage__title strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.evidence-echo-usage__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.evidence-echo-usage__refresh:hover:not(:disabled) {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.evidence-echo-usage__refresh:disabled { cursor: default; opacity: .5; }
+
+.evidence-echo-usage__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.evidence-echo-usage__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence-echo-usage__list > li > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 8px;
+  background: var(--color-surface);
+  text-align: start;
+  cursor: pointer;
+}
+
+.evidence-echo-usage__list > li > button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+}
+
+.evidence-echo-usage__session {
+  grid-column: 1;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-echo-usage__node {
+  grid-column: 1;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-echo-usage__meta {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.evidence-echo-usage__list > li > button[data-disposition='omitted'] .evidence-echo-usage__meta,
+.evidence-echo-usage__list > li > button[data-disposition='failed'] .evidence-echo-usage__meta {
+  opacity: .75;
+}
+
+/* 正向：装配节点摘要行上的「打开证据」按钮。它坐在 Disclosure 的 summary
+   里，所以必须自己吞掉点击，不能顺带展开那一行。 */
+.evidence-echo-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.evidence-echo-open > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.evidence-echo-open:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}

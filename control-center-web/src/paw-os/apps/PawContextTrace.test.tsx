@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawContextTrace, projectionTraceTurns } from './PawContextTrace';
@@ -75,6 +76,65 @@ describe('PawContextTrace evidence access', () => {
     // The token bar reads as the same assembly sequence as the node list.
     expect([...document.querySelectorAll('.an-tokenbar > span')].map((segment) => segment.getAttribute('title')))
       .toEqual(['project 300', 'memory 105', 'input 40']);
+  });
+
+  it('opens an assembly node to its evidence entity and leaves unresolvable nodes plain', async () => {
+    const openRoute = vi.fn();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': debugContextResponse(),
+        'agent.session.contextTraces.list': {
+          ok: true,
+          items: [{ traceId: 'trace-a', sessionId: 'session-a', turnId: 'turn-a' }],
+        },
+        'agent.session.contextTrace.get': contextTraceResponse(),
+      },
+    });
+    const user = userEvent.setup();
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawOsDesktopProvider openRoute={openRoute} openWindow={() => {}}>
+          <PawContextTrace active sessionId="session-a" />
+        </PawOsDesktopProvider>
+      </ControlTransportProvider>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: '上下文装配' }));
+
+    const memoryNode = (await screen.findByText('记忆注入', { selector: '.n-label' })).closest('details')!;
+    await user.click(within(memoryNode).getByRole('button', { name: '在 记忆 打开 atom-context-order' }));
+    expect(openRoute).toHaveBeenCalledWith('/memory?layer=atoms&id=atom-context-order');
+    // Opening the evidence is its own action; it must not also toggle the row.
+    expect(memoryNode).not.toHaveAttribute('open');
+
+    const inputNode = screen.getByText('当前输入', { selector: '.n-label' }).closest('details')!;
+    expect(within(inputNode).queryByRole('button', { name: /打开/ })).not.toBeInTheDocument();
+  });
+
+  it('lands the reverse link on the named assembly node with the trace view already open', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': debugContextResponse(),
+        'agent.session.contextTraces.list': {
+          ok: true,
+          items: [{ traceId: 'trace-a', sessionId: 'session-a', turnId: 'turn-a' }],
+        },
+        'agent.session.contextTrace.get': contextTraceResponse(),
+      },
+    });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawContextTrace active focusNodeId="node-memory" sessionId="session-a" />
+      </ControlTransportProvider>,
+    );
+
+    const memoryNode = (await screen.findByText('记忆注入', { selector: '.n-label' })).closest('details')!;
+    expect(memoryNode).toHaveAttribute('data-echo-focus');
+    expect(memoryNode).toHaveAttribute('open');
+    expect(screen.getByText('当前输入', { selector: '.n-label' }).closest('details'))
+      .not.toHaveAttribute('data-echo-focus');
   });
 
   it('shows line and character counts with a copy action on captured assembly evidence', async () => {
@@ -678,7 +738,7 @@ function contextTraceResponse() {
       durationMs: 1,
       fingerprint: 'sha256:fedcba9876543210',
       reason: '',
-      metadata: { itemCount: 3 },
+      metadata: { itemCount: 3, memoryAtomIds: 'atom-context-order' },
       createdAtMs: 103,
     }, {
       nodeId: 'node-input',

@@ -175,25 +175,48 @@ describe('PAWOS shell visual language', () => {
     expect(rule(shellCss, '.paw-desktop-root .paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
   });
 
-  it('keeps the Wayfinder list dense on one blur-free plate with a single style owner', () => {
-    // One owner: the migrated theme may not re-style the desktop list, so the
+  it('grounds the whole Project Field column on one blur-free veil instead of a second plate', () => {
+    // The first viewport is one composition: the lede and the identity rail
+    // share a single feathered opening in the fog, so the desktop carries a
+    // subject and one instrument instead of two matching corner cards. The
+    // veil is a gradient, never a fourth glass layer.
+    const veil = rule(shellCss, '.paw-desktop-root .paw-field-stage::before');
+    expect(veil).toContain('radial-gradient(');
+    expect(veil).not.toContain('backdrop-filter');
+    const stage = rule(pawOsCss, '.paw-field-stage');
+    expect(stage, 'the veil is a ground, not a card').not.toContain('border:');
+    expect(stage).not.toContain('box-shadow');
+    // Every ink on the column is proven against the veil's own floor — the
+    // weakest alpha the gradient reaches anywhere text is placed — composited
+    // over the darkest terrain the wallpaper can put underneath it (the near
+    // ridge crest, #202c46). Lowering that stop without re-proving the inks
+    // fails here.
+    expect(veil, 'the ink region never falls below the proven .78 stop')
+      .toContain('rgb(247 250 253 / .78) 70%');
+    // Inscribed radii: the opening fades to nothing exactly at its own box
+    // edge, so widening the column can never leave a clipped bright seam.
+    expect(veil).toContain('radial-gradient(50% 50% at 50% 50%');
+    expect(rule(pawOsCss, '.paw-field-stage::before')).toContain('inset: -200px -300px;');
+    const ground = composite('rgb(247 250 253 / .78)', '#202c46');
+    for (const ink of ['#0f172a', '#171a21', '#2c3645', '#414b5c']) {
+      expect(contrast(hexToRgb(ink), ground), `${ink} on the field veil`).toBeGreaterThanOrEqual(4.5);
+    }
+    // The one cobalt word in the composition is title-sized, so it answers
+    // the large-text threshold rather than the body one.
+    expect(contrast(hexToRgb('#1e50d8'), ground)).toBeGreaterThanOrEqual(3);
+    expect(contrast(hexToRgb('#ffffff'), hexToRgb('#1e50d8'))).toBeGreaterThanOrEqual(4.5);
+    // One owner: the migrated theme may not re-style the identity rail, so the
     // identity wash/ring language can never be overridden back into a second
     // hardcoded plate recipe like the pre-density desktop.
     expect(shellCss).not.toContain('.paw-desktop-shortcuts');
-    const plate = rule(pawOsCss, '.paw-desktop-shortcuts');
-    expect(plate).not.toContain('backdrop-filter');
-    expect(plate).toContain('background: rgb(249 251 254 / .66);');
-    // List ink stays AA-readable composited over the brightest fog band.
-    const ground = composite('rgb(249 251 254 / .66)', '#f5f8fc');
-    expect(contrast(hexToRgb('#0f172a'), ground)).toBeGreaterThanOrEqual(7);
-    expect(contrast(hexToRgb('#5d6675'), ground)).toBeGreaterThanOrEqual(4.5);
-    // Rows carry the Dock's running shape language: long pill = visible
+    expect(rule(pawOsCss, '.paw-desktop-shortcuts')).not.toContain('backdrop-filter');
+    // Tiles carry the Dock's running shape language: long pill = visible
     // window, short soft pill = minimized only — never colour alone.
     const running = rule(pawOsCss, '.paw-desktop-shortcuts button[data-open] > i');
     expect(running).toContain('var(--paw-identity-dot)');
     expect(running).toContain('height: 3px');
     expect(rule(pawOsCss, '.paw-desktop-shortcuts button[data-minimized] > i')).toContain('width: 6px');
-    // Dense rows resolve the md ladder step, not the launcher's 48px tile.
+    // Dense tiles resolve the md ladder step, not the launcher's 48px tile.
     expect(rule(appIconCss, '.paw-desktop-shortcuts .paw-app-icon')).toContain('var(--paw-icon-step-md)');
   });
 

@@ -199,7 +199,7 @@ export function MemoryPipeline({
           )}
           <p className="memory-pipeline__note">
             <ShieldCheck aria-hidden="true" size={14} />
-            <span>主题不会替代原始记录；每条结论都能沿这条链路回到来源。</span>
+            <span>主题不会替代原始记录；每条结论都能沿这条链路回到来源，也能在详情里看到它最近被哪些 Session 装配。</span>
           </p>
         </div>
       ) : null}

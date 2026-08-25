@@ -102,6 +102,9 @@ export function KnowledgeFeature() {
   const [selectedBaseId, setSelectedBaseId] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = asDetailTab(searchParams.get('tab') ?? 'materials');
+  // 从别处深链进来的一条资料：只在还没有有效选择时决定落点，之后由人自己开。
+  const routeBaseId = searchParams.get('base') ?? '';
+  const routeDocumentId = searchParams.get('document') ?? '';
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteBaseOpen, setDeleteBaseOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<KnowledgeDocument | null>(null);
@@ -124,19 +127,23 @@ export function KnowledgeFeature() {
   };
 
   useEffect(() => {
-    if (!selectedBaseId && bases[0]?.id) setSelectedBaseId(bases[0].id);
+    if (!selectedBaseId && bases.length) {
+      setSelectedBaseId(bases.find((item) => item.id === routeBaseId)?.id ?? bases[0]?.id ?? '');
+    }
     if (selectedBaseId && bases.length && !bases.some((item) => item.id === selectedBaseId)) {
       setSelectedBaseId(bases[0]?.id ?? '');
     }
-  }, [bases, selectedBaseId]);
+  }, [bases, routeBaseId, selectedBaseId]);
 
   useEffect(() => {
     if (!documents.length) {
       setSelectedDocumentId('');
       return;
     }
-    if (!documents.some((item) => item.id === selectedDocumentId)) setSelectedDocumentId(documents[0]?.id ?? '');
-  }, [documents, selectedDocumentId]);
+    if (!documents.some((item) => item.id === selectedDocumentId)) {
+      setSelectedDocumentId(documents.find((item) => item.id === routeDocumentId)?.id ?? documents[0]?.id ?? '');
+    }
+  }, [documents, routeDocumentId, selectedDocumentId]);
 
   useEffect(() => {
     setFocusedHit(null);

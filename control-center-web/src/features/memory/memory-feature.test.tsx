@@ -1,14 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { previewPersonas } from '@/features/agent/preview-data';
-import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
+import { PawOsAppSurfaceProvider, PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { MemoryFeature } from './index';
 
 afterEach(() => {
@@ -1902,6 +1902,74 @@ describe('MemoryFeature preferences', () => {
     expect(screen.queryByText('记忆偏好已保存')).not.toBeInTheDocument();
   });
 });
+
+describe('MemoryFeature catalog cold lead', () => {
+  it('cold-open explains the settle path and hands 交给 Agent 一件事 to the desktop route', async () => {
+    const openRoute = vi.fn();
+    const user = userEvent.setup();
+    renderMemoryOnDesktop(emptyCatalogTransport(), openRoute);
+
+    expect(await screen.findByText('记忆从工作回执沉淀')).toBeInTheDocument();
+    expect(screen.getByText(
+      '交给 Agent 一件事，工作留下来源记录，分批审核后沉淀成这里的记忆；每条记忆之后被哪些 Session 装配，都能在它的详情里看到。',
+    )).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '交给 Agent 一件事' }));
+    expect(openRoute).toHaveBeenCalledWith('/agent');
+  });
+
+  it('keeps the filter hint for filtered misses and never renders an entry it cannot open', async () => {
+    const user = userEvent.setup();
+    renderMemory(emptyCatalogTransport());
+
+    // 脱离桌面时冷启动引导仍然讲链路，但不渲染打不开的 Agent 入口。
+    expect(await screen.findByText('记忆从工作回执沉淀')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '交给 Agent 一件事' })).not.toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('标题、正文或标签，输入即筛选'), '没有这条记忆');
+    expect(await screen.findByText('没有匹配结果')).toBeInTheDocument();
+    expect(screen.queryByText('记忆从工作回执沉淀')).not.toBeInTheDocument();
+  });
+
+  it('gives the evidence layer its own receipt-first lead', async () => {
+    const user = userEvent.setup();
+    renderMemory(emptyCatalogTransport());
+
+    await user.click(await screen.findByRole('button', { name: '来源 · 来源记录 · 0 项' }));
+    expect(await screen.findByText('还没有来源记录')).toBeInTheDocument();
+    expect(screen.getByText(
+      '来源记录是工作留下的回执：输入法、语音与伙伴主动记录先落在这里，经分批审核后才沉淀为记忆。',
+    )).toBeInTheDocument();
+  });
+});
+
+function emptyCatalogTransport(): MockControlTransport {
+  return new MockControlTransport({
+    routes: {
+      'memory.summary': { ok: true, memoryBookCount: 0, memoryAtomCount: 0 },
+      'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+    },
+  });
+}
+
+function renderMemoryOnDesktop(transport: MockControlTransport, openRoute: (route: string) => void) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(
+    <MemoryRouter initialEntries={['/']}>
+      <MemoryLocationProbe />
+      <TooltipProvider delayDuration={0}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openRoute={openRoute} openWindow={() => {}}>
+            <PawOsAppSurfaceProvider appId="memory" height={720} width={1_080}>
+              <QueryClientProvider client={client}><MemoryFeature /></QueryClientProvider>
+            </PawOsAppSurfaceProvider>
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </TooltipProvider>
+    </MemoryRouter>,
+  );
+}
 
 function renderMemory(transport: MockControlTransport, initialEntry = '/', pawOs = false) {
   const client = new QueryClient({

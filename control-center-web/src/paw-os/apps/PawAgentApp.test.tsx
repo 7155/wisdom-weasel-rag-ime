@@ -157,17 +157,19 @@ describe('PAWOS Agent App', () => {
     expect(screen.queryByText(/Pi Runtime/)).not.toBeInTheDocument();
   });
 
-  it('reflects the selected permission risk on the composer chip state dot', async () => {
+  it('reflects the selected permission risk on the composer chip mark', async () => {
     const user = userEvent.setup();
     renderAgent();
 
+    // The chip signals the mode through the PermissionMark glyph family, not
+    // a colour dot: the mark's data-mark kind must follow the selection.
     const chip = await screen.findByRole('button', { name: /按风险确认/ });
-    expect(chip.querySelector('.mini-dot')).toHaveAttribute('data-execution-mode', 'per_action');
+    expect(chip.querySelector('[data-mark="permission-per-action"]')).toBeInTheDocument();
 
     await user.click(chip);
     await user.click(await screen.findByRole('menuitemradio', { name: /^只读/ }));
-    expect(screen.getByRole('button', { name: /只读/ }).querySelector('.mini-dot'))
-      .toHaveAttribute('data-execution-mode', 'read_only');
+    expect(screen.getByRole('button', { name: /只读/ }).querySelector('[data-mark="permission-read-only"]'))
+      .toBeInTheDocument();
   });
 
   it('orders 继续工作 by real recency instead of catalog list position', async () => {
@@ -396,10 +398,10 @@ describe('PAWOS Agent App', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: 'work/paw' }));
+    await user.click(await screen.findByRole('button', { name: '工作目录 · work/paw' }));
     await user.click(await screen.findByRole('button', { name: '浏览其他目录…' }));
     await waitFor(() => expect(pickWorkspaceDirectory).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('button', { name: 'work/paw-natural' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '工作目录 · work/paw-natural' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: 'Room' }));
     await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '从自然目标开始');

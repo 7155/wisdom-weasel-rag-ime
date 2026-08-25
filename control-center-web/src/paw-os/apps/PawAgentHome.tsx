@@ -9,7 +9,11 @@
  *   与「继续工作」在同一屏内完成；继续工作列表只在自身内部滚动，页脚是钉在
  *   底部的状态条。
  * - UR-002/040：单一 Agent 入口，Session / Room 在 Composer 底栏选择；
- *   PF-CM-003：所选工作类型的真实后果（谁来做、哪些伙伴加入）就写在 Composer 下方。
+ *   PF-CM-003：所选工作类型的真实后果（谁来做、哪些伙伴加入、过程在哪里看得见）
+ *   就写在 Composer 下方；Session 一句指向 PawSessionWorkspace 里真实存在的
+ *   「Agent 轨迹 / 上下文装配」，不描述任何这里没有的界面。「记有来源的装配
+ *   节点能直接打开那条证据」对应 PawContextTrace 已落地的双向证据链：只有
+ *   metadata 里带具体实体标识的节点才可点击，这句因此不构成过度承诺。
  * - UR-042/044/048：统一 Composer 骨架；锚定菜单紧贴触发控件，不撑开布局。
  * - UR-046：权限四档（按风险确认 / 只读 / 工作区托管 / 全自动），全自动需先选工作目录。
  * - UR-066/078：发送即乐观入场，后台补齐配置与回执。
@@ -563,7 +567,7 @@ export function PawAgentHome({
           ) : null}
           {mode === 'session' ? (
             <p className="an-mode-brief" id={modeBriefId}>
-              一位 Agent 在同一条时间线里完成这件事；过程可展开，随时可中止或追问。
+              一位 Agent 在同一条时间线里完成这件事；随时可中止或追问。过程可切到 Agent 轨迹，看每一轮装配了哪些上下文——记有来源的装配节点，能直接打开那条记忆、知识或文件。
             </p>
           ) : roomReady ? (
             <div className="an-mode-brief an-room-plan" id={modeBriefId}>
