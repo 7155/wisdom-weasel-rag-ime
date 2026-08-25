@@ -19,7 +19,15 @@ import { PAW_COMPOSITION_PULSE_EVENT, type PawCompositionPulseSource } from '../
  * lens-bloom swell at the light gap and a brief luminance lift of the mist
  * banks; residual energy keeps the horizon slightly lit after activity.
  * Ambient motion is minutes-long mist drift and disappears entirely under
- * reduced motion. Full-bleed at any scale (`slice` cover on a 1440x900 stage).
+ * reduced motion, and every pulse stays skipped while collaboration focus
+ * owns the desktop. Full-bleed at any scale (`slice` cover on a 1440x900
+ * stage).
+ *
+ * Render budget: the only continuously animated subtrees (mist drift) carry
+ * no SVG filter — the fog banks are pre-blurred radial gradients, so drift is
+ * a pure transform instead of a per-frame Gaussian re-raster. Depth-of-field
+ * blurs exist only on the three far ranges where they read, and both grain
+ * speckle passes share one feTurbulence evaluation.
  */
 export function PawCompositionField({ effects = false }: { effects?: boolean } = {}) {
   const fieldRef = useRef<SVGSVGElement>(null);
@@ -36,12 +44,18 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
         if (animation.id === pulseId) animation.cancel();
       });
     };
+    // Mist rest opacities are static stylesheet values; caching them keeps
+    // repeated pulses from forcing a style flush via getComputedStyle.
+    const restOpacities = new Map<Element, number>();
     const drive = (source: PawCompositionPulseSource, energyValue: number) => {
       const energy = Math.max(0, Math.min(1, Number.isFinite(energyValue) ? energyValue : .65));
       field.dataset.drive = source;
       field.style.setProperty('--paw-composition-energy', energy.toFixed(3));
       const reduceMotionAttr = document.documentElement.getAttribute('data-reduce-motion') === 'true';
-      if (reducedMotion.matches || reduceMotionAttr || energy === 0) return;
+      // Collaboration focus quiets the wallpaper exactly like reduced motion:
+      // no pulse choreography runs behind the focus plane.
+      const collaborationFocus = field.closest('[data-collaboration-focus]') !== null;
+      if (reducedMotion.matches || reduceMotionAttr || collaborationFocus || energy === 0) return;
       const signal = field.querySelector<SVGCircleElement>('.paw-field__signal');
       if (signal) {
         cancelPulse(signal);
@@ -54,7 +68,8 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
       const mists = field.querySelectorAll<SVGGElement>('.paw-field__mist');
       mists.forEach((mist, index) => {
         cancelPulse(mist);
-        const rest = Number(getComputedStyle(mist).opacity) || .8;
+        const rest = restOpacities.get(mist) ?? (Number(getComputedStyle(mist).opacity) || .8);
+        restOpacities.set(mist, rest);
         mist.animate([
           { opacity: rest },
           { opacity: Math.min(1, rest + energy * .18), offset: .3 },
@@ -162,26 +177,33 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
           <stop offset=".65" stopColor="#7688a5" />
           <stop offset="1" stopColor="#92a2bd" />
         </linearGradient>
-        {/* Depth of field: far ranges soften into the haze, near terrain
-            stays sharp. One-time rasters — nothing here ever re-filters. */}
+        {/* Mist banks: pre-blurred by the gradient itself instead of a live
+            feGaussianBlur, because these are the only subtrees that animate
+            forever — a filtered drift would re-run the blur every frame. */}
+        <radialGradient id="paw-field-mist-ball" cx="50%" cy="50%" r="50%">
+          <stop offset="0" stopColor="#ffffff" stopOpacity="1" />
+          <stop offset=".55" stopColor="#ffffff" stopOpacity=".92" />
+          <stop offset=".8" stopColor="#ffffff" stopOpacity=".45" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
+        {/* Depth of field: only the far ranges soften into the haze — the
+            near terrain reads sharp without spending blur. One-time rasters;
+            nothing here ever re-filters. */}
         <filter id="paw-field-dof-veil"><feGaussianBlur stdDeviation="4.5" /></filter>
         <filter id="paw-field-dof-far"><feGaussianBlur stdDeviation="3" /></filter>
         <filter id="paw-field-dof-midfar"><feGaussianBlur stdDeviation="1.8" /></filter>
-        <filter id="paw-field-dof-mid"><feGaussianBlur stdDeviation="1" /></filter>
-        <filter id="paw-field-dof-close"><feGaussianBlur stdDeviation=".6" /></filter>
-        <filter height="460%" id="paw-field-mist-soften" width="160%" x="-30%" y="-180%">
-          <feGaussianBlur stdDeviation="16" />
-        </filter>
-        {/* Deterministic film grain (fixed seeds, stitched tiles): a dark and
-            a light speckle pass at a few percent, enough to break banding and
-            give the gradients a photographic surface. */}
-        <filter id="paw-field-grain-dark" x="0" y="0" width="100%" height="100%">
-          <feTurbulence baseFrequency=".8" numOctaves="2" seed="7" stitchTiles="stitch" type="fractalNoise" />
-          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  .9 0 0 0 -.18" />
-        </filter>
-        <filter id="paw-field-grain-light" x="0" y="0" width="100%" height="100%">
-          <feTurbulence baseFrequency=".8" numOctaves="2" seed="23" stitchTiles="stitch" type="fractalNoise" />
-          <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  .9 0 0 0 -.18" />
+        {/* Deterministic film grain (fixed seed, stitched tiles): the dark
+            speckles key off the red noise channel and the light speckles off
+            the independent green channel, so one feTurbulence evaluation
+            yields both passes with their few-percent strengths baked in. */}
+        <filter id="paw-field-grain" x="0" y="0" width="100%" height="100%">
+          <feTurbulence baseFrequency=".8" numOctaves="2" result="paw-grain-noise" seed="7" stitchTiles="stitch" type="fractalNoise" />
+          <feColorMatrix in="paw-grain-noise" result="paw-grain-dark" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  .036 0 0 0 -.0072" />
+          <feColorMatrix in="paw-grain-noise" result="paw-grain-light" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 .045 0 0 -.009" />
+          <feMerge>
+            <feMergeNode in="paw-grain-dark" />
+            <feMergeNode in="paw-grain-light" />
+          </feMerge>
         </filter>
       </defs>
       <rect className="paw-field__sky" width="1440" height="900" fill="url(#paw-field-sky)" />
@@ -207,36 +229,34 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
         filter="url(#paw-field-dof-midfar)"
       />
       <g className="paw-field__mist paw-field__mist--far">
-        <g className="paw-field__mist-drift" filter="url(#paw-field-mist-soften)">
-          <ellipse cx="300" cy="618" rx="340" ry="30" fill="#ffffff" opacity=".5" />
-          <ellipse cx="940" cy="604" rx="420" ry="34" fill="#ffffff" opacity=".62" />
-          <ellipse cx="1310" cy="612" rx="260" ry="26" fill="#ffffff" opacity=".42" />
+        <g className="paw-field__mist-drift">
+          <ellipse cx="300" cy="618" rx="360" ry="44" fill="url(#paw-field-mist-ball)" opacity=".5" />
+          <ellipse cx="940" cy="604" rx="440" ry="48" fill="url(#paw-field-mist-ball)" opacity=".62" />
+          <ellipse cx="1310" cy="612" rx="280" ry="40" fill="url(#paw-field-mist-ball)" opacity=".42" />
         </g>
       </g>
       <path
         className="paw-field__ridge paw-field__ridge--mid"
         d="M -60 736.8 L -44 737.8 L -28 739.3 L -12 741.2 L 4 743.2 L 20 743.3 L 36 744.1 L 52 741.9 L 68 737.7 L 84 736.0 L 100 733.4 L 116 727.9 L 132 725.2 L 148 727.3 L 164 732.4 L 180 733.9 L 196 731.0 L 212 726.8 L 228 725.1 L 244 721.3 L 260 714.7 L 276 711.6 L 292 715.6 L 308 719.5 L 324 721.2 L 340 722.2 L 356 723.3 L 372 722.5 L 388 720.0 L 404 717.3 L 420 714.4 L 436 708.2 L 452 704.0 L 468 704.7 L 484 708.0 L 500 712.1 L 516 717.5 L 532 723.3 L 548 725.3 L 564 725.5 L 580 726.9 L 596 723.5 L 612 716.8 L 628 716.5 L 644 718.2 L 660 719.5 L 676 725.5 L 692 728.3 L 708 721.0 L 724 712.0 L 740 711.1 L 756 711.7 L 772 711.1 L 788 712.6 L 804 712.2 L 820 708.1 L 836 706.1 L 852 708.4 L 868 708.5 L 884 701.5 L 900 700.0 L 916 700.2 L 932 707.5 L 948 710.1 L 964 710.7 L 980 709.0 L 996 701.3 L 1012 700.5 L 1028 699.6 L 1044 699.5 L 1060 699.0 L 1076 700.8 L 1092 705.4 L 1108 709.2 L 1124 709.8 L 1140 707.5 L 1156 703.4 L 1172 698.1 L 1188 697.3 L 1204 702.0 L 1220 703.6 L 1236 705.1 L 1252 705.7 L 1268 701.8 L 1284 695.6 L 1300 687.3 L 1316 686.8 L 1332 686.6 L 1348 686.6 L 1364 687.0 L 1380 691.1 L 1396 697.6 L 1412 694.1 L 1428 693.6 L 1444 697.6 L 1460 702.7 L 1476 704.1 L 1492 703.3 L 1500 960 L -60 960 Z"
         fill="url(#paw-field-ridge-mid)"
-        filter="url(#paw-field-dof-mid)"
       />
       <circle className="paw-field__airlight paw-field__airlight--near" cx="985" cy="580" r="480" fill="url(#paw-field-airlight)" />
       <g className="paw-field__mist paw-field__mist--mid">
-        <g className="paw-field__mist-drift" filter="url(#paw-field-mist-soften)">
-          <ellipse cx="180" cy="706" rx="300" ry="32" fill="#ffffff" opacity=".5" />
-          <ellipse cx="760" cy="692" rx="430" ry="36" fill="#ffffff" opacity=".58" />
-          <ellipse cx="1240" cy="700" rx="300" ry="30" fill="#ffffff" opacity=".46" />
+        <g className="paw-field__mist-drift">
+          <ellipse cx="180" cy="706" rx="320" ry="46" fill="url(#paw-field-mist-ball)" opacity=".5" />
+          <ellipse cx="760" cy="692" rx="450" ry="50" fill="url(#paw-field-mist-ball)" opacity=".58" />
+          <ellipse cx="1240" cy="700" rx="320" ry="44" fill="url(#paw-field-mist-ball)" opacity=".46" />
         </g>
       </g>
       <path
         className="paw-field__ridge paw-field__ridge--close"
         d="M -60 782.1 L -44 783.2 L -28 785.8 L -12 790.6 L 4 795.8 L 20 801.2 L 36 805.5 L 52 805.3 L 68 801.1 L 84 796.1 L 100 792.8 L 116 789.1 L 132 786.6 L 148 782.4 L 164 781.1 L 180 781.9 L 196 785.9 L 212 789.0 L 228 789.7 L 244 789.8 L 260 789.2 L 276 787.2 L 292 784.4 L 308 782.5 L 324 782.6 L 340 783.0 L 356 782.7 L 372 783.1 L 388 783.6 L 404 782.9 L 420 781.5 L 436 779.9 L 452 780.7 L 468 782.5 L 484 781.2 L 500 779.4 L 516 778.1 L 532 775.8 L 548 773.3 L 564 774.1 L 580 774.8 L 596 775.5 L 612 775.4 L 628 775.7 L 644 776.7 L 660 777.3 L 676 780.2 L 692 782.7 L 708 784.9 L 724 789.5 L 740 792.8 L 756 793.4 L 772 792.5 L 788 791.5 L 804 790.8 L 820 790.5 L 836 789.6 L 852 784.5 L 868 778.7 L 884 777.5 L 900 777.0 L 916 777.5 L 932 778.5 L 948 782.3 L 964 783.6 L 980 780.0 L 996 776.3 L 1012 773.6 L 1028 775.3 L 1044 779.3 L 1060 781.4 L 1076 779.9 L 1092 778.7 L 1108 782.2 L 1124 786.1 L 1140 788.7 L 1156 791.2 L 1172 794.3 L 1188 796.0 L 1204 796.2 L 1220 796.7 L 1236 796.3 L 1252 792.9 L 1268 790.7 L 1284 791.8 L 1300 795.6 L 1316 799.0 L 1332 800.7 L 1348 803.9 L 1364 806.6 L 1380 808.2 L 1396 809.5 L 1412 810.7 L 1428 810.5 L 1444 811.1 L 1460 811.2 L 1476 809.5 L 1492 807.6 L 1500 960 L -60 960 Z"
         fill="url(#paw-field-ridge-close)"
-        filter="url(#paw-field-dof-close)"
       />
       <g className="paw-field__mist paw-field__mist--near">
-        <g className="paw-field__mist-drift" filter="url(#paw-field-mist-soften)">
-          <ellipse cx="480" cy="836" rx="420" ry="40" fill="#ffffff" opacity=".5" />
-          <ellipse cx="1120" cy="828" rx="380" ry="36" fill="#ffffff" opacity=".44" />
+        <g className="paw-field__mist-drift">
+          <ellipse cx="480" cy="836" rx="440" ry="54" fill="url(#paw-field-mist-ball)" opacity=".5" />
+          <ellipse cx="1120" cy="828" rx="400" ry="50" fill="url(#paw-field-mist-ball)" opacity=".44" />
         </g>
       </g>
       <path
@@ -245,8 +265,7 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
         fill="url(#paw-field-ridge-near)"
       />
       <circle className="paw-field__signal" cx="985" cy="552" r="240" fill="url(#paw-field-signal-bloom)" />
-      <rect className="paw-field__grain paw-field__grain--dark" width="1440" height="900" filter="url(#paw-field-grain-dark)" opacity=".04" />
-      <rect className="paw-field__grain paw-field__grain--light" width="1440" height="900" filter="url(#paw-field-grain-light)" opacity=".05" />
+      <rect className="paw-field__grain" width="1440" height="900" filter="url(#paw-field-grain)" />
     </svg>
   );
 }
