@@ -108,8 +108,10 @@ describe('PAWOS semantic type roles', () => {
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser\s*\{[^}]*container:\s*paw-browser\s*\/\s*inline-size;/s);
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser\s*\{[^}]*--paw-browser-chrome:\s*var\(--paw-app-nav,[^)]+\);[^}]*background:\s*var\(--paw-app-surface,/s);
     expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-toolbar/);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*none;/s);
-    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*flex;/s);
+    // The folded History/Settings rows have to outrank the shared menu-row
+    // painter, or they show beside the toolbar buttons they stand in for.
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-toolbar-actions \.paw-browser-menu > \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*none;/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-toolbar-actions \.paw-browser-menu > \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*flex;/s);
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-agent-stream\s*\{[^}]*background:\s*#fff;[^}]*backdrop-filter:\s*none;/s);
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-history,\s*\.paw-desktop-root \.paw-browser-settings\s*\{[^}]*background:\s*#eef1f5;[^}]*backdrop-filter:\s*none;/s);
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-error\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);

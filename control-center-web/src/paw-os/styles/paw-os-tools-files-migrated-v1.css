@@ -668,7 +668,12 @@
   border-radius: 7px;
 }
 
-.paw-desktop-root .paw-browser-menu-narrow-only {
+/* History and Settings only fold into the menu once their toolbar buttons are
+   gone. The shared strip paints every menu row with `.paw-toolbar-actions
+   .paw-browser-menu > button`, which outranked a plain narrow-only class, so
+   both folded rows were in fact showing at every width and duplicating the
+   toolbar buttons still standing beside them. */
+.paw-desktop-root .paw-toolbar-actions .paw-browser-menu > .paw-browser-menu-narrow-only {
   display: none;
 }
 
@@ -1168,7 +1173,7 @@
   .paw-desktop-root .paw-browser-history,
   .paw-desktop-root .paw-browser-settings { padding: 8px; }
   .paw-desktop-root .paw-browser-surface-card { width: 100%; max-height: 100%; border-radius: 13px; }
-  .paw-desktop-root .paw-browser-menu-narrow-only { display: flex; }
+  .paw-desktop-root .paw-toolbar-actions .paw-browser-menu > .paw-browser-menu-narrow-only { display: flex; }
   .paw-desktop-root .paw-browser-start-halo { width: 62px; height: 62px; }
   .paw-desktop-root .paw-browser-start > strong { font-size: 17px; }
 }
