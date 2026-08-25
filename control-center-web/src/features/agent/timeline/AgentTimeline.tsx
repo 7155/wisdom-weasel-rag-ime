@@ -31,6 +31,12 @@ import {
   type TranscriptFollowState,
 } from './transcript-follow';
 import {
+  captureTranscriptAnchor,
+  resolveAnchorRowIndex,
+  type TranscriptAnchor,
+  type TranscriptRowGeometry,
+} from './chat-ui-kit';
+import {
   buildAgentTurnWorkModel,
   type AgentTurnSequenceEntry,
 } from './agent-turn-work-model';
@@ -251,6 +257,43 @@ function fxClock(atMs: number): string {
   return atMs ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(atMs)) : '';
 }
 
+/* Where each Session was last read. `transcript-follow.ts` owns whether the
+   reader is following the end; this owns where they were when they were not.
+   Switching to another Session and back landed on the newest turn regardless,
+   because Virtuoso remounts on `key={sessionId}` and opened at `LAST`. */
+const timelineAnchorMemory = new Map<string, TranscriptAnchor>();
+
+/** Test/host escape hatch: forget every remembered Session reading position. */
+export function clearAgentTimelineScrollMemory(): void {
+  timelineAnchorMemory.clear();
+}
+
+/**
+ * Row geometry for the turns Virtuoso currently has mounted. Only the rendered
+ * window is measurable, which is enough: the anchor is the topmost row the
+ * reader can see, and that row is inside the window by construction.
+ */
+function renderedTurnGeometry(
+  scroller: HTMLElement,
+  turnOrder: readonly string[],
+): TranscriptRowGeometry[] {
+  const rows: TranscriptRowGeometry[] = [];
+  const scrollerTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
+  for (const element of scroller.querySelectorAll<HTMLElement>('[data-agent-turn-id]')) {
+    const key = element.dataset.agentTurnId ?? '';
+    if (!key) continue;
+    const box = element.getBoundingClientRect();
+    const index = turnOrder.indexOf(key);
+    rows.push({
+      key,
+      top: box.top - scrollerTop,
+      height: box.height,
+      ...(index >= 0 ? { index } : {}),
+    });
+  }
+  return rows.sort((left, right) => left.top - right.top);
+}
+
 export function AgentTimeline({
   sessionId,
   persona,
@@ -391,19 +434,74 @@ export function AgentTimeline({
     () => ({ leadingContent }),
     [leadingContent],
   );
+  const turnOrderRef = useRef(turnOrder);
+  turnOrderRef.current = turnOrder;
+  const scrollerRef = useRef<HTMLElement | null>(null);
+  scrollerRef.current = timelineScroller;
+
+  /** Remember the topmost turn the reader can see, by turn id and offset. */
+  const captureAnchor = useCallback((): void => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const anchor = captureTranscriptAnchor({
+      conversationId: sessionId,
+      rows: renderedTurnGeometry(scroller, turnOrderRef.current),
+      scrollTop: scroller.scrollTop,
+    });
+    if (anchor) timelineAnchorMemory.set(sessionId, anchor);
+  }, [sessionId]);
+
+  /* Where this Session was last read. Resolved once per Session: Virtuoso
+     reads initialTopMostItemIndex at mount only, and the component renders no
+     Virtuoso until there is at least one turn. */
+  const restoredStart = useMemo(() => {
+    const anchor = turnOrder.length > 0 ? timelineAnchorMemory.get(sessionId) : undefined;
+    return anchor ? resolveAnchorRowIndex({ anchor, rowKeys: turnOrder }) : null;
+  // Deliberately not recomputed per append: this is a mount-time seed, not
+  // live state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, turnOrder.length > 0]);
+  const initialTopMostItemIndex = useMemo(
+    () => (restoredStart
+      ? { index: restoredStart.index, align: 'start' as const, offset: restoredStart.offsetPx }
+      : { index: 'LAST' as const, align: 'start' as const }),
+    [restoredStart],
+  );
   useEffect(() => {
-    dispatchFollow({ type: 'conversation-switched' });
+    /* Opening on a remembered position is a detached read, not a following
+       one, so the jump control appears immediately rather than after the
+       reader's first scroll. This runs before the store subscription below is
+       installed, so no appended content is missed on the way. */
+    dispatchFollow(restoredStart
+      ? { type: 'user-detached', reason: 'user-scroll' }
+      : { type: 'conversation-switched' });
     const lastIndex = Math.max(0, turnOrder.length - 1);
     setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
-  }, [dispatchFollow, sessionId]);
+  }, [dispatchFollow, restoredStart, sessionId]);
+
+  useEffect(() => () => {
+    // Leaving this Session: remember the reading position unless the reader
+    // was at the end, where "latest" is the position worth restoring. Keyed on
+    // the Session alone so a mid-Session re-render never discards the memory.
+    if (followStateRef.current.mode === 'following') timelineAnchorMemory.delete(sessionId);
+    else captureAnchor();
+  }, [captureAnchor, sessionId]);
   const handleScrollerRef = useCallback((scroller: HTMLElement | Window | null) => {
     setTimelineScroller(scroller instanceof HTMLElement ? scroller : null);
   }, []);
   useEffect(() => {
     if (!timelineScroller) return;
     let pointerScrollActive = false;
+    let anchorFrame = 0;
     const leaveLiveFollow = () => {
       dispatchFollow({ type: 'user-detached', reason: 'user-scroll' });
+      // Reading the anchor costs a layout read per rendered turn, so it is
+      // coalesced to one frame rather than run on every scroll event.
+      if (anchorFrame !== 0) return;
+      anchorFrame = window.requestAnimationFrame(() => {
+        anchorFrame = 0;
+        if (followStateRef.current.mode === 'detached') captureAnchor();
+      });
     };
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) leaveLiveFollow();
@@ -444,8 +542,9 @@ export function AgentTimeline({
       timelineScroller.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('pointerup', handlePointerEnd);
       window.removeEventListener('pointercancel', handlePointerEnd);
+      window.cancelAnimationFrame(anchorFrame);
     };
-  }, [dispatchFollow, timelineScroller]);
+  }, [captureAnchor, dispatchFollow, timelineScroller]);
   useEffect(() => {
     if (!timelineScroller) return;
     let pendingFrame = 0;
@@ -566,7 +665,7 @@ export function AgentTimeline({
         followOutput={() => (
           followStateRef.current.mode === 'following' ? liveFollowScrollBehavior() : false
         )}
-        initialTopMostItemIndex={{ index: 'LAST', align: 'start' }}
+        initialTopMostItemIndex={initialTopMostItemIndex}
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
         context={timelineContext}
@@ -894,7 +993,7 @@ export function AgentTurn({
     </div>
   );
   return (
-    <article className="agent-turn" data-turn-status={turn.status}>
+    <article className="agent-turn" data-agent-turn-id={turnId} data-turn-status={turn.status}>
       {dayStartLabel ? <div aria-hidden="true" className="agent-fx-day"><span>{dayStartLabel}</span></div> : null}
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
