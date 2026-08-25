@@ -162,7 +162,9 @@ describe('PAWOS App identity icons', () => {
     const mark = container.querySelector('svg.paw-brand-mark');
     expect(mark).toHaveAttribute('aria-hidden', 'true');
     expect(mark).toHaveAttribute('fill', 'currentColor');
-    expect(mark?.querySelectorAll('ellipse, path')).toHaveLength(4);
+    // Four toes over one pad — a paw print, not three dots over a circle.
+    expect(mark?.querySelectorAll('ellipse')).toHaveLength(4);
+    expect(mark?.querySelectorAll('path')).toHaveLength(1);
     expect(mark?.hasAttribute('data-paw-app-icon')).toBe(false);
     rerender(<PawBrandMark title="PAW" />);
     expect(getByRole('img', { name: 'PAW' })).toBeInTheDocument();
