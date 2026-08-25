@@ -15,6 +15,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Printer,
+  Puzzle,
   RefreshCw,
   Search,
   Settings,
@@ -41,6 +42,7 @@ import {
   type PawBrowserGuestProcessGoneEvent,
   type PawBrowserHistoryEntry,
   type PawBrowserWebview,
+  type PawBrowserExtension,
   type PawBrowserSettings,
 } from './paw-browser-host';
 import {
@@ -89,6 +91,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const [historyQuery, setHistoryQuery] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [browserSettings, setBrowserSettings] = useState<PawBrowserSettings | null>(null);
+  const [browserExtensions, setBrowserExtensions] = useState<PawBrowserExtension[]>([]);
   const [settingsReceipt, setSettingsReceipt] = useState('');
   const [startPageDraft, setStartPageDraft] = useState('about:blank');
   const [showBrowserMenu, setShowBrowserMenu] = useState(false);
@@ -263,8 +266,12 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
 
   const refreshBrowserSettings = useCallback(async () => {
     if (!electronHost) return;
-    const value = await electronHost.getSettings();
+    const [value, extensions] = await Promise.all([
+      electronHost.getSettings(),
+      electronHost.listExtensions(),
+    ]);
     setBrowserSettings(value);
+    setBrowserExtensions(extensions);
     setStartPageDraft(value.startPage);
   }, [electronHost]);
 
@@ -396,21 +403,18 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     text(trace.sourceKind) === 'agent'
       && ['queued', 'claimed'].includes(text(trace.status))
   ));
-  const latestAgentTrace = activeAgentTrace ?? traces.find((trace) => (
-    text(trace.sourceKind) === 'agent'
-      && Date.now() - (number(trace.completedAtMs) || number(trace.createdAtMs)) < 3_000
-  ));
-  const latestAgentSteps = rows(latestAgentTrace?.steps);
-  const latestAgentStep = latestAgentSteps.at(-1);
-  const latestAgentAction = text(latestAgentStep?.action) || text(latestAgentTrace?.action);
-  const latestAgentTask = text(latestAgentTrace?.target)
-    || text(record(latestAgentTrace?.result).summary)
+  const activeAgentSteps = rows(activeAgentTrace?.steps);
+  const activeAgentStep = activeAgentSteps.at(-1);
+  const activeAgentAction = text(activeAgentStep?.action) || text(activeAgentTrace?.action);
+  const activeAgentTask = text(activeAgentTrace?.target)
+    || text(record(activeAgentTrace?.result).summary)
     || text(selectedTab?.title)
     || selectedHostTab?.title
     || '当前页面';
-  const latestAgentTarget = text(latestAgentStep?.target) || latestAgentTask;
-  const agentExecutionState = activeAgentTrace ? 'active' : latestAgentTrace ? 'settled' : '';
-  const agentTargetRefId = text(latestAgentTrace?.targetRefId);
+  const activeAgentTarget = text(activeAgentStep?.target) || activeAgentTask;
+  const agentExecutionState = activeAgentTrace ? 'active' : '';
+  const agentTargetRefId = text(activeAgentTrace?.targetRefId);
+  const activeAgentTraceId = text(activeAgentTrace?.commandId);
   const activateElement = (element: BrowserElement) => {
     if (isTextEntry(element)) {
       setEditingElement(element);
@@ -486,6 +490,55 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
 
   const selectedWebview = () => selectedHostTab ? hostWebviews.current.get(selectedHostTab.id) ?? null : null;
 
+  useEffect(() => {
+    if (!activeAgentTraceId) return;
+    setShowTrace(true);
+  }, [activeAgentTraceId]);
+
+  const loadUnpackedExtension = async () => {
+    if (!electronHost) return;
+    setBusy('load-extension');
+    setSettingsReceipt('');
+    try {
+      const loaded = await electronHost.loadUnpackedExtension();
+      if (loaded) setSettingsReceipt(`已加载扩展程序 ${loaded.name}`);
+      await refreshBrowserSettings();
+    } catch (requestError) {
+      setSettingsReceipt(`加载扩展程序失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const openExtensionsFolder = async () => {
+    if (!electronHost) return;
+    setBusy('open-extensions');
+    setSettingsReceipt('');
+    try {
+      const receipt = await electronHost.openExtensionsFolder();
+      setSettingsReceipt(receipt.opened ? `已打开扩展程序目录 ${receipt.path}` : '扩展程序目录未打开');
+    } catch (requestError) {
+      setSettingsReceipt(`打开扩展程序目录失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const removeBrowserExtension = async (extensionId: string) => {
+    if (!electronHost) return;
+    setBusy('remove-extension');
+    setSettingsReceipt('');
+    try {
+      setBrowserExtensions(await electronHost.removeExtension(extensionId));
+      setSettingsReceipt('扩展程序已移除');
+      await refreshBrowserSettings();
+    } catch (requestError) {
+      setSettingsReceipt(`移除扩展程序失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const takeOverBrowserWork = async () => {
     await stopAgentBrowserWork();
     setShowTrace(false);
@@ -522,10 +575,16 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   };
 
   const takeScreenshot = async () => {
-    if (!electronHost || !selectedHostTab?.webContentsId) return;
+    if (!electronHost) return;
+    const webContentsId = selectedHostTab?.webContentsId;
+    if (!webContentsId) {
+      setShowBrowserMenu(false);
+      setBrowserActionReceipt('页面还没有就绪，无法截图');
+      return;
+    }
     setBusy('screenshot');
     try {
-      const receipt = await electronHost.takeScreenshot(selectedHostTab.webContentsId);
+      const receipt = await electronHost.takeScreenshot(webContentsId);
       setBrowserActionReceipt(receipt.saved ? `截图已保存到 ${receipt.path}` : '截图未保存');
     } catch (requestError) {
       setBrowserActionReceipt(`截图失败：${errorText(requestError)}`);
@@ -779,6 +838,9 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
         </div>
       </section>
 
+      {/* The grid column follows the rendered sidebar, not the Agent: an
+        * on-demand trace opened while nobody is executing still needs its
+        * own column instead of stacking under the page. */}
       <section className="paw-browser-workspace" data-show-agent={showTrace || undefined}>
         <div className="paw-browser-viewport" data-agent-state={agentExecutionState || undefined}>
           {selectedGuestLoading ? (
@@ -876,6 +938,25 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
                     </div>
                   </section>
                   <section><h3>网站权限</h3><p>网站在需要时请求权限，由当前隔离 Browser Session 处理。</p></section>
+                  <section>
+                    <h3>扩展程序</h3>
+                    <p>已安装 {browserSettings?.extensionCount ?? browserExtensions.length} 个扩展程序，与 Chrome 一样可在隔离 Browser Session 中加载。</p>
+                    <code>{browserSettings?.extensionsPath || '读取中…'}</code>
+                    {browserExtensions.length ? (
+                      <ul className="paw-browser-extension-list">
+                        {browserExtensions.map((extension) => (
+                          <li key={extension.id}>
+                            <span><strong>{extension.name}</strong><small>{extension.version}</small></span>
+                            <button aria-label={`移除扩展程序 ${extension.name}`} disabled={Boolean(busy)} onClick={() => void removeBrowserExtension(extension.id)} type="button">移除</button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="paw-browser-extension-empty">还没有安装扩展程序</p>}
+                    <div className="paw-browser-setting-row paw-browser-extension-actions">
+                      <button disabled={Boolean(busy)} onClick={() => void loadUnpackedExtension()} type="button"><Puzzle size={13} />加载已解压的扩展程序</button>
+                      <button disabled={Boolean(busy)} onClick={() => void openExtensionsFolder()} type="button">打开扩展程序目录</button>
+                    </div>
+                  </section>
                   {settingsReceipt ? <output role="status">{settingsReceipt}</output> : null}
                 </div>
               </div>
@@ -907,9 +988,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           )) : null}
           {electronHost && isStartPage && !selectedPageFailure && !selectedPageCrash ? (
             <div aria-hidden="true" className="paw-browser-start" data-live={activeAgentTrace ? true : undefined}>
-              <span className="paw-browser-start-halo"><Globe2 size={26} /></span>
+              <span className="paw-browser-start-logo"><Globe2 size={28} /></span>
+              <span className="paw-browser-start-halo"><Sparkles size={26} /></span>
               <strong>新标签页</strong>
-              <span className="paw-browser-start-hint">输入网址或搜索内容，回车直达</span>
+              <span className="paw-browser-start-hint">在地址栏输入网址或搜索内容</span>
             </div>
           ) : null}
           {electronHost && (selectedPageFailure || selectedPageCrash) && !showHistory && !showSettings ? (
@@ -931,7 +1013,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           ) : null}
 
           {!electronHost && isStartPage ? (
-            <div aria-label="空白页面" className="paw-browser-blank-page" />
+            <div aria-label="空白页面" className="paw-browser-blank-page" data-live={activeAgentTrace ? true : undefined} />
           ) : !electronHost && snapshotImageUrl && viewportWidth && viewportHeight ? (
             <div className="paw-browser-live-view" onWheel={scrollPage}>
               <div className="paw-browser-live-canvas" style={{ aspectRatio: `${viewportWidth} / ${viewportHeight}` }}>
@@ -985,23 +1067,19 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
             </div>
           ) : null}
 
-          {latestAgentTrace && !showHistory && !showSettings ? (
-            <div className="paw-browser-agent-field" data-state={agentExecutionState}>
+          {activeAgentTrace && !showHistory && !showSettings ? (
+            <div className="paw-browser-agent-field" data-state="active">
               <span aria-hidden="true" className="paw-browser-agent-signal" />
-              {activeAgentTrace ? <span aria-hidden="true" className="paw-browser-agent-counter"><Sparkles size={13} />1</span> : null}
+              <span aria-hidden="true" className="paw-browser-agent-counter"><Sparkles size={13} />1</span>
               <section aria-label="Agent 浏览器任务" className="paw-browser-agent-capsule">
                 <span aria-hidden="true" className="paw-browser-agent-mark"><Sparkles size={17} /></span>
                 <output aria-label="Agent 浏览器任务状态" role="status">
-                  <strong>{latestAgentTask}</strong>
-                  <span><b>{activeAgentTrace ? 'Agent 正在浏览' : 'Agent 刚刚完成'}</b><small><b>{browserActionLabel(latestAgentAction) || '处理页面'}</b><span>{latestAgentTarget}</span></small></span>
+                  <strong>{activeAgentTask}</strong>
+                  <span><b>Agent 正在浏览</b><small><b>{browserActionLabel(activeAgentAction) || '处理页面'}</b><span>{activeAgentTarget}</span></small></span>
                 </output>
                 <div className="paw-browser-agent-capsule-actions">
-                  {activeAgentTrace ? (
-                    <>
-                      <button aria-label="接管浏览器" onClick={() => void takeOverBrowserWork()} type="button">接管</button>
-                      <button aria-label="停止 Agent 浏览器操作" data-danger onClick={() => void stopAgentBrowserWork()} type="button"><Square size={10} />停止</button>
-                    </>
-                  ) : null}
+                  <button aria-label="接管浏览器" onClick={() => void takeOverBrowserWork()} type="button">接管</button>
+                  <button aria-label="停止 Agent 浏览器操作" data-danger onClick={() => void stopAgentBrowserWork()} type="button"><Square size={10} />停止</button>
                 </div>
               </section>
             </div>

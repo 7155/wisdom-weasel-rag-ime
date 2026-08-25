@@ -5,15 +5,27 @@ import { browserPartition } from './host-config.mjs';
 
 const browserHistoryLimit = 500;
 
-export async function readBrowserSessionSettings({ downloadsPath, electronSession, startPage }) {
+export function listBrowserExtensions(electronSession) {
+  return [...electronSession.extensions.getAllExtensions().values()].map((extension) => ({
+    id: extension.id,
+    name: extension.name,
+    path: extension.path,
+    version: extension.version,
+  }));
+}
+
+export async function readBrowserSessionSettings({ downloadsPath, electronSession, extensionsPath, startPage }) {
   const [cacheBytes, cookies] = await Promise.all([
     electronSession.getCacheSize(),
     electronSession.cookies.get({}),
   ]);
+  const extensions = listBrowserExtensions(electronSession);
   return {
     cacheBytes,
     cookieCount: cookies.length,
     downloadPath: downloadsPath,
+    extensionCount: extensions.length,
+    extensionsPath,
     partition: browserPartition,
     permissionMode: 'site-request',
     startPage,

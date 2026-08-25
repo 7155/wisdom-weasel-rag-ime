@@ -11,6 +11,7 @@ import {
   appendBrowserHistory,
   clearBrowserHistory,
   clearBrowserSessionData,
+  listBrowserExtensions,
   readBrowserHistory,
   readBrowserSessionSettings,
   removeBrowserHistoryEntry,
@@ -29,6 +30,7 @@ test('uses one fixed persistent PAW Browser profile and the built PAWOS entry', 
   assert.match(paths.frontendEntry, /control-center-web\/dist\/index\.html$/);
   assert.equal(paths.hostPidFile, path.join(paths.profilePath, 'PAWBrowserHost.pid'));
   assert.equal(paths.browserHistoryFile, path.join(paths.profilePath, 'PAWBrowserHost.history.json'));
+  assert.equal(paths.browserExtensionsDir, path.join(paths.profilePath, 'Extensions'));
 });
 
 test('same-window guests accept browser pages but not local host files', () => {
@@ -194,6 +196,7 @@ test('Browser settings report and clear the fixed persistent session', async () 
     clearCache: async () => { cacheBytes = 0; },
     clearStorageData: async () => { cookieCount = 0; },
     cookies: { get: async () => Array.from({ length: cookieCount }, () => ({})) },
+    extensions: { getAllExtensions: () => new Map() },
     flushStorageData: () => undefined,
     getCacheSize: async () => cacheBytes,
   };
@@ -201,11 +204,14 @@ test('Browser settings report and clear the fixed persistent session', async () 
   assert.deepEqual(await readBrowserSessionSettings({
     downloadsPath: '/Users/example/Downloads',
     electronSession,
+    extensionsPath: '/Users/example/Extensions',
     startPage: 'about:blank',
   }), {
     cacheBytes: 8192,
     cookieCount: 3,
     downloadPath: '/Users/example/Downloads',
+    extensionCount: 0,
+    extensionsPath: '/Users/example/Extensions',
     partition: 'persist:paw-browser',
     permissionMode: 'site-request',
     startPage: 'about:blank',
@@ -220,6 +226,31 @@ test('Browser settings report and clear the fixed persistent session', async () 
     before: 3,
     after: 0,
   });
+});
+
+test('Browser settings report the extensions the persistent session actually loaded', async () => {
+  const extensions = new Map([
+    ['abc', { id: 'abc', name: '广告拦截', path: '/Users/example/Extensions/abc', version: '1.4.0', manifest: {} }],
+    ['def', { id: 'def', name: '取色器', path: '/Users/example/Extensions/def', version: '0.9.2', manifest: {} }],
+  ]);
+  const electronSession = {
+    cookies: { get: async () => [] },
+    extensions: { getAllExtensions: () => extensions },
+    getCacheSize: async () => 0,
+  };
+
+  assert.deepEqual(listBrowserExtensions(electronSession), [
+    { id: 'abc', name: '广告拦截', path: '/Users/example/Extensions/abc', version: '1.4.0' },
+    { id: 'def', name: '取色器', path: '/Users/example/Extensions/def', version: '0.9.2' },
+  ]);
+  const settings = await readBrowserSessionSettings({
+    downloadsPath: '/Users/example/Downloads',
+    electronSession,
+    extensionsPath: '/Users/example/Extensions',
+    startPage: 'about:blank',
+  });
+  assert.equal(settings.extensionCount, 2);
+  assert.equal(settings.extensionsPath, '/Users/example/Extensions');
 });
 
 test('Browser History is host-owned, persisted, bounded, and contains only real web pages', () => {

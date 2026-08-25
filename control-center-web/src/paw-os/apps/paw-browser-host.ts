@@ -10,7 +10,11 @@ export type PawBrowserHost = {
   clearHistory(): Promise<PawBrowserHistoryEntry[]>;
   getHistory(): Promise<PawBrowserHistoryEntry[]>;
   getSettings(): Promise<PawBrowserSettings>;
+  listExtensions(): Promise<PawBrowserExtension[]>;
+  loadUnpackedExtension(): Promise<PawBrowserExtension | null>;
+  openExtensionsFolder(): Promise<{ opened: boolean; path: string }>;
   openDownloads(): Promise<{ opened: boolean; path: string }>;
+  removeExtension(extensionId: string): Promise<PawBrowserExtension[]>;
   pickWorkspaceDirectory?(): Promise<PawWorkspaceDirectoryReceipt | null>;
   register(tab: { commandId?: string; tabId: string; webContentsId: number }): void;
   removeHistoryEntry(entryId: string): Promise<PawBrowserHistoryEntry[]>;
@@ -35,10 +39,19 @@ export type PawBrowserHistoryEntry = {
   visitedAt: number;
 };
 
+export type PawBrowserExtension = {
+  id: string;
+  name: string;
+  path: string;
+  version: string;
+};
+
 export type PawBrowserSettings = {
   cacheBytes: number;
   cookieCount: number;
   downloadPath: string;
+  extensionCount: number;
+  extensionsPath: string;
   partition: typeof PAW_BROWSER_PARTITION;
   permissionMode: 'site-request';
   startPage: string;
