@@ -118,30 +118,72 @@ function starLayers(seed: string): Record<'far' | 'mid' | 'near', BackdropStar[]
   };
 }
 
+interface BackdropMeteor {
+  topPct: number;
+  leftPct: number;
+  angleDeg: number;
+  delayS: number;
+  periodS: number;
+}
+
+/** Seeded shooting-star schedule for the 2D sky — decoration, never work. */
+function meteorStreaks(seed: string): BackdropMeteor[] {
+  let state = starfieldHash(`${seed}:meteor`) || 1;
+  const next = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+  return Array.from({ length: 3 }, (_, index) => ({
+    topPct: Math.round((6 + next() * 40) * 10) / 10,
+    leftPct: Math.round((6 + next() * 68) * 10) / 10,
+    angleDeg: Math.round(16 + next() * 30),
+    delayS: Math.round(next() * 70) / 10 + index * 4.2,
+    periodS: Math.round((11 + next() * 9) * 10) / 10,
+  }));
+}
+
 function StarfieldBackdrop2D({ seed }: { seed: string }) {
   const layers = useMemo(() => starLayers(seed), [seed]);
+  const meteors = useMemo(() => meteorStreaks(seed), [seed]);
   return (
-    <svg
-      aria-hidden="true"
-      className="paw-sf2__stars"
-      preserveAspectRatio="xMidYMid slice"
-      viewBox={`0 0 ${STARFIELD_VIEWBOX} ${STARFIELD_VIEWBOX}`}
-    >
-      {(['far', 'mid', 'near'] as const).map((name) => (
-        <g className="paw-sf2__star-layer" data-layer={name} key={name}>
-          {layers[name].map((star, index) => (
-            <circle
-              cx={star.x}
-              cy={star.y}
-              key={`${name}-${index}`}
-              opacity={star.opacity}
-              r={star.r}
-              style={{ animationDelay: `${star.delayS}s` }}
-            />
-          ))}
-        </g>
-      ))}
-    </svg>
+    <>
+      <svg
+        aria-hidden="true"
+        className="paw-sf2__stars"
+        preserveAspectRatio="xMidYMid slice"
+        viewBox={`0 0 ${STARFIELD_VIEWBOX} ${STARFIELD_VIEWBOX}`}
+      >
+        {(['far', 'mid', 'near'] as const).map((name) => (
+          <g className="paw-sf2__star-layer" data-layer={name} key={name}>
+            {layers[name].map((star, index) => (
+              <circle
+                cx={star.x}
+                cy={star.y}
+                key={`${name}-${index}`}
+                opacity={star.opacity}
+                r={star.r}
+                style={{ animationDelay: `${star.delayS}s` }}
+              />
+            ))}
+          </g>
+        ))}
+      </svg>
+      <div aria-hidden="true" className="paw-sf2__meteors">
+        {meteors.map((meteor, index) => (
+          <i
+            className="paw-sf2__meteor"
+            key={index}
+            style={{
+              '--sf-meteor-top': `${meteor.topPct}%`,
+              '--sf-meteor-left': `${meteor.leftPct}%`,
+              '--sf-meteor-angle': `${meteor.angleDeg}deg`,
+              '--sf-meteor-delay': `${meteor.delayS}s`,
+              '--sf-meteor-period': `${meteor.periodS}s`,
+            } as CSSProperties}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
