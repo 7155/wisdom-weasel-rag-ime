@@ -17,6 +17,7 @@ import type {
   AssistantBlock,
   AssistantMessage,
   RunPhase,
+  SteerReceiptState,
   ToolStatus,
   TranscriptMessage,
 } from '../model/types';
@@ -98,12 +99,14 @@ export function roomTranscript(
   for (const entry of roomChronology(projection, options.participantId)) {
     if (entry.kind === 'message' && entry.message.role === 'user') {
       openKey = '';
+      const steerReceipt = roomSteerReceipt(entry.message, projection);
       messages.push({
         id: entry.message.id,
         role: 'user',
         text: entry.message.text,
         timestamp: entry.message.createdAtMs,
         deliveryStatus: userDeliveryStatus(entry.message),
+        ...(steerReceipt ? { steerReceipt } : {}),
       });
       continue;
     }
@@ -351,6 +354,66 @@ function toolStatus(status: RoomActivityProjection['status']): ToolStatus {
   if (status === 'failed') return 'error';
   if (status === 'aborted') return 'cancelled';
   return 'success';
+}
+
+const NON_TERMINAL_TURN_STATES = ['queued', 'running'];
+
+/**
+ * A message written into a collaboration that is already in flight is a steer,
+ * and a steer is the one place a plain timestamp lies: it says when the writer
+ * sent it, never whether anybody has it yet.
+ *
+ * Every state below is read from the authoritative projection. `unread` is the
+ * reducer's own optimistic flag — the post exists only in this client, so no
+ * partner can have seen it. Once Runtime publishes it the post carries the
+ * running Root's turn, and from there the turn's own events answer the rest:
+ * nothing after it yet is `read`, published work after it is `settling`, and a
+ * terminal Root is `done`. A message that opens its own Root is not a steer and
+ * keeps the ordinary timestamp.
+ */
+function roomSteerReceipt(
+  message: RoomMessageProjection,
+  projection: RoomProjectionState,
+): SteerReceiptState | undefined {
+  if (message.projectionKind === 'optimistic') {
+    const runInFlight = projection.turnOrder.some((turnId) => (
+      turnId !== message.turnId
+      && NON_TERMINAL_TURN_STATES.includes(projection.turnsById[turnId]?.status ?? '')
+    ));
+    return runInFlight ? 'unread' : undefined;
+  }
+  const turn = projection.turnsById[message.turnId];
+  if (!turn) return undefined;
+  const at = chronologyOrder(message);
+  if (!turnWorkAround(turn, projection, message.id, (order) => order < at)) return undefined;
+  if (!NON_TERMINAL_TURN_STATES.includes(turn.status)) return 'done';
+  return turnWorkAround(turn, projection, message.id, (order) => order > at) ? 'settling' : 'read';
+}
+
+/** Whether the Root published any partner work on the given side of a post. */
+function turnWorkAround(
+  turn: RoomTurnProjection,
+  projection: RoomProjectionState,
+  exceptMessageId: string,
+  side: (order: number) => boolean,
+): boolean {
+  const activity = turn.activityIds.some((activityId) => {
+    const entry = projection.activitiesById[activityId];
+    return entry ? side(chronologyOrder(entry)) : false;
+  });
+  if (activity) return true;
+  return turn.messageIds.some((messageId) => {
+    const entry = projection.messagesById[messageId];
+    return Boolean(
+      entry && entry.id !== exceptMessageId && entry.role === 'assistant' && side(chronologyOrder(entry)),
+    );
+  });
+}
+
+/** The same order key `roomChronology` sorts on: server sequence when the
+ *  publication carries one, wall clock only as the optimistic fallback. */
+function chronologyOrder(entry: { sequence?: number; createdAtMs: number }): number {
+  return entry.sequence ?? entry.createdAtMs;
 }
 
 function userDeliveryStatus(message: RoomMessageProjection): 'sending' | 'sent' | 'failed' {

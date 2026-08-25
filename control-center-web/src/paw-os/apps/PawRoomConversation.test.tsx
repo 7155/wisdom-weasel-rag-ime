@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRoomProjection } from '@/contracts/room-reducer';
+import { appendOptimisticRoomMessage, createRoomProjection } from '@/contracts/room-reducer';
 import { clearConversationScrollMemory } from '@/features/conversation-ui';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { PawRoomConversation } from './PawRoomWorkspace';
@@ -172,6 +172,41 @@ describe('PawRoomConversation', () => {
 
     expect(screen.getByText('503 upstream request failed')).toBeVisible();
     expect(screen.queryByRole('button', { name: '再试一次' })).not.toBeInTheDocument();
+  });
+
+  it('tells the writer a steer is not delivered yet, then clears the receipt', () => {
+    const { projection, room } = roomConversation();
+    projection.turnOrder.push('root-a');
+    projection.turnsById['root-a'] = {
+      id: 'root-a', rootId: 'root-a', status: 'running',
+      messageIds: ['message-user', 'message-agent'], activityIds: ['tool-a', 'approval-a'],
+      participantIds: ['participant-a'], createdAtMs: 100, updatedAtMs: 130,
+    };
+
+    const pending = renderRoom({
+      projection: appendOptimisticRoomMessage(projection, {
+        clientMessageId: 'client-steer', text: '改成先做迁移脚本', nowMs: 200,
+      }),
+      room,
+    });
+    expect(screen.getByText('尚未送达伙伴')).toBeVisible();
+    // Nothing is offered that the Room cannot honour: no Runtime contract can
+    // recall a published Room post, so the receipt stays read-only.
+    expect(pending.container.querySelector('.ccui-steer-receipt button')).toBeNull();
+
+    cleanup();
+    clearConversationScrollMemory();
+    projection.messageOrder.push('message-steer');
+    projection.turnsById['root-a']!.messageIds.push('message-steer');
+    projection.messagesById['message-steer'] = {
+      id: 'message-steer', roomId: room.id, turnId: 'root-a', participantId: null,
+      sourceSessionId: '', role: 'user', status: 'completed', text: '改成先做迁移脚本',
+      projectionKind: 'post', sequence: 5, createdAtMs: 200,
+    };
+
+    renderRoom({ projection, room });
+    expect(screen.getByText('已送达伙伴')).toBeVisible();
+    expect(screen.queryByText('尚未送达伙伴')).not.toBeInTheDocument();
   });
 
   it('scopes a partner satellite to that partner and drops the Room-wide chrome', () => {

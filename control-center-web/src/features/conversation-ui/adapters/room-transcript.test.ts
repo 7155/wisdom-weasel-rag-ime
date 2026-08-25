@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createRoomProjection } from '@/contracts/room-reducer';
-import type { AssistantMessage } from '../model/types';
+import { appendOptimisticRoomMessage, createRoomProjection } from '@/contracts/room-reducer';
+import type { AssistantMessage, TranscriptMessage, UserMessage } from '../model/types';
 import {
   roomApprovalDecision,
   roomPhase,
@@ -164,7 +164,89 @@ describe('roomTranscript', () => {
 
     expect(blockIds).not.toContain('text:message-internal');
   });
+
+  describe('steer receipt', () => {
+    it('reports an unsent steer as undelivered while a Root is still in flight', () => {
+      const projection = appendOptimisticRoomMessage(runningProjection(), {
+        clientMessageId: 'client-steer',
+        text: '改成先做迁移脚本',
+        nowMs: 200,
+      });
+
+      const steer = lastUserMessage(roomTranscript(projection, options).messages);
+      expect(steer.steerReceipt).toBe('unread');
+      expect(steer.deliveryStatus).toBe('sending');
+    });
+
+    it('leaves an ordinary prompt on a plain timestamp when no Root is running', () => {
+      const projection = appendOptimisticRoomMessage(roomProjection(), {
+        clientMessageId: 'client-prompt',
+        text: '再开一个新任务',
+        nowMs: 200,
+      });
+
+      expect(lastUserMessage(roomTranscript(projection, options).messages).steerReceipt).toBeUndefined();
+    });
+
+    it('turns the receipt to delivered once Runtime publishes it into the running Root', () => {
+      const projection = runningProjection();
+      publishSteer(projection, 5);
+
+      expect(lastUserMessage(roomTranscript(projection, options).messages).steerReceipt).toBe('read');
+    });
+
+    it('settles the receipt once the Root publishes work after the steer', () => {
+      const projection = runningProjection();
+      publishSteer(projection, 5);
+      projection.messageOrder.push('message-after');
+      projection.turnsById['root-a']!.messageIds.push('message-after');
+      projection.messagesById['message-after'] = {
+        id: 'message-after', roomId: projection.roomId, turnId: 'root-a', participantId: 'participant-a',
+        sourceSessionId: 'session-a', role: 'assistant', status: 'completed', text: '好，改做迁移脚本。',
+        projectionKind: 'post', sequence: 6, createdAtMs: 210,
+      };
+
+      expect(lastUserMessage(roomTranscript(projection, options).messages).steerReceipt).toBe('settling');
+    });
+
+    it('closes the receipt when the steered Root reaches a terminal status', () => {
+      const projection = runningProjection();
+      publishSteer(projection, 5);
+      projection.turnsById['root-a']!.status = 'completed';
+
+      expect(lastUserMessage(roomTranscript(projection, options).messages).steerReceipt).toBe('done');
+    });
+  });
 });
+
+function lastUserMessage(messages: TranscriptMessage[]): UserMessage {
+  const user = messages.filter((message): message is UserMessage => message.role === 'user').at(-1);
+  if (!user) throw new Error('expected a user message in the transcript');
+  return user;
+}
+
+/** The base fixture with its Root still open, which is what makes a later
+ *  message a steer rather than a fresh request. */
+function runningProjection() {
+  const projection = roomProjection();
+  projection.turnOrder.push('root-a');
+  projection.turnsById['root-a'] = {
+    id: 'root-a', rootId: 'root-a', status: 'running',
+    messageIds: ['message-user', 'message-agent'], activityIds: ['tool-a', 'approval-a'],
+    participantIds: ['participant-a'], createdAtMs: 100, updatedAtMs: 130,
+  };
+  return projection;
+}
+
+function publishSteer(projection: ReturnType<typeof roomProjection>, sequence: number) {
+  projection.messageOrder.push('message-steer');
+  projection.turnsById['root-a']!.messageIds.push('message-steer');
+  projection.messagesById['message-steer'] = {
+    id: 'message-steer', roomId: projection.roomId, turnId: 'root-a', participantId: null,
+    sourceSessionId: '', role: 'user', status: 'completed', text: '改成先做迁移脚本',
+    projectionKind: 'post', sequence, createdAtMs: 200,
+  };
+}
 
 function roomProjection() {
   const projection = createRoomProjection('room-live');

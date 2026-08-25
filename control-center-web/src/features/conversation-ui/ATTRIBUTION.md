@@ -60,6 +60,12 @@ imports nothing from any host repository. Its stated host boundary is a single
   `renderMessageFooter` let a host keep Runtime-specific presentation (pending
   approvals, structured tool evidence, background process links) inside the
   shared card without forking the card.
+- **The steer receipt states delivery, not reading.** The package times
+  `unread → read` from its own reducer. PAWOS derives them from the Room
+  projection instead — the reducer's optimistic flag, then the Root's own
+  published events — so the copy says 尚未送达伙伴 / 已送达伙伴 rather than
+  claiming a partner has read the message. `settling` and `done` fade back to a
+  plain timestamp exactly as the package does.
 - **Pinning is instant.** The package re-pins from a `ResizeObserver`
   observation. That is right for later growth of a mounted row (streamed text,
   an opened disclosure) but a frame late for the transcript itself, so
