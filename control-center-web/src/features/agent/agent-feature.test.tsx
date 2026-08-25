@@ -3583,13 +3583,13 @@ describe('Agent experience', () => {
     renderAgent(transport);
 
     await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
-    const attachmentButton = await screen.findByRole('button', { name: '添加图片' });
+    const attachmentButton = await screen.findByRole('button', { name: '添加附件' });
     expect(attachmentButton).toBeVisible();
     expect(attachmentButton).toBeEnabled();
     await user.click(attachmentButton);
 
+    // No accepts filter: the picker takes any file, not only the image set.
     expect(transport.filePickCalls).toEqual([{
-      accepts: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
       multiple: true,
       purpose: 'attachment',
       sessionId: 'session-preview',
@@ -3598,7 +3598,7 @@ describe('Agent experience', () => {
     expect(await screen.findByText('screen.png')).toBeInTheDocument();
   });
 
-  it('leaves ordinary text paste alone and reports unsupported or oversized image files', async () => {
+  it('leaves ordinary text paste alone, imports non-image files, and rejects oversized ones', async () => {
     const transport = featureTransport();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
@@ -3606,16 +3606,18 @@ describe('Agent experience', () => {
     expect(fireEvent.paste(composer, { clipboardData: { files: [], getData: () => '普通文本' } })).toBe(true);
     expect(transport.imagePasteCalls).toHaveLength(0);
 
-    const unsupported = new File(['bad'], 'diagram.svg', { type: 'image/svg+xml' });
-    expect(fireEvent.paste(composer, { clipboardData: { files: [unsupported] } })).toBe(false);
-    expect(await screen.findByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、GIF 和 WebP');
-    expect(transport.imagePasteCalls).toHaveLength(0);
+    // Non-image files ride the same managed import path as images now.
+    const pastedDocument = new File(['{}'], 'notes.json', { type: 'application/json' });
+    expect(fireEvent.paste(composer, { clipboardData: { files: [pastedDocument] } })).toBe(false);
+    await waitFor(() => expect(transport.imagePasteCalls).toHaveLength(1));
+    expect(transport.imagePasteCalls[0]).toMatchObject({ sessionId: 'session-preview', maxFiles: 1 });
+    expect(transport.imagePasteCalls[0]?.files?.[0]?.name).toBe('notes.json');
 
     const oversized = new File(['x'], 'huge.webp', { type: 'image/webp' });
     Object.defineProperty(oversized, 'size', { value: 20 * 1024 * 1024 + 1 });
     fireEvent.paste(composer, { clipboardData: { files: [oversized] } });
     expect(await screen.findByRole('alert')).toHaveTextContent('必须小于 20 MiB');
-    expect(transport.imagePasteCalls).toHaveLength(0);
+    expect(transport.imagePasteCalls).toHaveLength(1);
   });
 
   it('asks the native host to read the system pasteboard when WebKit hides the image File', async () => {
@@ -3623,7 +3625,7 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
     await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
-    expect(screen.getByRole('button', { name: '添加图片' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '添加附件' })).toBeEnabled();
 
     expect(fireEvent.paste(composer, {
       clipboardData: {
@@ -3650,11 +3652,12 @@ describe('Agent experience', () => {
     ]));
   });
 
-  it('disables image selection and explains paste rejection for a Pi text-only model', async () => {
+  it('keeps attachments open for a Pi text-only model and blocks image sends with an explanation', async () => {
     const catalog = previewModelCatalog('session-preview');
     catalog.selected = { provider: 'deepseek', id: 'deepseek-v4' };
     catalog.thinkingLevel = 'off';
     const transport = featureTransport(catalog);
+    const user = userEvent.setup();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
 
@@ -3662,12 +3665,17 @@ describe('Agent experience', () => {
       name: '模型：DeepSeek V4 · DeepSeek，思考强度：不启用推理',
     });
     expect(modelPicker).toHaveTextContent('DeepSeek V4 · DeepSeek · 不启用推理');
-    expect(screen.getByRole('button', { name: '当前模型不支持图片' })).toBeDisabled();
+    // Documents still attach on a text-only model; only images are the problem.
+    expect(screen.getByRole('button', { name: '添加附件（当前模型不识别图片）' })).toBeEnabled();
 
     const image = new File(['png'], 'clipboard.png', { type: 'image/png' });
     expect(fireEvent.paste(composer, { clipboardData: { files: [image] } })).toBe(false);
-    expect(await screen.findByRole('alert')).toHaveTextContent('当前模型不支持图片');
-    expect(transport.imagePasteCalls).toHaveLength(0);
+    await waitFor(() => expect(transport.imagePasteCalls).toHaveLength(1));
+    expect(await screen.findByText('screen.png')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('当前模型不支持图片，请移除图片附件或切换到支持图片的模型。');
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(false);
   });
 
   it('loads the complete tool catalog and writes an explicit tool intent without faking execution', async () => {

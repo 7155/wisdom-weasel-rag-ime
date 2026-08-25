@@ -1,4 +1,8 @@
 import {
+  MAX_COMPOSER_ATTACHMENT_BYTES,
+  isComposerAttachmentMimeType,
+} from '@/contracts/attachment-policy';
+import {
   parseAgentEvent,
   parseContract,
   parseObservationEvent,
@@ -534,15 +538,15 @@ function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
   }
   if (options.purpose === 'attachment') {
     if (
-      MANAGED_AGENT_IMAGE_MIME_TYPES[value.mimeType] !== true ||
-      value.byteSize > MAX_MANAGED_AGENT_IMAGE_BYTES ||
+      !isComposerAttachmentMimeType(value.mimeType) ||
+      value.byteSize > MAX_COMPOSER_ATTACHMENT_BYTES ||
       !managedReceiptMatchesOwner(value, options) ||
       typeof value.sha256 !== 'string' ||
       !/^[a-f0-9]{64}$/.test(value.sha256) ||
       !/^media_[A-Za-z0-9_-]{12,80}$/.test(value.id) ||
       'path' in value
     ) {
-      throw new NativeBridgeCallError('pickFiles returned an invalid managed image receipt');
+      throw new NativeBridgeCallError('pickFiles returned an invalid managed attachment receipt');
     }
   } else if (
     typeof value.path !== 'string'
@@ -685,14 +689,6 @@ function isSafeKnowledgeId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value);
 }
 
-const MANAGED_AGENT_IMAGE_MIME_TYPES: Record<string, true> = {
-  'image/png': true,
-  'image/jpeg': true,
-  'image/gif': true,
-  'image/webp': true,
-};
-const MAX_MANAGED_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
-
 function hasExactlyOneManagedOwner(
   options: { sessionId?: unknown; roomId?: unknown },
 ): boolean {
@@ -733,17 +729,19 @@ function assertAgentImagePasteOptions(options: AgentImagePasteOptions): number {
     throw new TypeError('Agent image paste files exceed maxFiles');
   }
   for (const file of files ?? []) {
+    // Native paste reads the trusted system pasteboard; browser File objects
+    // are evidence only, so any named non-empty file within the byte cap is
+    // acceptable regardless of its (often missing) browser MIME type.
     if (
       typeof file?.name !== 'string' ||
       !file.name ||
       file.name.length > 512 ||
       file.name.includes('\u0000') ||
-      MANAGED_AGENT_IMAGE_MIME_TYPES[String(file.type).toLowerCase()] !== true ||
       !Number.isSafeInteger(file.size) ||
       file.size <= 0 ||
-      file.size > MAX_MANAGED_AGENT_IMAGE_BYTES
+      file.size > MAX_COMPOSER_ATTACHMENT_BYTES
     ) {
-      throw new TypeError('Agent image paste received an invalid image file');
+      throw new TypeError('Agent file paste received an invalid file');
     }
   }
   return maxFiles;

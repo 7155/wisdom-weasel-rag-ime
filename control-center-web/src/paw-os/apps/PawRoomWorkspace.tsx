@@ -24,6 +24,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
+import { isComposerAttachmentMimeType } from '@/contracts/attachment-policy';
 import type { RoomActivityProjection, RoomAttachmentReceipt, RoomMessageProjection, RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { ControlRequest, PickedFile } from '@/platform/transport';
@@ -94,8 +95,6 @@ const roomToolPanelIcons: Record<RoomToolPanel, LucideIcon> = {
   focus: Focus,
   governance: Settings2,
 };
-
-const imageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export function PawRoomWorkspace({
   initialDraft,
@@ -313,33 +312,32 @@ export function PawRoomWorkspace({
     }
   }
 
-  async function pickImages(): Promise<void> {
-    if (!transport.pickFiles) { setError('当前环境不能选择图片。'); return; }
+  async function pickAttachments(): Promise<void> {
+    if (!transport.pickFiles) { setError('当前环境不能选择附件。'); return; }
     try {
       const imported = await transport.pickFiles({
         purpose: 'attachment',
         roomId: recordId,
-        accepts: [...imageTypes],
         multiple: true,
         maxFiles: Math.max(1, 8 - attachments.length),
       });
-      mergePickedImages(imported);
-    } catch (reason) { setError(publicErrorText(reason, '图片没有导入，请重试。')); }
+      mergePickedAttachments(imported);
+    } catch (reason) { setError(publicErrorText(reason, '附件没有导入，请重试。')); }
   }
 
-  async function pasteImages(files?: File[]): Promise<void> {
-    if (!transport.pasteImages) { setError('当前环境不能导入剪贴板图片。'); return; }
+  async function pasteFiles(files?: File[]): Promise<void> {
+    if (!transport.pasteImages) { setError('当前环境不能导入剪贴板文件。'); return; }
     try {
       const imported = await transport.pasteImages({
         roomId: recordId,
         ...(files?.length ? { files } : {}),
         maxFiles: files?.length || Math.max(1, 8 - attachments.length),
       });
-      mergePickedImages(imported);
-    } catch (reason) { setError(publicErrorText(reason, '图片没有导入，请重试。')); }
+      mergePickedAttachments(imported);
+    } catch (reason) { setError(publicErrorText(reason, '附件没有导入，请重试。')); }
   }
 
-  function mergePickedImages(files: PickedFile[]): void {
+  function mergePickedAttachments(files: PickedFile[]): void {
     const receipts = files.map((file) => roomAttachment(file, recordId));
     setAttachments((current) => {
       const byId = new Map(current.map((item) => [item.mediaId, item]));
@@ -474,9 +472,9 @@ export function PawRoomWorkspace({
                   onDraftChange={setDraft}
                   onSend={(value) => void send(value, { question: pendingQuestion?.roomId === recordId ? pendingQuestion : undefined })}
                   onAttachmentsChange={setAttachments}
-                  onPasteImages={(files) => void pasteImages(files)}
-                  onPasteFromClipboard={() => void pasteImages()}
-                  onPickAttachments={() => void pickImages()}
+                  onPasteImages={(files) => void pasteFiles(files)}
+                  onPasteFromClipboard={() => void pasteFiles()}
+                  onPickAttachments={() => void pickAttachments()}
                 />
               )}
           </div>
@@ -1177,8 +1175,8 @@ function PawRoomGovernanceInner({
 }
 
 function roomAttachment(file: PickedFile, roomId: string): RoomAttachmentReceipt {
-  if (file.roomId !== roomId || !imageTypes.has(file.mimeType) || !file.sha256) throw new TypeError('Room 图片回执无效。');
-  return { mediaId: file.id, roomId, fileName: file.name.slice(0, 160) || '图片', mimeType: file.mimeType as RoomAttachmentReceipt['mimeType'], byteSize: file.byteSize, sha256: file.sha256 };
+  if (file.roomId !== roomId || !isComposerAttachmentMimeType(file.mimeType) || !file.sha256) throw new TypeError('Room 附件回执无效。');
+  return { mediaId: file.id, roomId, fileName: file.name.slice(0, 160) || '附件', mimeType: file.mimeType.toLowerCase(), byteSize: file.byteSize, sha256: file.sha256 };
 }
 
 function roomFromResponse(value: unknown): RoomSummary | undefined {

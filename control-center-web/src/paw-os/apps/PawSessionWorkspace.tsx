@@ -620,11 +620,22 @@ export function PawSessionWorkspace({
     } catch (reason) { setError(errorText(reason)); }
   }
 
-  async function pasteImages(files?: File[]): Promise<void> {
-    if (!transport.pasteImages) { setError('当前环境不能导入剪贴板图片。'); return; }
+  async function pasteFiles(files?: File[]): Promise<void> {
+    if (!transport.pasteImages) { setError('当前环境不能导入剪贴板文件。'); return; }
     try {
       const imported = await transport.pasteImages({ sessionId: recordId, ...(files?.length ? { files } : {}), maxFiles: Math.max(1, 8 - attachments.length) });
-      setAttachments((current) => mergeAttachments(current, imported.map((item) => ({ ...item, source: 'clipboard' as const }))));
+      // Browser transports echo the pasted bytes back as receipts; reusing the
+      // local File gives image chips an instant thumbnail before upload settles.
+      setAttachments((current) => mergeAttachments(current, imported.map((item, index) => {
+        const file = files?.[index];
+        const previewFile = file
+          && file.name === item.name
+          && file.size === item.byteSize
+          && transport.kind !== 'native'
+          ? { previewFile: file }
+          : {};
+        return { ...item, source: 'clipboard' as const, ...previewFile };
+      })));
     } catch (reason) { setError(errorText(reason)); }
   }
 
@@ -1041,8 +1052,8 @@ export function PawSessionWorkspace({
                 onCancelEdit={cancelEdit}
                 onEditPrevious={() => void beginEditMessage()}
                 onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)}
-                onPasteFromClipboard={() => void pasteImages()}
-                onPasteImages={(files) => void pasteImages(files)}
+                onPasteFromClipboard={() => void pasteFiles()}
+                onPasteImages={(files) => void pasteFiles(files)}
                 onPickAttachments={() => void pickAttachments()}
                 onProductCommand={runProductCommand}
                 onSend={(delivery, value) => void send(delivery, value)}

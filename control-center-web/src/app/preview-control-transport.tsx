@@ -1,3 +1,7 @@
+import {
+  MAX_COMPOSER_ATTACHMENT_BYTES,
+  normalizeComposerAttachmentMimeType,
+} from '@/contracts/attachment-policy';
 import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/routes';
 import type {
   AgentImagePasteOptions,
@@ -1238,13 +1242,6 @@ export function createPreviewTransport(): MockControlTransport {
   return previewTransport;
 }
 
-const PREVIEW_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-]);
-
 async function previewImagePaste(
   options: AgentImagePasteOptions,
 ): Promise<PickedFile[]> {
@@ -1254,29 +1251,25 @@ async function previewImagePaste(
     || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(ownerId)
     || (options.roomId !== undefined && options.sessionId !== undefined)
   ) {
-    throw new TypeError('Preview image paste requires exactly one bounded sessionId or roomId');
+    throw new TypeError('Preview file paste requires exactly one bounded sessionId or roomId');
   }
   const owner = options.roomId ? { roomId: ownerId } : { sessionId: ownerId };
   const files = Array.from(options.files ?? []);
   if (!files.length) return [];
   const maxFiles = options.maxFiles ?? files.length;
   if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 8 || files.length > maxFiles) {
-    throw new TypeError('Preview image paste requires between 1 and 8 files within maxFiles');
+    throw new TypeError('Preview file paste requires between 1 and 8 files within maxFiles');
   }
   const receipts: PickedFile[] = [];
   for (const file of files.slice(0, maxFiles)) {
-    if (
-      !PREVIEW_IMAGE_MIME_TYPES.has(file.type.toLowerCase())
-      || file.size <= 0
-      || file.size > 20 * 1024 * 1024
-    ) {
-      throw new TypeError('Preview image paste accepts only non-empty PNG, JPEG, GIF, or WebP files up to 20 MiB');
+    if (file.size <= 0 || file.size > MAX_COMPOSER_ATTACHMENT_BYTES) {
+      throw new TypeError('Preview file paste accepts only non-empty files up to 20 MiB');
     }
     const sha256 = await previewSha256(file);
     receipts.push({
       id: `media_preview_${sha256.slice(0, 24)}`,
-      name: file.name || 'clipboard-image',
-      mimeType: file.type.toLowerCase(),
+      name: file.name || 'clipboard-file',
+      mimeType: normalizeComposerAttachmentMimeType(file.type),
       byteSize: file.size,
       ...owner,
       sha256,

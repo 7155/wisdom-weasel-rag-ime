@@ -1244,6 +1244,8 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-composer__attachment-chip { display: inline-flex; min-height: var(--space-12); flex: 0 0 auto; align-items: center; gap: var(--space-2); padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface-subtle); font-size: 13px; animation: agent-attachment-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-composer__attachment-chip > img { width: var(--space-10); height: var(--space-10); border-radius: var(--radius-1); background: var(--color-surface); object-fit: cover; }
 .agent-composer__attachment-chip > svg { width: var(--space-5); height: var(--space-5); margin: 0 var(--space-2); color: var(--color-text-tertiary); }
+/* Non-image files show their type as a compact badge, never a broken thumbnail. */
+.agent-composer__attachment-badge { display: grid; min-width: var(--space-10); height: var(--space-10); flex: 0 0 auto; place-items: center; padding: 0 4px; border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 12px; font-style: normal; font-weight: var(--font-weight-semibold); letter-spacing: .04em; }
 .agent-composer__attachment-chip > b { overflow: hidden; max-width: 18ch; text-overflow: ellipsis; white-space: nowrap; }
 .agent-composer__attachment-chip > button { display: grid; width: var(--space-6); height: var(--space-6); place-items: center; border: 0; border-radius: var(--radius-round); background: transparent; cursor: pointer; }
 .agent-composer__attachment-chip > button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }

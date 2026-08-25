@@ -1919,7 +1919,7 @@ describe('Rooms experience', () => {
     fireEvent.paste(composer, {
       clipboardData: { files: [image], items: [], getData: () => '' },
     });
-    expect(await screen.findByLabelText('移除图片：diagram.png')).toBeInTheDocument();
+    expect(await screen.findByLabelText('移除 diagram.png')).toBeInTheDocument();
     expect(transport.imagePasteCalls).toEqual([expect.objectContaining({
       roomId: 'room-a',
       maxFiles: 1,
@@ -1966,9 +1966,9 @@ describe('Rooms experience', () => {
       sha256: 'b'.repeat(64),
     }]);
     await waitFor(() => expect(transport.pasteImages).toHaveBeenCalledTimes(1));
-    expect(screen.queryByLabelText('移除图片：late.png')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('移除 late.png')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '打开协作空间：Room A' }));
-    expect(await screen.findByLabelText('移除图片：late.png')).toBeInTheDocument();
+    expect(await screen.findByLabelText('移除 late.png')).toBeInTheDocument();
   });
 
   it('keeps newer attachment receipts ahead of restored receipts when a pending send fails', async () => {
@@ -2004,7 +2004,7 @@ describe('Rooms experience', () => {
         getData: () => '',
       },
     });
-    expect(await screen.findByLabelText('移除图片：submitted-a.png')).toBeInTheDocument();
+    expect(await screen.findByLabelText('移除 submitted-a.png')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
     await waitFor(() => expect(
       transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
@@ -2017,22 +2017,22 @@ describe('Rooms experience', () => {
         getData: () => '',
       },
     });
-    expect(await screen.findByLabelText('移除图片：new-7.png')).toBeInTheDocument();
+    expect(await screen.findByLabelText('移除 new-7.png')).toBeInTheDocument();
     pendingSend.reject(new Error('send failed'));
     await screen.findByRole('alert');
 
-    const restored = within(screen.getByLabelText('待发送图片'))
+    const restored = within(screen.getByLabelText('待发送附件'))
       .getAllByRole('button')
       .map((button) => button.getAttribute('aria-label'));
     expect(restored).toEqual([
-      '移除图片：newer-duplicate.png',
-      '移除图片：new-2.png',
-      '移除图片：new-3.png',
-      '移除图片：new-4.png',
-      '移除图片：new-5.png',
-      '移除图片：new-6.png',
-      '移除图片：new-7.png',
-      '移除图片：submitted-b.png',
+      '移除 newer-duplicate.png',
+      '移除 new-2.png',
+      '移除 new-3.png',
+      '移除 new-4.png',
+      '移除 new-5.png',
+      '移除 new-6.png',
+      '移除 new-7.png',
+      '移除 submitted-b.png',
     ]);
   });
 

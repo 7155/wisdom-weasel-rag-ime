@@ -1,4 +1,8 @@
 import {
+  MAX_COMPOSER_ATTACHMENT_BYTES,
+  normalizeComposerAttachmentMimeType,
+} from '@/contracts/attachment-policy';
+import {
   parseAgentEvent,
   parseContract,
   parseObservationEvent,
@@ -132,9 +136,12 @@ export class HttpControlTransport implements ControlTransport {
   }
 
   async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
-    const { files, maxFiles, ownerKey, ownerId } = assertHttpImagePasteOptions(options);
+    const { files, maxFiles, ownerKey, ownerId } = assertHttpFilePasteOptions(options);
     const receipts: PickedFile[] = [];
     for (const file of files.slice(0, maxFiles)) {
+      // Pasted code/text/archive files often carry no browser MIME type;
+      // they import as octet-stream instead of being refused.
+      const mimeType = normalizeComposerAttachmentMimeType(file.type);
       const url = new URL('/api/agent/media/import', this.baseUrl);
       url.searchParams.set(ownerKey, ownerId);
       url.searchParams.set('fileName', file.name);
@@ -142,7 +149,7 @@ export class HttpControlTransport implements ControlTransport {
         method: 'POST',
         headers: new Headers({
           Accept: 'application/json',
-          'Content-Type': file.type.toLowerCase(),
+          'Content-Type': mimeType,
           'Cache-Control': 'no-store',
         }),
         body: file,
@@ -158,6 +165,7 @@ export class HttpControlTransport implements ControlTransport {
         ownerKey,
         ownerId,
         file,
+        mimeType,
       }));
     }
     return receipts;
@@ -484,15 +492,7 @@ function isSnapshotRequired(event: unknown): boolean {
   );
 }
 
-const HTTP_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-]);
-const MAX_HTTP_IMAGE_BYTES = 20 * 1024 * 1024;
-
-function assertHttpImagePasteOptions(options: AgentImagePasteOptions): {
+function assertHttpFilePasteOptions(options: AgentImagePasteOptions): {
   files: File[];
   maxFiles: number;
   ownerKey: 'sessionId' | 'roomId';
@@ -505,15 +505,15 @@ function assertHttpImagePasteOptions(options: AgentImagePasteOptions): {
     || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(ownerId)
     || (options.roomId !== undefined && options.sessionId !== undefined)
   ) {
-    throw new TypeError('HTTP image paste requires exactly one bounded sessionId or roomId');
+    throw new TypeError('HTTP file paste requires exactly one bounded sessionId or roomId');
   }
   const files = Array.from(options.files ?? []);
   if (!files.length) {
-    throw new TypeError('Browser image paste requires clipboard File objects; use the native app when WebKit hides clipboard files');
+    throw new TypeError('Browser file paste requires clipboard File objects; use the native app when WebKit hides clipboard files');
   }
   const maxFiles = options.maxFiles ?? files.length;
   if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 8 || files.length > maxFiles) {
-    throw new TypeError('HTTP image paste requires between 1 and 8 files within maxFiles');
+    throw new TypeError('HTTP file paste requires between 1 and 8 files within maxFiles');
   }
   for (const file of files) {
     if (
@@ -521,11 +521,10 @@ function assertHttpImagePasteOptions(options: AgentImagePasteOptions): {
       || !file.name
       || file.name.length > 512
       || file.name.includes('\u0000')
-      || !HTTP_IMAGE_MIME_TYPES.has(file.type.toLowerCase())
       || file.size <= 0
-      || file.size > MAX_HTTP_IMAGE_BYTES
+      || file.size > MAX_COMPOSER_ATTACHMENT_BYTES
     ) {
-      throw new TypeError('HTTP image paste received an invalid PNG, JPEG, GIF, or WebP file');
+      throw new TypeError('HTTP file paste accepts only named, non-empty files up to 20 MiB');
     }
   }
   return { files, maxFiles, ownerKey, ownerId };
@@ -537,6 +536,7 @@ function parseAgentMediaImportResponse(
     ownerKey: 'sessionId' | 'roomId';
     ownerId: string;
     file: File;
+    mimeType: string;
   },
 ): PickedFile {
   if (
@@ -557,7 +557,7 @@ function parseAgentMediaImportResponse(
     || media[oppositeOwnerKey] !== undefined
     || media.ownerType !== (expected.ownerKey === 'roomId' ? 'room' : 'session')
     || media.ownerId !== expected.ownerId
-    || media.mimeType !== expected.file.type.toLowerCase()
+    || media.mimeType !== expected.mimeType
     || media.byteSize !== expected.file.size
     || media.origin !== 'user_attachment'
     || typeof media.sha256 !== 'string'
@@ -572,7 +572,7 @@ function parseAgentMediaImportResponse(
   return {
     id: media.mediaId,
     name: media.fileName,
-    mimeType: expected.file.type.toLowerCase(),
+    mimeType: expected.mimeType,
     byteSize: expected.file.size,
     [expected.ownerKey]: expected.ownerId,
     sha256: media.sha256,
