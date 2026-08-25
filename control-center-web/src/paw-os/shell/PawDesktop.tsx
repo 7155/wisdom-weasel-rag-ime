@@ -8,6 +8,7 @@ import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 import { PawCompositionField } from './PawCompositionField';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuItem } from './PawContextMenu';
+import { PawFieldLede } from './PawFieldLede';
 import { PawWayfinderWork } from './PawWayfinderWork';
 import { PawWindowLayer } from './PawWindowLayer';
 import { pawBrowserHost } from '../apps/paw-browser-host';
@@ -18,10 +19,15 @@ type PawMenuTarget =
   | { kind: 'apps'; appIds: PawAppId[]; label: string }
   | { kind: 'window'; windowId: string; label: string };
 
-const LAUNCHPAD_KIND_ORDER = ['work', 'agent', 'tool', 'system'] as const;
-const LAUNCHPAD_KIND_LABEL: Record<(typeof LAUNCHPAD_KIND_ORDER)[number], string> = {
+/* The archive is grouped the way the machine is actually laid out: where work
+ * is done, where what came out of it is kept, what the work reaches for, and
+ * what runs underneath. The previous grouping split 工作 from Agent, which put
+ * two lone tiles on their own rows above everything else and made eleven Apps
+ * read as a half-empty shelf. */
+const LAUNCHPAD_GROUP_ORDER = ['work', 'library', 'tool', 'system'] as const;
+const LAUNCHPAD_GROUP_LABEL: Record<(typeof LAUNCHPAD_GROUP_ORDER)[number], string> = {
   work: '工作',
-  agent: 'Agent',
+  library: '记忆与知识',
   tool: '工具',
   system: '系统',
 };
@@ -445,9 +451,10 @@ function PawMenuClock() {
 }
 
 /* The Wayfinder is the desktop's heaviest resting subtree: the wallpaper, the
- * recent-work panel and the identity column. Its props are the two stable
- * callbacks plus the selection set, so clock ticks, menus, focus changes and
- * every lasso frame that crosses no new identity leave it untouched. */
+ * lede, the identity rail and the recent-work panel. Its props are the two
+ * stable callbacks plus the selection set, so clock ticks, menus, focus
+ * changes and every lasso frame that crosses no new identity leave it
+ * untouched. */
 const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
   onOpen: (id: PawAppId) => void;
   onSelect: (id: PawAppId, additive: boolean) => void;
@@ -476,44 +483,52 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
     buttons[next]?.focus();
   };
   return (
-    <section className="paw-wayfinder" aria-label="Project Field">
+    <section className="paw-wayfinder" aria-label="项目场">
       <div aria-hidden="true" className="paw-field-media">
         <PawCompositionField effects />
       </div>
-      <PawWayfinderWork />
-      {/* The first viewport leads with the actionable list: one dense
-          Wayfinder instrument over the fog field instead of a sparse icon
-          scatter. Each row keeps the selection/open contracts (click selects,
-          double-click or Enter opens) and mirrors the Dock's open/minimized
-          running language so live work is visible from the desktop. */}
-      <div className="paw-desktop-shortcuts" aria-label="桌面 App" onKeyDown={walkShortcuts} ref={shortcutsRef}>
-        <header aria-hidden="true">项目场</header>
-        {desktopApps.map((id) => {
-          const open = running.open.has(id);
-          const minimizedOnly = open && !running.visible.has(id);
-          return (
-            <button
-              aria-selected={selectedApps.has(id) || undefined}
-              data-app={id}
-              data-desktop-app={id}
-              data-minimized={minimizedOnly || undefined}
-              data-open={open || undefined}
-              key={id}
-              onClick={(event) => onSelect(id, event.shiftKey || event.metaKey || event.ctrlKey)}
-              onDoubleClick={() => onOpen(id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') onOpen(id);
-              }}
-              title={minimizedOnly ? `${pawApp(id).shortLabel} · 已最小化` : open ? `${pawApp(id).shortLabel} · 运行中` : undefined}
-              type="button"
-            >
-              <span><PawAppIcon appId={id} size={28} /></span>
-              <strong>{pawApp(id).shortLabel}</strong>
-              <i aria-hidden="true" />
-            </button>
-          );
-        })}
+      {/* The first viewport is one composition, not two matching corner cards
+          around an empty middle: a single column states what the machine is
+          for and indexes the identities directly underneath that sentence,
+          and recent work keeps the opposite corner as the one live
+          instrument. The column's ground is a feathered opening in the fog,
+          so the type belongs to the picture instead of sitting on a card. */}
+      <div className="paw-field-stage">
+        <PawFieldLede onOpen={onOpen} />
+        {/* The identity rail is the lede's index: same column, same ground.
+            Each tile keeps the selection/open contracts (click selects,
+            double-click or Enter opens) and mirrors the Dock's
+            open/minimized running language so live work is visible from the
+            desktop. */}
+        <div className="paw-desktop-shortcuts" aria-label="桌面 App" onKeyDown={walkShortcuts} ref={shortcutsRef}>
+          {desktopApps.map((id) => {
+            const open = running.open.has(id);
+            const minimizedOnly = open && !running.visible.has(id);
+            return (
+              <button
+                aria-selected={selectedApps.has(id) || undefined}
+                data-app={id}
+                data-desktop-app={id}
+                data-minimized={minimizedOnly || undefined}
+                data-open={open || undefined}
+                key={id}
+                onClick={(event) => onSelect(id, event.shiftKey || event.metaKey || event.ctrlKey)}
+                onDoubleClick={() => onOpen(id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') onOpen(id);
+                }}
+                title={minimizedOnly ? `${pawApp(id).shortLabel} · 已最小化` : open ? `${pawApp(id).shortLabel} · 运行中` : undefined}
+                type="button"
+              >
+                <span><PawAppIcon appId={id} size={28} /></span>
+                <strong>{pawApp(id).shortLabel}</strong>
+                <i aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
       </div>
+      <PawWayfinderWork />
     </section>
   );
 });
@@ -675,10 +690,10 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
     // header takes its own beat and its tiles follow, so the archive opens as
     // one choreography that reads in document order — section, then contents.
     let order = 0;
-    return LAUNCHPAD_KIND_ORDER.flatMap((kind) => {
-      const apps = filtered.filter((app) => launchpadKind(app) === kind);
+    return LAUNCHPAD_GROUP_ORDER.flatMap((kind) => {
+      const apps = filtered.filter((app) => launchpadGroup(app) === kind);
       return apps.length
-        ? [{ kind, label: LAUNCHPAD_KIND_LABEL[kind], order: order++, apps: apps.map((app) => ({ app, order: order++ })) }]
+        ? [{ kind, label: LAUNCHPAD_GROUP_LABEL[kind], order: order++, apps: apps.map((app) => ({ app, order: order++ })) }]
         : [];
     });
   }, [filtered]);
@@ -757,9 +772,11 @@ function sameAppSelection(left: ReadonlySet<PawAppId>, right: ReadonlySet<PawApp
   return true;
 }
 
-function launchpadKind(app: PawAppDefinition): (typeof LAUNCHPAD_KIND_ORDER)[number] {
-  if (app.kind === 'work' && app.id !== 'project-workbench') return 'tool';
-  return app.kind;
+function launchpadGroup(app: PawAppDefinition): (typeof LAUNCHPAD_GROUP_ORDER)[number] {
+  if (app.id === 'memory' || app.id === 'knowledge') return 'library';
+  if (app.id === 'project-workbench' || app.kind === 'agent') return 'work';
+  if (app.kind === 'system') return 'system';
+  return 'tool';
 }
 
 function contextMenuAriaLabel(menu: PawMenuState, activeAppId: PawAppId | null): string {

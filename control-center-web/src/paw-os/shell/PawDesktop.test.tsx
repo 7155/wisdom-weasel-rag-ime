@@ -112,6 +112,30 @@ describe('PAWOS desktop', () => {
     expect(within(launcher).getByRole('heading', { name: '工具' })).toBeInTheDocument();
   });
 
+  it('groups the Launchpad archive the way the machine is laid out', () => {
+    renderDesktop();
+    fireEvent.click(screen.getByRole('button', { name: '全部 App' }));
+    const launcher = screen.getByRole('dialog', { name: '全部 App' });
+
+    // Where work is done, where what came out of it is kept, what the work
+    // reaches for, what runs underneath. Every App belongs to exactly one
+    // band, so eleven Apps read as a full shelf instead of lone tiles on
+    // their own rows.
+    const bands = new Map<string, string[]>();
+    let current = '';
+    for (const node of launcher.querySelectorAll('.paw-launchpad-group, .paw-launchpad [data-app]')) {
+      if (node.classList.contains('paw-launchpad-group')) {
+        current = node.textContent ?? '';
+        bands.set(current, []);
+      } else bands.get(current)?.push(node.getAttribute('data-app') ?? '');
+    }
+    expect([...bands.keys()]).toEqual(['工作', '记忆与知识', '工具', '系统']);
+    expect(bands.get('工作')).toEqual(['project-workbench', 'agent']);
+    expect(bands.get('记忆与知识')).toEqual(['memory', 'knowledge']);
+    expect(bands.get('系统')).toEqual(['system-monitor', 'system-settings']);
+    expect([...bands.values()].flat()).toHaveLength(pawApps.length);
+  });
+
   it('gives every Launchpad group header its own cascade beat ahead of its tiles', () => {
     renderDesktop();
     fireEvent.click(screen.getByRole('button', { name: '全部 App' }));
