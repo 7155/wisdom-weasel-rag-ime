@@ -95,6 +95,23 @@
 .paw-desktop-root .paw-room-focus-overview [data-state='completed'] .paw-room-focus-overview__state > i,
 .paw-desktop-root .paw-room-focus-overview__mission-state[data-state='completed'] > i { background: var(--focus-green); }
 
+/* 任务脉搏 — the four real counters as one proportional bar. Segment widths
+ * are the true counts; a zero count never draws a segment. */
+.paw-desktop-root .paw-room-focus-overview__pulse { display: grid; gap: 6px; }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  gap: 2px;
+  border-radius: 999px;
+  background: rgb(42 45 52 / .07);
+}
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i { min-width: 10px; flex-basis: 0; border-radius: 999px; transition: flex-grow 320ms cubic-bezier(.23, 1, .32, 1); }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='active'] { background: var(--focus-blue); animation: paw-room-focus-pulse-live 2.4s ease-in-out infinite; }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='review'] { background: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='blocked'] { background: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='completed'] { background: var(--focus-green); }
+
 .paw-desktop-root .paw-room-focus-overview__counts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -102,6 +119,7 @@
   margin: 0;
 }
 .paw-desktop-root .paw-room-focus-overview__counts > div { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 4px; padding: 7px 9px; border: 1px solid rgb(42 45 52 / .07); border-radius: 10px; background: rgb(255 255 255 / .8); }
+.paw-desktop-root .paw-room-focus-overview__counts > div[data-zero] { opacity: .62; }
 .paw-desktop-root .paw-room-focus-overview__counts dt { color: #858b95; font-size: 12px; }
 .paw-desktop-root .paw-room-focus-overview__counts dd { margin: 0; color: #363c46; font-size: 13px; font-weight: 680; font-variant-numeric: tabular-nums; }
 .paw-desktop-root .paw-room-focus-overview__counts [data-tone='active'] dd { color: var(--focus-blue); }
@@ -145,9 +163,66 @@
 .paw-desktop-root .paw-room-focus-overview__tree li[aria-selected='true'] button { background: rgb(39 131 222 / .075); box-shadow: inset 0 0 0 1px rgb(39 131 222 / .09); }
 .paw-desktop-root .paw-room-focus-overview__tree-node { display: grid; width: 16px; height: 16px; place-items: center; }
 .paw-desktop-root .paw-room-focus-overview__tree-node::before { position: absolute; width: 7px; height: 7px; border: 1px solid rgb(39 131 222 / .36); border-radius: 50%; background: #fff; content: ''; }
-.paw-desktop-root .paw-room-focus-overview__tree-copy { min-width: 0; display: grid; gap: 1px; }
+.paw-desktop-root .paw-room-focus-overview__tree-copy { min-width: 0; display: grid; gap: 2px; }
 .paw-desktop-root .paw-room-focus-overview__tree-copy strong { overflow: hidden; font-size: 12.5px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-overview__tree-copy small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Parallel wave header + rail: items dispatched in one real wave share a
+ * left rail so simultaneous tracks read as one gravity pull. */
+.paw-desktop-root .paw-room-focus-overview__wave {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 4px 7px 2px;
+  color: #6d7482;
+}
+.paw-desktop-root .paw-room-focus-overview__wave svg { align-self: center; color: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__wave strong { overflow: hidden; font-size: 12px; font-weight: 640; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__wave small { flex-shrink: 0; color: #949aa4; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-in-wave] { margin-left: 10px; }
+.paw-desktop-root .paw-room-focus-overview__tree > li[data-in-wave]::after {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: -4px;
+  border-left: 2px solid rgb(39 131 222 / .3);
+  border-radius: 2px;
+  content: '';
+}
+
+.paw-desktop-root .paw-room-focus-overview__tree-chips { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; }
+.paw-desktop-root .paw-room-focus-overview__lane-chip,
+.paw-desktop-root .paw-room-focus-overview__planet-chip,
+.paw-desktop-root .paw-room-focus-overview__verify-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid rgb(42 45 52 / .09);
+  border-radius: 999px;
+  color: #666e7a;
+  background: rgb(255 255 255 / .85);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+  white-space: nowrap;
+}
+.paw-desktop-root .paw-room-focus-overview__lane-chip { border-color: rgb(39 131 222 / .22); color: #206fae; background: rgb(39 131 222 / .05); font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-focus-overview__planet-chip > i { width: 6px; height: 6px; border-radius: 50%; background: #4b8fd0; }
+.paw-desktop-root .paw-room-focus-overview__planet-chip[data-orbit='1'] > i { background: #bd6355; }
+.paw-desktop-root .paw-room-focus-overview__planet-chip[data-orbit='2'] > i { background: #b9903f; }
+.paw-desktop-root .paw-room-focus-overview__planet-chip[data-orbit='3'] > i { background: #786bc2; }
+.paw-desktop-root .paw-room-focus-overview__verify-chip[data-verdict='passed'] { border-color: rgb(36 138 77 / .24); color: #1d7242; background: rgb(36 138 77 / .06); }
+.paw-desktop-root .paw-room-focus-overview__verify-chip[data-verdict='attention'] { border-color: rgb(198 71 71 / .24); color: #a13d3d; background: rgb(198 71 71 / .06); }
+.paw-desktop-root .paw-room-focus-overview__tree-blocker {
+  overflow: hidden;
+  color: #a13d3d;
+  font-size: 11.5px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .paw-desktop-root .paw-room-focus-overview__planet-list { display: grid; gap: 3px; margin: 0; padding: 5px; list-style: none; }
 .paw-desktop-root .paw-room-focus-overview__planet-list > li { min-width: 0; }
@@ -209,6 +284,33 @@
 .paw-desktop-root .paw-room-focus-overview__packet-detail dt { color: #949aa4; }
 .paw-desktop-root .paw-room-focus-overview__packet-detail dd { min-width: 0; margin: 0; overflow: hidden; color: #5e6673; font-family: var(--font-mono); text-overflow: ellipsis; white-space: pre-line; }
 
+/* Dispatch plan — the route decision as a readable route, not a dead label. */
+.paw-desktop-root .paw-room-focus-overview__dispatch-plan {
+  display: grid;
+  gap: 6px;
+  padding: 8px 9px;
+  border: 1px solid rgb(39 131 222 / .16);
+  border-radius: 10px;
+  background: rgb(39 131 222 / .04);
+}
+.paw-desktop-root .paw-room-focus-overview__dispatch-route { display: flex; min-width: 0; align-items: baseline; gap: 6px; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-route svg { align-self: center; flex-shrink: 0; color: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__dispatch-route b { font-size: 12.5px; font-weight: 680; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-route small { overflow: hidden; color: #8b929d; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-plan > dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 0; font-size: 12px; line-height: 16px; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-plan > dl > div { display: contents; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-plan dt { color: #7d8592; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-plan dd { min-width: 0; margin: 0; color: #454c58; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-objective { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates { font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates > summary { width: fit-content; color: #737a86; line-height: 17px; cursor: pointer; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates ul { display: grid; gap: 3px; margin: 5px 0 0; padding: 0; list-style: none; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 6px; padding: 2px 6px; border-radius: 6px; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates li[data-selected] { background: rgb(39 131 222 / .08); }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates li strong { font-size: 12px; font-weight: 640; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates li small { overflow: hidden; color: #8b929d; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__dispatch-candidates li span { color: #737a86; font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 .paw-desktop-root .paw-room-focus-overview__inspector { min-width: 0; display: grid; align-content: start; overflow: hidden; border: 1px solid rgb(39 131 222 / .14); border-radius: 13px; background: #fff; box-shadow: 0 10px 28px rgb(42 45 52 / .055); animation: paw-room-focus-inspector-enter 180ms cubic-bezier(.23, 1, .32, 1) both; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy { display: grid; gap: 3px; padding: 10px 11px 8px; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy > small { color: #8b929d; font-size: 12px; }
@@ -227,6 +329,18 @@
 .paw-desktop-root .paw-room-focus-overview__blocker { display: grid; gap: 2px; margin: 0 10px 8px; padding: 8px 9px; border-radius: 8px; color: #8c3636; background: rgb(198 71 71 / .07); }
 .paw-desktop-root .paw-room-focus-overview__blocker strong { font-size: 12px; }
 .paw-desktop-root .paw-room-focus-overview__blocker span { font-size: 12px; line-height: 16px; }
+.paw-desktop-root .paw-room-focus-overview__inspector-wave { display: flex; align-items: center; gap: 5px; margin: -2px 11px 8px; color: #206fae; font-size: 12px; line-height: 16px; }
+
+/* Dual-axis review verdict: operability and requirement stay two answers. */
+.paw-desktop-root .paw-room-focus-overview__review { display: grid; gap: 4px; margin: 0 10px 8px; padding: 8px 9px; border-radius: 8px; background: rgb(36 138 77 / .06); }
+.paw-desktop-root .paw-room-focus-overview__review[data-verdict='attention'] { background: rgb(198 71 71 / .07); }
+.paw-desktop-root .paw-room-focus-overview__review > span { display: inline-flex; align-items: center; gap: 5px; color: #1d7242; font-size: 12px; font-weight: 640; }
+.paw-desktop-root .paw-room-focus-overview__review[data-verdict='attention'] > span { color: #a13d3d; }
+.paw-desktop-root .paw-room-focus-overview__review > dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1px 8px; margin: 0; font-size: 12px; line-height: 16px; }
+.paw-desktop-root .paw-room-focus-overview__review > dl > div { display: contents; }
+.paw-desktop-root .paw-room-focus-overview__review dt { color: #7d8592; }
+.paw-desktop-root .paw-room-focus-overview__review dd { margin: 0; color: #454c58; font-weight: 600; }
+.paw-desktop-root .paw-room-focus-overview__review > p { margin: 0; color: #59616e; font-size: 12px; line-height: 16px; }
 .paw-desktop-root .paw-room-focus-overview__result { margin: 0 11px 8px; color: #59616e; font-size: 12px; line-height: 16px; }
 .paw-desktop-root .paw-room-focus-overview__evidence { display: grid; gap: 3px; margin: 0; padding: 0 10px 9px; list-style: none; }
 .paw-desktop-root .paw-room-focus-overview__evidence li { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; align-items: baseline; }
@@ -265,6 +379,11 @@
   to { opacity: 1; transform: none; }
 }
 
+@keyframes paw-room-focus-pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .68; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-room-focus-overview__inspector { animation: none; }
   .paw-desktop-root .paw-room-focus-overview :is(button, .paw-room-focus-overview__tree-node) { transition: none; }
@@ -272,7 +391,9 @@
   .paw-desktop-root .paw-room-focus-overview [data-state='running'] .paw-room-focus-overview__state > i,
   .paw-desktop-root .paw-room-focus-overview__mission-state[data-state='running'] > i,
   .paw-desktop-root .paw-room-focus-overview__planet-list > li[data-state='running'] .paw-room-focus-overview__planet > i,
+  .paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='active'],
   .paw-desktop-root .paw-room-focus-overview__packets > li:last-child > button { animation: none; }
+  .paw-desktop-root .paw-room-focus-overview__pulse-bar > i { transition: none; }
 }
 
 @media (max-width: 700px) {

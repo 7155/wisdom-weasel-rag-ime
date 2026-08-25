@@ -40,6 +40,17 @@ export interface RoomArtifact {
 
 export type RoomWorkState = 'queued' | 'active' | 'review' | 'blocked' | 'done' | 'failed' | 'cancelled';
 
+/** Dual-axis independent review verdict recorded on a WorkItem: operability
+ * (does it run) and requirement (does it satisfy the ask) stay separate. */
+export interface RoomWorkItemReview {
+  operabilityVerdict: string;
+  requirementVerdict: string;
+  evidenceRefs: string[];
+  reason: string;
+  reviewerParticipantId: string;
+  reviewedAtMs: number | null;
+}
+
 export interface RoomWorkItem {
   id: string;
   roomId: string;
@@ -61,6 +72,7 @@ export interface RoomWorkItem {
   resultSummary: string;
   artifactRefs: string[];
   evidenceRefs: string[];
+  review?: RoomWorkItemReview;
   blocker: Record<string, unknown>;
   acceptedTurnId: string;
   createdAtMs: number;
