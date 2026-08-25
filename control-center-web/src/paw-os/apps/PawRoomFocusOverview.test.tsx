@@ -21,8 +21,10 @@ const focus: RoomFocusProjection = {
       acceptanceCriteria: [],
       ownerParticipantId: 'p-venus',
       accountableParticipantId: 'p-venus',
+      verifierParticipantId: 'p-venus',
       state: 'review',
       reviewRequired: true,
+      review: { operability: 'passed', requirement: 'satisfied', reviewerParticipantId: 'p-venus' },
       latestResult: '两个实现分支已汇合。',
       evidence: [{ ref: 'test:room-focus', kind: 'evidence' }],
       updatedAtMs: 30,
@@ -37,6 +39,7 @@ const focus: RoomFocusProjection = {
       state: 'completed',
       currentAction: '任务图交互已通过测试',
       reviewRequired: false,
+      wave: { waveId: 'wave-a', phaseName: '并行实现两条支线', parallelIndex: 0, parallelSize: 2 },
       evidence: [],
       dispatchId: 'earth',
       updatedAtMs: 20,
@@ -51,6 +54,7 @@ const focus: RoomFocusProjection = {
       state: 'running',
       currentAction: '正在核对依赖投影',
       reviewRequired: false,
+      wave: { waveId: 'wave-a', phaseName: '并行实现两条支线', parallelIndex: 1, parallelSize: 2 },
       evidence: [],
       dispatchId: 'mars',
       updatedAtMs: 21,
@@ -120,6 +124,27 @@ const focus: RoomFocusProjection = {
       createdAtMs: 22,
       sequence: 2,
       dispatchId: 'mars',
+      dispatchPlan: {
+        dispatchId: 'mars',
+        parentDispatchId: 'earth-root',
+        child: true,
+        reason: 'partner_delegate',
+        reasonLabel: '伙伴委派',
+        routingPolicy: 'parallel',
+        routingPolicyLabel: '并行协作',
+        targetParticipantId: 'p-mars',
+        targetDisplayName: 'Agent 2',
+        waveId: 'wave-a',
+        phaseName: '并行实现两条支线',
+        parallelIndex: 1,
+        parallelSize: 2,
+        workItemId: 'runtime:mars',
+        workItemState: 'active',
+        candidates: [
+          { participantId: 'p-earth', displayName: 'Agent 1', score: 0, signals: [], selected: false },
+          { participantId: 'p-mars', displayName: 'Agent 2', score: 1, signals: ['explicit_invite'], selected: true },
+        ],
+      },
       refs: ['context://room/brief'],
     },
     {
@@ -179,6 +204,59 @@ describe('PawRoomFocusOverview', () => {
     expect(detail).toHaveTextContent('任务分派');
     expect(detail).toHaveTextContent('context://room/brief');
     expect(detail).toHaveTextContent('mars');
+  });
+
+  it('renders a selected route decision as a readable dispatch plan, not a dead label', () => {
+    render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+
+    const ledger = screen.getByRole('region', { name: '往来记录' });
+    fireEvent.click(within(ledger).getByRole('button', { name: /分派依赖投影支线/ }));
+    const plan = within(ledger).getByRole('group', { name: '分派方案' });
+
+    // Route, reason, policy and the parallel track all read as prose.
+    expect(plan).toHaveTextContent('Earth');
+    expect(plan).toHaveTextContent('Mars');
+    expect(plan).toHaveTextContent('伙伴委派 · 并行协作');
+    expect(plan).toHaveTextContent('轨道 2/2 · 并行实现两条支线');
+    expect(plan).toHaveTextContent('实现依赖数据投影');
+
+    // Candidate scoring stays reachable behind a disclosure.
+    fireEvent.click(within(plan).getByText('候选 2 位 · 选中 1 位'));
+    expect(plan).toHaveTextContent('explicit_invite · 1.0');
+  });
+
+  it('projects the pulse bar and the parallel wave lanes with owner and verifier planets', () => {
+    const { container } = render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+
+    // Pulse: proportional segments plus the exact numbers (进行1 复核1 完成1).
+    const pulse = screen.getByLabelText('协作摘要');
+    expect(pulse.querySelectorAll('.paw-room-focus-overview__pulse-bar > i')).toHaveLength(3);
+    expect(pulse).toHaveTextContent('进行');
+    expect(pulse).toHaveTextContent('复核');
+
+    const tree = screen.getByRole('tree', { name: '任务树' });
+    // The real wave groups both branches under one parallel header with tracks.
+    expect(within(tree).getByText('并行波次 · 并行实现两条支线')).toBeInTheDocument();
+    expect(within(tree).getByText('2 道轨道同时推进')).toBeInTheDocument();
+    expect(within(tree).getByText('∥ 轨道 1/2')).toBeInTheDocument();
+    expect(within(tree).getByText('∥ 轨道 2/2')).toBeInTheDocument();
+    // Owner planets and the dual-axis verifier chip stay text, not just color.
+    expect(within(tree).getByText('负责 Earth')).toBeInTheDocument();
+    expect(within(tree).getByText('负责 Mars')).toBeInTheDocument();
+    expect(within(tree).getByText(/复核 Venus ✓✓/)).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-in-wave]')).toHaveLength(2);
+  });
+
+  it('answers the dual-axis review verdict inside the inspector', () => {
+    render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+
+    // work-root (review state) is the default selection.
+    const inspector = screen.getByRole('region', { name: '焦点详情' });
+    expect(inspector).toHaveTextContent('独立复核 · Venus');
+    expect(inspector).toHaveTextContent('可运行');
+    expect(inspector).toHaveTextContent('通过');
+    expect(inspector).toHaveTextContent('符合需求');
+    expect(inspector).toHaveTextContent('满足');
   });
 
   it('windows a long ledger to the recent slice until the reader asks for everything', () => {

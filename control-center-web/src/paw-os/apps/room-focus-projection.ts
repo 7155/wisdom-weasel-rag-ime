@@ -5,6 +5,13 @@ import type {
 } from '@/contracts/room-reducer';
 import { roomActivityFlowKind, roomFlowRefs } from '@/features/rooms/room-flow-projection';
 import type { RoomSummary, RoomWorkItem, RoomWorkState } from '@/features/rooms/room-types';
+import {
+  roomDispatchPlanFromActivity,
+  roomDispatchPlans,
+  roomDispatchPlanSummary,
+  roomDispatchSourceParticipantId,
+  type RoomDispatchPlan,
+} from './room-gravity-projection';
 
 export type RoomFocusState =
   | 'idle'
@@ -27,6 +34,23 @@ export interface RoomFocusBlocker {
   nextStep?: string;
 }
 
+/** Dual-axis independent review outcome: operability (does it run) and
+ * requirement (does it satisfy the ask), plus which planet verified it. */
+export interface RoomFocusReview {
+  operability: string;
+  requirement: string;
+  reviewerParticipantId?: string;
+  reason?: string;
+}
+
+/** Which parallel wave a WorkItem was dispatched inside, from route_decision. */
+export interface RoomFocusWaveSlot {
+  waveId: string;
+  phaseName?: string;
+  parallelIndex: number;
+  parallelSize: number;
+}
+
 export interface RoomFocusWorkItem {
   id: string;
   parentId?: string;
@@ -37,10 +61,13 @@ export interface RoomFocusWorkItem {
   ownerParticipantId?: string;
   offeredToParticipantId?: string;
   accountableParticipantId?: string;
+  verifierParticipantId?: string;
   state: RoomFocusState;
   currentAction?: string;
   blocker?: RoomFocusBlocker;
   reviewRequired: boolean;
+  review?: RoomFocusReview;
+  wave?: RoomFocusWaveSlot;
   latestResult?: string;
   evidence: RoomFocusEvidence[];
   dispatchId?: string;
@@ -97,6 +124,8 @@ export interface RoomFocusPacket {
   sequence: number;
   dispatchId?: string;
   workItemId?: string;
+  /** Present on real routing decisions: how this assignment was made. */
+  dispatchPlan?: RoomDispatchPlan;
   refs: string[];
 }
 
@@ -133,7 +162,21 @@ export function buildRoomFocusProjection(
 ): RoomFocusProjection {
   const activities = orderedActivities(projection);
   const messages = orderedMessages(projection);
-  const explicit = orderedWorkItems(room.workItems ?? []).map((item) => explicitFocusWork(item, activities));
+  const dispatchPlans = roomDispatchPlans(activities);
+  const wavesByWorkItem = new Map<string, RoomFocusWaveSlot>();
+  const wavesByDispatch = new Map<string, RoomFocusWaveSlot>();
+  for (const plan of dispatchPlans) {
+    if (!plan.waveId) continue;
+    const slot: RoomFocusWaveSlot = {
+      waveId: plan.waveId,
+      ...(plan.phaseName ? { phaseName: plan.phaseName } : {}),
+      parallelIndex: plan.parallelIndex,
+      parallelSize: plan.parallelSize,
+    };
+    if (plan.workItemId) wavesByWorkItem.set(plan.workItemId, slot);
+    if (plan.dispatchId) wavesByDispatch.set(plan.dispatchId, slot);
+  }
+  const explicit = orderedWorkItems(room.workItems ?? []).map((item) => explicitFocusWork(item, activities, wavesByWorkItem));
   const rootByTurn = new Map<string, RoomFocusWorkItem>();
   for (const item of room.workItems ?? []) {
     if (item.parentWorkId) continue;
@@ -141,7 +184,13 @@ export function buildRoomFocusProjection(
     if (focus && item.rootTurnId) rootByTurn.set(item.rootTurnId, focus);
   }
   const defaultRoot = explicit.find((item) => !item.parentId);
-  const runtime = runtimeFocusWork(activities, rootByTurn, defaultRoot);
+  /* Dispatches whose route decision binds them to an explicit WorkItem are the
+   * WorkItem — the tree must not show the same task twice. */
+  const explicitIds = new Set(explicit.map((item) => item.id));
+  const coveredDispatchIds = new Set(dispatchPlans
+    .filter((plan) => plan.dispatchId && plan.workItemId && explicitIds.has(plan.workItemId))
+    .map((plan) => plan.dispatchId));
+  const runtime = runtimeFocusWork(activities, rootByTurn, defaultRoot, wavesByDispatch, explicitIds, coveredDispatchIds);
   const workItems = [...explicit, ...runtime];
   const partners = room.participants
     .slice()
@@ -179,7 +228,7 @@ export function buildRoomFocusProjection(
       } satisfies RoomFocusPartner;
     });
   const handoffs = focusHandoffs(room, activities);
-  const flow = focusFlowPackets(room, activities, messages, projection);
+  const flow = focusFlowPackets(room, activities, messages, projection, dispatchPlans);
   const rootResult = [...messages].reverse().find((message) => (
     message.role === 'assistant'
     && message.status === 'completed'
@@ -241,13 +290,19 @@ export function roomFocusStateLabel(state: RoomFocusState): string {
   } satisfies Record<RoomFocusState, string>)[state];
 }
 
-function explicitFocusWork(item: RoomWorkItem, activities: RoomActivityProjection[]): RoomFocusWorkItem {
+function explicitFocusWork(
+  item: RoomWorkItem,
+  activities: RoomActivityProjection[],
+  wavesByWorkItem?: Map<string, RoomFocusWaveSlot>,
+): RoomFocusWorkItem {
   const ownerId = item.currentOwnerParticipantId || item.offeredToParticipantId || item.accountableParticipantId || undefined;
   const latestActivity = [...activities].reverse().find((activity) => (
     activity.turnId === item.rootTurnId
     && (!ownerId || activity.participantId === ownerId)
   ));
   const blocker = focusBlocker(item.blocker);
+  const review = focusReview(item);
+  const wave = wavesByWorkItem?.get(item.id);
   return {
     id: item.id,
     ...(item.parentWorkId ? { parentId: item.parentWorkId } : {}),
@@ -258,10 +313,13 @@ function explicitFocusWork(item: RoomWorkItem, activities: RoomActivityProjectio
     ownerParticipantId: ownerId,
     offeredToParticipantId: item.offeredToParticipantId || undefined,
     accountableParticipantId: item.accountableParticipantId || undefined,
+    verifierParticipantId: review?.reviewerParticipantId,
     state: workState(item.state),
     currentAction: latestActivity?.summary.trim() || undefined,
     blocker,
     reviewRequired: item.state === 'review',
+    ...(review ? { review } : {}),
+    ...(wave ? { wave } : {}),
     latestResult: item.resultSummary.trim() || undefined,
     evidence: uniqueEvidence([
       ...item.artifactRefs.map((ref) => ({ ref, kind: 'artifact' as const })),
@@ -271,21 +329,46 @@ function explicitFocusWork(item: RoomWorkItem, activities: RoomActivityProjectio
   };
 }
 
+/** Only a real recorded verdict becomes a review row; empty strings stay out. */
+function focusReview(item: RoomWorkItem): RoomFocusReview | undefined {
+  const review = item.review;
+  if (!review) return undefined;
+  const operability = review.operabilityVerdict.trim();
+  const requirement = review.requirementVerdict.trim();
+  if (!operability && !requirement) return undefined;
+  return {
+    operability,
+    requirement,
+    ...(review.reviewerParticipantId ? { reviewerParticipantId: review.reviewerParticipantId } : {}),
+    ...(review.reason.trim() ? { reason: review.reason.trim() } : {}),
+  };
+}
+
+/** Runtime rows only surface dispatched work that has no explicit WorkItem
+ * (e.g. private tool agents). A dispatch already bound to a WorkItem stays a
+ * single row — the WorkItem itself carries owner, wave and review. */
 function runtimeFocusWork(
   activities: RoomActivityProjection[],
   rootByTurn: Map<string, RoomFocusWorkItem>,
   defaultRoot?: RoomFocusWorkItem,
+  wavesByDispatch?: Map<string, RoomFocusWaveSlot>,
+  explicitIds?: Set<string>,
+  coveredDispatchIds?: Set<string>,
 ): RoomFocusWorkItem[] {
   const byDispatch = new Map<string, RoomFocusWorkItem>();
   for (const activity of activities) {
     const task = stringValue(activity.payload.task);
     const dispatchId = stringValue(activity.payload.dispatchId || activity.payload.childDispatchId);
     if (!task || !dispatchId) continue;
+    if (coveredDispatchIds?.has(dispatchId)) continue;
+    const boundWorkId = stringValue(activity.payload.workItemId);
+    if (boundWorkId && explicitIds?.has(boundWorkId)) continue;
     const previous = byDispatch.get(dispatchId);
     const parent = rootByTurn.get(activity.turnId) ?? defaultRoot;
     const owner = activity.participantId
       || stringValue(activity.payload.targetParticipantId)
       || undefined;
+    const wave = wavesByDispatch?.get(dispatchId);
     byDispatch.set(dispatchId, {
       id: `runtime:${dispatchId}`,
       ...(parent ? { parentId: parent.id } : {}),
@@ -299,6 +382,7 @@ function runtimeFocusWork(
       state: activityState(activity.status),
       currentAction: activity.summary.trim() || previous?.currentAction,
       reviewRequired: stringValue(activity.payload.requestKind) === 'plan_review' || activity.status === 'waiting',
+      ...(wave ? { wave } : previous?.wave ? { wave: previous.wave } : {}),
       latestResult: activity.status === 'completed' ? activity.summary.trim() : previous?.latestResult,
       evidence: previous?.evidence ?? [],
       dispatchId,
@@ -363,29 +447,42 @@ function focusFlowPackets(
   activities: RoomActivityProjection[],
   messages: RoomMessageProjection[],
   projection?: RoomProjectionState,
+  dispatchPlans: RoomDispatchPlan[] = [],
 ): RoomFocusPacket[] {
   const packets: RoomFocusPacket[] = [];
+  const celestialByParticipant = new Map(room.participants.map((participant) => (
+    [participant.id, roomFocusCelestialName(participant.ordinal)]
+  )));
   for (const activity of activities) {
     const kind = roomActivityFlowKind(activity);
     if (!kind) continue;
     const isApproval = kind === 'approval';
     const targetId = isApproval ? 'root' : stringValue(activity.payload.targetParticipantId) || activity.participantId || '';
     if (!targetId) continue;
+    const plan = kind === 'dispatch' ? roomDispatchPlanFromActivity(activity) : undefined;
+    /* A child dispatch is exerted by the target of its parent dispatch; a
+     * root dispatch is Sol's own gravity. */
+    const planSource = plan ? roomDispatchSourceParticipantId(plan, dispatchPlans) : '';
+    const planSummary = plan
+      ? roomDispatchPlanSummary(plan, celestialByParticipant.get(plan.targetParticipantId) ?? plan.targetDisplayName)
+      : '';
     packets.push({
       id: `activity:${activity.id}`,
       sourceParticipantId: stringValue(activity.payload.sourceParticipantId)
         || stringValue(activity.payload.actorParticipantId)
         || stringValue(activity.payload.parentParticipantId)
+        || planSource
         || (isApproval ? activity.participantId ?? '' : '')
         || 'root',
       targetParticipantIds: [targetId],
       kind,
-      summary: activity.summary.trim() || stringValue(activity.payload.reason) || '已确认本轮分工',
+      summary: planSummary || activity.summary.trim() || stringValue(activity.payload.reason) || '已确认本轮分工',
       status: activity.status,
       createdAtMs: activity.createdAtMs,
       sequence: activity.sequence ?? activity.createdAtMs,
       dispatchId: stringValue(activity.payload.dispatchId) || undefined,
       workItemId: stringValue(activity.payload.workItemId) || stringValue(activity.payload.taskId) || undefined,
+      ...(plan ? { dispatchPlan: plan } : {}),
       refs: roomFlowRefs(activity.payload),
     });
   }

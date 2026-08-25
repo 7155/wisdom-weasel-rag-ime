@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Orbit,
   Plus,
+  Route,
   Settings2,
   ShieldAlert,
   StopCircle,
@@ -59,6 +60,15 @@ import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/ro
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 import { PawRoomStarfield } from './PawStarfield';
 import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
+import {
+  roomDispatchPlanFromActivity,
+  roomDispatchSourceParticipantId,
+  roomGravityToolLabel,
+  roomToolEvidence,
+  type RoomDispatchPlan,
+  type RoomToolFact,
+} from './room-gravity-projection';
+import { RoomActivityGlyph } from './room-tool-glyph';
 import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
 import '@/features/rooms/rooms.css';
 
@@ -560,6 +570,13 @@ export function PawRoomConversation({
   room: RoomSummary;
 }) {
   const turnGroups = useMemo(() => pawRoomTurnGroups(projection), [projection]);
+  /* Every routing decision in the projection, so a child dispatch can name
+   * the planet that exerted the gravity (target of its parent dispatch). */
+  const dispatchPlans = useMemo(() => projection.activityOrder
+    .map((activityId) => projection.activitiesById[activityId])
+    .filter((activity): activity is RoomActivityProjection => Boolean(activity))
+    .map((activity) => roomDispatchPlanFromActivity(activity))
+    .filter((plan): plan is RoomDispatchPlan => Boolean(plan)), [projection]);
   return <section aria-label="Room 公开对话" className="paw-room-chronology">
     {turnGroups.map((group) => (
       <section className="paw-room-chronology__turn" data-status={group.status} key={group.id}>
@@ -567,6 +584,7 @@ export function PawRoomConversation({
           if (item.kind === 'fold') {
             return <PawRoomActivityFold
               activities={item.activities}
+              dispatchPlans={dispatchPlans}
               foldId={item.id}
               key={item.id}
               onApprovalDecision={onApprovalDecision}
@@ -574,7 +592,7 @@ export function PawRoomConversation({
               room={room}
             />;
           }
-          if (item.kind === 'activity') return <PawRoomInlineActivity activity={item.activity} key={item.id} onApprovalDecision={onApprovalDecision} onOpenProcessActivity={onOpenProcessActivity} room={room} />;
+          if (item.kind === 'activity') return <PawRoomInlineActivity activity={item.activity} dispatchPlans={dispatchPlans} key={item.id} onApprovalDecision={onApprovalDecision} onOpenProcessActivity={onOpenProcessActivity} room={room} />;
           if (item.kind === 'terminal') {
             const retrySource = roomTurnSupersededByUserInput(item.turn, projection)
               ? undefined
@@ -611,12 +629,14 @@ export function PawRoomConversation({
  */
 function PawRoomActivityFold({
   activities,
+  dispatchPlans,
   foldId,
   onApprovalDecision,
   onOpenProcessActivity,
   room,
 }: {
   activities: RoomActivityProjection[];
+  dispatchPlans: RoomDispatchPlan[];
   foldId: string;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => Promise<void>;
   onOpenProcessActivity?: (activity: RoomActivityProjection) => void;
@@ -669,7 +689,7 @@ function PawRoomActivityFold({
       open={open}
     >
       <div className="paw-room-chronology__fold-content">
-        {activities.map((activity) => <PawRoomInlineActivity activity={activity} key={activity.id} onApprovalDecision={onApprovalDecision} onOpenProcessActivity={onOpenProcessActivity} room={room} />)}
+        {activities.map((activity) => <PawRoomInlineActivity activity={activity} dispatchPlans={dispatchPlans} key={activity.id} onApprovalDecision={onApprovalDecision} onOpenProcessActivity={onOpenProcessActivity} room={room} />)}
       </div>
     </SmoothDisclosureReveal>
   </details>;
@@ -788,8 +808,9 @@ function pawRoomInlineActivityVisible(activity: RoomActivityProjection): boolean
     || eventType.includes('dispatch');
 }
 
-function PawRoomInlineActivity({ activity, onApprovalDecision, onOpenProcessActivity, room }: {
+function PawRoomInlineActivity({ activity, dispatchPlans = [], onApprovalDecision, onOpenProcessActivity, room }: {
   activity: RoomActivityProjection;
+  dispatchPlans?: RoomDispatchPlan[];
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => Promise<void>;
   onOpenProcessActivity?: (activity: RoomActivityProjection) => void;
   room: RoomSummary;
@@ -807,6 +828,7 @@ function PawRoomInlineActivity({ activity, onApprovalDecision, onOpenProcessActi
   const [decisionError, setDecisionError] = useState('');
   const participant = activity.participantId ? room.participants.find((item) => item.id === activity.participantId) : undefined;
   const eventType = roomText(activity.payload.sourceEventType, activity.kind);
+  const dispatchPlan = approvalId ? undefined : roomDispatchPlanFromActivity(activity);
   const summary = pawRoomActivitySummary(activity, eventType);
   const rawDetail = activity.summary.trim();
   const processWindow = onOpenProcessActivity
@@ -820,18 +842,95 @@ function PawRoomInlineActivity({ activity, onApprovalDecision, onOpenProcessActi
       .catch((error: unknown) => setDecisionError(publicAgentErrorText(error)))
       .finally(() => setSubmitting(''));
   };
+  if (dispatchPlan) {
+    return <PawRoomDispatchActivity
+      activity={activity}
+      dispatchPlans={dispatchPlans}
+      plan={dispatchPlan}
+      room={room}
+    />;
+  }
+  const toolFacts = !approvalId && (eventType === 'tool' || eventType.startsWith('tool_'))
+    ? roomToolEvidence(activity.payload)?.facts ?? []
+    : [];
+  const rawBody = rawDetail && rawDetail !== summary ? rawDetail : '';
   return <article className="paw-room-chronology__activity" data-kind={approvalId ? 'approval' : eventType} data-status={activity.status}>
     <span aria-hidden="true">{approvalId ? <ShieldAlert size={14} /> : activity.status === 'completed' ? <CheckCircle2 size={14} /> : <LoaderCircle className={activity.status === 'running' ? 'ui-spin' : undefined} size={14} />}</span>
-    <div><strong title={participant?.displayName}>{participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'} · {pawRoomActivityKindLabel(eventType, approvalId)}</strong><p>{summary}</p></div>
+    <div>
+      <strong title={participant?.displayName}>
+        {participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'}
+        {approvalId ? ' · 审批' : <RoomActivityGlyph eventType={eventType} toolName={roomText(activity.payload.toolName, roomText(activity.payload.toolId))} />}
+      </strong>
+      <p>{summary}</p>
+    </div>
     <time>{pawRoomClock(activity.createdAtMs)}</time>
-    {rawDetail && rawDetail !== summary ? <PawRoomRawActivityDetail detail={rawDetail} /> : null}
+    {toolFacts.length || rawBody ? <PawRoomRawActivityDetail detail={rawBody} facts={toolFacts} /> : null}
     {processWindow ? <footer><button onClick={() => onOpenProcessActivity?.(activity)} type="button">查看后台 Bash</button></footer> : null}
     {approvalPending ? <footer><button disabled={Boolean(submitting)} onClick={() => decide('approved')} type="button">{submitting === 'approved' ? '正在批准' : '批准并继续'}</button><button disabled={Boolean(submitting)} onClick={() => decide('rejected')} type="button">{submitting === 'rejected' ? '正在拒绝' : '拒绝'}</button></footer> : null}
     {decisionError ? <small role="alert">{decisionError}</small> : null}
   </article>;
 }
 
-function PawRoomRawActivityDetail({ detail }: { detail: string }) {
+/** A route_decision rendered as the real dispatch: which planet pulled which,
+ * why, on which parallel track, for which task — never a dead「分派」label.
+ * WorkItem IDs, dispatch IDs and candidate scores stay reachable in the
+ * disclosure so no Runtime contract detail is lost. */
+function PawRoomDispatchActivity({ activity, dispatchPlans, plan, room }: {
+  activity: RoomActivityProjection;
+  dispatchPlans: RoomDispatchPlan[];
+  plan: RoomDispatchPlan;
+  room: RoomSummary;
+}) {
+  const sourceParticipantId = roomDispatchSourceParticipantId(plan, dispatchPlans);
+  const source = sourceParticipantId ? room.participants.find((item) => item.id === sourceParticipantId) : undefined;
+  const target = room.participants.find((item) => item.id === plan.targetParticipantId);
+  const sourceName = source ? roomFocusCelestialName(source.ordinal) : 'Sol';
+  const targetName = target ? roomFocusCelestialName(target.ordinal) : plan.targetDisplayName || '伙伴';
+  const objective = room.workItems?.find((item) => item.id === plan.workItemId)?.objective;
+  const celestialOf = (participantId: string) => {
+    const candidate = room.participants.find((item) => item.id === participantId);
+    return candidate ? roomFocusCelestialName(candidate.ordinal) : '';
+  };
+  return <article className="paw-room-chronology__activity paw-room-chronology__activity--dispatch" data-kind="dispatch" data-status={activity.status}>
+    <span aria-hidden="true"><Route size={14} /></span>
+    <div>
+      <strong title={target?.displayName}>{sourceName} → {targetName} · 任务分派</strong>
+      <span className="paw-room-chronology__dispatch-meta">
+        <em>{plan.reasonLabel}</em>
+        {plan.routingPolicyLabel ? <em>{plan.routingPolicyLabel}</em> : null}
+        {plan.parallelIndex >= 0 && plan.parallelSize > 1 ? <em data-lane="">∥ 轨道 {plan.parallelIndex + 1}/{plan.parallelSize}</em> : null}
+        {plan.phaseName ? <em>{plan.phaseName}</em> : null}
+      </span>
+      {objective ? <p className="paw-room-chronology__dispatch-objective">{objective}</p> : null}
+    </div>
+    <time>{pawRoomClock(activity.createdAtMs)}</time>
+    {plan.candidates.length || plan.dispatchId || plan.workItemId ? (
+      <details className="paw-room-chronology__activity-detail paw-room-chronology__dispatch-detail">
+        <summary>路由依据</summary>
+        {plan.candidates.length ? (
+          <ul className="paw-room-chronology__dispatch-candidates">
+            {plan.candidates.map((candidate) => (
+              <li data-selected={candidate.selected || undefined} key={candidate.participantId}>
+                <strong>{celestialOf(candidate.participantId) || candidate.displayName}</strong>
+                <small>{candidate.displayName}</small>
+                <span>{candidate.signals.length ? candidate.signals.join('、') : '无信号'} · {candidate.score.toFixed(1)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <dl className="paw-room-chronology__dispatch-ids">
+          {plan.dispatchId ? <div><dt>分派</dt><dd>{plan.dispatchId}</dd></div> : null}
+          {plan.workItemId ? <div><dt>任务</dt><dd>{plan.workItemId}</dd></div> : null}
+        </dl>
+      </details>
+    ) : null}
+  </article>;
+}
+
+/** What the tool really did — sent, changed, read — as labeled facts, with
+ * the public raw text folded below (Joshua5: 「要能够点开看到具体内容的，
+ * 例如发送了什么，修改了什么，读取了哪些」). */
+function PawRoomRawActivityDetail({ detail, facts = [] }: { detail: string; facts?: RoomToolFact[] }) {
   const detailId = `paw-room-activity-detail-${useId().replaceAll(':', '')}`;
   const [open, setOpen] = useState(false);
   const [presence, setPresence] = useState(false);
@@ -841,14 +940,19 @@ function PawRoomRawActivityDetail({ detail }: { detail: string }) {
       aria-expanded={open}
       onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
       onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-    >详情</summary>
+    >{facts.length ? '查看执行详情' : '详情'}</summary>
     <SmoothDisclosureReveal
       className="paw-room-chronology__detail-reveal"
       id={detailId}
       onPresenceChange={setPresence}
       open={open}
     >
-      <p>{detail}</p>
+      {facts.length ? (
+        <dl className="paw-room-chronology__tool-facts">
+          {facts.map((fact) => <div key={`${fact.label}:${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
+        </dl>
+      ) : null}
+      {detail ? <p>{detail}</p> : null}
     </SmoothDisclosureReveal>
   </details>;
 }
@@ -872,8 +976,14 @@ function roomProcessWindowRequest(activity: RoomActivityProjection, roomId: stri
 
 function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: string): string {
   const detail = activity.summary.trim();
-  const tool = roomText(activity.payload.displayName, roomText(activity.payload.toolName, roomText(activity.payload.toolId, '工具')));
+  const tool = roomText(activity.payload.displayName)
+    || roomGravityToolLabel(roomText(activity.payload.toolName, roomText(activity.payload.toolId, '工具')));
   if (roomText(activity.payload.approvalId)) return detail && !pawRoomRawDetail(detail) ? detail : '等待你确认这项受控操作';
+  const plan = roomDispatchPlanFromActivity(activity);
+  if (plan) {
+    const lane = plan.parallelIndex >= 0 && plan.parallelSize > 1 ? ` · 并行轨道 ${plan.parallelIndex + 1}/${plan.parallelSize}` : '';
+    return `${plan.reasonLabel}${plan.targetDisplayName ? ` · 交给 ${plan.targetDisplayName}` : ''}${lane}${plan.phaseName ? ` · ${plan.phaseName}` : ''}`;
+  }
   if (eventType.startsWith('tool_')) {
     if (detail && !pawRoomRawDetail(detail)) return pawRoomCompactText(detail);
     return activity.status === 'running' ? `${tool} 正在执行` : activity.status === 'failed' ? `${tool} 执行失败` : activity.status === 'aborted' ? `${tool} 已停止` : `${tool} 已完成`;
@@ -881,13 +991,6 @@ function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: str
   return detail && !pawRoomRawDetail(detail) ? pawRoomCompactText(detail) : '公开进展已更新';
 }
 
-function pawRoomActivityKindLabel(eventType: string, approvalId: string): string {
-  if (approvalId) return '审批';
-  if (eventType.startsWith('tool_')) return '工具';
-  if (eventType.includes('reasoning') || eventType.includes('thinking')) return '思考摘要';
-  if (eventType.includes('route') || eventType.includes('dispatch')) return '分派';
-  return '进展';
-}
 
 function pawRoomRawDetail(value: string): boolean {
   return value.includes('\n')

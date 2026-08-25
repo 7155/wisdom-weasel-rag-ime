@@ -54,8 +54,9 @@ describe('PawRoomConversation', () => {
     const activityActor = container.querySelector('.paw-room-chronology__activity[data-kind="tool_started"] strong');
     expect(activityActor).toHaveTextContent('Mars');
     expect(activityActor).toHaveAttribute('title', '实现伙伴');
+    // Raw Runtime tool ids map to reader-facing labels (`read` → 读取文件).
     expect(container.querySelector('.paw-room-chronology__activity[data-kind="tool_started"]'))
-      .toHaveTextContent('read 正在执行');
+      .toHaveTextContent('读取文件 正在执行');
     expect(container.querySelector('.room-turn, .room-agent-lane')).toBeNull();
     expect(container.querySelectorAll('.paw-room-chronology__message')).toHaveLength(2);
     expect(container.querySelectorAll('.paw-room-chronology__activity')).toHaveLength(2);
@@ -103,7 +104,7 @@ describe('PawRoomConversation', () => {
     expect(summary).toHaveAttribute('aria-expanded', 'false');
     // The native shell remains open while the measured disclosure plays out.
     expect(fold).toHaveAttribute('open');
-    expect(fold).toHaveTextContent('read 正在执行');
+    expect(fold).toHaveTextContent('读取文件 正在执行');
     const reveal = fold.querySelector('.paw-room-chronology__reveal')!;
     expect(reveal).toHaveAttribute('data-state', 'closing');
     fireEvent.transitionEnd(reveal, { propertyName: 'height' });
