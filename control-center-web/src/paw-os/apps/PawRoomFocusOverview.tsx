@@ -16,7 +16,6 @@ import { Disclosure } from '@/components/primitives';
 import {
   buildRoomFocusMesh,
   roomFocusMeshEdgeKindLabel,
-  roomFocusMeshRings,
   type RoomFocusMeshNode,
 } from './room-focus-mesh';
 import {
@@ -50,7 +49,8 @@ const FLOW_PACKET_WINDOW = 18;
 
 /**
  * Sol collaboration console — the single Room 态势 surface. Mission, the
- * pulse instrument, the collaboration mesh (partners and WorkItems as nodes,
+ * pulse instrument, the chronological collaboration mesh (partners and
+ * WorkItems as nodes on a top→bottom time axis,
  * ownership/accountability/review/lineage/handoff as edges), the
  * chronological flow ledger and the inspector all project the same real Room
  * data. The solar metaphor stays visual seasoning: every node keeps its real
@@ -150,10 +150,13 @@ function FocusPulse({ counts }: { counts: RoomFocusProjection['counts'] }) {
   );
 }
 
-/** 协作网 — partners and WorkItems as one mesh. Nodes carry real names and
- * live state colors; edges draw only recorded relations (ownership,
- * accountability, review, parent/child lineage, handoffs). Clicking a node
- * drives the same selection the inspector and open-partner path already use. */
+/** 协作时序网 — partners and WorkItems as one chronological flow graph.
+ * Columns are identity lanes (Sol origin, then each partner); vertical order
+ * is real event order, so reading top→bottom is reading time. Nodes carry
+ * real names and live state colors; edges draw only recorded relations
+ * (ownership, accountability, review, parent/child lineage, handoffs).
+ * Clicking a node drives the same selection the inspector and open-partner
+ * path already use. */
 function FocusMeshGraph({
   focus,
   onSelect,
@@ -169,20 +172,25 @@ function FocusMeshGraph({
     <section aria-label="协作网" className="paw-room-focus-overview__section paw-room-focus-overview__mesh">
       <header>
         <span><Waypoints aria-hidden="true" size={14} /><strong>协作网</strong></span>
-        <small>{focus.partners.length} 位伙伴 · {focus.workItems.length} 项任务</small>
+        <small>{focus.partners.length} 位伙伴 · {focus.workItems.length} 项任务 · 时间自上而下</small>
       </header>
       {hasActors ? (
-        <div aria-label="协作网状图" className="paw-room-focus-overview__mesh-canvas" role="group">
-          <svg aria-hidden="true" focusable="false" preserveAspectRatio="none" viewBox="0 0 100 100">
-            {[roomFocusMeshRings.partner, roomFocusMeshRings.work].map((ring) => (
-              <ellipse
-                className="paw-room-focus-overview__mesh-guide"
-                cx={roomFocusMeshRings.center.x}
-                cy={roomFocusMeshRings.center.y}
-                key={ring.rx}
-                rx={ring.rx}
-                ry={ring.ry}
+        <div
+          aria-label="协作网状图"
+          className="paw-room-focus-overview__mesh-canvas"
+          role="group"
+          style={{ aspectRatio: `100 / ${mesh.height}` }}
+        >
+          <svg aria-hidden="true" focusable="false" preserveAspectRatio="none" viewBox={`0 0 100 ${mesh.height}`}>
+            {mesh.lanes.map((lane) => (
+              <line
+                className="paw-room-focus-overview__mesh-lane"
+                key={lane.id}
                 vectorEffect="non-scaling-stroke"
+                x1={lane.x}
+                x2={lane.x}
+                y1={lane.y0}
+                y2={lane.y1}
               />
             ))}
             {mesh.edges.map((edge) => (
@@ -198,6 +206,7 @@ function FocusMeshGraph({
             ))}
           </svg>
           {mesh.nodes.map((node) => <FocusMeshNode
+            canvasHeight={mesh.height}
             key={node.id}
             node={node}
             selected={node.kind === 'work'
@@ -207,6 +216,12 @@ function FocusMeshGraph({
           />)}
         </div>
       ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，协作网会从这里生长。</p>}
+      {mesh.timeline ? (
+        <p className="paw-room-focus-overview__mesh-timespan">
+          <span>起 {packetClock(mesh.timeline.startMs)}</span>
+          <span>止 {packetClock(mesh.timeline.endMs)}</span>
+        </p>
+      ) : null}
       {mesh.edgeKinds.length ? (
         <ul aria-label="关系图例" className="paw-room-focus-overview__mesh-legend">
           {mesh.edgeKinds.map((kind) => (
@@ -219,15 +234,17 @@ function FocusMeshGraph({
 }
 
 function FocusMeshNode({
+  canvasHeight,
   node,
   onSelect,
   selected,
 }: {
+  canvasHeight: number;
   node: RoomFocusMeshNode;
   onSelect: (selection: FocusSelection) => void;
   selected: boolean;
 }) {
-  const position = { left: `${node.x}%`, top: `${node.y}%` };
+  const position = { left: `${node.x}%`, top: `${Math.round((node.y / canvasHeight) * 10000) / 100}%` };
   if (node.kind === 'root') {
     return (
       <div
@@ -251,7 +268,7 @@ function FocusMeshNode({
         : `${node.label}，${stateLabel}`}
       aria-pressed={selected}
       className={`paw-room-focus-overview__mesh-node paw-room-focus-overview__mesh-node--${node.kind}`}
-      data-orbit={node.orbit}
+      data-tone={node.tone}
       data-state={node.state}
       onClick={() => onSelect(node.kind === 'partner'
         ? { kind: 'partner', id: node.refId }

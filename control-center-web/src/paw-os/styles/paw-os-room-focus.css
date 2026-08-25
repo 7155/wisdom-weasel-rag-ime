@@ -153,15 +153,17 @@
 .paw-desktop-root .paw-room-focus-overview__inspector > header strong { font-size: 12px; font-weight: 650; }
 .paw-desktop-root .paw-room-focus-overview__section > header small { color: #9197a1; font-size: 12px; font-variant-numeric: tabular-nums; }
 
-/* 协作网 — partners and WorkItems as one mesh. The SVG layer draws only
- * recorded relations (ownership / accountability / review / lineage /
- * handoff); HTML node buttons stay on top with their real names and live
- * state colors. Coordinates come from the deterministic layout module. */
+/* 协作时序网 — partners and WorkItems as one chronological flow graph.
+ * Columns are identity lanes (Sol origin, then each partner) with faint
+ * lifelines; vertical position is real event order, so time reads top to
+ * bottom. The SVG layer draws only recorded relations (ownership /
+ * accountability / review / lineage / handoff); HTML node buttons stay on
+ * top with their real names and live state colors. Coordinates and the
+ * per-graph aspect ratio come from the deterministic layout module. */
 .paw-desktop-root .paw-room-focus-overview__mesh-canvas {
   position: relative;
   width: 100%;
   max-width: 500px;
-  aspect-ratio: 1.04;
   margin: 0 auto;
   overflow: hidden;
 }
@@ -174,7 +176,21 @@
   overflow: visible;
 }
 
-.paw-desktop-root .paw-room-focus-overview__mesh-guide { fill: none; stroke: rgb(42 45 52 / .05); stroke-width: 1px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-lane { stroke: rgb(42 45 52 / .07); stroke-width: 1px; stroke-dasharray: 2 5; stroke-linecap: round; }
+
+/* Real covered time range under the canvas: first → last recorded event. */
+.paw-desktop-root .paw-room-focus-overview__mesh-timespan {
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 2px auto 0;
+  padding: 0 8px;
+  color: #9197a1;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 
 .paw-desktop-root .paw-room-focus-overview__mesh-edge { color: #9aa1ac; }
 .paw-desktop-root .paw-room-focus-overview__mesh-edge > path { fill: none; stroke: currentColor; stroke-width: 1.4px; opacity: .72; }
@@ -218,15 +234,15 @@
 .paw-desktop-root .paw-room-focus-overview__mesh-node > span > strong { overflow: hidden; font-size: 12px; font-weight: 640; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-overview__mesh-node > span > small { overflow: hidden; color: #858c97; font-size: 12px; line-height: 15px; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Node marks: Sol keeps its sun, partners keep their orbit identity colors,
+/* Node marks: Sol keeps its sun, partners keep their identity colors,
  * WorkItems are square task marks. The state ring/fill is the live color. */
 .paw-desktop-root .paw-room-focus-overview__mesh-node > i { width: 10px; height: 10px; border-radius: 50%; background: #9198a3; box-shadow: 0 0 0 2.5px rgb(145 152 163 / .16); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node--root > i { width: 12px; height: 12px; background: #f5a623; box-shadow: 0 0 0 4px rgb(245 166 35 / .13); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node--root > span > strong { font-weight: 700; }
 .paw-desktop-root .paw-room-focus-overview__mesh-node--partner > i { width: 13px; height: 13px; background: #4b8fd0; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-orbit='1'] > i { background: #bd6355; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-orbit='2'] > i { background: #b9903f; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-orbit='3'] > i { background: #786bc2; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-tone='1'] > i { background: #bd6355; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-tone='2'] > i { background: #b9903f; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-tone='3'] > i { background: #786bc2; }
 .paw-desktop-root .paw-room-focus-overview__mesh-node--work > i { width: 9px; height: 9px; border-radius: 2.5px; transform: rotate(45deg); }
 
 .paw-desktop-root .paw-room-focus-overview__mesh-node[data-state='running'] > i { box-shadow: 0 0 0 2.5px rgb(39 131 222 / .28); }

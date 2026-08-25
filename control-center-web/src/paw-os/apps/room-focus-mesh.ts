@@ -6,11 +6,18 @@ import type {
 } from './room-focus-projection';
 
 /**
- * 协作网状图 — the Sol console mesh. Every node is a real Room actor or
- * WorkItem and every edge is one authoritative RoomFocusProjection field:
- * ownership, accountability, recorded review, parent/child lineage or a real
- * handoff. Layout is pure polar math over stable orderings, so the same
- * projection always yields the same picture (UR-023, no invented edges).
+ * 协作时序网 — the Sol console mesh as a chronological flow graph, not an
+ * orbit. Every node is a real Room actor or WorkItem and every edge one
+ * authoritative RoomFocusProjection field: ownership, accountability,
+ * recorded review, parent/child lineage or a real handoff.
+ *
+ * Columns are identity lanes: Sol (the origin) leftmost, then one stable lane
+ * per partner; a WorkItem lives in its owner's lane. Rows are real event
+ * order — a node's vertical position comes only from recorded times
+ * (WorkItem updatedAtMs, handoff createdAtMs, flow packet createdAtMs), so
+ * reading top→bottom is reading time. Nothing invents a timestamp: a partner
+ * with no recorded involvement stays on the origin row. Layout is pure
+ * deterministic math over stable orderings (UR-023).
  */
 
 export type RoomFocusMeshEdgeKind = 'ownership' | 'accountable' | 'review' | 'parent' | 'handoff';
@@ -20,13 +27,14 @@ export interface RoomFocusMeshNode {
   kind: 'root' | 'partner' | 'work';
   /** participantId for partners, WorkItem id for work, '' for root. */
   refId: string;
-  /** 0..100 coordinates inside the mesh canvas. */
+  /** x in the fixed 0..100 lane axis; y in 0..mesh.height — time grows down. */
   x: number;
   y: number;
   state: RoomFocusState;
   label: string;
   sublabel?: string;
-  orbit?: number;
+  /** Stable partner identity color index. */
+  tone?: number;
 }
 
 export interface RoomFocusMeshEdge {
@@ -36,10 +44,19 @@ export interface RoomFocusMeshEdge {
   targetId: string;
   /** RoomFocusState for work-derived edges, RoomFocusHandoff state for handoffs. */
   state: RoomFocusState | RoomFocusHandoff['state'];
-  /** SVG path in the same 0..100 space as node coordinates. */
+  /** SVG path in the same 0..100 × 0..height space as node coordinates. */
   path: string;
   /** Direction hint drawn near the target — only on directed handoff edges. */
   tip?: { x: number; y: number };
+}
+
+/** One vertical lifeline guide: from the actor's entry row to the bottom. */
+export interface RoomFocusMeshLane {
+  /** 'root' for Sol, otherwise the participantId owning the lane. */
+  id: string;
+  x: number;
+  y0: number;
+  y1: number;
 }
 
 export interface RoomFocusMesh {
@@ -47,21 +64,20 @@ export interface RoomFocusMesh {
   edges: RoomFocusMeshEdge[];
   /** Edge kinds actually present, in legend order. Never lists absent kinds. */
   edgeKinds: RoomFocusMeshEdgeKind[];
+  lanes: RoomFocusMeshLane[];
+  /** viewBox height in the same units as the fixed 0..100 width. */
+  height: number;
+  /** Real recorded time range covered by the rows (first→last event), for the
+   * axis caption. Absent when nothing carries a real timestamp yet. */
+  timeline?: { startMs: number; endMs: number };
 }
 
-const CENTER = { x: 50, y: 46 };
-const PARTNER_RING = { rx: 27, ry: 21 };
-const WORK_RING = { rx: 40, ry: 35 };
-const WORK_RING_INNER = { rx: 31, ry: 26 };
-/** Above this many work nodes the outer ring alternates two radii. */
-const WORK_RING_SPLIT = 8;
-
-/** Ring geometry for decorative orbit guides — same space as node x/y. */
-export const roomFocusMeshRings = {
-  center: CENTER,
-  partner: PARTNER_RING,
-  work: WORK_RING,
-} as const;
+const X_MARGIN = 3;
+const ROW_TOP = 7;
+const ROW_STEP = 12;
+const ROW_BOTTOM = 9;
+/** A quiet room (partners but no timed events) still gets a readable band. */
+const MIN_HEIGHT = 36;
 
 const EDGE_KIND_ORDER: RoomFocusMeshEdgeKind[] = ['ownership', 'accountable', 'review', 'parent', 'handoff'];
 
@@ -76,43 +92,67 @@ export function roomFocusMeshEdgeKindLabel(kind: RoomFocusMeshEdgeKind): string 
 }
 
 export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
+  const partnerColumn = new Map(focus.partners.map((partner, index) => [partner.participantId, index + 1]));
+  const columnCount = focus.partners.length + 1;
+  const laneX = (column: number) => round(X_MARGIN + ((column + 0.5) * (100 - 2 * X_MARGIN)) / columnCount);
+
+  /* Chronological rows: every timed node in real event order. Ties keep
+   * actors ahead of their same-instant work, then projection order. */
+  const anchors = partnerAnchors(focus, partnerColumn);
+  const timed: { nodeId: string; at: number; phase: number; index: number }[] = [];
+  const untimedWork: string[] = [];
+  focus.partners.forEach((partner, index) => {
+    const at = anchors.get(partner.participantId);
+    if (at !== undefined) timed.push({ nodeId: `partner:${partner.participantId}`, at, phase: 0, index });
+  });
+  focus.workItems.forEach((item, index) => {
+    const at = realTime(item.updatedAtMs);
+    if (at !== undefined) timed.push({ nodeId: `work:${item.id}`, at, phase: 1, index });
+    else untimedWork.push(`work:${item.id}`);
+  });
+  timed.sort((left, right) => left.at - right.at || left.phase - right.phase || left.index - right.index);
+  const rowById = new Map<string, number>();
+  timed.forEach((entry, order) => rowById.set(entry.nodeId, order + 1));
+  untimedWork.forEach((nodeId, order) => rowById.set(nodeId, timed.length + 1 + order));
+  const rowCount = 1 + timed.length + untimedWork.length;
+  const height = Math.max(MIN_HEIGHT, ROW_TOP + (rowCount - 1) * ROW_STEP + ROW_BOTTOM);
+  const rowY = (row: number) => round(ROW_TOP + row * ROW_STEP);
+
   const nodes: RoomFocusMeshNode[] = [{
     id: 'root',
     kind: 'root',
     refId: '',
-    x: CENTER.x,
-    y: CENTER.y,
+    x: laneX(0),
+    y: rowY(0),
     state: focus.goal.state,
     label: focus.goal.title,
   }];
-
-  const partnerAngle = new Map<string, number>();
   focus.partners.forEach((partner, index) => {
-    const angle = -90 + (index * 360) / Math.max(focus.partners.length, 1);
-    partnerAngle.set(partner.participantId, angle);
     nodes.push({
       id: `partner:${partner.participantId}`,
       kind: 'partner',
       refId: partner.participantId,
-      ...pointAt(angle, PARTNER_RING),
+      x: laneX(index + 1),
+      /* No recorded involvement → the partner waits on the origin row. */
+      y: rowY(rowById.get(`partner:${partner.participantId}`) ?? 0),
       state: partner.state,
       label: partner.celestialName,
       sublabel: partner.displayName,
-      orbit: index % 4,
+      tone: index % 4,
     });
   });
-
-  for (const [index, placed] of workRingSlots(focus.workItems, partnerAngle).entries()) {
-    const ring = focus.workItems.length > WORK_RING_SPLIT && index % 2 === 1 ? WORK_RING_INNER : WORK_RING;
+  const workById = new Map(focus.workItems.map((item) => [item.id, item]));
+  for (const item of focus.workItems) {
     nodes.push({
-      id: `work:${placed.item.id}`,
+      id: `work:${item.id}`,
       kind: 'work',
-      refId: placed.item.id,
-      ...pointAt(placed.angle, ring),
-      state: placed.item.state,
-      label: placed.item.objective,
-      ...(placed.item.wave
-        ? { sublabel: `∥ 轨道 ${Math.max(placed.item.wave.parallelIndex, 0) + 1}/${Math.max(placed.item.wave.parallelSize, 1)}` }
+      refId: item.id,
+      x: laneX(workColumn(item, workById, partnerColumn)),
+      y: rowY(rowById.get(`work:${item.id}`)!),
+      state: item.state,
+      label: item.objective,
+      ...(item.wave
+        ? { sublabel: `∥ 轨道 ${Math.max(item.wave.parallelIndex, 0) + 1}/${Math.max(item.wave.parallelSize, 1)}` }
         : {}),
     });
   }
@@ -169,61 +209,94 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
     );
   }
 
+  const lanes: RoomFocusMeshLane[] = [{ id: 'root', x: laneX(0), y0: rowY(0), y1: height - 4 }];
+  for (const partner of focus.partners) {
+    const node = byId.get(`partner:${partner.participantId}`)!;
+    lanes.push({ id: partner.participantId, x: node.x, y0: node.y, y1: height - 4 });
+  }
+
   const present = new Set([...edges.values()].map((edge) => edge.kind));
   return {
     nodes,
     edges: [...edges.values()],
     edgeKinds: EDGE_KIND_ORDER.filter((kind) => present.has(kind)),
+    lanes,
+    height,
+    /* `timed` is already sorted, so its ends are the real covered range. */
+    ...(timed.length
+      ? { timeline: { startMs: timed[0]!.at, endMs: timed[timed.length - 1]!.at } }
+      : {}),
   };
 }
 
-interface WorkSlot {
-  item: RoomFocusWorkItem;
-  angle: number;
-}
-
-/** Work items take evenly spaced outer-ring slots, ordered so each owner's
- * items stay contiguous near that owner's angle. Even spacing keeps the ring
- * collision-free; the ownership edge — not proximity — carries the fact. */
-function workRingSlots(
-  items: RoomFocusWorkItem[],
-  partnerAngle: Map<string, number>,
-): WorkSlot[] {
-  if (!items.length) return [];
-  const anchorAngle = (item: RoomFocusWorkItem, index: number): number => {
-    const owned = item.ownerParticipantId ? partnerAngle.get(item.ownerParticipantId) : undefined;
-    if (owned !== undefined) return owned;
-    const parent = items.find((candidate) => candidate.id === item.parentId);
-    const inherited = parent?.ownerParticipantId ? partnerAngle.get(parent.ownerParticipantId) : undefined;
-    /* Items with no resolvable owner keep insertion order after all owned
-     * groups instead of guessing a partner. */
-    return inherited ?? 400 + index;
+/** Earliest recorded time a partner is named by an authoritative field:
+ * WorkItem roles at updatedAtMs, handoffs at createdAtMs, flow packets at
+ * createdAtMs. No record → no anchor; times are never invented. */
+function partnerAnchors(
+  focus: RoomFocusProjection,
+  partnerColumn: Map<string, number>,
+): Map<string, number> {
+  const anchors = new Map<string, number>();
+  const consider = (participantId: string | undefined, at: number) => {
+    if (!participantId || !partnerColumn.has(participantId)) return;
+    const time = realTime(at);
+    if (time === undefined) return;
+    const previous = anchors.get(participantId);
+    if (previous === undefined || time < previous) anchors.set(participantId, time);
   };
-  const ordered = items
-    .map((item, index) => ({ item, anchor: anchorAngle(item, index), index }))
-    .sort((left, right) => left.anchor - right.anchor || left.index - right.index);
-  const start = ordered[0]!.anchor >= 400 ? -90 : ordered[0]!.anchor;
-  const step = 360 / items.length;
-  return ordered.map((entry, slot) => ({ item: entry.item, angle: start + slot * step }));
+  for (const item of focus.workItems) {
+    for (const role of [
+      item.ownerParticipantId,
+      item.offeredToParticipantId,
+      item.accountableParticipantId,
+      item.verifierParticipantId,
+      item.review?.reviewerParticipantId,
+    ]) consider(role, item.updatedAtMs);
+  }
+  for (const handoff of focus.handoffs) {
+    consider(handoff.sourceParticipantId, handoff.createdAtMs);
+    consider(handoff.targetParticipantId, handoff.createdAtMs);
+  }
+  for (const packet of focus.flow) {
+    consider(packet.sourceParticipantId, packet.createdAtMs);
+    for (const target of packet.targetParticipantIds) consider(target, packet.createdAtMs);
+  }
+  return anchors;
 }
 
-function pointAt(angleDegrees: number, ring: { rx: number; ry: number }): { x: number; y: number } {
-  const radians = (angleDegrees * Math.PI) / 180;
-  return {
-    x: round(CENTER.x + ring.rx * Math.cos(radians)),
-    y: round(CENTER.y + ring.ry * Math.sin(radians)),
-  };
+/** A WorkItem lives in its owner's lane, inheriting up the parent chain when
+ * unowned. Nothing resolvable keeps it in Sol's origin lane — the parent
+ * edge, not a guessed lane, carries the relation. */
+function workColumn(
+  item: RoomFocusWorkItem,
+  workById: Map<string, RoomFocusWorkItem>,
+  partnerColumn: Map<string, number>,
+): number {
+  const seen = new Set<string>();
+  let current: RoomFocusWorkItem | undefined = item;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    const owner = current.ownerParticipantId
+      || current.offeredToParticipantId
+      || current.accountableParticipantId;
+    const column = owner ? partnerColumn.get(owner) : undefined;
+    if (column !== undefined) return column;
+    current = current.parentId ? workById.get(current.parentId) : undefined;
+  }
+  return 0;
 }
 
+/** Signed perpendicular bow per kind: ownership stays a straight drop inside
+ * the lane; review and accountability bow to opposite sides so both stay
+ * legible on the same endpoints; handoffs bow widest with a direction tip. */
 const EDGE_BOW: Record<RoomFocusMeshEdgeKind, number> = {
-  ownership: 3,
-  accountable: 5,
+  ownership: 0,
+  accountable: -5,
   review: 5,
-  parent: 4,
-  handoff: 9,
+  parent: 3,
+  handoff: 7,
 };
 
-/** Quadratic curve bowed away from the center so chords do not stack on Sol. */
 function curvePath(source: { x: number; y: number }, target: { x: number; y: number }, kind: RoomFocusMeshEdgeKind): string {
   const control = curveControl(source, target, kind);
   return `M ${source.x} ${source.y} Q ${control.x} ${control.y} ${target.x} ${target.y}`;
@@ -249,17 +322,17 @@ function curveControl(
   kind: RoomFocusMeshEdgeKind,
 ): { x: number; y: number } {
   const mid = { x: (source.x + target.x) / 2, y: (source.y + target.y) / 2 };
-  let away = { x: mid.x - CENTER.x, y: mid.y - CENTER.y };
-  if (Math.hypot(away.x, away.y) < 0.001) {
-    /* A perfect diameter: bow perpendicular to the chord instead. */
-    away = { x: -(target.y - source.y), y: target.x - source.x };
-  }
-  const length = Math.hypot(away.x, away.y) || 1;
+  const chord = { x: target.x - source.x, y: target.y - source.y };
+  const length = Math.hypot(chord.x, chord.y) || 1;
   const bow = EDGE_BOW[kind];
   return {
-    x: round(mid.x + (away.x / length) * bow),
-    y: round(mid.y + (away.y / length) * bow),
+    x: round(mid.x + (-chord.y / length) * bow),
+    y: round(mid.y + (chord.x / length) * bow),
   };
+}
+
+function realTime(value: number): number | undefined {
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function round(value: number): number {
