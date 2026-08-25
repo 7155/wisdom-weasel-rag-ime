@@ -446,11 +446,9 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
         const dispatchPlan = eventType.includes('route') || eventType.includes('dispatch')
           ? roomDispatchPlan(activity.payload)
           : undefined;
-        const summary = tool
-          ? roomSatelliteToolMessage(tool, activity.status)
-          : dispatchPlan && (roomDispatchSummaryIsGeneric(detail) || participantDetailIsMachineToken(detail))
-            ? roomDispatchPlanText(dispatchPlan, celestialOf)
-            : conciseParticipantActivity(eventType, activity.status, activity.payload, detail);
+        const summary = dispatchPlan && (roomDispatchSummaryIsGeneric(detail) || participantDetailIsMachineToken(detail))
+          ? roomDispatchPlanText(dispatchPlan, celestialOf)
+          : conciseParticipantActivity(eventType, activity.status, activity.payload, detail, tool);
         return {
           id: activity.id,
           kind: 'activity' as const,
@@ -750,15 +748,20 @@ function SatelliteRawDetail({ contentId, label, text }: { contentId: string; lab
   </SatelliteDisclosure>;
 }
 
+/** Real human-authored summaries pass through; only the opaque fallbacks are
+ *  upgraded to the humanized tool message (never a raw tool id chip). */
 function conciseParticipantActivity(
   eventType: string,
   status: string,
   payload: Record<string, unknown>,
   detail: string,
+  tool?: RoomSatelliteToolContent,
 ): string {
-  if (!participantDetailNeedsDisclosure(detail)) return conciseParticipantEntry(detail, '运行状态已更新');
-  const tool = stringValue(payload.displayName, stringValue(payload.toolName, stringValue(payload.toolId, '工具')));
-  if (eventType === 'tool' || eventType.startsWith('tool_')) return `${tool} ${participantToolStatusLabel(status)}`;
+  const toolFallback = tool ? roomSatelliteToolMessage(tool, status) : '';
+  if (!participantDetailNeedsDisclosure(detail)) return conciseParticipantEntry(detail, toolFallback || '运行状态已更新');
+  if (toolFallback) return toolFallback;
+  const toolName = stringValue(payload.displayName, stringValue(payload.toolName, stringValue(payload.toolId, '工具')));
+  if (eventType === 'tool' || eventType.startsWith('tool_')) return `${toolName} ${participantToolStatusLabel(status)}`;
   if (eventType.includes('reasoning') || eventType.includes('thinking')) return status === 'running' ? '正在形成可公开的思考摘要' : '思考摘要已更新';
   if (eventType.includes('route') || eventType.includes('dispatch')) return '分派状态已更新';
   return '运行状态已更新';
@@ -956,9 +959,8 @@ function timelineNearLatest(timeline: HTMLDivElement): boolean {
 }
 
 function subagentEntrySummary(entry: SubagentTimelineEntry): string {
-  return entry.tool
-    ? roomSatelliteToolMessage(entry.tool, entry.status)
-    : conciseParticipantEntry(entry.text, entry.kind === 'activity' ? '运行状态已更新' : '公开消息已更新');
+  const toolFallback = entry.tool ? roomSatelliteToolMessage(entry.tool, entry.status) : '';
+  return conciseParticipantEntry(entry.text, toolFallback || (entry.kind === 'activity' ? '运行状态已更新' : '公开消息已更新'));
 }
 
 function SatelliteTimelineEntry({ entry }: { entry: SubagentTimelineEntry }) {
@@ -1023,6 +1025,9 @@ function subagentTimeline(value: unknown): SubagentTimelineEntry[] {
     const tool = eventType === 'tool' || eventType.startsWith('tool_')
       ? roomSatelliteToolContent({ kind: eventType, status, payload })
       : undefined;
+    /* 真实摘要直通；缺摘要的工具事件用人话的工具身份，而不是拼一个带
+       原始 tool id 的机器串（PF-CM-012）。 */
+    const realSummary = stringValue(item.summary) || stringValue(payload.summary);
     return {
       id: stringValue(item.id, `activity:${index}`),
       actor: '运行进度',
@@ -1030,7 +1035,7 @@ function subagentTimeline(value: unknown): SubagentTimelineEntry[] {
       kind: 'activity',
       eventType,
       status,
-      text: stringValue(item.summary) || stringValue(payload.summary) || subagentActivityLabel(eventType, payload),
+      text: realSummary || (tool ? roomSatelliteToolMessage(tool, status) : subagentActivityLabel(eventType, payload)),
       ...(tool ? { tool } : {}),
       time: Number(item.createdAtMs) || 0,
     };

@@ -70,7 +70,9 @@ describe('PawOsSatelliteHost', () => {
     );
 
     expect(await screen.findByText('正在核对兼容边界。')).toBeInTheDocument();
-    expect(screen.getByText('开始调用 read')).toBeInTheDocument();
+    /* PF-CM-012：没有真实摘要的工具事件展示人话的工具身份，而不是
+       「开始调用 read」这类带原始 tool id 的机器串。 */
+    expect(screen.getByText('正在使用「读取文件」')).toBeInTheDocument();
     const timeline = screen.getByRole('log', { name: '子 Agent 实现子 Agent 卫星窗 公开对话与运行事件' });
     expect(timeline).toHaveAttribute('aria-live', 'polite');
     expect(screen.getAllByRole('img', { name: '执行中' })).toHaveLength(3);
@@ -282,7 +284,8 @@ describe('PawOsSatelliteHost', () => {
     expect(row).not.toBeNull();
     expect(row?.querySelector('header')).toBeNull();
     expect(row?.querySelector('p')).toBeNull();
-    expect(row?.querySelector('strong')).toHaveTextContent('工具');
+    /* 行首是真实工具身份（read → 读取文件），不再是不透明的「工具」筹码。 */
+    expect(row?.querySelector('strong')).toHaveTextContent('读取文件');
     expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveTextContent('已创建 interface.js');
     expect(row?.querySelector('.paw-participant-chat__activity-message')).toHaveAttribute('title', '已创建 interface.js');
     expect(row?.querySelector('time')).toHaveTextContent(/\d/);
@@ -436,7 +439,7 @@ describe('PawOsSatelliteHost', () => {
     }, { openWindow });
 
     const console = await screen.findByRole('region', { name: 'Sol 协作态势' });
-    expect(within(console).getByRole('tree', { name: '任务树' })).toHaveTextContent('实现 Room 任务图交互');
+    expect(within(console).getByRole('list', { name: '并行轨道' })).toHaveTextContent('实现 Room 任务图交互');
     expect(within(console).getByLabelText('往来事件')).toHaveTextContent('实现 Room 任务图交互');
     expect(within(console).getByText('验收条件 · 1')).toBeInTheDocument();
     expect(within(console).getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
@@ -541,7 +544,7 @@ describe('PawOsSatelliteHost', () => {
     });
 
     const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    expect(timeline.querySelector('article[data-status="running"]')).toHaveTextContent('read 工具执行中');
+    expect(timeline.querySelector('article[data-status="running"]')).toHaveTextContent('正在使用「读取文件」');
     const disclosure = document.querySelector<HTMLElement>('.paw-participant-chat__raw-detail');
     expect(disclosure).not.toBeNull();
     expect(screen.queryByText('/Volumes/private/workspace/PawWindowLayer.tsx')).not.toBeInTheDocument();

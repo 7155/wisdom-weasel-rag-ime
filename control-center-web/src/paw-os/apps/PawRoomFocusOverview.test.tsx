@@ -143,10 +143,93 @@ describe('PawRoomFocusOverview', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
     expect(screen.getByRole('region', { name: 'Sol 协作态势' })).toHaveTextContent('任务图依赖验证');
-    expect(screen.getByRole('tree', { name: '任务树' })).toHaveTextContent('实现依赖数据投影');
+    expect(screen.getByRole('list', { name: '并行轨道' })).toHaveTextContent('实现依赖数据投影');
     expect(screen.getByRole('list', { name: '行星伙伴' })).toHaveTextContent('Earth');
     expect(screen.getByLabelText('任务交接')).toHaveTextContent('Earth → Mars');
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
+  });
+
+  it('lays the task flow out as parallel owner lanes with verifier planets and a state pulse', () => {
+    const withVerifier = {
+      ...focus,
+      workItems: focus.workItems.map((item) => item.id === 'runtime:mars'
+        ? { ...item, accountableParticipantId: 'p-venus' }
+        : item),
+    };
+    render(<PawRoomFocusOverview focus={withVerifier} onOpenParticipant={vi.fn()} />);
+
+    // Dead counters are gone; the same real counts live on one pulse strip.
+    expect(screen.queryByLabelText('协作摘要')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '任务状态：进行 1，复核 1，完成 1' })).toBeInTheDocument();
+
+    const laneList = screen.getByRole('list', { name: '并行轨道' });
+    expect(within(laneList).getByRole('list', { name: 'Earth 的任务' })).toHaveTextContent('实现任务图交互');
+    expect(within(laneList).getByRole('list', { name: 'Venus 的任务' })).toHaveTextContent('整合 Room 任务图');
+    const marsTrack = within(laneList).getByRole('list', { name: 'Mars 的任务' });
+    expect(marsTrack).toHaveTextContent('实现依赖数据投影');
+    expect(marsTrack).toHaveTextContent('复核 Venus');
+
+    // Selecting a lane node fills the inspector with owner and verifier.
+    fireEvent.click(within(marsTrack).getByRole('button', { name: /实现依赖数据投影/ }));
+    const inspector = screen.getByRole('region', { name: '焦点详情' });
+    expect(inspector).toHaveTextContent('负责人');
+    expect(inspector).toHaveTextContent('Mars · Agent 2');
+    expect(inspector).toHaveTextContent('复核人');
+    expect(inspector).toHaveTextContent('Venus · Agent 3');
+  });
+
+  it('keeps unowned work visible in one trailing 待认领 lane instead of dropping it', () => {
+    const withUnclaimed = {
+      ...focus,
+      workItems: [...focus.workItems, {
+        id: 'work-orphan',
+        source: 'work-item' as const,
+        objective: '补齐验收记录',
+        acceptanceCriteria: [],
+        state: 'waiting' as const,
+        reviewRequired: false,
+        evidence: [],
+        updatedAtMs: 40,
+      }],
+    };
+    render(<PawRoomFocusOverview focus={withUnclaimed} onOpenParticipant={vi.fn()} />);
+
+    expect(within(screen.getByRole('list', { name: '并行轨道' }))
+      .getByRole('list', { name: '待认领 的任务' })).toHaveTextContent('补齐验收记录');
+  });
+
+  it('reveals the dispatch verdict — every candidate and the selection — behind a dispatch packet', () => {
+    const withPlan = {
+      ...focus,
+      flow: focus.flow.map((packet) => packet.id === 'activity:dispatch-mars'
+        ? {
+            ...packet,
+            plan: {
+              policy: 'parallel',
+              reason: 'partner_delegate',
+              targetParticipantIds: ['p-mars'],
+              child: true,
+              parallelIndex: 0,
+              parallelSize: 2,
+              candidates: [
+                { participantId: 'p-earth', displayName: 'Agent 1', score: 0, signals: [], selected: false },
+                { participantId: 'p-mars', displayName: 'Agent 2', score: 1, signals: ['explicit_invite'], selected: true },
+              ],
+            },
+          }
+        : packet),
+    };
+    render(<PawRoomFocusOverview focus={withPlan} onOpenParticipant={vi.fn()} />);
+
+    const ledger = screen.getByRole('region', { name: '往来记录' });
+    fireEvent.click(within(ledger).getByRole('button', { name: /分派依赖投影支线/ }));
+    const candidates = within(ledger).getByRole('list', { name: '候选伙伴' });
+    const mars = within(candidates).getByText('Mars').closest('li')!;
+    expect(mars).toHaveAttribute('data-selected');
+    expect(mars).toHaveTextContent('点名邀请');
+    const earth = within(candidates).getByText('Earth').closest('li')!;
+    expect(earth).not.toHaveAttribute('data-selected');
+    expect(earth).toHaveTextContent('未选');
   });
 
   it('selects a planet with pointer or keyboard and opens only its real participant target', () => {

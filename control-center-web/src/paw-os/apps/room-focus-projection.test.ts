@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRoomProjection, type RoomProjectionState } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
-import { buildRoomFocusProjection } from './room-focus-projection';
+import { buildRoomFocusProjection, roomFocusLanes } from './room-focus-projection';
 
 function participant(id: string, ordinal: number, displayName = `Agent ${ordinal + 1}`) {
   return {
@@ -220,6 +220,83 @@ describe('buildRoomFocusProjection', () => {
     } else {
       expect(packet).toBeUndefined();
     }
+  });
+
+  it('groups the task flow into parallel lanes per owning planet plus one trailing unclaimed lane', () => {
+    const owned = work({ id: 'work-earth', objective: '实现任务图交互', currentOwnerParticipantId: 'p-earth' });
+    const alsoEarth = work({ id: 'work-earth-2', objective: '补充交互验收', currentOwnerParticipantId: 'p-earth', state: 'done' });
+    const mars = work({ id: 'work-mars', objective: '实现依赖数据投影', currentOwnerParticipantId: 'p-mars', state: 'blocked' });
+    const orphan = work({ id: 'work-orphan', objective: '待认领的验收记录', currentOwnerParticipantId: '', accountableParticipantId: '' });
+
+    const focus = buildRoomFocusProjection(room([owned, alsoEarth, mars, orphan]), createRoomProjection('room-sol'));
+    const lanes = roomFocusLanes(focus);
+
+    expect(lanes.map((lane) => [lane.id, lane.celestialName, lane.state, lane.items.map((item) => item.id)])).toEqual([
+      ['p-earth', 'Earth', 'running', ['work-earth', 'work-earth-2']],
+      ['p-mars', 'Mars', 'blocked', ['work-mars']],
+      ['unassigned', '待认领', 'running', ['work-orphan']],
+    ]);
+    // A partner without any owned work contributes no empty lane.
+    expect(lanes.some((lane) => lane.ownerParticipantId === 'p-venus')).toBe(false);
+  });
+
+  it('attaches the routing verdict to a dispatch packet and upgrades its stock summary to plan text', () => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['route-1'];
+    projection.activitiesById = {
+      'route-1': {
+        id: 'route-1', sequence: 6, turnId: 'turn-root', participantId: 'p-mars', sourceSessionId: 'session-root',
+        kind: 'route_decision', status: 'completed', summary: '已确认本轮分工',
+        payload: {
+          routingPolicy: 'parallel',
+          selectedParticipantIds: ['p-mars'],
+          targetParticipantId: 'p-mars',
+          targetDisplayName: 'Agent 2',
+          reason: 'partner_delegate',
+          parallelIndex: 0,
+          parallelSize: 2,
+          candidates: [
+            { participantId: 'p-earth', displayName: 'Agent 1', score: 0, signals: [] },
+            { participantId: 'p-mars', displayName: 'Agent 2', score: 1, signals: ['explicit_invite'] },
+          ],
+        },
+        createdAtMs: 130, updatedAtMs: 130,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+    const packet = focus.flow.find((candidate) => candidate.id === 'activity:route-1');
+
+    expect(packet?.summary).toBe('并行分派 → Mars（伙伴委派） · 并行第 1/2 路');
+    expect(packet?.plan).toMatchObject({ policy: 'parallel', reason: 'partner_delegate' });
+    expect(packet?.plan?.candidates.map((candidate) => [candidate.participantId, candidate.selected])).toEqual([
+      ['p-earth', false],
+      ['p-mars', true],
+    ]);
+  });
+
+  it('never overwrites a human dispatch summary with generated plan text', () => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['route-2'];
+    projection.activitiesById = {
+      'route-2': {
+        id: 'route-2', sequence: 7, turnId: 'turn-root', participantId: 'p-mars', sourceSessionId: 'session-root',
+        kind: 'route_decision', status: 'completed', summary: '把依赖投影支线交给 Mars 实现',
+        payload: {
+          routingPolicy: 'parallel',
+          targetParticipantId: 'p-mars',
+          reason: 'partner_delegate',
+          candidates: [{ participantId: 'p-mars', displayName: 'Agent 2', score: 1, signals: [] }],
+        },
+        createdAtMs: 140, updatedAtMs: 140,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+    const packet = focus.flow.find((candidate) => candidate.id === 'activity:route-2');
+
+    expect(packet?.summary).toBe('把依赖投影支线交给 Mars 实现');
+    expect(packet?.plan).toBeDefined();
   });
 
   it('makes a real offer visible as a directed handoff and preserves blocker recovery copy', () => {
