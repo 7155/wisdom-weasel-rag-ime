@@ -639,7 +639,7 @@
   overflow: clip;
   opacity: 0;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
     opacity 150ms ease;
   will-change: height;
 }
@@ -3764,4 +3764,131 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* ===== 分派计划（route_decision 的真实内容） =====
+   目标、理由与波次在头部；下方每位候选伙伴一行：真实权重条 + 路由信号。
+   权重来自路由回执的 score（0..1），不发明进度；协作色 = 紫罗兰。 */
+.agent-route-plan {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+}
+
+.agent-route-plan__header {
+  display: flex;
+  min-height: 36px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  color: var(--color-collaboration);
+}
+
+.agent-route-plan__header > strong {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agent-route-plan__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-collaboration-soft);
+  color: var(--color-collaboration);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.agent-route-plan__badge[data-tone='wave'] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+.agent-route-plan__phase {
+  margin: 0;
+  padding: 8px 10px 0;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.agent-route-plan__candidates {
+  display: grid;
+  margin: 0;
+  padding: 6px 10px 10px;
+  gap: 4px;
+  list-style: none;
+}
+
+.agent-route-plan__candidates > li {
+  display: grid;
+  grid-template-columns: minmax(72px, 128px) minmax(64px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: var(--radius-1, 6px);
+}
+
+.agent-route-plan__candidates > li[data-selected] {
+  background: var(--color-collaboration-soft);
+}
+
+.agent-route-plan__candidates > li > strong {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-route-plan__candidates > li[data-selected] > strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.agent-route-plan__score {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-tertiary) 14%, transparent);
+}
+
+.agent-route-plan__score > i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-collaboration);
+  transform-origin: left center;
+}
+
+.agent-route-plan__candidates > li:not([data-selected]) .agent-route-plan__score > i {
+  background: color-mix(in srgb, var(--color-text-tertiary) 45%, transparent);
+}
+
+.agent-route-plan__candidates > li > small {
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.agent-route-plan__candidates > li[data-selected] > small {
+  color: var(--color-collaboration);
+  font-weight: 600;
 }
