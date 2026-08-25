@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import agentCss from '../agent.css?raw';
 import {
   DISCLOSURE_MOTION,
   SmoothDisclosureReveal,
@@ -41,11 +42,16 @@ describe('SmoothDisclosureReveal', () => {
     vi.useRealTimers();
   });
 
-  it('uses the bounded spring motion contract shared with the conversation baseline', () => {
+  it('uses the one calm ease-out disclosure voice that the conversation CSS actually ships', () => {
+    // 全对话统一披露动效（agent-deep 定稿）：180ms 平静 ease-out。
     expect(DISCLOSURE_MOTION).toEqual({
-      durationMs: 220,
-      easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)',
+      durationMs: 180,
+      easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
     });
+    // 常量与真实 CSS 不允许悄悄分叉：agent.css 的 reveal 过渡必须使用同一对值。
+    expect(agentCss).toContain(
+      `height ${DISCLOSURE_MOTION.durationMs}ms ${DISCLOSURE_MOTION.easing}`,
+    );
   });
 
   it('keeps closing content mounted, supports reversal, and removes it only after exit', async () => {
