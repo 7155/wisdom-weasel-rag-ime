@@ -82,9 +82,10 @@ describe('PAWOS system Apps window shape', () => {
       /\.paw-system-app__stage\s*\{[^}]*grid-template-rows:\s*var\(--paw-stage-chrome-h\) minmax\(0, 1fr\);/s,
     );
     expect(sysAppsCss).toMatch(/\.paw-system-app__workspace\s*\{[^}]*overflow:\s*hidden;/s);
-    // The workspace band, not the App, owns scrolling.
+    // The page inside the workspace band owns scrolling, and it keeps both
+    // axes reachable so nothing wide is silently clipped.
     expect(sysAppsCss).toMatch(
-      /\.paw-system-app \.mgmt-page,\s*\n\.paw-desktop-root \.paw-system-app \.context-debug-feature\s*\{[^}]*overflow:\s*hidden auto;/s,
+      /\.paw-system-app \.mgmt-page,\s*\n\.paw-desktop-root \.paw-system-app \.context-debug-feature\s*\{[^}]*overflow:\s*auto;[^}]*overscroll-behavior:\s*contain;/s,
     );
     // The retired 36px spacer pseudo-band must not come back.
     expect(sysAppsCss).not.toContain('.mgmt-page:not(:has(.mgmt-page__native-actions))::before');

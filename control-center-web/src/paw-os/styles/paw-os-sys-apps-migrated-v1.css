@@ -354,14 +354,17 @@
 
 /* Shared operational canvas ------------------------------------------------ */
 
-/* One scroller per page, and it is the only band that absorbs resize. */
+/* One scroller per page, and it is the only band that absorbs resize. Both
+   axes stay reachable: a wide diagnostics table has to be scrollable inside
+   the workspace rather than clipped by it, and the window body's own
+   containment keeps that overflow from ever reaching the document. */
 .paw-desktop-root .paw-system-app .mgmt-page,
 .paw-desktop-root .paw-system-app .context-debug-feature {
   width: 100%;
   height: 100%;
   min-height: 0;
   padding: 0;
-  overflow: hidden auto;
+  overflow: auto;
   overscroll-behavior: contain;
   background: var(--paw-system-stage);
   color: var(--paw-system-ink);
