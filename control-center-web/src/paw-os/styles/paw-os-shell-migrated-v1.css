@@ -9,9 +9,11 @@
  * button, panel) in paw-os-controls.css.
  * MATERIAL CONTRACT: exactly three surfaces may blur — the menu bar, the Dock
  * and the Launchpad veil (modal, never underneath a drag). They all derive
- * from one --paw-chrome-* recipe. Windows, menus, tooltips and every text
- * surface are opaque, so ink never sits on an unknown backdrop and drag or
- * resize never re-rasterizes a filter stack.
+ * from one --paw-chrome-* recipe. While a window drag/resize owns the pointer
+ * (`data-window-interaction` on the root), menu bar and Dock drop blur and
+ * become opaque so the compositor never re-samples a moving window through
+ * chrome glass — that re-blur was starving the pointer. Windows, menus,
+ * tooltips and every text surface stay opaque always.
  * STORY: orient in the menu bar, launch from Dock or Launchpad, recognize the
  * active App by its accent, continue work on a spatially stable white window.
  */
@@ -88,6 +90,12 @@
   box-shadow: var(--paw-chrome-highlight);
   -webkit-backdrop-filter: var(--paw-chrome-blur);
   backdrop-filter: var(--paw-chrome-blur);
+}
+/* Pointer-owned freeze: opaque chrome, no glass sample of the moving frame. */
+.paw-desktop-root[data-window-interaction] .paw-menu-bar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: #fbfcfe;
 }
 
 /* Signature light: one static aurora hairline along the bottom edge of the
@@ -343,6 +351,17 @@
   -webkit-backdrop-filter: var(--paw-chrome-blur);
   backdrop-filter: var(--paw-chrome-blur);
 }
+.paw-desktop-root[data-window-interaction] .paw-dock {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: #fbfcfe;
+}
+/* Magnification already drives transform-only styles; drop-shadow filters on
+ * every shelf icon would re-rasterize each frame and fight the pointer. */
+.paw-desktop-root .paw-dock[data-magnify] .paw-app-icon {
+  filter: none;
+  transition: none;
+}
 .paw-desktop-root .paw-dock button { color: #556171; }
 .paw-desktop-root .paw-dock > i { background: rgb(23 26 33 / .12); }
 .paw-desktop-root .paw-dock button::before { content: none; }
@@ -558,7 +577,9 @@
 }
 /* The lifted window casts its own light: a whisper-thin accent ring plus an
    ambient shadow tinted toward the App identity. Shadow colour only — the
-   surface stays opaque white, so nothing re-rasterizes while dragging. */
+   surface stays opaque white. During live drag/resize the multi-layer
+   color-mix stack collapses to the resting shadow so the compositor keeps a
+   cheap layer under the transform. */
 .paw-desktop-root .paw-window-shell[data-active] .paw-window {
   border-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 38%, rgb(23 26 33 / .16));
   box-shadow:
@@ -566,6 +587,10 @@
     0 0 0 4px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 8%, transparent),
     0 30px 74px -22px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 26%, rgb(23 32 52 / .34)),
     0 5px 18px rgb(23 26 33 / .07);
+}
+.paw-desktop-root[data-window-interaction] .paw-window-shell[data-active] .paw-window,
+.paw-desktop-root[data-window-interaction] .paw-window-shell[data-interaction] .paw-window {
+  box-shadow: var(--paw-shadow-rest);
 }
 .paw-desktop-root .paw-window-titlebar {
   border-bottom: 1px solid rgb(23 26 33 / .1);

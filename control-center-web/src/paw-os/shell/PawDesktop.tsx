@@ -194,7 +194,12 @@ export function PawDesktop() {
     const baseline = additive ? new Set(selectedApps) : new Set<PawAppId>();
     if (!additive) setSelectedApps(new Set());
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    const move = (moveEvent: PointerEvent) => {
+    let frame = 0;
+    let latest: PointerEvent | null = null;
+    const apply = () => {
+      frame = 0;
+      const moveEvent = latest;
+      if (!moveEvent) return;
       const left = Math.min(origin.x, moveEvent.clientX);
       const top = Math.min(origin.y, moveEvent.clientY);
       const right = Math.max(origin.x, moveEvent.clientX);
@@ -215,13 +220,19 @@ export function PawDesktop() {
       });
       setSelectedApps(next);
     };
+    const move = (moveEvent: PointerEvent) => {
+      latest = moveEvent;
+      if (!frame) frame = window.requestAnimationFrame(apply);
+    };
     const finish = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      apply();
       setLasso(null);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
     };
-    window.addEventListener('pointermove', move);
+    window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', finish);
   }, [selectedApps]);
@@ -550,8 +561,8 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
  * conducts, because every response below is a transform — so the per-frame
  * path is pure math plus style writes: no layout reads, no repaints, and
  * dragging a window across the Dock cannot flicker. Coarse pointers, the
- * narrow scrolling Dock and both reduced-motion signals opt out entirely,
- * leaving the resting shelf untouched. */
+ * narrow scrolling Dock, a live window drag/resize, and both reduced-motion
+ * signals opt out entirely, leaving the resting shelf untouched. */
 function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
   useEffect(() => {
     const dock = dockRef.current;
@@ -588,15 +599,20 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
         item.style.setProperty('--paw-dock-shift', shift[index].toFixed(2));
       });
     };
+    const windowGestureOwnsPointer = () => Boolean(dock.closest('.paw-desktop-root')?.dataset.windowInteraction);
     const conducting = () => {
       if (!finePointer.matches || !wideShelf.matches || reducedMotion.matches) return false;
+      if (windowGestureOwnsPointer()) return false;
       return document.documentElement.getAttribute('data-reduce-motion') !== 'true';
     };
     const enter = () => {
       if (conducting()) measure();
     };
     const move = (event: PointerEvent) => {
-      if (!conducting()) return;
+      if (!conducting()) {
+        if (dock.dataset.magnify) rest();
+        return;
+      }
       pointerX = event.clientX;
       dock.dataset.magnify = 'true';
       if (!frame) frame = window.requestAnimationFrame(apply);

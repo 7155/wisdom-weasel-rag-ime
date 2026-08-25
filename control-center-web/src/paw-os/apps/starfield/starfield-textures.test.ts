@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   archetypeForPalette,
   archetypeForSeed,
+  generateCloudMap,
   generatePlanetMaps,
   generateRadialGlow,
   generateRingMap,
@@ -97,6 +98,20 @@ describe('starfield procedural textures', () => {
     expect(Math.abs(channelMean(star, 0) - channelMean(star, 2))).toBeLessThan(14);
   });
 
+  it('bakes translucent cloud sheets with opaque cores and clear sky gaps', () => {
+    const clouds = generateCloudMap('terra-1', 64, 32);
+    expect(digest(clouds)).toBe(digest(generateCloudMap('terra-1', 64, 32)));
+    expect(digest(clouds)).not.toBe(digest(generateCloudMap('ocean-2', 64, 32)));
+    let transparent = 0;
+    let solid = 0;
+    for (let index = 3; index < clouds.data.length; index += 4) {
+      if (clouds.data[index]! < 8) transparent += 1;
+      if (clouds.data[index]! > 80) solid += 1;
+    }
+    expect(transparent).toBeGreaterThan(0);
+    expect(solid).toBeGreaterThan(0);
+  });
+
   it('bakes a deep sky with a bright star scatter over a dark base', () => {
     const sky = generateSkyMap('session-1', 128);
     expect(digest(sky)).toBe(digest(generateSkyMap('session-1', 128)));
@@ -149,6 +164,9 @@ describe('starfield texture factory', () => {
     expect(pair.normalMap.colorSpace).toBe(THREE.NoColorSpace);
     expect(pair.map.wrapS).toBe(THREE.RepeatWrapping);
     expect(factory.planet({ seed: 'p', archetype: 'terra', baseColor: 0x5b9bf0, width: 32 }).map).toBe(pair.map);
+    const clouds = factory.cloud('p', 32);
+    expect(factory.cloud('p', 32)).toBe(clouds);
+    expect(factory.owns(clouds)).toBe(true);
 
     factory.dispose();
     expect(factory.owns(sun)).toBe(false);
