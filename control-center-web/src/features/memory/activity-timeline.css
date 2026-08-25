@@ -2,21 +2,50 @@
   --timeline-period-color: var(--color-accent);
 }
 
+/* ============================== viewport split ==============================
+   Master-detail: the daily journal is the primary object and owns the first
+   screen; the month calendar rides along as a compact side rail. */
+
+.activity-timeline__layout {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) minmax(272px, 324px);
+}
+
+.activity-timeline__main {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.activity-timeline__rail {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+@container memory-second-brain (max-width: 960px) {
+  .activity-timeline__layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The calendar reads as a compact rail instrument: dates plus state marks;
+   the per-day aria-labels and the legend carry the full wording. */
 .activity-calendar {
   position: relative;
   display: grid;
   min-width: 0;
-  border-block: 1px solid var(--color-border-strong);
+  border: 1px solid var(--color-border-strong);
+  border-inline: 0;
   background: var(--color-surface);
 }
 
 .activity-calendar__header {
-  display: flex;
+  display: grid;
   min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 13px 14px 11px;
+  gap: 8px;
+  padding: 11px 12px 10px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
 }
@@ -34,20 +63,21 @@
 
 .activity-calendar__header h3 {
   margin: 2px 0 0;
-  font-size: 17px;
+  font-size: 15px;
   letter-spacing: 0;
 }
 
 .activity-calendar__header p {
   margin: 3px 0 0;
   color: var(--color-text-tertiary);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
 .activity-calendar__month-controls {
   display: flex;
-  flex: 0 0 auto;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
 }
@@ -81,11 +111,11 @@
 
 .activity-calendar__summary {
   display: flex;
-  min-height: 38px;
+  min-height: 34px;
   flex-wrap: wrap;
   align-items: center;
-  gap: 7px 18px;
-  padding: 7px 14px;
+  gap: 5px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -112,7 +142,7 @@
 }
 
 .activity-calendar__weekdays span {
-  padding: 6px 8px;
+  padding: 5px 2px;
   color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.4;
@@ -127,7 +157,7 @@
 .activity-calendar__day,
 .activity-calendar__blank {
   min-width: 0;
-  min-height: 66px;
+  min-height: 44px;
   border: 0;
   border-right: 1px solid var(--color-border);
   border-bottom: 1px solid var(--color-border);
@@ -140,13 +170,13 @@
   position: relative;
   display: grid;
   align-content: center;
-  justify-items: start;
-  padding: 7px 9px;
+  justify-items: center;
+  padding: 5px 3px;
   color: var(--color-text-primary);
   cursor: pointer;
   font: inherit;
-  gap: 3px;
-  text-align: left;
+  gap: 2px;
+  text-align: center;
   transition:
     background-color var(--duration-enter) var(--ease-standard),
     box-shadow var(--duration-enter) var(--ease-standard),
@@ -165,7 +195,7 @@
 
 .activity-calendar__date {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   font-weight: 760;
 }
@@ -179,15 +209,11 @@
 }
 
 .activity-calendar__state svg { flex: 0 0 auto; }
-.activity-calendar__state small { overflow: hidden; font-size: 13px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.activity-calendar__day b {
-  color: var(--color-text-tertiary);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
+
+/* In-cell wording collapses to the state mark; the button's aria-label and
+   the legend below keep the full state and source counts. */
+.activity-calendar__state small { display: none; }
+.activity-calendar__day > b { display: none; }
 
 .activity-calendar__day[data-state='approved']::before { background: var(--color-success); }
 .activity-calendar__day[data-state='approved'] .activity-calendar__state { color: var(--color-success); }
@@ -223,8 +249,8 @@
 .activity-calendar__legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px 16px;
-  padding: 8px 14px;
+  gap: 5px 12px;
+  padding: 8px 12px;
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.4;
@@ -237,16 +263,16 @@
 
 .activity-calendar__boundary {
   margin: 0;
-  padding: 0 14px 10px;
+  padding: 0 12px 10px;
   color: var(--color-text-tertiary);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
 .daily-journal {
   position: relative;
   min-width: 0;
-  border-bottom: 1px solid var(--color-border-strong);
+  border-block: 1px solid var(--color-border-strong);
   background: var(--color-surface);
   animation: daily-journal-reveal var(--duration-slow) var(--ease-standard) both;
 }
@@ -479,47 +505,6 @@
 }
 
 @keyframes daily-journal-spin { to { transform: rotate(360deg); } }
-
-.activity-timeline--semantic .activity-timeline__day-band {
-  border-block-color: var(--color-border-strong);
-  background: var(--color-surface-subtle);
-  grid-template-columns: minmax(0, 1.25fr) minmax(420px, .9fr);
-}
-
-.activity-timeline--semantic .activity-timeline__summary-copy {
-  display: grid;
-  align-content: center;
-  min-height: 132px;
-}
-
-.activity-timeline__day-source {
-  display: inline-flex;
-  width: fit-content;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.activity-timeline__day-source svg:first-child { color: var(--color-accent); }
-.activity-timeline__day-source svg:last-child { color: var(--color-text-tertiary); }
-.activity-timeline__day-source:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
-
-.activity-timeline--semantic .activity-timeline__summary-metrics {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.activity-timeline--semantic .activity-timeline__summary-metrics > div:nth-child(-n + 3) {
-  border-bottom: 1px solid var(--color-border);
-}
 
 .activity-timeline__periods {
   display: grid;
@@ -1131,7 +1116,6 @@
   .daily-journal__source:hover { color: var(--color-text-primary); }
   .daily-journal__source:hover svg:last-child { transform: translateX(2px); }
 
-  .activity-timeline__day-source:hover,
   .activity-timeline__open-event:hover { color: var(--color-text-primary); }
 
   .activity-day-map__row > button:hover {
@@ -1153,7 +1137,6 @@
 
 @media (max-width: 980px) {
   .daily-journal__body { grid-template-columns: minmax(0, 1fr) minmax(230px, 34%); }
-  .activity-timeline--semantic .activity-timeline__day-band { grid-template-columns: 1fr; }
   .activity-timeline__task { grid-template-columns: 106px minmax(0, 1fr) 132px 30px; }
   .activity-timeline__task-main { padding-inline: 14px; }
 }
@@ -1161,8 +1144,6 @@
 @media (max-width: 720px) {
   .daily-journal__body { grid-template-columns: 1fr; }
   .daily-journal__story { border-right: 0; border-bottom: 1px solid var(--color-border); }
-  .activity-calendar__header { align-items: flex-start; }
-  .activity-calendar__summary { gap-inline: 12px; }
   .activity-timeline__period-header { align-items: flex-start; }
   .activity-timeline__period-header > span { padding-top: 7px; }
   .activity-timeline__task {
@@ -1196,19 +1177,6 @@
   .daily-journal__facts dl > div { border-right: 0; }
   .daily-journal__empty-copy { min-height: 150px; padding: 20px 16px; }
   .daily-journal__boundary { padding-inline: 14px 12px; }
-  .activity-calendar__header { display: grid; }
-  .activity-calendar__month-controls { width: 100%; justify-content: space-between; }
-  .activity-calendar__day,
-  .activity-calendar__blank { min-height: 58px; }
-  .activity-calendar__day { padding: 6px 4px; justify-items: center; text-align: center; }
-  .activity-calendar__state { gap: 2px; }
-  .activity-calendar__state small { max-width: 44px; font-size: 12px; }
-  .activity-calendar__day b { font-size: 12px; }
-  .activity-calendar__weekdays span { padding-inline: 2px; }
-  .activity-timeline__day-source {
-    min-height: 44px;
-    padding-block: 10px;
-  }
   .activity-day-map__row {
     height: 44px;
     overflow: hidden;
@@ -1218,10 +1186,6 @@
     bottom: 0;
     min-width: 44px;
   }
-  .activity-timeline--semantic .activity-timeline__summary-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .activity-timeline--semantic .activity-timeline__summary-metrics > div { border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
-  .activity-timeline--semantic .activity-timeline__summary-metrics > div:nth-child(2n) { border-right: 0; }
-  .activity-timeline--semantic .activity-timeline__summary-metrics > div:nth-last-child(-n + 2) { border-bottom: 0; }
   .activity-timeline__period-header { display: grid; gap: 5px; }
   .activity-timeline__period-header > span { padding: 0 0 0 44px; }
   .activity-timeline__task { grid-template-columns: 1fr 28px; }
@@ -1268,8 +1232,8 @@
 .activity-timeline {
   display: grid;
   min-width: 0;
-  gap: var(--space-4);
-  padding: var(--space-5) 0 var(--space-6);
+  gap: var(--space-3);
+  padding: var(--space-3) 0 var(--space-6);
 }
 
 .activity-timeline__eyebrow {

@@ -14,14 +14,15 @@ import { ActivityTimeline } from './ActivityTimeline';
 afterEach(cleanup);
 
 describe('ActivityTimeline activity projection', () => {
-  it('keeps the daily journal directly below the calendar and opens a journal highlight', async () => {
+  it('keeps the daily journal as the first-screen main pane with the calendar in the rail', async () => {
     const user = userEvent.setup();
     renderTimeline(semanticTimeline());
 
     const calendarHeading = await screen.findByText('月度整理轨迹');
-    const calendar = calendarHeading.closest('.activity-calendar');
-    expect(calendar?.nextElementSibling).toHaveClass('daily-journal');
-    expect(screen.getByRole('heading', { name: /的每日日记$/ })).toBeInTheDocument();
+    expect(calendarHeading.closest('.activity-timeline__rail')).not.toBeNull();
+    const journal = screen.getByRole('heading', { name: /的每日日记$/ }).closest('.daily-journal');
+    expect(journal?.parentElement).toHaveClass('activity-timeline__main');
+    expect(journal?.parentElement?.firstElementChild).toBe(journal);
     expect(await screen.findByText('上午完成账号切换与连续开发，下午验证记忆召回。')).toBeInTheDocument();
     expect(screen.getByText('今日足迹')).toBeInTheDocument();
 
