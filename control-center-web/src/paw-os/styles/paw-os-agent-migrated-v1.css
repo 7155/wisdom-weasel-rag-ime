@@ -206,16 +206,22 @@
 
 /* 视图切换：与 Room 窗口 chrome（.paw-room-window-chrome > nav）同一枚
    分段控件语言——同槽色、同活动白片、同尺寸，portal 进标题栏后
-   「对话 / Agent 轨迹 / 星空」与 Room 的「对话 / 星图 / 治理」不再是两套 UI。 */
+   「对话 / Agent 轨迹 / 星空」与 Room 的「对话 / 星图 / 治理」不再是两套 UI。
+
+   取色来自 OS 的 chrome token，而不是 v1 基线带进来的私有暖褐色。这条
+   header 被 portal 进 .paw-window-titlebar，已经不在 .paw-session-workspace
+   的作用域里，--paw-chat-* 取不到——于是它此前退回写死的 rgb(42 28 0) 与
+   #2c2c2b，在一条冷灰蓝的标题栏里显出第二种黑。--paw-chrome-* 正是为窗口
+   furniture 准备的，且在 .paw-desktop-root 上，portal 之后依然解析得到。 */
 .paw-desktop-root .paw-session-workspace__view-switch {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border: 1px solid rgb(42 28 0 / .055);
+  border: 1px solid var(--paw-line-soft);
   border-radius: 8px;
-  background: rgb(42 28 0 / .035);
+  background: color-mix(in srgb, var(--paw-chrome-ink) 4%, transparent);
   box-shadow: none;
 }
 
@@ -233,7 +239,7 @@
   padding: 0 9px;
   border: 0;
   border-radius: 6px;
-  color: #7d7a75;
+  color: var(--paw-chrome-muted);
   background: transparent;
   font-size: 12.5px;
   font-weight: 550;
@@ -244,7 +250,7 @@
 
 .paw-desktop-root .paw-session-workspace__view-switch button:hover,
 .paw-desktop-root .paw-session-workspace__tools > button:hover {
-  color: #2c2c2b;
+  color: var(--paw-chrome-ink);
 }
 
 .paw-desktop-root .paw-session-workspace__view-switch button:active,
@@ -252,16 +258,13 @@
   transform: scale(.97);
 }
 
-.paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'] {
-  color: #2c2c2b;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(42 28 0 / .08), 0 0 0 1px rgb(42 28 0 / .04);
-}
-
+.paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'],
 .paw-desktop-root .paw-session-workspace__tools[data-open] > button {
-  color: #2c2c2b;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(42 28 0 / .08), 0 0 0 1px rgb(42 28 0 / .04);
+  color: var(--paw-chrome-ink);
+  background: var(--paw-panel);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--paw-chrome-ink) 8%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--paw-chrome-ink) 5%, transparent);
 }
 
 .paw-desktop-root .paw-session-workspace__tools > nav {
@@ -276,8 +279,8 @@
   padding: 6px;
   border: 1px solid var(--paw-chat-border);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 14px 36px rgb(36 31 27 / 16%);
+  background: var(--paw-panel);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--paw-chrome-ink) 16%, transparent);
 }
 
 .paw-desktop-root .paw-session-workspace__tools > nav > button {
@@ -1540,7 +1543,7 @@
     border-radius: 16px 16px 0 0;
     border-top: 1px solid var(--paw-chat-border);
     border-left: 0;
-    box-shadow: 0 -12px 30px rgb(36 31 27 / 12%);
+    box-shadow: 0 -12px 30px color-mix(in srgb, var(--paw-chrome-ink) 12%, transparent);
     animation-name: paw-session-sheet-in;
   }
 

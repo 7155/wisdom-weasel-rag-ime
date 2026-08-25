@@ -149,14 +149,17 @@
   backdrop-filter: none;
 }
 
+/* 与 Session 窗口 chrome 是同一枚分段控件，因此跟着一起改用 OS 的
+   --paw-chrome-* ：两扇窗并排在桌面上时，标题栏里不能出现一冷一暖两种黑。
+   Room 内部面板（.paw-room-tools__*）仍带着 v1 基线的暖褐色，留给 Room 轨。 */
 .paw-desktop-root .paw-room-window-chrome > nav {
   display: inline-flex;
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border: 1px solid rgb(42 28 0 / .055);
+  border: 1px solid var(--paw-line-soft);
   border-radius: 8px;
-  background: rgb(42 28 0 / .035);
+  background: color-mix(in srgb, var(--paw-chrome-ink) 4%, transparent);
 }
 
 .paw-desktop-root .paw-room-workspace__mode {
@@ -177,7 +180,7 @@
   padding-inline: 9px;
   border: 0;
   border-radius: 6px;
-  color: #7d7a75;
+  color: var(--paw-chrome-muted);
   background: transparent;
   font-size: 12.5px;
   font-weight: 550;
@@ -187,13 +190,15 @@
   transition: color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, transform 100ms ease;
 }
 
-.paw-desktop-root .paw-room-window-chrome nav button:hover { color: #2c2c2b; }
+.paw-desktop-root .paw-room-window-chrome nav button:hover { color: var(--paw-chrome-ink); }
 .paw-desktop-root .paw-room-window-chrome nav button:active { transform: scale(.97); }
 
 .paw-desktop-root .paw-room-window-chrome nav button[aria-pressed='true'] {
-  color: #2c2c2b;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(42 28 0 / .08), 0 0 0 1px rgb(42 28 0 / .04);
+  color: var(--paw-chrome-ink);
+  background: var(--paw-panel);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--paw-chrome-ink) 8%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--paw-chrome-ink) 5%, transparent);
 }
 
 .paw-desktop-root .paw-room-workspace__signal {

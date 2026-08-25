@@ -340,6 +340,23 @@ describe('PAWOS Agent Session structural migration', () => {
     );
   });
 
+  it('dresses the portaled Session chrome in the OS window palette, not a private one', () => {
+    // header 被 portal 进 .paw-window-titlebar 后就离开了 .paw-session-workspace
+    // 的作用域，--paw-chat-* 取不到；它此前退回 v1 基线的暖褐色，在冷灰蓝的
+    // 标题栏里显出第二种黑。--paw-chrome-* 定义在 .paw-desktop-root 上，portal
+    // 之后仍然解析得到，是这条 chrome 唯一该说的色板。
+    const chrome = agentMigratedCss.slice(
+      agentMigratedCss.indexOf('.paw-desktop-root .paw-session-workspace__view-switch {'),
+      agentMigratedCss.indexOf('.paw-desktop-root .paw-session-workspace__attention'),
+    );
+    expect(chrome).not.toBe('');
+    expect(chrome).toContain('var(--paw-chrome-ink)');
+    expect(chrome).toContain('var(--paw-chrome-muted)');
+    for (const warm of ['rgb(42 28 0', '#7d7a75', '#2c2c2b', 'rgb(36 31 27']) {
+      expect(chrome, warm).not.toContain(warm);
+    }
+  });
+
   it('uses one compact recoverable line when the Session has no files', async () => {
     const user = userEvent.setup();
     render(
