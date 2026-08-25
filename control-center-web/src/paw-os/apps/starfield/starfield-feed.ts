@@ -81,11 +81,38 @@ const HANDOFF_STATE_LABEL: Record<RoomFocusProjection['handoffs'][number]['state
   stopped: '已停止',
 };
 
-export function buildRoomFeed(focus: RoomFocusProjection): StarfieldFeedItem[] {
+/** What needs the user first: a blocker outranks a review, then live work. */
+const PARTNER_ROW_PRIORITY: Record<string, number> = {
+  blocked: 0,
+  failed: 0,
+  review: 1,
+  running: 2,
+  waiting: 3,
+};
+
+export function buildRoomFeed(
+  focus: RoomFocusProjection,
+  options: { hosted: boolean } = { hosted: true },
+): StarfieldFeedItem[] {
   const nameById = new Map(focus.partners.map((partner) => [partner.participantId, partner.celestialName]));
-  const liveStates = new Set(['running', 'review', 'blocked', 'failed']);
+  const liveStates = new Set(Object.keys(PARTNER_ROW_PRIORITY));
+  // The shared objective leads the feed: the sky is about the work, not the
+  // scenery. It only points at Sol when a facilitator is actually hosting.
+  const goalRow: StarfieldFeedItem = {
+    id: 'room:goal',
+    atMs: 0,
+    actor: options.hosted ? `Sol · ${focus.goal.title}` : focus.goal.title,
+    text: focus.goal.description.trim() || '这间 Room 的共同目标',
+    stateLabel: roomFocusStateLabel(focus.goal.state),
+    tone: roomBodyMotion(focus.goal.state).tone,
+    ...(options.hosted ? { bodyId: 'center' } : {}),
+  };
   const partnerRows = focus.partners
     .filter((partner) => liveStates.has(partner.state))
+    .sort((left, right) => (
+      (PARTNER_ROW_PRIORITY[left.state] ?? 9) - (PARTNER_ROW_PRIORITY[right.state] ?? 9)
+      || left.celestialName.localeCompare(right.celestialName)
+    ))
     .map((partner): StarfieldFeedItem => ({
       id: `partner:${partner.participantId}`,
       atMs: 0,
@@ -112,7 +139,7 @@ export function buildRoomFeed(focus: RoomFocusProjection): StarfieldFeedItem[] {
             : 'working',
       bodyId: handoff.targetParticipantId,
     }));
-  return [...partnerRows, ...handoffRows].slice(0, STARFIELD_FEED_LIMIT);
+  return [goalRow, ...partnerRows, ...handoffRows].slice(0, STARFIELD_FEED_LIMIT);
 }
 
 /* ------------------------------------------------------------------ */
