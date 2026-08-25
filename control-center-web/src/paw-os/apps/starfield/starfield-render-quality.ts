@@ -10,10 +10,14 @@
  *   fifty moons stays within a few megabytes of texture memory.
  */
 
-/** Hard DPR ceiling — beyond 2 the extra pixels are invisible on a sky. */
-export const MAX_PIXEL_RATIO = 2;
+/**
+ * Hard DPR ceiling. A deep-space scene is dominated by smooth gradients and
+ * additive glows, so anything beyond 1.5 spends GPU time on pixels the eye
+ * cannot separate — the fill-rate saving at 1.5 vs 2 is ~44% per frame.
+ */
+export const MAX_PIXEL_RATIO = 1.5;
 
-/** Total pixel budget per frame ≈ 1080p × 2 supersample. */
+/** Total pixel budget per frame ≈ 1080p × 1.5² supersample, minus headroom. */
 export const MAX_RENDER_PIXELS = 4_200_000;
 
 function round2(value: number): number {
@@ -68,5 +72,17 @@ export interface SurfaceTextureSize {
 /** Equirect surface resolution per body size — bounded at 512×256. */
 export function surfaceTextureSize(bodySize: number): SurfaceTextureSize {
   const width = bodySize < 0.45 ? 128 : bodySize < 1 ? 256 : 512;
+  return { width, height: width / 2 };
+}
+
+/**
+ * Resolution for a body that also has a photographic map on its way: the
+ * procedural surface is only the stand-in until the file lands, so it is
+ * synthesised one tier smaller. Generation cost scales with area, making
+ * this a ~4× saving on exactly the bodies whose noise map is about to be
+ * thrown away — while an offline sky still gets a complete surface.
+ */
+export function fallbackSurfaceTextureSize(bodySize: number): SurfaceTextureSize {
+  const width = Math.max(128, surfaceTextureSize(bodySize).width >> 1);
   return { width, height: width / 2 };
 }
