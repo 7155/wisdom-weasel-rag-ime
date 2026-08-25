@@ -402,14 +402,20 @@ describe('Agent tool activity details', () => {
 
     const done = render(<ActivitySummary activities={[settled]} inline />);
     const doneSummary = done.container.querySelector('details.agent-activity--inline > summary')!;
-    expect(doneSummary.querySelector('.paw-conv-planet')).not.toBeInTheDocument();
     expect(doneSummary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
+    // A settled group keeps its Tool glyph in front and a still planet in the
+    // pill: the same body as a live row, without the orbit.
+    const donePill = doneSummary.querySelector('.agent-activity__inline-status .paw-conv-planet[data-state="done"]')!;
+    expect(donePill).toBeInTheDocument();
+    expect(donePill).not.toHaveAttribute('data-live');
+    expect(donePill.querySelector('.paw-conv-planet__orbit')).toBeNull();
     cleanup();
 
     const tree = render(<FxActivityStack activities={[running, settled]} />);
     const pills = [...tree.container.querySelectorAll('.fx-pill')];
-    expect(pills[0]!.querySelector('.paw-conv-planet[data-state="running"][data-size="sm"]')).toBeInTheDocument();
-    expect(pills[1]!.querySelector('.paw-conv-planet')).toBeNull();
+    expect(pills[0]!.querySelector('.paw-conv-planet[data-state="running"][data-size="sm"] .paw-conv-planet__orbit')).toBeInTheDocument();
+    expect(pills[1]!.querySelector('.paw-conv-planet[data-state="done"]')).toBeInTheDocument();
+    expect(pills[1]!.querySelector('.paw-conv-planet__orbit')).toBeNull();
   });
 
   it('turns the public feed slower for a live thought than for a live Tool call', () => {

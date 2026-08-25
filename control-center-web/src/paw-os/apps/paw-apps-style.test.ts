@@ -485,6 +485,11 @@ describe('PAWOS semantic type roles', () => {
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-pill.danger');
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-pill.vio');
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-context-chip');
+    // The planet mark is declared once in the Agent owner so it survives
+    // outside the desktop shell; the fx layer may only repaint it.
+    expect(agentFxCss).not.toContain('@keyframes paw-conv-planet-breathe');
+    expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .paw-conv-planet {');
+    expect(agentFeatureCss).toContain('@keyframes paw-conv-planet-breathe');
     expect(agentFxCss).not.toMatch(/(^|})\s*(?::root|html|body|\*)\s*\{/m);
     // The repeated "Agent/状态" caption row left the fx DOM entirely; no owner
     // may keep styling (or hiding) it inside the separated conversation.

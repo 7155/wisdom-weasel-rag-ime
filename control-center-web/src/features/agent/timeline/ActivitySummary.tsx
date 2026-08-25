@@ -265,9 +265,10 @@ export function ActivitySummary({
             <strong>{inlineTitle}</strong>
             <span className="agent-activity__inline-tools">{inlineSummary}</span>
             <span className="agent-activity__inline-status agent-fx-pill" data-status={state} data-tone={state === 'done' ? 'ok' : state === 'running' ? 'run' : state === 'waiting' ? 'wait' : state === 'failed' ? 'danger' : 'warn'}>
-              {inlinePlanetState
-                ? <ConversationPlanetMark size="sm" state={inlinePlanetState} />
-                : <i aria-hidden="true" />}
+              <ConversationPlanetMark
+                size="sm"
+                state={inlinePlanetState ?? (state === 'failed' ? 'failed' : state === 'done' ? 'done' : 'idle')}
+              />
               {inlineStatus}
             </span>
             <ChevronRight aria-hidden="true" size={15} />
@@ -1650,9 +1651,7 @@ function FxActivityDisclosure({
           <span className="paw-activity__label">{label}</span>
           {hint ? <span className="paw-activity__hint">{hint}</span> : null}
           <span className={`fx-pill ${tone}`}>
-            {rowPlanetState
-              ? <ConversationPlanetMark size="sm" state={rowPlanetState} />
-              : <i aria-hidden="true" />}
+            <ConversationPlanetMark size="sm" state={rowPlanetState ?? (failed ? 'failed' : 'done')} />
             {statusText}
           </span>
           {meta ? <span className="fx-meta">{meta}</span> : null}
