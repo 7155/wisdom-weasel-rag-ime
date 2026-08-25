@@ -3,7 +3,10 @@
  *
  * - three.js is loaded lazily so the main bundle never pays for the sky;
  * - every celestial body also exists as a real DOM button in the label
- *   layer (keyboard and screen-reader access), positioned by the stage;
+ *   layer (keyboard and screen-reader access), positioned by the stage,
+ *   carrying the real work it is running so the sky reads as work first;
+ * - a handoff in flight also gets a label at its beam midpoint, so a live
+ *   beam says which WorkItem is moving instead of just glowing;
  * - the render loop only runs while the host is actually on screen: the
  *   `running` prop (page visible + sky watched) is combined with an
  *   IntersectionObserver so a scrolled-away or covered sky costs zero rAF;
@@ -13,7 +16,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { StarfieldStage } from './starfield-scene';
-import { sceneBodyAriaLabel, type StarfieldSceneModel } from './starfield-scene-model';
+import {
+  liveBeamLinks,
+  sceneBodyAriaLabel,
+  type StarfieldSceneModel,
+} from './starfield-scene-model';
 
 export function webglAvailable(): boolean {
   try {
@@ -165,6 +172,7 @@ export function Starfield3D({
           <button
             aria-label={sceneBodyAriaLabel(model.mode, body)}
             className="paw-sf-label"
+            data-idle={body.idle || undefined}
             data-sf-body={body.id}
             data-selected={selectedId === body.id || undefined}
             data-tone={body.motion.tone}
@@ -176,7 +184,13 @@ export function Starfield3D({
           >
             <strong>{body.title}</strong>
             <small>{body.subtitle}</small>
+            {body.task && !body.idle ? <em>{body.task}</em> : null}
           </button>
+        ))}
+        {liveBeamLinks(model).map((link) => (
+          <span className="paw-sf-beam-label" data-sf-link={link.id} key={link.id}>
+            {link.label}
+          </span>
         ))}
       </div>
     </div>

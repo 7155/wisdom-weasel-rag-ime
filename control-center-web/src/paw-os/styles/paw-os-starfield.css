@@ -17,7 +17,8 @@
   --sf-space-deep: #04060f;
   --sf-ink: #dbe4f5;
   --sf-ink-dim: #93a1bd;
-  --sf-line: rgb(148 176 226 / .16);
+  /* Orbit ink stays one soft color; it charts the work, it is not the work. */
+  --sf-line: rgb(140 184 206 / .13);
   --sf-panel: rgb(7 11 25 / .84);
   --sf-panel-border: rgb(148 176 226 / .22);
   --sf-working: #5b9bf0;
@@ -102,7 +103,12 @@
   pointer-events: none;
 }
 
-/* Projected body labels: positioned per frame by the stage. */
+/* Projected body labels: positioned per frame by the stage.
+ *
+ * The label is the work, so it always wins over the sky behind it: a very
+ * low-alpha plate plus a tight shadow keeps every glyph readable over a
+ * nebula, the milky-way band or a bright planet limb, without a blur filter
+ * and without hiding the sky. */
 .paw-sf-label {
   position: absolute;
   top: 0;
@@ -110,16 +116,62 @@
   display: grid;
   justify-items: center;
   gap: 1px;
-  padding: 3px 7px;
+  max-width: 210px;
+  padding: 3px 8px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   color: var(--sf-ink);
-  background: transparent;
+  background: rgb(5 8 18 / .46);
   text-align: center;
   transform: translate(-50%, 0) translate(-200px, -200px);
   cursor: pointer;
   pointer-events: auto;
-  transition: opacity 160ms ease;
+  transition: opacity 160ms ease, background-color 120ms ease;
+}
+
+/* The task line: what this body is actually working on right now. */
+.paw-sf-label em {
+  overflow: hidden;
+  max-width: 196px;
+  color: #c3d3ef;
+  font-size: 11px;
+  font-style: normal;
+  letter-spacing: .01em;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 8px rgb(4 6 15 / .95);
+  white-space: nowrap;
+}
+
+/* Nothing live behind this body: keep identity, drop the competition. */
+.paw-sf-label[data-idle] {
+  background: rgb(5 8 18 / .3);
+  opacity: .62;
+}
+
+.paw-sf-label[data-idle]:hover,
+.paw-sf-label[data-idle]:focus-visible,
+.paw-sf-label[data-idle][data-selected] { opacity: 1; }
+
+/* A handoff in flight names its WorkItem right on the beam. */
+.paw-sf-beam-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  max-width: 188px;
+  margin-top: -9px;
+  padding: 2px 8px;
+  border: 1px solid rgb(85 195 221 / .32);
+  border-radius: 999px;
+  background: rgb(5 8 18 / .72);
+  color: #bfe9f4;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 6px rgb(4 6 15 / .95);
+  white-space: nowrap;
+  transform: translate(-50%, 0) translate(-200px, -200px);
+  pointer-events: none;
 }
 
 .paw-sf-label strong {
@@ -146,11 +198,13 @@
 .paw-sf-label--center strong { max-width: 240px; font-size: 13.5px; }
 
 .paw-sf-label[data-working] strong { color: #eaf2ff; }
-.paw-sf-label[data-tone='attention'] small { color: #f3bab2; }
-.paw-sf-label[data-selected] { background: rgb(21 30 55 / .78); }
+.paw-sf-label[data-working] em { color: #d5e6ff; }
+.paw-sf-label[data-tone='attention'] small,
+.paw-sf-label[data-tone='attention'] em { color: #f3bab2; }
+.paw-sf-label[data-selected] { background: rgb(21 30 55 / .88); }
 
 .paw-sf-label:hover,
-.paw-sf-label:focus-visible { background: rgb(21 30 55 / .66); }
+.paw-sf-label:focus-visible { background: rgb(21 30 55 / .8); }
 
 .paw-sf-label:focus-visible {
   outline: 2px solid var(--sf-working);
@@ -579,6 +633,8 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  /* Held back a step so a dense star field never speckles the task text. */
+  opacity: .78;
   pointer-events: none;
 }
 
@@ -590,14 +646,16 @@
   filter: drop-shadow(0 0 3px rgb(214 228 255 / .8));
 }
 
+/* Deep sky is depth, not subject: the nebula and aurora sit far below the
+ * contrast of the task labels and orbit ink drawn on top of them. */
 .paw-sf2__nebula {
   position: absolute;
   inset: -12%;
   pointer-events: none;
   background:
-    radial-gradient(34% 30% at 26% 68%, rgb(47 107 255 / .12), transparent 70%),
-    radial-gradient(30% 26% at 74% 26%, rgb(154 122 224 / .12), transparent 72%),
-    radial-gradient(20% 18% at 58% 76%, rgb(85 195 221 / .08), transparent 74%);
+    radial-gradient(34% 30% at 26% 68%, rgb(47 107 255 / .07), transparent 70%),
+    radial-gradient(30% 26% at 74% 26%, rgb(154 122 224 / .07), transparent 72%),
+    radial-gradient(20% 18% at 58% 76%, rgb(85 195 221 / .05), transparent 74%);
   animation: paw-sf-nebula-drift 60s ease-in-out infinite alternate;
 }
 
@@ -610,9 +668,9 @@
   height: 42%;
   pointer-events: none;
   background:
-    radial-gradient(58% 86% at 24% 100%, rgb(64 201 176 / .1), transparent 66%),
-    radial-gradient(52% 80% at 58% 104%, rgb(91 155 240 / .12), transparent 68%),
-    radial-gradient(44% 72% at 84% 100%, rgb(154 122 224 / .1), transparent 70%);
+    radial-gradient(58% 86% at 24% 100%, rgb(64 201 176 / .06), transparent 66%),
+    radial-gradient(52% 80% at 58% 104%, rgb(91 155 240 / .07), transparent 68%),
+    radial-gradient(44% 72% at 84% 100%, rgb(154 122 224 / .06), transparent 70%);
   mix-blend-mode: screen;
   animation: paw-sf-aurora 26s ease-in-out infinite alternate;
 }
@@ -833,6 +891,31 @@
   white-space: nowrap;
 }
 
+/* The task line: the real objective this body is carrying right now. */
+.paw-sf2__body-label em {
+  overflow: hidden;
+  max-width: 168px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgb(5 8 18 / .55);
+  color: #c3d3ef;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 8px rgb(4 6 15 / .9);
+  white-space: nowrap;
+}
+
+.paw-sf2__body-button[data-working] .paw-sf2__body-label em { color: #d5e6ff; }
+.paw-sf2__body-button[data-tone='attention'] .paw-sf2__body-label em { color: #f3bab2; }
+
+/* Nothing live behind this body: keep identity, drop the competition. */
+.paw-sf2__body-button[data-idle] { opacity: .6; }
+
+.paw-sf2__body-button[data-idle]:hover,
+.paw-sf2__body-button[data-idle]:focus-visible,
+.paw-sf2__body-button[data-idle][data-selected] { opacity: 1; }
+
 .paw-sf2__body-label--center strong {
   max-width: 220px;
   font-size: 13.5px;
@@ -942,6 +1025,18 @@
   stroke-dasharray: 6 10;
   filter: drop-shadow(0 0 5px rgb(85 195 221 / .8));
   animation: paw-sf-beam-march 1.1s linear infinite;
+}
+
+/* A live beam says which WorkItem is moving, not just that light is moving. */
+.paw-sf2__beam-label {
+  fill: #bfe9f4;
+  font-size: 15px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: rgb(4 6 15 / .85);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  text-anchor: middle;
 }
 
 .paw-sf2__packet {
