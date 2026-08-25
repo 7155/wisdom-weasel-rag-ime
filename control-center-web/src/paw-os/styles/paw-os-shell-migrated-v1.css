@@ -300,6 +300,103 @@
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / .46);
 }
 
+/* --------------------------------------------------- Wayfinder work panel
+ * The desktop's recent-work projection is desk furniture, not chrome: one
+ * cool near-opaque card with the shell's hairline and inner light but no
+ * blur — the material budget stays at menu bar, Dock and Launchpad. Every
+ * ink sits on this proven bright ground, and colour appears only as the
+ * running/attention dots and the one cobalt action tone. */
+.paw-desktop-root .paw-wayfinder-work {
+  border: 1px solid rgb(23 26 33 / .1);
+  color: var(--paw-desktop-ink);
+  background: rgb(251 252 254 / .86);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .85), 0 18px 44px -26px rgb(23 32 52 / .3);
+}
+.paw-desktop-root .paw-wayfinder-work__head strong { color: #273142; }
+.paw-desktop-root .paw-wayfinder-work__count,
+.paw-desktop-root .paw-wayfinder-work__bucket-label,
+.paw-desktop-root .paw-wayfinder-work__bucket-toggle { color: var(--paw-desktop-muted); }
+.paw-desktop-root .paw-wayfinder-work__bucket-label small,
+.paw-desktop-root .paw-wayfinder-work__bucket-toggle small { color: #8a93a2; }
+.paw-desktop-root .paw-wayfinder-work__bucket-toggle {
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__bucket-toggle:hover {
+  color: var(--paw-ink);
+  background: rgb(23 26 33 / .05);
+}
+.paw-desktop-root .paw-wayfinder-work__search {
+  border: 1px solid rgb(23 26 33 / .12);
+  color: var(--paw-desktop-muted);
+  background: rgb(255 255 255 / .72);
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+/* The label carries the focus ring so the input can drop its own outline
+   without losing a visible keyboard-focus state. */
+.paw-desktop-root .paw-wayfinder-work__search:focus-within {
+  border-color: rgb(47 107 255 / .62);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgb(47 107 255 / .18);
+}
+.paw-desktop-root .paw-wayfinder-work__search input { color: var(--paw-ink); outline: none; }
+.paw-desktop-root .paw-wayfinder-work__search input::placeholder { color: #8a93a2; }
+.paw-desktop-root .paw-wayfinder-work__list { scrollbar-color: rgb(23 26 33 / .24) transparent; }
+.paw-desktop-root .paw-wayfinder-work__row { transition: background-color 120ms ease; }
+.paw-desktop-root .paw-wayfinder-work__row:hover { background: rgb(255 255 255 / .9); }
+.paw-desktop-root .paw-wayfinder-work__row strong { color: var(--paw-ink); }
+.paw-desktop-root .paw-wayfinder-work__row small { color: var(--paw-desktop-muted); }
+.paw-desktop-root .paw-wayfinder-work__dot { background: rgb(23 26 33 / .3); }
+.paw-desktop-root .paw-wayfinder-work__row[data-activity='running'] .paw-wayfinder-work__dot {
+  background: var(--paw-success);
+  box-shadow: 0 0 0 3px rgb(21 154 102 / .16);
+}
+.paw-desktop-root .paw-wayfinder-work__row[data-activity='attention'] .paw-wayfinder-work__dot {
+  background: var(--paw-danger);
+  box-shadow: 0 0 0 3px rgb(217 45 32 / .15);
+}
+.paw-desktop-root .paw-wayfinder-work__agents b {
+  color: #3f4856;
+  background: rgb(23 26 33 / .07);
+}
+.paw-desktop-root .paw-wayfinder-work__repeats-toggle {
+  border: 1px solid rgb(23 26 33 / .12);
+  color: var(--paw-desktop-muted);
+  background: rgb(255 255 255 / .8);
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__repeats-toggle:hover,
+.paw-desktop-root .paw-wayfinder-work__repeats-toggle[aria-expanded='true'] {
+  color: #1e57e7;
+  border-color: rgb(47 107 255 / .5);
+  background: #fff;
+}
+.paw-desktop-root .paw-wayfinder-work__repeat {
+  color: var(--paw-desktop-muted);
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__repeat:hover {
+  color: var(--paw-ink);
+  background: rgb(255 255 255 / .85);
+}
+.paw-desktop-root .paw-wayfinder-work__more {
+  color: #1e57e7;
+  transition: background-color 120ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__more:hover { background: rgb(47 107 255 / .1); }
+.paw-desktop-root .paw-wayfinder-work__state { color: var(--paw-desktop-muted); }
+.paw-desktop-root .paw-wayfinder-work__state button {
+  border: 1px solid rgb(23 26 33 / .14);
+  color: #273142;
+  background: rgb(255 255 255 / .85);
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__state button:hover {
+  color: #1e57e7;
+  border-color: rgb(47 107 255 / .5);
+  background: #fff;
+}
+.paw-desktop-root .paw-wayfinder-work__spin { animation: paw-field-orbit 900ms linear infinite; }
+
 /* ---------------------------------------------------------------------- Dock
  * A floating machined shelf. Identity colour belongs to the Apps; the shelf
  * itself is the shared chrome veil. Running state is a pill (long = visible,
@@ -626,6 +723,7 @@
     backdrop-filter: none;
     background: #f0f3f8;
   }
+  .paw-desktop-root .paw-wayfinder-work { background: #fbfcfe; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -639,7 +737,8 @@
   .paw-desktop-root .paw-launchpad-group,
   .paw-desktop-root .paw-dock button,
   .paw-desktop-root .paw-dock-tip,
-  .paw-desktop-root .paw-app-icon {
+  .paw-desktop-root .paw-app-icon,
+  .paw-desktop-root .paw-wayfinder-work__spin {
     animation: none !important;
     transition-duration: .01ms !important;
     transform: none !important;
@@ -652,6 +751,7 @@
   .paw-desktop-root .paw-dock,
   .paw-desktop-root .paw-dock-tip,
   .paw-desktop-root .paw-launchpad,
+  .paw-desktop-root .paw-wayfinder-work,
   .paw-desktop-root .paw-window-shell .paw-window { border: 1px solid CanvasText; }
   .paw-desktop-root .paw-app-icon { forced-color-adjust: auto; }
 }
