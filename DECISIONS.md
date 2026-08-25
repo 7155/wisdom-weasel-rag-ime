@@ -1,6 +1,6 @@
 # Project Decisions
 
-Updated: 2026-08-16
+Updated: 2026-08-25
 
 This file records decisions that remain relevant across Outcomes. It does not
 record ordinary implementation choices or live status.
@@ -141,3 +141,19 @@ record ordinary implementation choices or live status.
   product asks for confirmation only before installation-state mutation. New
   Sessions receive the active Package resources; already-running Sessions keep
   their stable resource snapshot.
+
+## D-012 — A Person Editing In A First-Party App Does Not Mint An Approval
+
+- **Status:** accepted
+- **Decision:** when a person performs a mutation directly in a Control Center
+  App, the route applies it as a first-party action. Approvals are minted for
+  model-proposed mutations, not for the person who is already the authority the
+  approval would ask.
+- **Why:** replaying the model approval loop for a human Save would ask the
+  person to approve their own keystrokes and would put a human edit into the
+  model's approval history.
+- **Consequence:** a first-party route still runs the same owning harness as
+  the equivalent Tool, so path confinement, size caps, snapshot revisions, and
+  receipts are unchanged. Only the approval mint is skipped. Files' Save uses
+  `agent.session.workspace.write`; the model keeps the `workspace_write` Tool
+  and its approval loop.

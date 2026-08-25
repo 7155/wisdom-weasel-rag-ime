@@ -12,7 +12,7 @@
 
 ### IFACE-002 — 给前端完整真实功能，不让模型猜 | current / P0
 
-- **Current controlling requirement:** 逐 App 说明真实读、写、事件、文件、二进制和 Native 能力，并附当前全部 233 条 typed route；页面和按钮必须接真实 owner，不得凭 mock HTML 发明功能。
+- **Current controlling requirement:** 逐 App 说明真实读、写、事件、文件、二进制和 Native 能力，并附当前全部 234 条 typed route；页面和按钮必须接真实 owner，不得凭 mock HTML 发明功能。
 - **User-visible acceptance:** Project、Agent/Room、Memory、Knowledge、Input、App Center、Monitor、Settings、Files、Browser、Terminal 都有愿景、真实工作流、route 覆盖和前端 owner；接口目录能直接查 pathId/method/path/allowlisted fields/response/stream/binary。
 - **Must preserve:** Pi 是唯一 Agent Runtime；PAW 后端拥有 Room、Memory、Knowledge、Browser/Terminal 工具合同、SQLite、权限与 HTTP/SSE；前端只投影和操控，不复制第二套生命周期。
 - **Must not do:** 不把“源码中有 route”写成“当前安装实例可用”，不绕过 capability/allowlist，不把接口名原样当 UI 文案，不造假成功态。
@@ -161,9 +161,9 @@ PAWOS 的目标不是给管理后台套一层桌面边框，而是把个人 Agen
 
 **体验愿景：** Files 是真实工作区入口：目录树、选择、预览、错误和空态都要精心设计；不得用假文件列表。
 
-**真实工作流：** 当前 Files 页面先选择 Session，再按授权 root/path 读取目录与最多 64 KB 的文件片段。owner-bound picker、Agent 产物/媒体预览与 `revealPath()` 是共享 transport/Agent 工作流能力，目前不能冒充为 Files 页面已接通写入或系统磁盘管理。路径错误、权限、截断、二进制和空目录都必须有专用状态。
+**真实工作流：** 当前 Files 页面先选择 Session，再按授权 root/path 读取目录与最多 64 KB 的文件片段。完整读入、非二进制且不超过 2 MiB 的 UTF-8 文本可以就地编辑并整份覆盖保存，保存必须带上读到的 `resourceRevision`。owner-bound picker、Agent 产物/媒体预览与 `revealPath()` 是共享 transport/Agent 工作流能力，目前不能冒充为 Files 页面已接通系统磁盘管理。路径错误、权限、截断、二进制、快照过期和空目录都必须有专用状态。
 
-**typed route 领域覆盖（2）：** `agent.session.workspace.list`, `agent.session.workspace.read`；当前页面还读取 `agent.sessions.list`。
+**typed route 领域覆盖（3）：** `agent.session.workspace.list`, `agent.session.workspace.read`, `agent.session.workspace.write`；当前页面还读取 `agent.sessions.list`。
 
 **当前前端 owner：** `control-center-web/src/features/files/PawOsFilesApp.tsx`, `control-center-web/src/features/agent/file-preview`, `control-center-web/src/features/agent/workspace`
 
@@ -245,7 +245,7 @@ PAWOS 的目标不是给管理后台套一层桌面边框，而是把个人 Agen
 | `runVoiceAction()` | Voice 原生动作 | 启动/停止/重载/权限与设置动作，展示真实 receipt。 |
 | `dispose()` | 释放 transport | App/host teardown 时取消连接与资源。 |
 
-## Complete Route Catalog (233)
+## Complete Route Catalog (234)
 
 此表是当前前端 typed authority 的逐条投影，不证明某个安装实例已启用对应 capability。UI 仍须先检查 `capabilities()`。
 
@@ -276,6 +276,7 @@ PAWOS 的目标不是给管理后台套一层桌面边框，而是把个人 Agen
 | `agent.session.snapshot` | Agent / Room | `GET` | `/api/agent/sessions/:sessionId/messages` | `sessionId` | `view` | — | — | — | — |
 | `agent.session.workspace.list` | Files | `GET` | `/api/agent/sessions/:sessionId/workspace` | `sessionId` | `path`, `depth`, `limit` | — | — | — | — |
 | `agent.session.workspace.read` | Files | `GET` | `/api/agent/sessions/:sessionId/workspace-file` | `sessionId` | `path`, `offset`, `limit` | `path` | — | — | — |
+| `agent.session.workspace.write` | Files | `POST` | `/api/agent/sessions/:sessionId/workspace-file` | `sessionId` | — | — | `path`, `resourceRevision`, `content` | `path`, `resourceRevision`, `content` | — |
 | `agent.session.rename` | Agent / Room | `PATCH` | `/api/agent/sessions/:sessionId` | `sessionId` | — | — | `title` | `title` | — |
 | `agent.session.archive` | Agent / Room | `PATCH` | `/api/agent/sessions/:sessionId` | `sessionId` | — | — | `archived` | `archived` | — |
 | `agent.session.mode.update` | Agent / Room | `PATCH` | `/api/agent/sessions/:sessionId` | `sessionId` | — | — | `mode`, `executionMode`, `workspaceRoots`, `workspaceScopeConfirmation`, `toolProfileVersion`, `toolAllowlistMode`, `allowedTools`, `dangerousModeConfirmation`, `projectContextEnabled`, `piSkillsEnabled`, `codexSkillsEnabled` | `mode` | — |
@@ -487,7 +488,7 @@ PAWOS 的目标不是给管理后台套一层桌面边框，而是把个人 Agen
 
 ## Source Authority And Coverage Receipt
 
-- Typed route authority: `control-center-web/src/platform/routes.ts` — 233 unique routes, all assigned to an App or shared control plane.
+- Typed route authority: `control-center-web/src/platform/routes.ts` — 234 unique routes, all assigned to an App or shared control plane.
 - Frontend transport/native authority: `control-center-web/src/platform/transport.ts`.
 - Backend allowlist/ownership evidence: `rag_ime/control_api/route_table.py`, `rag_ime/control_api/route_policy.py`.
 - Generated response contracts: `control-center-web/src/contracts/generated.ts` and its validators/schema index in the repository.
