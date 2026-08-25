@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import { TooltipProvider } from '@/components/primitives';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
 import type { SessionSummary } from '@/features/agent/types';
 import { StubControlTransport } from '@/test/stub-control-transport';
+import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 import { PawSessionWorkspace } from './PawSessionWorkspace';
 
@@ -263,6 +264,44 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(items[2]).toHaveFocus();
     await user.tab();
     expect(screen.queryByRole('menu', { name: 'Session 工具菜单' })).not.toBeInTheDocument();
+  });
+
+  it('closes the floating tool rail with Escape and returns focus to its trigger', async () => {
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={createPreviewTransport()}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={liveSession()}
+            recordId="session-live"
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    await screen.findByRole('textbox', { name: '消息' });
+    await user.click(screen.getByRole('button', { name: 'Session 工具' }));
+    await user.click(screen.getByRole('menuitem', { name: '文件' }));
+
+    const sidebar = screen.getByRole('complementary', { name: 'Session 工具侧栏' });
+    fireEvent.keyDown(sidebar, { key: 'Escape' });
+
+    expect(screen.queryByRole('complementary', { name: 'Session 工具侧栏' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Session 工具' })).toHaveFocus();
+  });
+
+  it('projects the tool rail as a floating overlay so the message flow keeps the full viewport column', () => {
+    // 浮层合同：桌面下侧栏绝对定位悬浮在对话之上；任何工具面板开启时，
+    // 对话列仍然是唯一的网格列，绝不被挤出首屏。
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-session-workspace__side\s*\{[^}]*position:\s*absolute;/s,
+    );
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-session-workspace\[data-panel='status'\] \.paw-session-workspace__body,\s*\.paw-desktop-root \.paw-session-workspace\[data-panel='subagents'\] \.paw-session-workspace__body,\s*\.paw-desktop-root \.paw-session-workspace\[data-panel='files'\] \.paw-session-workspace__body\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
+    );
   });
 
   it('uses one compact recoverable line when the Session has no files', async () => {

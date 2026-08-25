@@ -40,19 +40,21 @@
 .paw-agent-next .mono { font-family: var(--an-mono); }
 .paw-agent-next .ui-spin { animation: an-spin .8s linear infinite; }
 
-/* New work */
+/* New work — 固定桌面表面（首屏合同）：新建 Composer 与「继续工作」在同一屏内
+   完成。页面本身绝不滚动；只有继续工作列表在自身内部滚动。窗口矮于 520px 时，
+   an-home 的 min-height 生效，整块表面作为兜底通过 an-home-root 整体滚动。 */
 .an-home-root { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; background: var(--an-paper); }
-.an-home { position: relative; width: 100%; min-height: 100%; flex: 1; overflow: hidden auto; }
+.an-home { position: relative; width: 100%; height: 100%; min-height: 520px; flex: 1; overflow: hidden; }
 .an-home-geo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 /* 装饰虚线环极缓慢地行进：桌面在呼吸，但不与任何真实状态混淆。 */
 .an-home-geo .an-geo-orbit { animation: an-orbit-march 90s linear infinite; }
-.an-home-wrap { position: relative; width: min(780px, 100%); margin: 0 auto; padding: clamp(46px, 8vh, 82px) 32px 42px; }
+.an-home-wrap { position: relative; display: flex; width: min(780px, 100%); height: 100%; min-height: 0; margin: 0 auto; flex-direction: column; padding: 26px 32px 14px; }
 /* 开场编排：问候、标题、Composer、事实行依次落定，一次入场，不重播。 */
-.an-home-greet { display: flex; align-items: center; gap: 10px; color: var(--an-ink-3); font-size: 12px; font-weight: 650; letter-spacing: .065em; animation: an-rise 400ms var(--an-ease-out) both; }
+.an-home-greet { display: flex; flex: none; align-items: center; gap: 10px; color: var(--an-ink-3); font-size: 12px; font-weight: 650; letter-spacing: .065em; animation: an-rise 400ms var(--an-ease-out) both; }
 .an-home-greet::before { width: 22px; height: 2px; background: var(--an-cobalt); content: ""; }
-.an-home-title { margin: 9px 0 27px; font-size: clamp(30px, 4vw, 40px); font-weight: 720; letter-spacing: -.035em; line-height: 1.16; animation: an-rise 440ms var(--an-ease-out) 45ms both; }
+.an-home-title { margin: 8px 0 18px; flex: none; font-size: clamp(24px, 3.4cqw, 30px); font-weight: 720; letter-spacing: -.03em; line-height: 1.16; animation: an-rise 440ms var(--an-ease-out) 45ms both; }
 .an-home-title em { color: var(--an-cobalt); font-style: normal; }
-.an-composer { position: relative; z-index: 4; background: var(--an-paper-bright); border: 1px solid var(--an-rule); border-radius: 14px; box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 12px 30px rgba(24, 32, 43, .07); transition: border-color 160ms ease, box-shadow 180ms ease, transform 220ms var(--an-ease-out); animation: an-rise 480ms var(--an-ease-out) 90ms both; }
+.an-composer { position: relative; z-index: 4; flex: none; background: var(--an-paper-bright); border: 1px solid var(--an-rule); border-radius: 14px; box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 12px 30px rgba(24, 32, 43, .07); transition: border-color 160ms ease, box-shadow 180ms ease, transform 220ms var(--an-ease-out); animation: an-rise 480ms var(--an-ease-out) 90ms both; }
 .an-composer:focus-within { border-color: color-mix(in srgb, var(--an-cobalt) 42%, var(--an-rule)); box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 16px 36px rgba(24, 32, 43, .09), 0 0 0 4px color-mix(in srgb, var(--an-cobalt) 9%, transparent); transform: translateY(-1px); }
 /* 与 Session composer 同语汇的船坞光环：聚焦时一段静态钴-紫 conic 光
    贴着边框亮起（Home 不执行任务，光不转动）。 */
@@ -84,7 +86,9 @@
 .an-send:hover:not(:disabled) { background: var(--an-cobalt); transform: translateY(-2px); }
 .an-send:active:not(:disabled) { transform: translateY(0) scale(.96); }
 .an-send:disabled { opacity: .34; }
-.an-menu { position: absolute; z-index: 40; bottom: calc(100% + 8px); left: 0; width: min(330px, calc(100cqw - 32px)); max-height: 330px; overflow: auto; padding: 7px; border: 1px solid var(--an-rule); border-radius: 10px; background: var(--an-paper-bright); box-shadow: 0 18px 42px rgba(24, 32, 43, .15); animation: an-menu-in 180ms var(--an-ease-out) both; }
+/* 锚定菜单向下展开：固定表面不滚动，Composer 靠近首屏上沿，向上弹出会被
+   表面上缘裁掉；向下是桌面菜单的自然方向，空间也真实存在。 */
+.an-menu { position: absolute; z-index: 40; top: calc(100% + 8px); left: 0; width: min(330px, calc(100cqw - 32px)); max-height: min(330px, 46cqh); overflow: auto; padding: 7px; border: 1px solid var(--an-rule); border-radius: 10px; background: var(--an-paper-bright); box-shadow: 0 18px 42px rgba(24, 32, 43, .15); animation: an-menu-in 180ms var(--an-ease-out) both; }
 .an-anchor:nth-last-of-type(-n + 2) .an-menu { right: 0; left: auto; }
 .an-menu-title,
 .an-menu-group { padding: 6px 9px 5px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .07em; }
@@ -95,7 +99,7 @@
 .an-menu-item .mi-sub { display: block; margin-top: 2px; overflow: hidden; color: var(--an-ink-3); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .an-menu-sep { height: 1px; margin: 6px 2px; background: var(--an-hairline); }
 /* 快速开始：三枚可点的开场白，只预填输入框，绝不代发。 */
-.an-starters { display: flex; flex-wrap: wrap; gap: 7px; margin: 11px 2px 0; animation: an-rise 420ms var(--an-ease-out) 140ms both; }
+.an-starters { display: flex; flex: none; flex-wrap: wrap; gap: 7px; margin: 11px 2px 0; animation: an-rise 420ms var(--an-ease-out) 140ms both; }
 .an-starter { display: inline-flex; align-items: center; min-height: 28px; padding: 3px 12px; border: 1px solid var(--an-hairline); border-radius: 999px; background: var(--an-paper-bright); color: var(--an-ink-2); font-size: 12.5px; font-weight: 600; transition: border-color 140ms ease, color 140ms ease, background 140ms ease, transform 160ms var(--an-spring); }
 .an-starter::before { width: 5px; height: 5px; margin-right: 7px; border-radius: 50%; background: var(--an-cobalt); opacity: .55; content: ""; transition: opacity 140ms ease; }
 .an-starter:hover { border-color: color-mix(in srgb, var(--an-cobalt) 38%, var(--an-hairline)); color: var(--an-ink); background: #f8fbff; transform: translateY(-1px); }
@@ -104,18 +108,21 @@
 
 /* 入口目的（PF-CM-003）：Composer 下方一行安静事实——Session 由谁完成、
    Room 将由哪些真实伙伴加入；伙伴不足时给出可行动的禁用原因。 */
-.an-mode-brief { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin: 9px 2px 0; color: var(--an-ink-3); font-size: 12.5px; line-height: 1.55; animation: an-rise 420ms var(--an-ease-out) 170ms both; }
+.an-mode-brief { display: flex; flex: none; align-items: baseline; flex-wrap: wrap; gap: 6px; margin: 9px 2px 0; color: var(--an-ink-3); font-size: 12.5px; line-height: 1.55; animation: an-rise 420ms var(--an-ease-out) 170ms both; }
 .an-mode-brief.is-blocked { color: var(--an-yellow); }
 .an-room-plan { align-items: center; }
 .an-room-plan__label { flex: none; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .05em; }
 .an-room-plan__chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px; border: 1px solid var(--an-hairline); border-radius: 999px; background: var(--an-paper-bright); color: var(--an-ink-2); font-size: 12px; font-weight: 620; }
 .an-room-plan__chip i { color: var(--an-violet); font-size: 12px; font-style: normal; font-weight: 650; }
-.an-home-error { display: flex; align-items: center; gap: 7px; margin: 9px 2px 0; color: var(--an-red); font-size: 12.5px; }
+.an-home-error { display: flex; flex: none; align-items: center; gap: 7px; margin: 9px 2px 0; color: var(--an-red); font-size: 12.5px; }
 .an-home-error button { flex: none; padding: 2px 8px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font-size: 12px; font-weight: 650; }
-.an-home-section { margin-top: 35px; animation: an-rise 460ms var(--an-ease-out) 210ms both; }
-.an-home-section h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+.an-home-section { margin-top: 22px; animation: an-rise 460ms var(--an-ease-out) 210ms both; }
+.an-home-section h2 { display: flex; flex: none; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
 .an-home-section h2::after { height: 1px; flex: 1; background: var(--an-hairline); content: ""; }
-.an-recent-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+/* 继续工作是首屏内唯一的弹性区：吃掉剩余高度，条目多时在列表内部滚动。 */
+.an-home-recents { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; }
+.an-recent-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-content: start; }
+.an-home-recents .an-recent-list { min-height: 88px; flex: 1 1 auto; margin: -3px; padding: 3px; overflow: hidden auto; overscroll-behavior: contain; }
 /* 状态色左轨：进行中钴蓝、正常青绿、Room 紫；扫一眼即知每条工作的状态。 */
 .an-recent-card { display: flex; min-width: 0; padding: 13px 14px 13px 17px; flex-direction: column; gap: 5px; border: 1px solid var(--an-hairline); border-radius: 10px; background: var(--an-paper-bright); box-shadow: inset 3px 0 var(--an-rule); text-align: left; transition: border-color 150ms ease, transform 180ms var(--an-ease-out), background 150ms ease, box-shadow 180ms ease; }
 .an-recent-card:has(.an-dot.is-ok) { box-shadow: inset 3px 0 color-mix(in srgb, var(--an-teal) 62%, var(--an-hairline)); }
@@ -133,8 +140,9 @@
 .an-dot.is-run { background: var(--an-cobalt); animation: an-pulse 1.15s ease-in-out infinite; }
 .an-dot.is-fail { background: var(--an-red); }
 .an-dot.is-wait { background: var(--an-yellow); }
-/* 页脚只投影真实目录状态（PF-CM-018/021）：读取中、失败可重试、模型事实。 */
-.an-home-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 29px; color: var(--an-ink-3); font-size: 12px; animation: an-rise 420ms var(--an-ease-out) 260ms both; }
+/* 页脚只投影真实目录状态（PF-CM-018/021）：读取中、失败可重试、模型事实。
+   它是钉在表面底部的状态条，不是文章末尾的一段话。 */
+.an-home-foot { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px 16px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--an-hairline); color: var(--an-ink-3); font-size: 12px; animation: an-rise 420ms var(--an-ease-out) 260ms both; }
 .an-home-foot span { display: inline-flex; align-items: center; gap: 6px; }
 .an-home-foot .is-warn { color: var(--an-yellow); }
 .an-home-foot button { padding: 1px 7px; border: 1px solid var(--an-rule); border-radius: 6px; background: var(--an-paper-bright); color: var(--an-cobalt); font-size: 12px; font-weight: 650; }
@@ -331,7 +339,7 @@
 .paw-agent-next *::-webkit-scrollbar { width: 9px; height: 9px; }
 .paw-agent-next *::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 9px; background: var(--an-rule-strong); background-clip: padding-box; }
 
-@keyframes an-menu-in { from { opacity: 0; transform: translateY(5px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes an-menu-in { from { opacity: 0; transform: translateY(-5px) scale(.985); } to { opacity: 1; transform: none; } }
 @keyframes an-pulse { 50% { opacity: .34; transform: scale(.82); } }
 @keyframes an-spin { to { transform: rotate(360deg); } }
 @keyframes an-rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
@@ -374,10 +382,6 @@
   .an-crumb-sub { display: none; }
 }
 
-@container paw-agent-shell (max-width: 1080px) {
-  .an-home-wrap { padding-top: 50px; }
-}
-
 @container paw-agent-shell (max-width: 860px) {
   .an-home-wrap { padding-inline: 22px; }
   .an-composer-foot { align-items: flex-start; flex-wrap: wrap; }
@@ -385,10 +389,9 @@
 }
 
 @container paw-agent-shell (max-width: 680px) {
-  .an-home-wrap { padding: 36px 16px 28px; }
-  .an-home-title { margin-bottom: 20px; font-size: 30px; }
+  .an-home-wrap { padding: 18px 16px 12px; }
+  .an-home-title { margin-bottom: 14px; font-size: 24px; }
   .an-recent-list { grid-template-columns: 1fr; }
-  .an-home-foot { margin-top: 22px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
