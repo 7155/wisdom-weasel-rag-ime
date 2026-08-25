@@ -2,16 +2,24 @@ import { useEffect, useRef } from 'react';
 import { PAW_COMPOSITION_PULSE_EVENT, type PawCompositionPulseSource } from '../runtime/composition-pulse';
 
 /**
- * PAWOS desktop wallpaper — the Wayfinder daybreak field. The whole field is
- * deterministic SVG in the shell's own glacial palette: a cold-light sky, one
- * warm signal beacon on a meridian track, layered translucent ridge terrain
- * and sparse survey marks. No raster asset remains, so the field stays crisp
- * and full-bleed at any scale (`slice` cover on a 1440x900 stage).
+ * PAWOS desktop wallpaper — the Wayfinder fog terrain. One coherent direction
+ * pushed as far as deterministic SVG allows: a photographic landscape of six
+ * ridge lines sinking into valley fog, lit by a diffuse light source that is
+ * never drawn as a shape. Depth comes from real photographic technique, not
+ * from line work: atmospheric perspective (each ridge fades into the fog that
+ * separates it from the next), depth-of-field blur on the far ranges, airlight
+ * veils that scatter around the light, drifting mist banks, and a static film
+ * grain pass that kills gradient banding. No sun disc, no dashed orbits, no
+ * icon-like marks — nothing on the desktop asks to be read. The ridgeline
+ * polylines are baked from seeded fractal noise (ridged fBm for the far
+ * ranges, rolling fBm for the foothills), so the silhouettes carry real
+ * terrain character while staying byte-for-byte deterministic.
  *
- * Runtime pulses (`pulsePawComposition` / playing audio) land as one expanding
- * signal ring at the beacon, a brief rise of the lit ridge crests and survey
- * packets travelling the meridian. Ambient motion is near-imperceptible drift
- * and disappears entirely under reduced motion.
+ * Runtime pulses (`pulsePawComposition` / playing audio) land as one soft
+ * lens-bloom swell at the light gap and a brief luminance lift of the mist
+ * banks; residual energy keeps the horizon slightly lit after activity.
+ * Ambient motion is minutes-long mist drift and disappears entirely under
+ * reduced motion. Full-bleed at any scale (`slice` cover on a 1440x900 stage).
  */
 export function PawCompositionField({ effects = false }: { effects?: boolean } = {}) {
   const fieldRef = useRef<SVGSVGElement>(null);
@@ -20,6 +28,14 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
     const field = fieldRef.current;
     if (!field) return undefined;
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    // Pulse animations carry this id so cancelling them can never touch the
+    // CSS-driven ambient mist drift running on the same subtree.
+    const pulseId = 'paw-field-pulse';
+    const cancelPulse = (element: Element) => {
+      element.getAnimations().forEach((animation) => {
+        if (animation.id === pulseId) animation.cancel();
+      });
+    };
     const drive = (source: PawCompositionPulseSource, energyValue: number) => {
       const energy = Math.max(0, Math.min(1, Number.isFinite(energyValue) ? energyValue : .65));
       field.dataset.drive = source;
@@ -28,31 +44,22 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
       if (reducedMotion.matches || reduceMotionAttr || energy === 0) return;
       const signal = field.querySelector<SVGCircleElement>('.paw-field__signal');
       if (signal) {
-        signal.getAnimations().forEach((animation) => animation.cancel());
+        cancelPulse(signal);
         signal.animate([
-          { transform: 'scale(.3)', opacity: 0 },
-          { transform: 'scale(.8)', opacity: .3 + energy * .3, offset: .28 },
-          { transform: `scale(${(1.9 + energy * 1.4).toFixed(2)})`, opacity: 0 },
-        ], { duration: 860 + energy * 320, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+          { transform: 'scale(.55)', opacity: 0 },
+          { transform: 'scale(.92)', opacity: .2 + energy * .26, offset: .32 },
+          { transform: `scale(${(1.45 + energy * .55).toFixed(2)})`, opacity: 0 },
+        ], { id: pulseId, duration: 1240 + energy * 420, easing: 'cubic-bezier(.16, 1, .3, 1)' });
       }
-      const crests = field.querySelector<SVGGElement>('.paw-field__crest-lights');
-      if (crests) {
-        crests.getAnimations().forEach((animation) => animation.cancel());
-        crests.animate([
-          { opacity: .55 },
-          { opacity: (.55 + energy * .45).toFixed(3), offset: .3 },
-          { opacity: .55 },
-        ], { duration: 980 + energy * 260, easing: 'cubic-bezier(.65, 0, .35, 1)' });
-      }
-      const packets = field.querySelectorAll<SVGCircleElement>('.paw-field__packet');
-      packets.forEach((packet, index) => {
-        packet.getAnimations().forEach((animation) => animation.cancel());
-        packet.animate([
-          { offsetDistance: '0%', opacity: 0 },
-          { offsetDistance: '12%', opacity: .9 },
-          { offsetDistance: '86%', opacity: .9 },
-          { offsetDistance: '100%', opacity: 0 },
-        ], { delay: index * 90, duration: 920 + energy * 260 + index * 70, easing: 'cubic-bezier(.42, 0, .28, 1)' });
+      const mists = field.querySelectorAll<SVGGElement>('.paw-field__mist');
+      mists.forEach((mist, index) => {
+        cancelPulse(mist);
+        const rest = Number(getComputedStyle(mist).opacity) || .8;
+        mist.animate([
+          { opacity: rest },
+          { opacity: Math.min(1, rest + energy * .18), offset: .3 },
+          { opacity: rest },
+        ], { id: pulseId, delay: index * 130, duration: 1420 + energy * 320, easing: 'cubic-bezier(.65, 0, .35, 1)' });
       });
     };
     const handlePulse = (event: Event) => {
@@ -88,125 +95,158 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
       viewBox="0 0 1440 900"
     >
       <defs>
-        <linearGradient id="paw-field-sky" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="#fcfeff" />
-          <stop offset=".34" stopColor="#f3f7fc" />
-          <stop offset=".56" stopColor="#e7eff9" />
-          <stop offset=".665" stopColor="#dae6f6" />
-          <stop offset="1" stopColor="#cfdcef" />
+        {/* Sky: cool zenith settling into a luminous haze band at the horizon.
+            The brightness peak sits just above the ridge lines, so the light
+            source is implied by the atmosphere rather than drawn. */}
+        <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-sky" x1="0" x2="0" y1="0" y2="900">
+          <stop offset="0" stopColor="#edf2f9" />
+          <stop offset=".36" stopColor="#e8eff7" />
+          <stop offset=".55" stopColor="#e6eef8" />
+          <stop offset=".63" stopColor="#eff4fa" />
+          <stop offset=".68" stopColor="#f5f8fc" />
+          <stop offset=".78" stopColor="#eaf0f8" />
+          <stop offset="1" stopColor="#e7edf7" />
         </linearGradient>
-        <radialGradient id="paw-field-daycore" cx="50%" cy="50%" r="50%">
-          <stop offset="0" stopColor="#ffffff" stopOpacity=".9" />
-          <stop offset=".55" stopColor="#fdf6e6" stopOpacity=".34" />
+        <radialGradient cx="985" cy="552" gradientUnits="userSpaceOnUse" id="paw-field-bloom" r="560">
+          <stop offset="0" stopColor="#ffffff" stopOpacity=".92" />
+          <stop offset=".34" stopColor="#fbf8f0" stopOpacity=".42" />
+          <stop offset=".62" stopColor="#f4f4f0" stopOpacity=".16" />
+          <stop offset="1" stopColor="#f4f4f0" stopOpacity="0" />
+        </radialGradient>
+        <radialGradient cx="985" cy="552" gradientUnits="userSpaceOnUse" id="paw-field-warmth" r="210">
+          <stop offset="0" stopColor="#f6e7cb" stopOpacity=".5" />
+          <stop offset=".6" stopColor="#f5ecd9" stopOpacity=".2" />
+          <stop offset="1" stopColor="#f5ecd9" stopOpacity="0" />
+        </radialGradient>
+        {/* Airlight: light scattered by the atmosphere in front of the far
+            ranges. Shared by both veils; nearer terrain receives less. */}
+        <radialGradient id="paw-field-airlight" cx="50%" cy="50%" r="50%">
+          <stop offset="0" stopColor="#ffffff" stopOpacity=".55" />
+          <stop offset=".5" stopColor="#fcf9f2" stopOpacity=".26" />
           <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
         </radialGradient>
-        <radialGradient id="paw-field-cloud" cx="50%" cy="50%" r="50%">
-          <stop offset="0" stopColor="#ffffff" stopOpacity=".85" />
+        <radialGradient id="paw-field-signal-bloom" cx="50%" cy="50%" r="50%">
+          <stop offset="0" stopColor="#ffffff" stopOpacity=".8" />
+          <stop offset=".45" stopColor="#fdfbf5" stopOpacity=".38" />
           <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
         </radialGradient>
-        <radialGradient id="paw-field-halo" cx="50%" cy="50%" r="50%">
-          <stop offset="0" stopColor="#f6d88f" stopOpacity=".78" />
-          <stop offset=".62" stopColor="#eebd62" stopOpacity=".3" />
-          <stop offset="1" stopColor="#eebd62" stopOpacity="0" />
-        </radialGradient>
-        <radialGradient id="paw-field-core" cx="42%" cy="38%" r="72%">
-          <stop offset="0" stopColor="#fbe7b4" />
-          <stop offset=".6" stopColor="#f0c469" />
-          <stop offset="1" stopColor="#e0a53f" />
-        </radialGradient>
-        <linearGradient id="paw-field-crestlight" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0" stopColor="#ffffff" stopOpacity=".05" />
-          <stop offset=".55" stopColor="#ffffff" stopOpacity=".4" />
-          <stop offset=".82" stopColor="#fff4dd" stopOpacity=".9" />
-          <stop offset="1" stopColor="#ffffff" stopOpacity=".5" />
+        {/* Atmospheric perspective: every ridge is darkest at its crest and
+            dissolves into the fog pooling at its base; each nearer layer
+            starts deeper and its fog is a step less bright. */}
+        <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-veil" x1="0" x2="0" y1="545" y2="760">
+          <stop offset="0" stopColor="#d7e2f1" />
+          <stop offset="1" stopColor="#e9eff8" />
         </linearGradient>
-        <linearGradient id="paw-field-ridge-far" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="#d3e1f6" />
-          <stop offset="1" stopColor="#dde8f8" />
+        <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-far" x1="0" x2="0" y1="495" y2="800">
+          <stop offset="0" stopColor="#c2d1e8" />
+          <stop offset=".55" stopColor="#dbe5f3" />
+          <stop offset="1" stopColor="#e6ecf7" />
         </linearGradient>
-        <linearGradient id="paw-field-ridge-mid" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="#b7cdee" />
-          <stop offset="1" stopColor="#c9daf3" />
+        <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-midfar" x1="0" x2="0" y1="585" y2="850">
+          <stop offset="0" stopColor="#aabdd9" />
+          <stop offset=".55" stopColor="#cfdcee" />
+          <stop offset="1" stopColor="#dfe8f4" />
         </linearGradient>
-        <linearGradient id="paw-field-ridge-close" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="#93b2e0" />
-          <stop offset="1" stopColor="#accaee" />
+        <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-mid" x1="0" x2="0" y1="685" y2="910">
+          <stop offset="0" stopColor="#8da4c6" />
+          <stop offset=".6" stopColor="#bfcfe5" />
+          <stop offset="1" stopColor="#d3deee" />
         </linearGradient>
-        <linearGradient id="paw-field-ridge-near" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="#6f92cb" />
-          <stop offset="1" stopColor="#8fabd9" />
+        <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-close" x1="0" x2="0" y1="755" y2="960">
+          <stop offset="0" stopColor="#6a81a6" />
+          <stop offset=".62" stopColor="#a3b7d4" />
+          <stop offset="1" stopColor="#bfcde3" />
         </linearGradient>
+        <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-near" x1="0" x2="0" y1="838" y2="980">
+          <stop offset="0" stopColor="#4c5b76" />
+          <stop offset=".65" stopColor="#7688a5" />
+          <stop offset="1" stopColor="#92a2bd" />
+        </linearGradient>
+        {/* Depth of field: far ranges soften into the haze, near terrain
+            stays sharp. One-time rasters — nothing here ever re-filters. */}
+        <filter id="paw-field-dof-veil"><feGaussianBlur stdDeviation="4.5" /></filter>
+        <filter id="paw-field-dof-far"><feGaussianBlur stdDeviation="3" /></filter>
+        <filter id="paw-field-dof-midfar"><feGaussianBlur stdDeviation="1.8" /></filter>
+        <filter id="paw-field-dof-mid"><feGaussianBlur stdDeviation="1" /></filter>
+        <filter id="paw-field-dof-close"><feGaussianBlur stdDeviation=".6" /></filter>
+        <filter height="460%" id="paw-field-mist-soften" width="160%" x="-30%" y="-180%">
+          <feGaussianBlur stdDeviation="16" />
+        </filter>
+        {/* Deterministic film grain (fixed seeds, stitched tiles): a dark and
+            a light speckle pass at a few percent, enough to break banding and
+            give the gradients a photographic surface. */}
+        <filter id="paw-field-grain-dark" x="0" y="0" width="100%" height="100%">
+          <feTurbulence baseFrequency=".8" numOctaves="2" seed="7" stitchTiles="stitch" type="fractalNoise" />
+          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  .9 0 0 0 -.18" />
+        </filter>
+        <filter id="paw-field-grain-light" x="0" y="0" width="100%" height="100%">
+          <feTurbulence baseFrequency=".8" numOctaves="2" seed="23" stitchTiles="stitch" type="fractalNoise" />
+          <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  .9 0 0 0 -.18" />
+        </filter>
       </defs>
       <rect className="paw-field__sky" width="1440" height="900" fill="url(#paw-field-sky)" />
-      <circle className="paw-field__daycore" cx="1042" cy="268" r="340" fill="url(#paw-field-daycore)" />
-      <g className="paw-field__clouds">
-        <ellipse className="paw-field__cloud paw-field__cloud--one" cx="400" cy="168" rx="270" ry="34" fill="url(#paw-field-cloud)" />
-        <ellipse className="paw-field__cloud paw-field__cloud--two" cx="1180" cy="112" rx="200" ry="26" fill="url(#paw-field-cloud)" />
-        <ellipse className="paw-field__cloud paw-field__cloud--haze" cx="820" cy="530" rx="360" ry="30" fill="url(#paw-field-cloud)" />
+      <circle className="paw-field__bloom" cx="985" cy="552" r="560" fill="url(#paw-field-bloom)" />
+      <circle className="paw-field__warmth" cx="985" cy="552" r="210" fill="url(#paw-field-warmth)" />
+      <path
+        className="paw-field__ridge paw-field__ridge--veil"
+        d="M -60 558.4 L -44 558.7 L -28 558.9 L -12 559.1 L 4 559.3 L 20 559.5 L 36 559.7 L 52 559.9 L 68 560.0 L 84 560.1 L 100 560.1 L 116 560.0 L 132 559.9 L 148 559.7 L 164 559.5 L 180 559.3 L 196 559.0 L 212 558.6 L 228 558.2 L 244 557.9 L 260 557.5 L 276 557.3 L 292 557.3 L 308 557.4 L 324 557.4 L 340 557.4 L 356 557.5 L 372 557.8 L 388 558.2 L 404 559.0 L 420 560.1 L 436 561.5 L 452 563.0 L 468 564.4 L 484 565.8 L 500 566.8 L 516 567.4 L 532 567.5 L 548 567.3 L 564 567.0 L 580 566.6 L 596 566.1 L 612 565.4 L 628 564.6 L 644 563.7 L 660 562.4 L 676 560.8 L 692 559.0 L 708 557.2 L 724 555.6 L 740 554.2 L 756 553.2 L 772 552.6 L 788 552.1 L 804 552.0 L 820 552.0 L 836 552.0 L 852 552.0 L 868 552.0 L 884 552.0 L 900 552.0 L 916 552.0 L 932 552.0 L 948 552.0 L 964 552.3 L 980 552.6 L 996 552.9 L 1012 553.0 L 1028 553.1 L 1044 552.9 L 1060 552.8 L 1076 552.6 L 1092 552.5 L 1108 552.5 L 1124 553.0 L 1140 553.7 L 1156 554.6 L 1172 555.6 L 1188 556.6 L 1204 557.4 L 1220 557.9 L 1236 558.2 L 1252 558.3 L 1268 558.3 L 1284 558.3 L 1300 558.4 L 1316 558.8 L 1332 559.5 L 1348 560.5 L 1364 561.6 L 1380 562.8 L 1396 563.9 L 1412 564.8 L 1428 565.3 L 1444 565.5 L 1460 565.2 L 1476 564.5 L 1492 563.6 L 1500 960 L -60 960 Z"
+        fill="url(#paw-field-ridge-veil)"
+        filter="url(#paw-field-dof-veil)"
+      />
+      <path
+        className="paw-field__ridge paw-field__ridge--far"
+        d="M -60 588.5 L -44 580.0 L -28 586.2 L -12 574.7 L 4 570.5 L 20 568.0 L 36 571.2 L 52 560.8 L 68 560.2 L 84 579.1 L 100 595.1 L 116 602.8 L 132 602.1 L 148 601.1 L 164 601.7 L 180 601.6 L 196 598.2 L 212 594.6 L 228 598.3 L 244 595.5 L 260 591.4 L 276 594.6 L 292 574.2 L 308 565.7 L 324 552.6 L 340 539.7 L 356 523.9 L 372 517.9 L 388 511.6 L 404 521.5 L 420 523.0 L 436 517.9 L 452 510.5 L 468 494.8 L 484 506.7 L 500 524.5 L 516 525.7 L 532 536.0 L 548 543.7 L 564 548.5 L 580 540.7 L 596 541.7 L 612 545.9 L 628 552.5 L 644 557.9 L 660 561.6 L 676 570.4 L 692 576.3 L 708 585.7 L 724 596.5 L 740 596.4 L 756 591.6 L 772 588.5 L 788 589.2 L 804 580.1 L 820 576.3 L 836 577.6 L 852 578.3 L 868 582.2 L 884 582.4 L 900 584.5 L 916 588.4 L 932 588.0 L 948 589.4 L 964 590.1 L 980 590.3 L 996 590.6 L 1012 587.8 L 1028 582.3 L 1044 578.2 L 1060 575.9 L 1076 579.6 L 1092 564.2 L 1108 564.9 L 1124 573.1 L 1140 574.2 L 1156 581.9 L 1172 586.2 L 1188 588.5 L 1204 583.7 L 1220 577.9 L 1236 572.8 L 1252 570.2 L 1268 559.7 L 1284 544.3 L 1300 537.4 L 1316 526.0 L 1332 519.1 L 1348 531.1 L 1364 541.1 L 1380 547.9 L 1396 559.2 L 1412 560.3 L 1428 585.1 L 1444 595.2 L 1460 594.6 L 1476 592.8 L 1492 592.8 L 1500 960 L -60 960 Z"
+        fill="url(#paw-field-ridge-far)"
+        filter="url(#paw-field-dof-far)"
+      />
+      <circle className="paw-field__airlight paw-field__airlight--far" cx="985" cy="560" r="640" fill="url(#paw-field-airlight)" />
+      <path
+        className="paw-field__ridge paw-field__ridge--midfar"
+        d="M -60 641.2 L -44 633.0 L -28 639.5 L -12 649.1 L 4 653.7 L 20 651.9 L 36 645.5 L 52 631.8 L 68 621.9 L 84 613.3 L 100 620.8 L 116 622.9 L 132 629.7 L 148 637.0 L 164 635.3 L 180 640.0 L 196 641.0 L 212 641.8 L 228 636.8 L 244 631.4 L 260 627.4 L 276 627.8 L 292 628.4 L 308 629.6 L 324 632.4 L 340 632.6 L 356 627.3 L 372 622.1 L 388 625.3 L 404 615.9 L 420 616.2 L 436 613.4 L 452 613.9 L 468 615.0 L 484 614.3 L 500 619.5 L 516 620.9 L 532 627.7 L 548 624.4 L 564 619.3 L 580 618.6 L 596 625.5 L 612 625.1 L 628 622.5 L 644 624.2 L 660 627.5 L 676 627.1 L 692 626.9 L 708 630.0 L 724 634.0 L 740 638.6 L 756 645.3 L 772 646.4 L 788 647.4 L 804 650.9 L 820 648.7 L 836 648.2 L 852 646.8 L 868 645.0 L 884 644.5 L 900 644.9 L 916 641.9 L 932 642.8 L 948 641.7 L 964 641.0 L 980 645.0 L 996 647.6 L 1012 648.6 L 1028 650.4 L 1044 649.2 L 1060 649.0 L 1076 646.7 L 1092 642.6 L 1108 637.8 L 1124 641.9 L 1140 638.9 L 1156 634.2 L 1172 634.6 L 1188 628.3 L 1204 620.3 L 1220 617.4 L 1236 619.9 L 1252 622.5 L 1268 622.8 L 1284 618.9 L 1300 618.5 L 1316 606.8 L 1332 598.5 L 1348 600.7 L 1364 606.4 L 1380 621.4 L 1396 636.0 L 1412 648.1 L 1428 649.2 L 1444 650.6 L 1460 648.1 L 1476 647.8 L 1492 648.1 L 1500 960 L -60 960 Z"
+        fill="url(#paw-field-ridge-midfar)"
+        filter="url(#paw-field-dof-midfar)"
+      />
+      <g className="paw-field__mist paw-field__mist--far">
+        <g className="paw-field__mist-drift" filter="url(#paw-field-mist-soften)">
+          <ellipse cx="300" cy="618" rx="340" ry="30" fill="#ffffff" opacity=".5" />
+          <ellipse cx="940" cy="604" rx="420" ry="34" fill="#ffffff" opacity=".62" />
+          <ellipse cx="1310" cy="612" rx="260" ry="26" fill="#ffffff" opacity=".42" />
+        </g>
       </g>
-      <g className="paw-field__meridians" fill="none" strokeLinecap="round">
-        <path className="paw-field__meridian paw-field__meridian--track" d="M -80 486 C 300 356 720 256 1520 318" />
-        <path className="paw-field__meridian paw-field__meridian--high" d="M 180 96 C 520 168 920 176 1280 96" />
-        <circle className="paw-field__orbit" cx="1042" cy="268" r="124" />
-        <circle className="paw-field__waypoint paw-field__waypoint--cobalt" cx="488" cy="341" r="3" />
-        <circle className="paw-field__waypoint paw-field__waypoint--teal" cx="858" cy="304" r="2.5" />
+      <path
+        className="paw-field__ridge paw-field__ridge--mid"
+        d="M -60 736.8 L -44 737.8 L -28 739.3 L -12 741.2 L 4 743.2 L 20 743.3 L 36 744.1 L 52 741.9 L 68 737.7 L 84 736.0 L 100 733.4 L 116 727.9 L 132 725.2 L 148 727.3 L 164 732.4 L 180 733.9 L 196 731.0 L 212 726.8 L 228 725.1 L 244 721.3 L 260 714.7 L 276 711.6 L 292 715.6 L 308 719.5 L 324 721.2 L 340 722.2 L 356 723.3 L 372 722.5 L 388 720.0 L 404 717.3 L 420 714.4 L 436 708.2 L 452 704.0 L 468 704.7 L 484 708.0 L 500 712.1 L 516 717.5 L 532 723.3 L 548 725.3 L 564 725.5 L 580 726.9 L 596 723.5 L 612 716.8 L 628 716.5 L 644 718.2 L 660 719.5 L 676 725.5 L 692 728.3 L 708 721.0 L 724 712.0 L 740 711.1 L 756 711.7 L 772 711.1 L 788 712.6 L 804 712.2 L 820 708.1 L 836 706.1 L 852 708.4 L 868 708.5 L 884 701.5 L 900 700.0 L 916 700.2 L 932 707.5 L 948 710.1 L 964 710.7 L 980 709.0 L 996 701.3 L 1012 700.5 L 1028 699.6 L 1044 699.5 L 1060 699.0 L 1076 700.8 L 1092 705.4 L 1108 709.2 L 1124 709.8 L 1140 707.5 L 1156 703.4 L 1172 698.1 L 1188 697.3 L 1204 702.0 L 1220 703.6 L 1236 705.1 L 1252 705.7 L 1268 701.8 L 1284 695.6 L 1300 687.3 L 1316 686.8 L 1332 686.6 L 1348 686.6 L 1364 687.0 L 1380 691.1 L 1396 697.6 L 1412 694.1 L 1428 693.6 L 1444 697.6 L 1460 702.7 L 1476 704.1 L 1492 703.3 L 1500 960 L -60 960 Z"
+        fill="url(#paw-field-ridge-mid)"
+        filter="url(#paw-field-dof-mid)"
+      />
+      <circle className="paw-field__airlight paw-field__airlight--near" cx="985" cy="580" r="480" fill="url(#paw-field-airlight)" />
+      <g className="paw-field__mist paw-field__mist--mid">
+        <g className="paw-field__mist-drift" filter="url(#paw-field-mist-soften)">
+          <ellipse cx="180" cy="706" rx="300" ry="32" fill="#ffffff" opacity=".5" />
+          <ellipse cx="760" cy="692" rx="430" ry="36" fill="#ffffff" opacity=".58" />
+          <ellipse cx="1240" cy="700" rx="300" ry="30" fill="#ffffff" opacity=".46" />
+        </g>
       </g>
-      <g className="paw-field__beacon">
-        <circle className="paw-field__beacon-ring" cx="1042" cy="268" r="86" />
-        <circle className="paw-field__beacon-halo" cx="1042" cy="268" r="52" fill="url(#paw-field-halo)" />
-        <circle className="paw-field__beacon-core" cx="1042" cy="268" r="22" fill="url(#paw-field-core)" />
-        <circle className="paw-field__signal" cx="1042" cy="268" r="30" />
+      <path
+        className="paw-field__ridge paw-field__ridge--close"
+        d="M -60 782.1 L -44 783.2 L -28 785.8 L -12 790.6 L 4 795.8 L 20 801.2 L 36 805.5 L 52 805.3 L 68 801.1 L 84 796.1 L 100 792.8 L 116 789.1 L 132 786.6 L 148 782.4 L 164 781.1 L 180 781.9 L 196 785.9 L 212 789.0 L 228 789.7 L 244 789.8 L 260 789.2 L 276 787.2 L 292 784.4 L 308 782.5 L 324 782.6 L 340 783.0 L 356 782.7 L 372 783.1 L 388 783.6 L 404 782.9 L 420 781.5 L 436 779.9 L 452 780.7 L 468 782.5 L 484 781.2 L 500 779.4 L 516 778.1 L 532 775.8 L 548 773.3 L 564 774.1 L 580 774.8 L 596 775.5 L 612 775.4 L 628 775.7 L 644 776.7 L 660 777.3 L 676 780.2 L 692 782.7 L 708 784.9 L 724 789.5 L 740 792.8 L 756 793.4 L 772 792.5 L 788 791.5 L 804 790.8 L 820 790.5 L 836 789.6 L 852 784.5 L 868 778.7 L 884 777.5 L 900 777.0 L 916 777.5 L 932 778.5 L 948 782.3 L 964 783.6 L 980 780.0 L 996 776.3 L 1012 773.6 L 1028 775.3 L 1044 779.3 L 1060 781.4 L 1076 779.9 L 1092 778.7 L 1108 782.2 L 1124 786.1 L 1140 788.7 L 1156 791.2 L 1172 794.3 L 1188 796.0 L 1204 796.2 L 1220 796.7 L 1236 796.3 L 1252 792.9 L 1268 790.7 L 1284 791.8 L 1300 795.6 L 1316 799.0 L 1332 800.7 L 1348 803.9 L 1364 806.6 L 1380 808.2 L 1396 809.5 L 1412 810.7 L 1428 810.5 L 1444 811.1 L 1460 811.2 L 1476 809.5 L 1492 807.6 L 1500 960 L -60 960 Z"
+        fill="url(#paw-field-ridge-close)"
+        filter="url(#paw-field-dof-close)"
+      />
+      <g className="paw-field__mist paw-field__mist--near">
+        <g className="paw-field__mist-drift" filter="url(#paw-field-mist-soften)">
+          <ellipse cx="480" cy="836" rx="420" ry="40" fill="#ffffff" opacity=".5" />
+          <ellipse cx="1120" cy="828" rx="380" ry="36" fill="#ffffff" opacity=".44" />
+        </g>
       </g>
-      <g className="paw-field__survey" fill="none" strokeLinecap="round">
-        <path className="paw-field__mark paw-field__mark--cross" d="M 392 478 v 16 M 384 486 h 16" />
-        <path className="paw-field__mark paw-field__mark--station" d="m 1218 509 8 14 h -16 Z" />
-        <path className="paw-field__mark paw-field__mark--ticks" d="M 168 590 v 8 M 196 590 v 8 M 224 590 v 8" />
-      </g>
-      <g className="paw-field__terrain">
-        <path
-          className="paw-field__ridge paw-field__ridge--far"
-          d="M -40 662 C 150 612 320 594 480 612 C 660 632 760 672 930 656 C 1090 641 1210 602 1330 610 C 1394 614 1444 626 1480 622 L 1480 940 L -40 940 Z"
-          fill="url(#paw-field-ridge-far)"
-        />
-        <path
-          className="paw-field__ridge paw-field__ridge--mid"
-          d="M -40 742 C 110 688 250 658 420 676 C 590 694 690 742 870 728 C 1030 715 1150 676 1300 690 C 1370 696 1436 712 1480 706 L 1480 940 L -40 940 Z"
-          fill="url(#paw-field-ridge-mid)"
-        />
-        <path
-          className="paw-field__ridge paw-field__ridge--close"
-          d="M -40 810 C 160 780 320 748 520 764 C 700 778 820 818 1000 800 C 1150 785 1270 742 1480 766 L 1480 940 L -40 940 Z"
-          fill="url(#paw-field-ridge-close)"
-        />
-        <path
-          className="paw-field__ridge paw-field__ridge--near"
-          d="M -40 856 C 140 826 300 806 470 820 C 640 834 760 866 940 872 C 1100 877 1260 848 1480 838 L 1480 940 L -40 940 Z"
-          fill="url(#paw-field-ridge-near)"
-        />
-      </g>
-      <g className="paw-field__crest-lights" fill="none" strokeLinecap="round">
-        <path
-          className="paw-field__crest paw-field__crest--far"
-          d="M -40 662 C 150 612 320 594 480 612 C 660 632 760 672 930 656 C 1090 641 1210 602 1330 610 C 1394 614 1444 626 1480 622"
-        />
-        <path
-          className="paw-field__crest paw-field__crest--mid"
-          d="M -40 742 C 110 688 250 658 420 676 C 590 694 690 742 870 728 C 1030 715 1150 676 1300 690 C 1370 696 1436 712 1480 706"
-        />
-        <path
-          className="paw-field__crest paw-field__crest--close"
-          d="M -40 810 C 160 780 320 748 520 764 C 700 778 820 818 1000 800 C 1150 785 1270 742 1480 766"
-        />
-      </g>
-      <g className="paw-field__contours" fill="none" strokeLinecap="round">
-        <path className="paw-field__contour" d="M -40 786 C 160 756 320 726 520 742 C 700 756 820 794 1000 778 C 1150 764 1270 726 1480 748" />
-        <path className="paw-field__contour paw-field__contour--near" d="M -40 834 C 140 806 300 786 470 800 C 640 814 760 844 940 850 C 1100 855 1260 828 1480 818" />
-      </g>
-      <g className="paw-field__packets">
-        <circle className="paw-field__packet paw-field__packet--cobalt" r="4.5" />
-        <circle className="paw-field__packet paw-field__packet--teal" r="4" />
-        <circle className="paw-field__packet paw-field__packet--gold" r="3.5" />
-      </g>
+      <path
+        className="paw-field__ridge paw-field__ridge--near"
+        d="M -60 869.6 L -44 869.3 L -28 869.2 L -12 869.2 L 4 869.4 L 20 869.6 L 36 870.0 L 52 870.4 L 68 870.8 L 84 871.2 L 100 871.4 L 116 871.4 L 132 871.4 L 148 871.4 L 164 871.4 L 180 871.6 L 196 872.0 L 212 872.6 L 228 873.7 L 244 875.2 L 260 877.1 L 276 879.0 L 292 881.0 L 308 882.9 L 324 884.5 L 340 885.7 L 356 886.4 L 372 887.1 L 388 887.7 L 404 888.0 L 420 888.0 L 436 888.0 L 452 888.0 L 468 888.0 L 484 888.0 L 500 888.0 L 516 888.0 L 532 888.0 L 548 888.0 L 564 888.0 L 580 887.6 L 596 886.8 L 612 886.5 L 628 886.5 L 644 886.6 L 660 886.9 L 676 887.3 L 692 887.6 L 708 887.9 L 724 888.0 L 740 887.9 L 756 887.5 L 772 887.3 L 788 887.2 L 804 887.2 L 820 887.1 L 836 887.1 L 852 887.0 L 868 886.8 L 884 886.4 L 900 885.7 L 916 884.6 L 932 883.3 L 948 881.9 L 964 880.4 L 980 879.1 L 996 878.0 L 1012 877.2 L 1028 876.7 L 1044 876.1 L 1060 875.6 L 1076 875.0 L 1092 874.6 L 1108 874.2 L 1124 873.9 L 1140 873.6 L 1156 873.4 L 1172 873.4 L 1188 873.3 L 1204 873.1 L 1220 872.8 L 1236 872.4 L 1252 871.8 L 1268 871.1 L 1284 870.2 L 1300 869.2 L 1316 868.1 L 1332 867.0 L 1348 865.9 L 1364 864.8 L 1380 863.7 L 1396 862.8 L 1412 862.0 L 1428 862.0 L 1444 862.0 L 1460 862.6 L 1476 863.8 L 1492 865.0 L 1500 960 L -60 960 Z"
+        fill="url(#paw-field-ridge-near)"
+      />
+      <circle className="paw-field__signal" cx="985" cy="552" r="240" fill="url(#paw-field-signal-bloom)" />
+      <rect className="paw-field__grain paw-field__grain--dark" width="1440" height="900" filter="url(#paw-field-grain-dark)" opacity=".04" />
+      <rect className="paw-field__grain paw-field__grain--light" width="1440" height="900" filter="url(#paw-field-grain-light)" opacity=".05" />
     </svg>
   );
 }
