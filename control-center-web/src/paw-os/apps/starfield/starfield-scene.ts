@@ -2,12 +2,12 @@
  * 星空 v2 WebGL stage — the immersive 3D renderer.
  *
  * A hand-driven three.js scene (no per-frame React): a procedurally textured
- * deep-sky dome with a milky-way band, particle star shells, nebulae, orbit
- * rings, planets with seeded surface + normal maps and fresnel atmospheres,
- * a granulated burning Sol, handoff light beams and picked-body highlighting.
- * All *work* motion comes from `StarfieldMotion` profiles produced by the
- * pure motion module, so the 3D stage can never claim activity the Runtime
- * does not report:
+ * deep-sky dome with a milky-way band, particle star shells, nebulae, elliptical
+ * orbit paths (q-jade/solar-system seasoning), planets with seeded surface +
+ * normal maps, cloud shells, fresnel atmospheres, a granulated burning Sol,
+ * handoff light beams and picked-body highlighting. All *work* motion comes
+ * from `StarfieldMotion` profiles produced by the pure motion module, so the
+ * 3D stage can never claim activity the Runtime does not report:
  * - orbit + spin advance by `motion.orbitRadPerS` / `spinRadPerS` (working);
  * - queue / review / failure appear as rings and light, never as motion;
  * - reduced motion stops the integrator and renders on demand only.
@@ -36,6 +36,11 @@ import {
   type MeteorSpawn,
 } from './starfield-flourish';
 import type { StarfieldTone } from './starfield-motion';
+import {
+  ellipticOrbitSamples,
+  ellipticPosition,
+  ellipticTrailSamples,
+} from './starfield-orbit';
 import {
   SPHERE_SEGMENTS,
   sphereLodLevels,
@@ -114,6 +119,12 @@ interface BodyRuntime {
   statusRingMaterial: THREE.Material | null;
   angleRad: number;
   pulseSeed: number;
+  /** Working-body comet trail positions, updated along the ellipse. */
+  trailPositions: THREE.BufferAttribute | null;
+  /** Cloud shell that drifts slightly ahead of ground spin. */
+  cloudSpin: THREE.Object3D | null;
+  /** Scratch vector reused by the elliptical integrator (zero alloc). */
+  orbitScratch: { x: number; y: number; z: number };
 }
 
 interface CenterRuntime {
@@ -125,6 +136,9 @@ interface CenterRuntime {
   size: number;
   spinRadPerS: number;
   pulseHz: number;
+  /** Optional second corona sprite for a layered Sol bloom. */
+  outerCorona: THREE.Sprite | null;
+  cloudSpin: THREE.Object3D | null;
 }
 
 interface MeteorRuntime {
@@ -421,17 +435,32 @@ export class StarfieldStage {
     this.backdropRoot.add(sky);
     this.refreshEnvironment(skyTexture);
 
-    // Parallax star shells in front of the dome. The dome carries density,
-    // so the shells stay lean.
+    // Parallax star shells in front of the dome. Spectral OBAFGKM mix
+    // (q-jade style) so the field reads as real starlight, not flat white.
+    const spectral: Array<{ weight: number; color: [number, number, number]; size: number }> = [
+      { weight: 0.05, color: [0.65, 0.78, 1.0], size: 1.35 }, // O/B
+      { weight: 0.1, color: [0.78, 0.86, 1.0], size: 1.15 }, // A
+      { weight: 0.2, color: [0.95, 0.96, 1.0], size: 1.0 }, // F
+      { weight: 0.35, color: [1.0, 0.96, 0.86], size: 0.9 }, // G
+      { weight: 0.2, color: [1.0, 0.86, 0.68], size: 0.8 }, // K
+      { weight: 0.1, color: [1.0, 0.72, 0.55], size: 0.7 }, // M
+    ];
+    const pickSpectral = (): (typeof spectral)[number] => {
+      let roll = random();
+      for (const entry of spectral) {
+        roll -= entry.weight;
+        if (roll <= 0) return entry;
+      }
+      return spectral[spectral.length - 1]!;
+    };
     const shells: Array<{ count: number; radius: [number, number]; size: number; opacity: number }> = [
-      { count: 900, radius: [64, 96], size: 0.55, opacity: 0.6 },
-      { count: 420, radius: [44, 64], size: 0.8, opacity: 0.75 },
-      { count: 200, radius: [28, 44], size: 1.15, opacity: 0.95 },
+      { count: 1100, radius: [64, 96], size: 0.5, opacity: 0.62 },
+      { count: 520, radius: [44, 64], size: 0.78, opacity: 0.78 },
+      { count: 240, radius: [28, 44], size: 1.12, opacity: 0.96 },
     ];
     for (const shell of shells) {
       const positions = new Float32Array(shell.count * 3);
       const colors = new Float32Array(shell.count * 3);
-      const tint = new THREE.Color();
       for (let index = 0; index < shell.count; index += 1) {
         const radius = shell.radius[0] + random() * (shell.radius[1] - shell.radius[0]);
         const theta = random() * Math.PI * 2;
@@ -439,10 +468,11 @@ export class StarfieldStage {
         positions[index * 3] = radius * Math.sin(phi) * Math.cos(theta);
         positions[index * 3 + 1] = radius * Math.cos(phi);
         positions[index * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
-        tint.setHSL(0.55 + random() * 0.16, 0.35 + random() * 0.3, 0.62 + random() * 0.3);
-        colors[index * 3] = tint.r;
-        colors[index * 3 + 1] = tint.g;
-        colors[index * 3 + 2] = tint.b;
+        const spectralType = pickSpectral();
+        const brightness = 0.55 + random() * 0.45;
+        colors[index * 3] = spectralType.color[0] * brightness;
+        colors[index * 3 + 1] = spectralType.color[1] * brightness;
+        colors[index * 3 + 2] = spectralType.color[2] * brightness;
       }
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -467,7 +497,10 @@ export class StarfieldStage {
       });
     }
 
-    const nebulaTints = [0x4c76ff, 0x9468eb, 0x54c4de];
+    // Dense milky-way particle band tilted against the ecliptic (q-jade).
+    this.backdropRoot.add(this.buildMilkyWayBand(random));
+
+    const nebulaTints = [0x4c76ff, 0x9468eb, 0x54c4de, 0xff7a5c];
     nebulaTints.forEach((tint, index) => {
       const material = new THREE.SpriteMaterial({
         map: this.glowTexture,
@@ -500,6 +533,53 @@ export class StarfieldStage {
 
     this.buildMeteorPool(model.seed);
     if (model.mode === 'galaxy') this.backdropRoot.add(this.buildSpiral(random));
+  }
+
+  /**
+   * Dense galactic-plane particle band tilted vs the ecliptic — the same
+   * visual idea as q-jade/solar-system's milky-way Points layer, scaled
+   * down to our stage radius and driven by the scene seed.
+   */
+  private buildMilkyWayBand(random: () => number): THREE.Points {
+    const count = 1800;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const tilt = 1.05; // ~60° like the reference
+    const cosT = Math.cos(tilt);
+    const sinT = Math.sin(tilt);
+    for (let index = 0; index < count; index += 1) {
+      const dist = 70 + random() * 55;
+      const angle = random() * Math.PI * 2;
+      const up = (random() - 0.5) * (6 + random() * 10);
+      const flatX = dist * Math.cos(angle);
+      const flatZ = dist * Math.sin(angle);
+      positions[index * 3] = flatX * cosT;
+      positions[index * 3 + 1] = flatX * sinT + up;
+      positions[index * 3 + 2] = flatZ;
+      const reddish = 0.45 + 0.55 * ((dist - 70) / 55);
+      const br = 0.45 + random() * 0.55;
+      colors[index * 3] = 1.0 * br;
+      colors[index * 3 + 1] = (0.78 + 0.22 * (1 - reddish)) * br;
+      colors[index * 3 + 2] = (0.55 + 0.45 * (1 - reddish)) * br;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const material = new THREE.PointsMaterial({
+      size: 0.42,
+      map: this.dotTexture,
+      transparent: true,
+      opacity: 0.72,
+      vertexColors: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+      fog: false,
+    });
+    const points = new THREE.Points(geometry, material);
+    points.name = 'sf-milky-way';
+    points.renderOrder = -8;
+    return points;
   }
 
   /**
@@ -626,6 +706,9 @@ export class StarfieldStage {
     for (const runtime of this.bodies) this.anchorById.set(runtime.body.id, runtime.anchor);
     if (this.center) this.anchorById.set('center', this.center.group);
     for (const link of model.links) this.buildLink(link);
+    if (model.mode === 'room' && model.ringRadii.length >= 1) {
+      this.modelRoot.add(this.buildAsteroidBelt(model));
+    }
     this.applySelectionHighlight();
   }
 
@@ -669,6 +752,8 @@ export class StarfieldStage {
     const center = model.center!;
     const group = new THREE.Group();
     const toneColor = TONE_COLORS[center.motion.tone];
+    let outerCorona: THREE.Sprite | null = null;
+    let cloudSpin: THREE.Object3D | null = null;
 
     let mesh: THREE.Mesh;
     if (center.kind === 'sun') {
@@ -679,22 +764,32 @@ export class StarfieldStage {
       mesh.scale.setScalar(center.size);
       const chromosphere = new THREE.Mesh(
         this.sphereGeometries.medium,
-        this.atmosphereMaterial(0xffa14f, 0.6),
+        this.atmosphereMaterial(0xffa14f, 0.72),
       );
-      chromosphere.scale.setScalar(center.size * 1.26);
+      chromosphere.scale.setScalar(center.size * 1.28);
       group.add(chromosphere);
-      const light = new THREE.PointLight(0xffc37a, 130, 0, 2);
+      const light = new THREE.PointLight(0xffc37a, 150, 0, 2);
       group.add(light);
       const corona = new THREE.Sprite(new THREE.SpriteMaterial({
         map: this.glowTexture,
         color: 0xffc46a,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.9,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }));
       corona.scale.setScalar(center.size * 5.4);
       group.add(corona);
+      outerCorona = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.glowTexture,
+        color: 0xff8a3a,
+        transparent: true,
+        opacity: 0.38,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      outerCorona.scale.setScalar(center.size * 9.2);
+      group.add(outerCorona);
     } else {
       const archetype = archetypeForSeed(model.seed);
       const { width } = surfaceTextureSize(center.size);
@@ -720,8 +815,13 @@ export class StarfieldStage {
       );
       atmosphere.scale.setScalar(center.size * 1.18);
       group.add(atmosphere);
+      if (archetype === 'terra' || archetype === 'ocean') {
+        cloudSpin = this.buildCloudShell(model.seed, center.size, width);
+        group.add(cloudSpin);
+      }
+      const ringGeo = this.buildRadialRingGeometry(center.size * 1.5, center.size * 2.25, 96);
       const saturnRing = new THREE.Mesh(
-        new THREE.RingGeometry(center.size * 1.5, center.size * 2.25, 96),
+        ringGeo,
         new THREE.MeshBasicMaterial({
           map: this.textures.ring(model.seed),
           transparent: true,
@@ -740,11 +840,11 @@ export class StarfieldStage {
       map: this.glowTexture,
       color: toneColor,
       transparent: true,
-      opacity: center.kind === 'sun' ? 0.5 : 0.42,
+      opacity: center.kind === 'sun' ? 0.55 : 0.42,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }));
-    const glowBaseScale = center.size * (center.kind === 'sun' ? 7 : 3.6);
+    const glowBaseScale = center.size * (center.kind === 'sun' ? 7.4 : 3.6);
     glow.scale.setScalar(glowBaseScale);
     group.add(glow);
 
@@ -758,22 +858,109 @@ export class StarfieldStage {
       size: center.size,
       spinRadPerS: center.motion.spinRadPerS,
       pulseHz: center.motion.pulseHz,
+      outerCorona,
+      cloudSpin,
     };
+  }
+
+  /** Cloud shell slightly larger than the body — drifts ahead of ground spin. */
+  private buildCloudShell(seed: string, size: number, width: number): THREE.Mesh {
+    const material = new THREE.MeshBasicMaterial({
+      map: this.textures.cloud(seed, Math.max(64, width)),
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.85,
+      blending: THREE.NormalBlending,
+    });
+    const mesh = new THREE.Mesh(this.sphereGeometries.medium, material);
+    mesh.scale.setScalar(size * 1.035);
+    mesh.renderOrder = 2;
+    return mesh;
+  }
+
+  /**
+   * RingGeometry with radial UVs so the procedural ring alpha map reads as
+   * concentric bands (same UV remap as q-jade Saturn rings).
+   */
+  private buildRadialRingGeometry(inner: number, outer: number, segments: number): THREE.RingGeometry {
+    const geometry = new THREE.RingGeometry(inner, outer, segments, 1);
+    const pos = geometry.attributes.position;
+    const uv = geometry.attributes.uv;
+    if (pos && uv) {
+      for (let index = 0; index < pos.count; index += 1) {
+        const x = pos.getX(index);
+        const y = pos.getY(index);
+        const radius = Math.sqrt(x * x + y * y);
+        const t = (radius - inner) / Math.max(outer - inner, 1e-6);
+        uv.setXY(index, t, 0.5);
+      }
+      uv.needsUpdate = true;
+    }
+    return geometry;
+  }
+
+  /** Sparse rocky belt between Room orbits — decoration only. */
+  private buildAsteroidBelt(model: StarfieldSceneModel): THREE.Points {
+    const random = seededRandom(`${model.seed}:belt`);
+    const inner = Math.max(1.2, (model.ringRadii[0] ?? 3) * 0.72);
+    const outer = Math.min(
+      SCENE_STAGE_RADIUS * 1.15,
+      (model.ringRadii[model.ringRadii.length - 1] ?? inner + 2) * 0.92,
+    );
+    const count = 420;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    for (let index = 0; index < count; index += 1) {
+      const radius = inner + random() * Math.max(0.4, outer - inner);
+      const angle = random() * Math.PI * 2;
+      const elev = (random() - 0.5) * 0.35;
+      positions[index * 3] = Math.cos(angle) * radius;
+      positions[index * 3 + 1] = elev;
+      positions[index * 3 + 2] = Math.sin(angle) * radius;
+      const shade = 0.45 + random() * 0.4;
+      colors[index * 3] = shade;
+      colors[index * 3 + 1] = shade * 0.92;
+      colors[index * 3 + 2] = shade * 0.8;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const material = new THREE.PointsMaterial({
+      size: 0.12,
+      map: this.dotTexture,
+      transparent: true,
+      opacity: 0.7,
+      vertexColors: true,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const points = new THREE.Points(geometry, material);
+    points.name = 'sf-asteroid-belt';
+    return points;
   }
 
   private buildBody(model: StarfieldSceneModel, body: SceneBody, drawnRings: Set<string>): void {
     const orbitGroup = new THREE.Group();
     orbitGroup.rotation.z = body.inclinationRad;
+    // Carrier kept for hierarchy stability; elliptical motion writes the
+    // focus-centered cartesian position onto `anchor` each frame.
     const carrier = new THREE.Group();
-    carrier.rotation.y = body.phaseRad;
     const anchor = new THREE.Group();
-    anchor.position.set(body.orbitRadius, 0, 0);
+    const scratch = { x: 0, y: 0, z: 0 };
+    ellipticPosition(body.orbitRadius, body.eccentricity, body.phaseRad, scratch);
+    anchor.position.set(scratch.x, scratch.y, scratch.z);
     carrier.add(anchor);
     orbitGroup.add(carrier);
     this.modelRoot.add(orbitGroup);
 
     const toneColor = TONE_COLORS[body.motion.tone];
     const surface = BODY_PALETTE[body.paletteIndex % BODY_PALETTE.length]!;
+    const archetype = body.kind === 'star' ? null : archetypeForPalette(body.paletteIndex);
+
+    // Axial tilt wraps the spinning surface (q-jade tiltGroup).
+    const tiltGroup = new THREE.Group();
+    tiltGroup.rotation.z = body.axialTiltRad;
+    anchor.add(tiltGroup);
 
     // One material shared by every LOD level; textures cached by identity.
     let material: THREE.Material;
@@ -783,18 +970,17 @@ export class StarfieldStage {
         color: new THREE.Color(surface).lerp(new THREE.Color(0xffffff), 0.4),
       });
     } else {
-      const archetype = archetypeForPalette(body.paletteIndex);
       const { width } = surfaceTextureSize(body.size);
       const maps = this.textures.planet({
         seed: body.id,
-        archetype,
+        archetype: archetype!,
         baseColor: surface,
         width,
       });
       material = new THREE.MeshStandardMaterial({
         map: maps.map,
         normalMap: maps.normalMap,
-        roughness: ARCHETYPE_ROUGHNESS[archetype],
+        roughness: ARCHETYPE_ROUGHNESS[archetype!],
         metalness: 0.04,
       });
     }
@@ -806,7 +992,14 @@ export class StarfieldStage {
       lod.addLevel(levelMesh, level.distance);
     }
     lod.userData.sfBodyId = body.id;
-    anchor.add(lod);
+    tiltGroup.add(lod);
+
+    let cloudSpin: THREE.Object3D | null = null;
+    if (archetype === 'terra' || archetype === 'ocean') {
+      const { width } = surfaceTextureSize(body.size);
+      cloudSpin = this.buildCloudShell(body.id, body.size, width);
+      tiltGroup.add(cloudSpin);
+    }
 
     // Fresnel atmosphere only for bodies large enough to read it; moons rely
     // on the tone glow, which halves their draw calls.
@@ -831,17 +1024,20 @@ export class StarfieldStage {
     glow.scale.setScalar(glowBaseScale);
     anchor.add(glow);
 
-    // Orbit path, deduplicated by radius + inclination.
+    // Elliptical orbit path, deduplicated by a/e/inclination.
     if (body.orbitRadius > 0.05 && model.mode !== 'galaxy') {
-      const ringKey = `${body.orbitRadius.toFixed(2)}:${body.inclinationRad.toFixed(3)}`;
+      const ringKey = `${body.orbitRadius.toFixed(2)}:${body.eccentricity.toFixed(3)}:${body.inclinationRad.toFixed(3)}`;
       if (!drawnRings.has(ringKey)) {
         drawnRings.add(ringKey);
-        orbitGroup.add(this.buildOrbitPath(body.orbitRadius, body.motion.working));
+        orbitGroup.add(this.buildOrbitPath(body.orbitRadius, body.eccentricity, body.motion.working));
       }
     }
 
+    let trailPositions: THREE.BufferAttribute | null = null;
     if (body.motion.working) {
-      carrier.add(this.buildTrail(body.orbitRadius, toneColor));
+      const trail = this.buildTrail(body.orbitRadius, body.eccentricity, body.phaseRad, toneColor);
+      trailPositions = trail.geometry.getAttribute('position') as THREE.BufferAttribute;
+      orbitGroup.add(trail);
     }
 
     const { statusRing, statusRingMaterial } = this.buildStatusRing(body, toneColor);
@@ -858,39 +1054,35 @@ export class StarfieldStage {
       statusRingMaterial,
       angleRad: body.phaseRad,
       pulseSeed: body.phaseRad * 7.13,
+      trailPositions,
+      cloudSpin,
+      orbitScratch: scratch,
     });
   }
 
-  private buildOrbitPath(radius: number, working: boolean): THREE.LineLoop {
-    const segments = 128;
-    const positions = new Float32Array(segments * 3);
-    for (let index = 0; index < segments; index += 1) {
-      const angle = (index / segments) * Math.PI * 2;
-      positions[index * 3] = Math.cos(angle) * radius;
-      positions[index * 3 + 1] = 0;
-      positions[index * 3 + 2] = Math.sin(angle) * radius;
-    }
+  private buildOrbitPath(semiMajor: number, eccentricity: number, working: boolean): THREE.LineLoop {
+    const positions = ellipticOrbitSamples(semiMajor, eccentricity, 160);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     return new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({
       color: working ? 0x93b0e2 : 0x4a5878,
       transparent: true,
-      opacity: working ? 0.4 : 0.22,
+      opacity: working ? 0.45 : 0.24,
     }));
   }
 
-  /** A comet tail behind a working body, riding inside its carrier group. */
-  private buildTrail(radius: number, toneColor: number): THREE.Line {
+  /** A comet tail behind a working body, riding its elliptical path. */
+  private buildTrail(
+    semiMajor: number,
+    eccentricity: number,
+    trueAnomalyRad: number,
+    toneColor: number,
+  ): THREE.Line {
     const segments = 42;
-    const span = 0.95;
-    const positions = new Float32Array(segments * 3);
+    const positions = ellipticTrailSamples(semiMajor, eccentricity, trueAnomalyRad, 0.95, segments);
     const colors = new Float32Array(segments * 3);
     const tone = new THREE.Color(toneColor);
     for (let index = 0; index < segments; index += 1) {
-      const delta = (index / (segments - 1)) * span;
-      positions[index * 3] = Math.cos(delta) * radius;
-      positions[index * 3 + 1] = 0;
-      positions[index * 3 + 2] = Math.sin(delta) * radius;
       const fade = 1 - index / (segments - 1);
       colors[index * 3] = tone.r * fade;
       colors[index * 3 + 1] = tone.g * fade;
@@ -1046,11 +1238,35 @@ export class StarfieldStage {
         const { motion } = runtime.body;
         if (motion.orbitRadPerS > 0) {
           runtime.angleRad += motion.orbitRadPerS * runtime.body.speedFactor * motionDt;
-          runtime.carrier.rotation.y = runtime.angleRad;
+          ellipticPosition(
+            runtime.body.orbitRadius,
+            runtime.body.eccentricity,
+            runtime.angleRad,
+            runtime.orbitScratch,
+          );
+          runtime.anchor.position.set(
+            runtime.orbitScratch.x,
+            runtime.orbitScratch.y,
+            runtime.orbitScratch.z,
+          );
+          if (runtime.trailPositions) {
+            ellipticTrailSamples(
+              runtime.body.orbitRadius,
+              runtime.body.eccentricity,
+              runtime.angleRad,
+              0.95,
+              runtime.trailPositions.count,
+              runtime.trailPositions.array as Float32Array,
+            );
+            runtime.trailPositions.needsUpdate = true;
+          }
           animated = true;
         }
         if (motion.spinRadPerS > 0) {
           runtime.spinTarget.rotation.y += motion.spinRadPerS * motionDt;
+          if (runtime.cloudSpin) {
+            runtime.cloudSpin.rotation.y += motion.spinRadPerS * motionDt * 1.18;
+          }
           animated = true;
         }
         if (motion.pulseHz > 0) {
@@ -1065,11 +1281,20 @@ export class StarfieldStage {
       if (this.center) {
         if (this.center.spinRadPerS > 0) {
           this.center.mesh.rotation.y += this.center.spinRadPerS * motionDt;
+          if (this.center.cloudSpin) {
+            this.center.cloudSpin.rotation.y += this.center.spinRadPerS * motionDt * 1.15;
+          }
           animated = true;
         }
         if (this.center.pulseHz > 0) {
           const wave = Math.sin(this.elapsedS * this.center.pulseHz * Math.PI * 2);
-          this.center.glow.scale.setScalar(this.center.glowBaseScale * (1 + wave * 0.1));
+          this.center.glow.scale.setScalar(this.center.glowBaseScale * (1 + wave * 0.12));
+          if (this.center.outerCorona) {
+            const pulse = 1 + wave * 0.18;
+            this.center.outerCorona.scale.setScalar(this.center.size * 9.2 * pulse);
+            (this.center.outerCorona.material as THREE.SpriteMaterial).opacity =
+              0.28 + (wave * 0.5 + 0.5) * 0.2;
+          }
           animated = true;
         }
       }
@@ -1077,6 +1302,8 @@ export class StarfieldStage {
       this.backdropRoot.rotation.y += dt * 0.004;
       const spiral = this.backdropRoot.getObjectByName('sf-spiral');
       if (spiral) spiral.rotation.y += dt * 0.01;
+      const belt = this.modelRoot.getObjectByName('sf-asteroid-belt');
+      if (belt) belt.rotation.y += dt * 0.02;
       this.updateFlourishes();
       animated = true;
     }
