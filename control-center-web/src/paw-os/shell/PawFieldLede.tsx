@@ -20,8 +20,10 @@ import { PawBrandMark } from './PawAppIcon';
  *   入口，永远不是开始 Session 的前置条件（PROJECT.md 非目标）。
  * - 文案只说得出真实产品名词（Session、回执、记忆与知识、上下文），不写指标、
  *   不写连接状态、不替 Runtime 作任何声明。
- * - `data-paw-evidence-echo` 是留给双向证据链的接缝：轨迹节点 ↔ 条目页的来回
- *   落地后，这里是桌面上指向「上下文是怎么装配的」的那个入口，不必改结构。
+ * - `data-paw-evidence-echo` 是双向证据链在桌面上的锚点。轨迹节点 ↔ 条目页
+ *   的来回已在 Agent 轨迹与 Memory / Knowledge / Files 落地；这里保持可寻址
+ *   但不持有它——桌面仍然只做导航，副句里的「回执 → 记忆与知识 → 上下文」
+ *   就是那条链路在文案上的同一句话。
  *
  * 样式：paw-os.css 拥有几何，paw-os-shell-migrated-v1.css 拥有着墨与雾面底。
  */
