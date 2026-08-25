@@ -488,8 +488,15 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-room-window-flow {
   position: absolute; z-index: 20; inset: 0;
   width: 100%; height: 100%; overflow: visible; pointer-events: none;
-  will-change: opacity;
-  backface-visibility: hidden;
+}
+/* The overlay repaints per frame only while a window drag streams live path
+   geometry through it or a live packet pulse is animating. Promote it for
+   exactly those windows so its repaints rasterize into their own layer; at
+   rest the hint is released, so a Room desktop showing static relationship
+   hints no longer pins one full-viewport compositor layer forever. */
+.paw-desktop-root[data-window-interaction] .paw-room-window-flow,
+.paw-room-window-flow:has(g[data-live]) {
+  will-change: transform;
 }
 .paw-room-window-flow path { fill: none; vector-effect: non-scaling-stroke; }
 /* Idle relationships are a faint dashed hint; a live transfer lights the path

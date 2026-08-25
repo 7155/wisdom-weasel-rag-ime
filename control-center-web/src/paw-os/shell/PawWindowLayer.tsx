@@ -358,37 +358,55 @@ function useLiveWindowFlowPoints(): Record<string, WindowFlowPoint> {
   const [livePoints, setLivePoints] = useState<Record<string, WindowFlowPoint>>({});
   useEffect(() => {
     let frame = 0;
-    let pending: WindowFlowGeometryDetail | null = null;
-    const flush = () => {
-      frame = 0;
-      const detail = pending;
-      pending = null;
-      if (!detail?.windowId) return;
+    const pending = new Map<string, WindowFlowPoint | null>();
+    const apply = (batch: ReadonlyArray<readonly [string, WindowFlowPoint | null]>) => {
       setLivePoints((current) => {
-        if (detail.point) {
-          const prior = current[detail.windowId];
-          if (prior && prior.x === detail.point.x && prior.y === detail.point.y) return current;
-          return { ...current, [detail.windowId]: detail.point };
+        let next: Record<string, WindowFlowPoint> | null = null;
+        for (const [windowId, point] of batch) {
+          const base: Record<string, WindowFlowPoint> = next ?? current;
+          if (point) {
+            const prior = base[windowId];
+            if (prior && prior.x === point.x && prior.y === point.y) continue;
+            next = { ...base, [windowId]: point };
+          } else if (windowId in base) {
+            const copy = { ...base };
+            delete copy[windowId];
+            next = copy;
+          }
         }
-        if (!(detail.windowId in current)) return current;
-        const next = { ...current };
-        delete next[detail.windowId];
-        return next;
+        return next ?? current;
       });
     };
+    const flush = () => {
+      frame = 0;
+      if (!pending.size) return;
+      const batch = [...pending];
+      pending.clear();
+      apply(batch);
+    };
+    /* Leading edge applies synchronously: the publisher already paces one
+     * geometry event per frame per window (it fires from the drag gesture's
+     * own rAF render), so the common path is one immediate React write per
+     * frame with zero added latency. The trailing rAF slot only exists to
+     * fold a same-frame burst — several windows repositioned at once — into
+     * one write. Clears flush through immediately so release never paints a
+     * stale path. */
     const handle = (event: Event) => {
       const detail = (event as CustomEvent<WindowFlowGeometryDetail>).detail;
       if (!detail?.windowId) return;
-      // Clears must land immediately so release never paints a stale path;
-      // live points coalesce to one React write per frame.
+      pending.set(detail.windowId, detail.point);
       if (!detail.point) {
-        pending = detail;
-        if (frame) window.cancelAnimationFrame(frame);
+        if (frame) {
+          window.cancelAnimationFrame(frame);
+          frame = 0;
+        }
         flush();
         return;
       }
-      pending = detail;
-      if (!frame) frame = window.requestAnimationFrame(flush);
+      if (!frame) {
+        flush();
+        frame = window.requestAnimationFrame(flush);
+      }
     };
     window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
     return () => {
@@ -813,6 +831,33 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
   const node = usePawDesktopStore((state) => state.windows[windowId]);
   const zIndex = usePawDesktopStore((state) => state.stack.indexOf(windowId) + 10);
   const active = usePawDesktopStore((state) => state.activeWindowId === windowId);
+  const openLinkedRoute = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
+    if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+    const href = anchor.getAttribute('href') ?? '';
+    if (!href.startsWith('#/')) return;
+    event.preventDefault();
+    openDesktopRoute(api, href.slice(1));
+  }, [api]);
+  /* The App surface depends only on process identity and committed size.
+   * Keeping the element referentially stable means frame-only re-renders —
+   * z-order churn on every focus click, active/flow flags, drag position
+   * commits — bail out at MemoizedWindowBody instead of reconciling the App
+   * provider chain, so a window's own re-render walks chrome only. */
+  const appId = node?.appId;
+  const entityId = node?.entityId;
+  const initialRoute = node?.initialRoute;
+  const target = node?.target;
+  const surfaceWidth = focusFrame?.width ?? node?.bounds.width ?? 0;
+  const surfaceHeight = Math.max(0, focusFrame?.height ?? node?.bounds.height ?? 0);
+  const appSurface = useMemo(() => (appId ? (
+    <div className="paw-window-route-surface" onClick={openLinkedRoute}>
+      <PawOsAppSurfaceProvider appId={appId} height={surfaceHeight} width={surfaceWidth} windowId={windowId}>
+        <PawAppProcess appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />
+      </PawOsAppSurfaceProvider>
+    </div>
+  ) : null), [appId, entityId, initialRoute, openLinkedRoute, surfaceHeight, surfaceWidth, target, windowId]);
   if (!node || (node.minimized && !overview)) return null;
   const app = pawApp(node.appId);
   const inFocus = collaborationFocusGroup ? windowBelongsToFocus(node, collaborationFocusGroup) : false;
@@ -825,15 +870,6 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
         ? 'primary'
         : 'unrelated'
     : undefined;
-  const openLinkedRoute = (event: ReactMouseEvent<HTMLElement>) => {
-    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
-    if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
-    const href = anchor.getAttribute('href') ?? '';
-    if (!href.startsWith('#/')) return;
-    event.preventDefault();
-    openDesktopRoute(api, href.slice(1));
-  };
   return (
     <PawWindowFrame
       active={active}
@@ -883,11 +919,7 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
       windowId={windowId}
       zIndex={zIndex}
     >
-      <div className="paw-window-route-surface" onClick={openLinkedRoute}>
-        <PawOsAppSurfaceProvider appId={node.appId} height={Math.max(0, focusFrame?.height ?? node.bounds.height)} width={focusFrame?.width ?? node.bounds.width} windowId={windowId}>
-          <PawAppProcess appId={node.appId} entityId={node.entityId} initialRoute={node.initialRoute} target={node.target} />
-        </PawOsAppSurfaceProvider>
-      </div>
+      {appSurface}
     </PawWindowFrame>
   );
 });
