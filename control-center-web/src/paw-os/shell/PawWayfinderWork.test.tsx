@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { MockControlTransport, type MockControlTransportOptions } from '@/test/mock-transport';
@@ -103,13 +103,17 @@ describe('PawWayfinderWork', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /继续修复投影/ }));
 
-    const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
-      windows?: Record<string, { appId?: string; initialRoute?: string; target?: { kind?: string; id?: string } }>;
-    };
-    expect(snapshot.windows?.['agent:s-42']).toMatchObject({
-      appId: 'agent',
-      initialRoute: '/agent?session=s-42',
-      target: { kind: 'session', id: 's-42' },
+    // Desktop persistence is a trailing debounce, so the snapshot lands one
+    // beat after the interaction instead of inside it.
+    await waitFor(() => {
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        windows?: Record<string, { appId?: string; initialRoute?: string; target?: { kind?: string; id?: string } }>;
+      };
+      expect(snapshot.windows?.['agent:s-42']).toMatchObject({
+        appId: 'agent',
+        initialRoute: '/agent?session=s-42',
+        target: { kind: 'session', id: 's-42' },
+      });
     });
   });
 
