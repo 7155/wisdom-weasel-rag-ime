@@ -685,10 +685,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 /* chrome 槽位是真实网格列：App 级控件右对齐、永不再压标题与信号灯 */
 .paw-window-chrome-slot { min-width: 0; height: 100%; display: flex; align-items: center; justify-content: flex-end; overflow: hidden; }
 .paw-window-chrome-slot:empty { display: none; }
+/* Leading App chrome docks to the right of the traffic lights, never before
+   them: the red/yellow/green trio must start at the same x on every window,
+   and the shared nth-child colour rules count buttons from the first child. */
 .paw-window-leading-slot {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-inline-start: 3px;
 }
 .paw-window-leading-slot:empty { display: none; }
 .paw-traffic-lights .paw-window-leading-slot .paw-agent-rail-toggle {

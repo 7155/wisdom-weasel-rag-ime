@@ -126,8 +126,13 @@
 .paw-desktop-root .paw-room-window-chrome[data-status='busy'] .paw-room-workspace__runtime i { background: var(--room-running, #1677d2); animation: paw-live-pulse 1.2s ease-in-out infinite; }
 .paw-desktop-root .paw-room-window-chrome[data-status='stopping'] .paw-room-workspace__runtime i { background: var(--room-waiting, #b56808); animation: none; }
 
+/* 按钮位置符合直觉：the 公开对话 / 协作态势 / 星空 cluster stays on the
+   trailing edge whether it is portalled into the window titlebar or drawn in
+   the workspace's own fallback header, because 协作态势 always opens the
+   tools aside on the trailing edge too. A leading-aligned cluster here was
+   the "button one side, panel the other" inversion. */
 .paw-desktop-root .paw-room-workspace__header > .paw-room-window-chrome {
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__header {
@@ -348,14 +353,23 @@
   }
 }
 
+/* Named areas make the tools side an explicit contract rather than an
+   accident of DOM order: the aside is declared on the trailing edge, the same
+   edge the 协作态势 control that opens it sits on. Anything that re-orders the
+   body markup keeps the affordance. */
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__body {
   grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'room-main';
   background: var(--paw-chat-surface);
 }
 
 .paw-desktop-root .paw-room-workspace--migrated-v1:not([data-panel='none']) .paw-room-workspace__body {
   grid-template-columns: minmax(0, 1fr) clamp(320px, 36%, 420px);
+  grid-template-areas: 'room-main room-tools';
 }
+
+.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__main { grid-area: room-main; }
+.paw-desktop-root .paw-room-tools[data-side='trailing'] { grid-area: room-tools; }
 
 .paw-desktop-root .paw-room-tools {
   min-width: 0;
@@ -660,10 +674,14 @@
   filter: blur(3px) saturate(.35);
 }
 
+/* 关闭键位置统一：the verb that dismisses collaboration focus is the same
+   kind of verb as a window's red light, so it lives on the same leading edge
+   instead of floating alone in the opposite corner. The modebar reserves its
+   first column for it (see the grid below). */
 .paw-desktop-root .paw-desktop:has(.paw-window-layer[data-room-focus]) .paw-collaboration-focus-exit {
   top: 43px;
-  right: 14px;
-  left: auto;
+  right: auto;
+  left: 14px;
   min-height: 30px;
   border-color: rgb(29 36 48 / .11);
   border-radius: 8px;
@@ -675,9 +693,11 @@
 
 .paw-desktop-root .paw-desktop:has(.paw-window-layer[data-room-focus]) .paw-collaboration-focus-exit:active { transform: scale(.97); }
 
-/* status overlay 克制：模式条只是一条安静的场地标线——左边 Room 名，
+/* status overlay 克制：模式条只是一条安静的场地标线——Room 名居中带，
    右边一句状态；分隔靠细边线，不再另加投影抢窗口的注意力。
-   46px 高度是 layoutCollaborationFocus 的布局常量，保持不动。 */
+   46px 高度是 layoutCollaborationFocus 的布局常量，保持不动。
+   列律与窗口标题栏同构（控件列 · 标识列 · 状态列），所以聚焦模式条读起来
+   和它下面每一扇窗的标题栏是同一套语言；第一列留给退出协作聚焦键。 */
 .paw-desktop-root .paw-room-focus-modebar {
   position: absolute;
   z-index: 50;
@@ -685,11 +705,11 @@
   right: 0;
   left: 0;
   height: 46px;
-  display: flex;
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr) minmax(0, auto);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  padding: 0 132px 0 14px;
+  padding: 0 14px;
   border-bottom: 1px solid rgb(29 36 48 / .08);
   color: #5f6978;
   /* The focus plane behind the modebar is itself a backdrop-filter layer;
@@ -700,7 +720,10 @@
   backdrop-filter: none;
 }
 .paw-desktop-root .paw-room-focus-modebar > span { min-width: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-modebar > span:last-child { flex-shrink: 0; color: #74808f; font-size: 12px; }
+/* Column 1 stays empty in the flow: it is the reserved landing area for the
+   absolutely positioned 退出协作聚焦 control. */
+.paw-desktop-root .paw-room-focus-modebar > span:first-child { grid-column: 2; }
+.paw-desktop-root .paw-room-focus-modebar > span:last-child { grid-column: 3; justify-self: end; flex-shrink: 0; color: #74808f; font-size: 12px; }
 .paw-desktop-root .paw-room-focus-modebar strong { color: #6845d8; font: 760 12px/18px var(--font-mono); letter-spacing: .08em; }
 .paw-desktop-root .paw-room-focus-modebar b { overflow: hidden; color: #28313e; font-size: 14px; font-weight: 640; text-overflow: ellipsis; }
 .paw-desktop-root .paw-room-focus-modebar i { width: 7px; height: 7px; border-radius: 50%; background: #168c58; }
@@ -755,41 +778,16 @@
   box-shadow: 0 24px 58px -20px rgb(35 47 66 / .25), 0 4px 12px rgb(35 47 66 / .06);
 }
 
-.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-titlebar {
-  grid-template-columns: 76px minmax(0, 1fr);
-  gap: 8px;
-  height: 34px;
-  padding: 0 12px;
+/* A focus-card satellite is a window, not a card: it keeps the shared
+   titlebar grid, the shared 40px bar height and the shared traffic-light
+   column, so its close light sits at exactly the same coordinates as the main
+   Room window stacked behind it. Only the title weight is quieter — the
+   satellite must read as secondary without inventing a second control
+   language (Joshua5: 卫星窗不要右上角孤立 X). */
+.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-title strong {
+  font-size: 12.5px;
+  font-weight: 620;
 }
-
-.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-titlebar .paw-traffic-lights button:nth-child(2),
-.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-titlebar .paw-traffic-lights button:nth-child(3) {
-  display: none;
-}
-
-.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-chrome-slot:empty {
-  display: none;
-}
-
-.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-body {
-  padding-top: 34px;
-}
-
-.paw-desktop-root .paw-focus-card-close {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  color: #78818f;
-  background: transparent;
-  cursor: pointer;
-  transition: color 120ms ease, background-color 120ms ease, transform 100ms ease;
-}
-
-.paw-desktop-root .paw-focus-card-close:hover { color: #27303c; background: rgb(29 36 48 / .055); }
-.paw-desktop-root .paw-focus-card-close:active { transform: scale(.94); }
 
 .paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='satellite']:not([data-active]) .paw-window {
   opacity: .88;
@@ -1006,9 +1004,13 @@
 .paw-desktop-root .paw-room-window-flow-ledger span[data-status='streaming'] em { color: #1677d2; }
 
 @container paw-room-workspace (max-width: 760px) {
+  /* Too narrow for a side-by-side split: the aside becomes the trailing
+     block below the conversation, which is still the reading-order side the
+     control cluster points at. */
   .paw-desktop-root .paw-room-workspace--migrated-v1:not([data-panel='none']) .paw-room-workspace__body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(250px, .92fr) minmax(280px, 1.08fr);
+    grid-template-areas: 'room-main' 'room-tools';
   }
   .paw-desktop-root .paw-room-tools {
     grid-row: 2;
