@@ -4,9 +4,15 @@
  * Three sibling skies over one shared shell:
  * - PawSessionStarfield — the Session as a planet, real subagent runs as
  *   moons (`agent.subagents.list`);
- * - PawRoomStarfield — the Room as a solar system around Sol with real
- *   handoff light beams;
+ * - PawRoomStarfield — the Room as a solar system of partner planets and
+ *   real handoff light beams. Sol is the facilitator's star: it is drawn only
+ *   while a coordinator actually hosts the Room, otherwise the sky stays a
+ *   partner-only constellation around an empty origin;
  * - PawGalaxyStarfield — every Room one star system in a small galaxy.
+ *
+ * The work leads: every body carries the task it is running, live handoff
+ * beams name the WorkItem in flight, and bodies with no live work go quiet
+ * so the backdrop and the settled planets never outshout them.
  *
  * The shell renders a fullscreen WebGL stage (three.js) with an information
  * feed, an honest motion legend and a detail card for any picked body. When
@@ -70,6 +76,7 @@ import {
   buildGalaxySceneModel,
   buildRoomSceneModel,
   buildSessionSceneModel,
+  liveBeamLinks,
   SCENE_STAGE_RADIUS,
   sceneBodyAriaLabel,
   type SceneMode,
@@ -234,6 +241,7 @@ function Starfield2D({
     body.id,
     viewboxPoint(body.orbitRadius, body.phaseRad),
   ]));
+  const namedBeamIds = new Set(liveBeamLinks(model).map((link) => link.id));
 
   return (
     <div className="paw-sf2" data-mode={model.mode}>
@@ -263,9 +271,12 @@ function Starfield2D({
           )) : null}
           <g className="paw-sf2__beams">
             {model.links.map((link) => {
-              const from = pointById.get(link.fromId) ?? { x: 500, y: 500 };
+              // Without Sol there is no origin to leave from: a handoff whose
+              // source is not on stage simply is not drawn.
+              const from = pointById.get(link.fromId) ?? (model.center ? { x: 500, y: 500 } : undefined);
               const to = pointById.get(link.toId);
-              if (!to) return null;
+              if (!from || !to) return null;
+              const named = namedBeamIds.has(link.id);
               return (
                 <g
                   className="paw-sf2__beam"
@@ -282,6 +293,15 @@ function Starfield2D({
                     >
                       <title>{link.label}</title>
                     </circle>
+                  ) : null}
+                  {named ? (
+                    <text
+                      className="paw-sf2__beam-label"
+                      x={(from.x + to.x) / 2}
+                      y={(from.y + to.y) / 2 - 8}
+                    >
+                      {link.label}
+                    </text>
                   ) : null}
                 </g>
               );
@@ -300,6 +320,7 @@ function Starfield2D({
               <span className="paw-sf2__body-label">
                 <strong>{body.title}</strong>
                 <small>{body.subtitle}</small>
+                {body.task && !body.idle ? <em>{body.task}</em> : null}
               </span>
             </>
           );
@@ -317,6 +338,7 @@ function Starfield2D({
               <button
                 aria-label={sceneBodyAriaLabel(model.mode, body)}
                 className="paw-sf2__body-button"
+                data-idle={body.idle || undefined}
                 data-ring={body.motion.ring === 'none' ? undefined : body.motion.ring}
                 data-selected={selectedId === body.id || undefined}
                 data-tone={body.motion.tone}
@@ -332,6 +354,7 @@ function Starfield2D({
             <button
               aria-label={sceneBodyAriaLabel(model.mode, body)}
               className="paw-sf2__body-button paw-sf2__body-button--fixed"
+              data-idle={body.idle || undefined}
               data-kind={body.kind}
               data-ring={body.motion.ring === 'none' ? undefined : body.motion.ring}
               data-selected={selectedId === body.id || undefined}
@@ -764,6 +787,9 @@ export function PawSessionStarfield({
 /* Room: the whole solar system                                        */
 /* ------------------------------------------------------------------ */
 
+/** The card names the work a partner owns; the Room App owns the full list. */
+const ROOM_CARD_WORK_LIMIT = 4;
+
 export function PawRoomStarfield({
   focus,
   roomId,
@@ -780,7 +806,10 @@ export function PawRoomStarfield({
   const nowMs = useNowMs();
   const model = useMemo(() => buildRoomStarfield(focus), [focus]);
   const sceneModel = useMemo(() => buildRoomSceneModel(model, roomId), [model, roomId]);
-  const feed = useMemo(() => buildRoomFeed(focus), [focus]);
+  // Sol belongs to the facilitator. With nobody hosting, the scene model
+  // returns no center and the sky stays a partner-only constellation.
+  const hosted = sceneModel.center !== null;
+  const feed = useMemo(() => buildRoomFeed(focus, { hosted }), [focus, hosted]);
 
   const renderDetail = (bodyId: string): ReactNode | null => {
     if (bodyId === 'center') {
@@ -803,6 +832,10 @@ export function PawRoomStarfield({
     const planet = model.planets.find((candidate) => candidate.participantId === bodyId);
     if (!planet) return null;
     const partner = focus.partners.find((candidate) => candidate.participantId === bodyId);
+    // The planet's real work, straight from the Room WorkItems it owns.
+    const ownedWork = focus.workItems
+      .filter((item) => partner?.ownedWorkItemIds.includes(item.id))
+      .slice(0, ROOM_CARD_WORK_LIMIT);
     return (
       <>
         <header className="paw-sf__card-head">
@@ -810,6 +843,16 @@ export function PawRoomStarfield({
           <span data-tone={planet.attention ? 'attention' : planet.state === 'running' ? 'working' : 'done'}>{planet.stateLabel}</span>
         </header>
         <p className="paw-sf__card-task">{planet.currentAction}</p>
+        {ownedWork.length ? (
+          <ul aria-label="负责的工作项" className="paw-sf__card-work">
+            {ownedWork.map((item) => (
+              <li key={item.id}>
+                <strong>{item.objective}</strong>
+                <small>{roomFocusStateLabel(item.state)}{item.blocker ? ` · ${item.blocker.reason}` : ''}</small>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <dl className="paw-sf__card-rows">
           {planet.collaborationRole ? <div><dt>职责</dt><dd>{planet.collaborationRole}</dd></div> : null}
           <div><dt>负责工作项</dt><dd>{planet.ownedWorkCount} 项</dd></div>
@@ -846,6 +889,12 @@ export function PawRoomStarfield({
       nowMs={nowMs}
       renderDetail={renderDetail}
       sceneModel={sceneModel}
+      status={hosted ? undefined : (
+        <div className="paw-sf__status">
+          <Orbit size={15} />
+          <span>这间 Room 没有主持人，中心不画 Sol；伙伴星按各自的工作项排列。</span>
+        </div>
+      )}
       {...(onExit ? { onExit } : {})}
     />
   );

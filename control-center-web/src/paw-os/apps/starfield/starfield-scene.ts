@@ -20,8 +20,11 @@
  * `sceneModelSignature`, zero per-frame allocations in the link updater, and
  * no rAF at all while the sky is hidden (`setRunning(false)` cancels it).
  *
- * DOM labels are positioned by projecting body anchors each frame, keeping
- * text crisp and accessible while the sky itself stays on the GPU.
+ * DOM labels are positioned by projecting body anchors — and live handoff
+ * beam midpoints — each frame, keeping the work text crisp and accessible
+ * while the sky itself stays on the GPU. The backdrop is deliberately held
+ * below them: dome tint, band and nebula opacity are tuned so the deep sky
+ * reads as depth without ever competing with a task label or an orbit.
  */
 
 import * as THREE from 'three';
@@ -92,6 +95,14 @@ const SPACE_CLEAR = 0x05070f;
 const MAX_FRAME_DT = 0.1;
 /** Deep-sky dome radius: outside every orbit, inside the camera far plane. */
 const SKY_RADIUS = 170;
+/**
+ * The backdrop is the room the work sits in, not the subject. Multiplying the
+ * dome map down (and holding the particle layers at low opacity) keeps the
+ * deep sky readable as depth while the DOM task labels, orbit ink and body
+ * light stay the brightest things on screen. The PMREM environment is built
+ * from the texture itself, so surface lighting keeps its full range.
+ */
+const SKY_DOME_TINT = 0x8b93ac;
 /** Meteor shell: behind every orbit and star shell, in front of the dome. */
 const METEOR_SHELL_RADIUS = 84;
 
@@ -103,6 +114,17 @@ const ARCHETYPE_ROUGHNESS: Record<PlanetArchetype, number> = {
   ice: 0.5,
   terra: 0.85,
 };
+
+/**
+ * Base glow strength. A body carrying live work leads the sky; a settled,
+ * stopped or unassigned one keeps its identity and orbit but stops competing
+ * with the work — the same quieting the DOM label applies to its text.
+ */
+function bodyGlowOpacity(body: SceneBody): number {
+  if (body.motion.working) return 0.62;
+  if (body.idle) return body.kind === 'star' ? 0.3 : 0.18;
+  return body.kind === 'star' ? 0.5 : 0.34;
+}
 
 /** Deterministic LCG stream seeded by a string, mirrors starfieldHash. */
 function seededRandom(seed: string): () => number {
@@ -184,6 +206,8 @@ interface NebulaBreathRuntime {
 }
 
 interface LinkRuntime {
+  /** Real handoff identity — also keys the DOM beam label. */
+  id: string;
   line: THREE.Line;
   packet: THREE.Sprite | null;
   fromId: string;
@@ -195,6 +219,8 @@ interface LinkRuntime {
   packetSeed: number;
   /** Accumulated dash-pattern shift for the flowing live-handoff look. */
   dashShift: number;
+  /** Beam midpoint in world space, refreshed by the link updater (no alloc). */
+  midpoint: THREE.Vector3;
 }
 
 export interface StarfieldStageOptions {
@@ -221,6 +247,7 @@ export class StarfieldStage {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly worldPosition = new THREE.Vector3();
+  private readonly labelAnchor = new THREE.Vector3();
   private readonly linkFrom = new THREE.Vector3();
   private readonly linkTo = new THREE.Vector3();
 
@@ -249,6 +276,7 @@ export class StarfieldStage {
   private pickTargets: THREE.Object3D[] = [];
   private anchorById = new Map<string, THREE.Object3D>();
   private labelById = new Map<string, HTMLElement>();
+  private linkLabelById = new Map<string, HTMLElement>();
   private backdropSeed = '';
   private modelSignature = '';
 
@@ -429,6 +457,7 @@ export class StarfieldStage {
     this.nebulaBreaths = [];
     this.meteors = [];
     this.labelById.clear();
+    this.linkLabelById.clear();
     // Exit must return the GPU immediately: dropping the context releases
     // its memory now instead of whenever the canvas is garbage collected.
     // The contextlost listener is already removed, so no fallback fires.
@@ -460,6 +489,7 @@ export class StarfieldStage {
     // real one for the first idle moment.
     const skyMaterial = new THREE.MeshBasicMaterial({
       map: this.textures.skyPreview(model.seed),
+      color: SKY_DOME_TINT,
       side: THREE.BackSide,
       depthWrite: false,
       fog: false,
@@ -484,9 +514,9 @@ export class StarfieldStage {
     // far layers cannot read as two different skies.
     const pickSpectral = () => spectralStarColor(random());
     const shells: Array<{ count: number; radius: [number, number]; size: number; opacity: number }> = [
-      { count: 1100, radius: [64, 96], size: 0.5, opacity: 0.62 },
-      { count: 520, radius: [44, 64], size: 0.78, opacity: 0.78 },
-      { count: 240, radius: [28, 44], size: 1.12, opacity: 0.96 },
+      { count: 1100, radius: [64, 96], size: 0.5, opacity: 0.44 },
+      { count: 520, radius: [44, 64], size: 0.78, opacity: 0.56 },
+      { count: 240, radius: [28, 44], size: 1.12, opacity: 0.7 },
     ];
     for (const shell of shells) {
       const positions = new Float32Array(shell.count * 3);
@@ -530,13 +560,15 @@ export class StarfieldStage {
     // Dense milky-way particle band tilted against the ecliptic (q-jade).
     this.backdropRoot.add(this.buildMilkyWayBand(random));
 
+    // Nebulae keep the sky from reading flat, but additive clouds behind a
+    // white task label are exactly what makes text mushy — hold them low.
     const nebulaTints = [0x4c76ff, 0x9468eb, 0x54c4de, 0xff7a5c];
     nebulaTints.forEach((tint, index) => {
       const material = new THREE.SpriteMaterial({
         map: this.glowTexture,
         color: tint,
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.15,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
@@ -566,12 +598,14 @@ export class StarfieldStage {
   }
 
   /**
-   * Dense galactic-plane particle band tilted vs the ecliptic — the same
-   * visual idea as q-jade/solar-system's milky-way Points layer, scaled
-   * down to our stage radius and driven by the scene seed.
+   * Galactic-plane particle band tilted vs the ecliptic — the same visual
+   * idea as q-jade/solar-system's milky-way Points layer, scaled down to our
+   * stage radius and driven by the scene seed. Deliberately thinner and
+   * dimmer than the reference: a bright band sweeping behind the orbit chart
+   * competes with the labels sitting on top of it.
    */
   private buildMilkyWayBand(random: () => number): THREE.Points {
-    const count = 1800;
+    const count = 1300;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     const tilt = 1.05; // ~60° like the reference
@@ -596,10 +630,10 @@ export class StarfieldStage {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     const material = new THREE.PointsMaterial({
-      size: 0.42,
+      size: 0.4,
       map: this.dotTexture,
       transparent: true,
-      opacity: 0.72,
+      opacity: 0.34,
       vertexColors: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -886,11 +920,13 @@ export class StarfieldStage {
       group.add(chromosphere);
       const light = new THREE.PointLight(0xffc37a, 150, 0, 2);
       group.add(light);
+      // Sol still leads the Room, but its bloom is the one thing bright
+      // enough to swallow a task label that drifts across it.
       const corona = new THREE.Sprite(new THREE.SpriteMaterial({
         map: this.glowTexture,
         color: 0xffc46a,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.76,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }));
@@ -900,7 +936,7 @@ export class StarfieldStage {
         map: this.glowTexture,
         color: 0xff8a3a,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.3,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }));
@@ -1098,7 +1134,7 @@ export class StarfieldStage {
     if (body.kind !== 'star' && body.size >= 0.45) {
       const shell = new THREE.Mesh(
         this.sphereGeometries.medium,
-        this.atmosphereMaterial(toneColor, body.motion.tone === 'muted' ? 0.22 : 0.5),
+        this.atmosphereMaterial(toneColor, body.idle ? 0.2 : 0.5),
       );
       shell.scale.setScalar(body.size * 1.22);
       anchor.add(shell);
@@ -1108,7 +1144,7 @@ export class StarfieldStage {
       map: this.glowTexture,
       color: toneColor,
       transparent: true,
-      opacity: body.motion.working ? 0.62 : body.kind === 'star' ? 0.5 : 0.3,
+      opacity: bodyGlowOpacity(body),
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }));
@@ -1165,7 +1201,7 @@ export class StarfieldStage {
     return new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({
       color: 0x8cb8ce,
       transparent: true,
-      opacity: working ? 0.42 : 0.2,
+      opacity: working ? 0.4 : 0.16,
     }));
   }
 
@@ -1274,6 +1310,7 @@ export class StarfieldStage {
       this.modelRoot.add(packet);
     }
     this.links.push({
+      id: link.id,
       line,
       packet,
       fromId: link.fromId,
@@ -1283,6 +1320,7 @@ export class StarfieldStage {
       lineDistances,
       packetSeed: seededRandom(link.id)(),
       dashShift: 0,
+      midpoint: new THREE.Vector3(),
     });
   }
 
@@ -1290,19 +1328,21 @@ export class StarfieldStage {
 
   private collectLabels(): void {
     this.labelById.clear();
+    this.linkLabelById.clear();
     for (const element of this.labelLayer.querySelectorAll<HTMLElement>('[data-sf-body]')) {
       const id = element.dataset.sfBody;
       if (id) this.labelById.set(id, element);
     }
+    for (const element of this.labelLayer.querySelectorAll<HTMLElement>('[data-sf-link]')) {
+      const id = element.dataset.sfLink;
+      if (id) this.linkLabelById.set(id, element);
+    }
   }
 
   private updateLabels(): void {
-    const place = (id: string, target: THREE.Object3D, offsetY: number) => {
-      const label = this.labelById.get(id);
+    const project = (label: HTMLElement | undefined, world: THREE.Vector3) => {
       if (!label) return;
-      target.getWorldPosition(this.worldPosition);
-      this.worldPosition.y -= offsetY;
-      this.worldPosition.project(this.camera);
+      this.worldPosition.copy(world).project(this.camera);
       if (this.worldPosition.z > 1 || this.worldPosition.z < -1) {
         label.style.opacity = '0';
         return;
@@ -1312,8 +1352,19 @@ export class StarfieldStage {
       label.style.opacity = '';
       label.style.transform = `translate(-50%, 0) translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
     };
+    const place = (id: string, target: THREE.Object3D, offsetY: number) => {
+      const label = this.labelById.get(id);
+      if (!label) return;
+      target.getWorldPosition(this.labelAnchor);
+      this.labelAnchor.y -= offsetY;
+      project(label, this.labelAnchor);
+    };
     if (this.center) place('center', this.center.group, this.center.size * 1.6);
     for (const runtime of this.bodies) place(runtime.body.id, runtime.anchor, runtime.body.size * 1.7);
+    // Live handoffs name the work that is moving, right on the beam.
+    if (this.linkLabelById.size) {
+      for (const link of this.links) project(this.linkLabelById.get(link.id), link.midpoint);
+    }
   }
 
   /* ----------------------------------------------------- frame loop -- */
@@ -1392,7 +1443,7 @@ export class StarfieldStage {
             const pulse = 1 + wave * 0.18;
             this.center.outerCorona.scale.setScalar(this.center.size * 9.2 * pulse);
             (this.center.outerCorona.material as THREE.SpriteMaterial).opacity =
-              0.28 + (wave * 0.5 + 0.5) * 0.2;
+              0.22 + (wave * 0.5 + 0.5) * 0.16;
           }
           animated = true;
         }
@@ -1487,6 +1538,9 @@ export class StarfieldStage {
 
   private renderOnce(): void {
     this.controls.update();
+    // Beam midpoints come from the link updater; a resize outside the loop
+    // must refresh them or its labels would snap back to the origin.
+    this.updateLinks(0);
     this.updateLabels();
     this.renderer.render(this.scene, this.camera);
     this.dirty = false;
@@ -1506,6 +1560,7 @@ export class StarfieldStage {
       link.positions.setXYZ(0, from.x, from.y, from.z);
       link.positions.setXYZ(1, to.x, to.y, to.z);
       link.positions.needsUpdate = true;
+      link.midpoint.copy(from).lerp(to, 0.5);
       const material = link.line.material as THREE.LineDashedMaterial | THREE.LineBasicMaterial;
       if ('dashSize' in material) {
         // Two-point dashed line: shift the lineDistance attribute so the
@@ -1592,7 +1647,7 @@ export class StarfieldStage {
     for (const runtime of this.bodies) {
       const selected = runtime.body.id === this.selectedId;
       const material = runtime.glow.material;
-      material.opacity = selected ? 0.95 : runtime.body.motion.working ? 0.62 : runtime.body.kind === 'star' ? 0.5 : 0.3;
+      material.opacity = selected ? 0.95 : bodyGlowOpacity(runtime.body);
       runtime.glow.scale.setScalar(selected ? runtime.glowBaseScale * 1.25 : runtime.glowBaseScale);
     }
     if (this.center) {
