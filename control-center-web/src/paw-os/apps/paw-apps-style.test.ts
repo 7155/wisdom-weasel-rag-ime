@@ -35,6 +35,27 @@ const pawOsStyleFiles = new Set(
   Object.keys(import.meta.glob('../styles/*.css')).map((filePath) => filePath.split('/').pop()!),
 );
 
+/** Border, fill, shadow and backdrop — the composer chrome one owner declares. */
+const COMPOSER_CHROME_DECLARATION =
+  /(?:^|[;\s])-?(?:webkit-)?(?:border(?:-[a-z]+)*|box-shadow|background(?:-[a-z]+)?|backdrop-filter)\s*:/;
+
+/**
+ * Rules whose subject is a composer dock element itself, rather than something
+ * inside it. `.paw-x__composer .agent-composer:focus-within` counts;
+ * `.agent-composer textarea` and `.paw-unified-composer > textarea` do not,
+ * because their metrics legitimately live with the surface that lays them out.
+ */
+function composerElementRules(css: string): { selector: string; declarations: string }[] {
+  const composerSubject = /\.(?:agent|room|paw-unified)-composer(?:::?[a-z-]+(?:\([^)]*\))?|\[[^\]]*\])*$/;
+  const rules: { selector: string; declarations: string }[] = [];
+  for (const [, selectorList, declarations] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = (selectorList ?? '').split(',').map((one) => one.trim()).filter(Boolean);
+    if (!selectors.some((one) => composerSubject.test(one))) continue;
+    rules.push({ selector: selectors.join(', ').replace(/\s+/g, ' '), declarations: declarations ?? '' });
+  }
+  return rules;
+}
+
 type SemanticBlock = {
   css: string;
   marker: string;
@@ -686,7 +707,6 @@ describe('PAWOS semantic type roles', () => {
     // No second non-motion owner may re-declare the dock's border, radius,
     // fill, shadow or focus ring — that is how the violet hard-offset and the
     // stacked focus shadows came back the last three times.
-    const chromeDeclaration = /(?:^|[;{\s])(?:border(?:-[a-z]+)*|box-shadow|background(?:-color|-image)?|backdrop-filter)\s*:/;
     for (const [owner, css] of Object.entries({
       'paw-os-webmodel-v1.css': webmodelCss,
       'paw-os-agent-next.css': agentNextCss,
@@ -695,15 +715,9 @@ describe('PAWOS semantic type roles', () => {
       'paw-os-motion.css': motionCss,
       'paw-os.css': pawOsCss,
     })) {
-      for (const [, selector, block] of css.matchAll(
-        /([^{}]*\.(?:agent|room|paw-unified)-composer(?:\s*,[^{}]*)?)\s*\{([^{}]*)\}/g,
-      )) {
-        const normalized = selector.trim().replace(/\s+/g, ' ');
-        // Descendant rules (textarea, toolbar, send) carry their own metrics;
-        // only the dock element itself is contested.
-        if (!/composer(?::[a-z-]+)?(?:,|$)/.test(normalized.replace(/\s*,\s*/g, ','))) continue;
-        expect(block, `${owner}: ${normalized} must leave composer chrome to paw-os-agent-migrated-v1.css`)
-          .not.toMatch(chromeDeclaration);
+      for (const rule of composerElementRules(css)) {
+        expect(rule.declarations, `${owner}: ${rule.selector} must leave composer chrome to paw-os-agent-migrated-v1.css`)
+          .not.toMatch(COMPOSER_CHROME_DECLARATION);
       }
     }
 

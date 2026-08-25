@@ -6,9 +6,9 @@
    they do not contribute App state, data, routes or duplicated components.
    ========================================================================== */
 
-/* The Composition-8 token block that used to sit here existed only to recolour
-   paw-os-agent-composition.css onto the cold desktop palette. That layer has
-   been retired, and no owner reads a --comp8-* token any more. */
+/* The Composition 8 token block that used to sit here existed only to recolour
+   the retired Agent composition layer onto the cold desktop palette. That layer
+   is gone, and no owner reads a Composition 8 token any more. */
 
 /* Agent conversation -------------------------------------------------------
  * The Runtime already emits one truthful, interleaved turn sequence.  This
