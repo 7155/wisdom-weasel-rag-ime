@@ -21,6 +21,12 @@ import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import { toggleDisclosurePreservingAnchor } from '@/features/agent/timeline/disclosure-anchor';
 import { buildRoomFocusProjection, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
+import {
+  roomDispatchPlanFromPayload,
+  roomGravityToolLabel,
+  roomToolEvidence,
+  type RoomToolFact,
+} from '@/paw-os/apps/room-gravity-projection';
 import './paw-os-satellite.css';
 
 export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
@@ -421,7 +427,11 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
       .filter((activity) => activity && roomSatelliteActivityVisible(activity.payload, activity.kind))
       .map((activity) => {
         const eventType = roomSatelliteActivityType(activity.payload, activity.kind);
-        const detail = roomSatelliteActivityText(activity.summary, activity.payload, activity.status);
+        const dispatch = roomSatelliteDispatchText(eventType, activity.payload);
+        const detail = dispatch || roomSatelliteActivityText(activity.summary, activity.payload, activity.status);
+        const facts = eventType === 'tool' || eventType.startsWith('tool_')
+          ? roomToolEvidence(activity.payload)?.facts ?? []
+          : [];
         return {
           id: activity.id,
           kind: 'activity' as const,
@@ -430,7 +440,8 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
           status: activity.status,
           eventType,
           text: detail,
-          summary: conciseParticipantActivity(eventType, activity.status, activity.payload, detail),
+          summary: dispatch || conciseParticipantActivity(eventType, activity.status, activity.payload, detail),
+          facts,
           time: activity.createdAtMs,
           order: activity.sequence ?? activity.createdAtMs,
         };
@@ -522,6 +533,8 @@ type ParticipantTimelineEntryData = {
   eventType: string;
   text: string;
   summary: string;
+  /** Structured tool evidence (op, arguments, result digest) for disclosure. */
+  facts?: RoomToolFact[];
   time: number;
   order: number;
 };
@@ -585,9 +598,10 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
     return <SatelliteActivityRow
       direction={fromParticipant ? 'out' : 'in'}
       eventType={entry.eventType}
+      facts={entry.facts}
       message={entry.summary}
       rawContentId={`participant-raw-${entry.id}`}
-      rawLabel="查看公开原文"
+      rawLabel={entry.facts?.length ? '查看执行详情' : '查看公开原文'}
       rawText={entry.text}
       status={entry.status}
       time={entry.time}
@@ -610,10 +624,12 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
 }
 
 /** 工具/运行事件压成一行：状态 · 类型 · 消息（可截断）· 时间弱化在行尾。
- *  失败沿用红色警示图标，超出摘要的公开原文披露仍折在行下。 */
-function SatelliteActivityRow({ direction, eventType, message, rawContentId, rawLabel, rawText, status, time }: {
+ *  失败沿用红色警示图标；披露展开为结构化执行详情（操作、参数、结果），
+ *  超出摘要的公开原文仍折在同一披露里（共享 Agent 对话的披露工艺）。 */
+function SatelliteActivityRow({ direction, eventType, facts, message, rawContentId, rawLabel, rawText, status, time }: {
   direction: 'in' | 'out';
   eventType: string;
+  facts?: RoomToolFact[];
   message: string;
   rawContentId: string;
   rawLabel: string;
@@ -621,12 +637,23 @@ function SatelliteActivityRow({ direction, eventType, message, rawContentId, raw
   status: string;
   time: number;
 }) {
+  const hasRaw = rawText.trim() !== message.trim();
+  const hasFacts = Boolean(facts?.length);
   return <article data-direction={direction} data-event-type={eventType} data-kind="activity" data-status={status}>
     <span className="paw-participant-chat__activity-state"><SatelliteRunState eventType={eventType} status={status} /></span>
     <strong>{roomSatelliteEntryLabel(eventType)}</strong>
     <span className="paw-participant-chat__activity-message" title={message}>{message}</span>
     <time>{time ? formatTime(time) : ''}</time>
-    {rawText.trim() !== message.trim() ? <SatelliteRawDetail contentId={rawContentId} label={rawLabel} text={rawText} /> : null}
+    {hasRaw || hasFacts ? (
+      <SatelliteDisclosure className="paw-participant-chat__raw-detail" contentId={rawContentId} summary={<span>{rawLabel}</span>}>
+        {hasFacts ? (
+          <dl className="paw-participant-chat__tool-facts">
+            {facts!.map((fact) => <div key={`${fact.label}:${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
+          </dl>
+        ) : null}
+        {hasRaw ? <pre>{rawText}</pre> : null}
+      </SatelliteDisclosure>
+    ) : null}
   </article>;
 }
 
@@ -685,11 +712,25 @@ function conciseParticipantActivity(
   detail: string,
 ): string {
   if (!participantDetailNeedsDisclosure(detail)) return conciseParticipantEntry(detail, '运行状态已更新');
-  const tool = stringValue(payload.displayName, stringValue(payload.toolName, stringValue(payload.toolId, '工具')));
+  const tool = stringValue(payload.displayName)
+    || roomGravityToolLabel(stringValue(payload.toolName, stringValue(payload.toolId)));
   if (eventType === 'tool' || eventType.startsWith('tool_')) return `${tool} ${participantToolStatusLabel(status)}`;
   if (eventType.includes('reasoning') || eventType.includes('thinking')) return status === 'running' ? '正在形成可公开的思考摘要' : '思考摘要已更新';
   if (eventType.includes('route') || eventType.includes('dispatch')) return '分派状态已更新';
   return '运行状态已更新';
+}
+
+/** A dispatch entry in the planet window names the gravity it received:
+ * reason, parallel track and phase — real routing data, not a dead chip. */
+function roomSatelliteDispatchText(eventType: string, payload: Record<string, unknown>): string {
+  if (!eventType.includes('route') && !eventType.includes('dispatch')) return '';
+  const plan = roomDispatchPlanFromPayload(payload);
+  /* A bare routing receipt without reason or wave keeps its own real summary. */
+  if (!plan || (!plan.reason && !plan.waveId && !plan.phaseName)) return '';
+  const parts = [`收到任务分派 · ${plan.reasonLabel}`];
+  if (plan.parallelIndex >= 0 && plan.parallelSize > 1) parts.push(`并行轨道 ${plan.parallelIndex + 1}/${plan.parallelSize}`);
+  if (plan.phaseName) parts.push(plan.phaseName);
+  return parts.join(' · ');
 }
 
 function conciseParticipantEntry(detail: string, fallback: string): string {
@@ -780,7 +821,8 @@ function roomSatelliteActivityText(
   status: string,
 ): string {
   if (summary.trim()) return summary.trim();
-  const tool = stringValue(payload.displayName, stringValue(payload.toolName, '工具'));
+  const tool = stringValue(payload.displayName)
+    || roomGravityToolLabel(stringValue(payload.toolName));
   if (status === 'running' || status === 'waiting') return `正在使用 ${tool}`;
   if (status === 'failed') return `${tool} 执行失败`;
   if (status === 'aborted') return `${tool} 已停止`;
@@ -790,7 +832,7 @@ function roomSatelliteActivityText(
 function roomSatelliteEntryLabel(eventType: string): string {
   if (eventType === 'tool' || eventType.startsWith('tool_')) return '工具';
   if (eventType === 'reasoning_summary' || eventType === 'thinking') return '思考摘要';
-  if (eventType.includes('route') || eventType.includes('dispatch')) return '分派';
+  if (eventType.includes('route') || eventType.includes('dispatch')) return '任务分派';
   return '进展';
 }
 

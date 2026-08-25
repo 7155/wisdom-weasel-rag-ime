@@ -198,6 +198,14 @@
 .paw-participant-chat__raw-detail__summary:hover { color: var(--paw-ink); text-decoration-color: currentcolor; }
 .paw-participant-chat__raw-detail__summary:focus-visible { border-radius: 4px; outline: 2px solid var(--paw-accent); outline-offset: 2px; }
 .paw-participant-chat__raw-detail pre { max-height: 180px; margin: 7px 0 0; padding: 8px 9px; overflow: auto; border: 1px solid var(--paw-line-soft); border-radius: 8px; background: var(--paw-panel-soft); color: var(--paw-muted); font: 12px/18px var(--font-mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+
+/* Structured tool evidence rows: operation, arguments and result digest read
+ * as labeled facts before any raw payload text. */
+.paw-participant-chat__tool-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; margin: 7px 0 0; padding: 7px 9px; border: 1px solid var(--paw-line-soft); border-radius: 8px; background: var(--paw-panel-soft); font-size: 12px; line-height: 17px; }
+.paw-participant-chat__tool-facts > div { display: contents; }
+.paw-participant-chat__tool-facts dt { color: var(--paw-muted); white-space: nowrap; }
+.paw-participant-chat__tool-facts dd { min-width: 0; margin: 0; color: color-mix(in srgb, var(--paw-ink) 84%, var(--paw-muted)); overflow-wrap: anywhere; }
+.paw-participant-chat__tool-facts + pre { margin-top: 5px; }
 /* 连续工具/运行事件折叠为一条披露：摘要常驻，进行中自动展开（UR-085） */
 .paw-participant-chat__activity-group { width: 100%; margin: 4px 0; border: 1px solid var(--paw-line-soft); border-radius: 10px; background: var(--paw-panel-soft); }
 .paw-participant-chat__activity-group[data-active] { border-color: color-mix(in srgb, var(--paw-accent) 30%, var(--paw-line-soft)); }

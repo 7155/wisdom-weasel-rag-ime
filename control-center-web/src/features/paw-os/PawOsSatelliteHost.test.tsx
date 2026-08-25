@@ -541,7 +541,8 @@ describe('PawOsSatelliteHost', () => {
     });
 
     const timeline = await screen.findByRole('log', { name: '实现伙伴 公开消息与运行事件' });
-    expect(timeline.querySelector('article[data-status="running"]')).toHaveTextContent('read 工具执行中');
+    // Raw Runtime tool ids map to reader-facing labels (`read` → 读取文件).
+    expect(timeline.querySelector('article[data-status="running"]')).toHaveTextContent('读取文件 工具执行中');
     const disclosure = document.querySelector<HTMLElement>('.paw-participant-chat__raw-detail');
     expect(disclosure).not.toBeNull();
     expect(screen.queryByText('/Volumes/private/workspace/PawWindowLayer.tsx')).not.toBeInTheDocument();
