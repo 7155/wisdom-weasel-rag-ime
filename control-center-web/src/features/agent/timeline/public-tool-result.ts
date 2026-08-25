@@ -39,7 +39,12 @@ export interface PublicToolResultView {
     text: string;
     truncated: boolean;
   };
+  /** Header label when the output block is not a tool return, e.g. the
+   * concrete content a collaboration tool sent on the user's behalf. */
+  outputLabel?: string;
   resultItems: PublicToolResultItem[];
+  /** Header label for structured result items, e.g. delegation runs. */
+  resultItemsLabel?: string;
   rawResult?: {
     format: 'json' | 'text';
     value: unknown;
@@ -222,6 +227,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   ).toLowerCase();
   const toolLabel = publicToolLabel(toolId);
   const expectedNoop = payload.expectedNoop === true;
+  const collaboration = collaborationToolResult(toolId, record(payload.args), layers);
   const fields: PublicToolResultField[] = [];
   const seen = new Set<string>();
   const append = (id: string, label: string, value: string) => {
@@ -243,7 +249,12 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   const ok = firstBoolean([envelope, domain, carrier], ['ok']);
   if (!expectedNoop && ok !== undefined) append('ok', '执行结果', ok ? '成功' : '未成功');
 
-  const resultStatus = publicStatusLabel(firstText(layers, ['status', 'state', 'availability']));
+  // Collaboration receipts carry their own precise state labels; the generic
+  // service-status projection would mislabel a document/goal state as a
+  // service condition.
+  const resultStatus = collaboration
+    ? ''
+    : publicStatusLabel(firstText(layers, ['status', 'state', 'availability']));
   if (resultStatus) append('resultStatus', '服务状态', resultStatus);
 
   const summary = firstPublicText(layers, ['summary', 'message', 'label']);
@@ -377,13 +388,17 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   if (codeResult.additions !== undefined || codeResult.deletions !== undefined) {
     append('changes', '变更', `+${codeResult.additions ?? 0} / -${codeResult.deletions ?? 0}`);
   }
+  if (collaboration) {
+    for (const field of collaboration.fields) append(field.id, field.label, field.value);
+  }
 
   const sources = toolId === 'knowledge'
     ? safeKnowledgeSourceLabels(items)
     : safeSourceLabels(payload.sources ?? payload.documents ?? payload.books);
   const preview = semanticToolPreview(toolId, operation, layers);
   const resultKind = publicToolResultKind(toolId, Boolean(preview));
-  const resultItems = publicToolResultItems(resultKind, layers, codeResult.output?.text ?? '');
+  const projectedItems = publicToolResultItems(resultKind, layers, codeResult.output?.text ?? '');
+  const resultItems = projectedItems.length ? projectedItems : collaboration?.resultItems ?? [];
   const rawResult = inspectableRawResult(payload);
   const subagentResult = toolId === 'subagent'
     ? publicSubagentResult(layers)
@@ -392,13 +407,14 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     ? publicToolError(layers, carrier)
     : '';
   const recovery = error ? publicToolRecovery(error, payload) : undefined;
-  const output = subagentResult?.output ?? codeResult.output;
+  const output = collaboration?.output ?? subagentResult?.output ?? codeResult.output;
+  const request = collaboration?.request.length ? collaboration.request : codeResult.request;
 
   return {
     toolId,
     toolLabel,
     operation,
-    summary: subagentResult?.summary || summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
+    summary: subagentResult?.summary || summary || collaboration?.summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
     resultKind,
     ...(codeResult.file ? { target: codeResult.file } : {}),
     ...(codeResult.additions !== undefined || codeResult.deletions !== undefined ? {
@@ -408,9 +424,13 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
       },
     } : {}),
     fields,
-    request: codeResult.request,
+    request,
     ...(output ? { output } : {}),
+    ...(collaboration?.outputLabel ? { outputLabel: collaboration.outputLabel } : {}),
     resultItems,
+    ...(collaboration?.resultItemsLabel && resultItems === collaboration.resultItems
+      ? { resultItemsLabel: collaboration.resultItemsLabel }
+      : {}),
     ...(rawResult ? { rawResult } : {}),
     ...(resultKind === 'code' && codeResult.file ? { language: publicCodeLanguage(codeResult.file) } : {}),
     sources,
@@ -476,6 +496,354 @@ function publicSubagentStatus(value: string): string {
     aborted: '已停止',
     timeout: '超时',
   } as Record<string, string>)[value.toLowerCase()] ?? '已返回';
+}
+
+interface CollaborationToolProjection {
+  summary: string;
+  request: PublicToolRequestField[];
+  fields: PublicToolResultField[];
+  resultItems: PublicToolResultItem[];
+  resultItemsLabel?: string;
+  output?: {
+    text: string;
+    truncated: boolean;
+  };
+  outputLabel?: string;
+}
+
+const collaborationSettledStates: Record<string, string> = {
+  completed: '已完成',
+  running: '进行中',
+  active: '进行中',
+  waiting: '等待中',
+  pending: '等待中',
+  failed: '失败',
+  aborted: '已停止',
+  cancelled: '已取消',
+  abandoned: '已放弃',
+};
+
+function collaborationStateLabel(value: string): string {
+  return collaborationSettledStates[value.toLowerCase()] ?? '';
+}
+
+/**
+ * Concrete payload projection for collaboration, delegation, goal, work
+ * document, and background-job receipts (PF-CM-007/010). The rows used to
+ * settle on a raw tool id with an empty detail body; the sent content, task
+ * briefs, acceptance criteria, evidence, and commands were only reachable via
+ * the raw JSON. Everything projected here comes from the durable Runtime
+ * payload — nothing is invented and the raw receipt stays available below.
+ */
+function collaborationToolResult(
+  toolId: string,
+  args: Record<string, unknown>,
+  layers: Record<string, unknown>[],
+): CollaborationToolProjection | undefined {
+  const request: PublicToolRequestField[] = [];
+  const fields: PublicToolResultField[] = [];
+  const addRequest = (id: string, label: string, value: string, code = false) => {
+    if (!value || request.some((field) => field.id === id)) return;
+    request.push({ id, label, value, ...(code ? { code: true } : {}) });
+  };
+  const addField = (id: string, label: string, value: string) => {
+    if (!value || fields.some((field) => field.id === id)) return;
+    fields.push({ id, label, value });
+  };
+  const op = text(args.op) || firstText(layers, ['operation', 'op']);
+
+  if (toolId === 'room_partner') {
+    const opLabel = ({
+      post: '发布协作消息',
+      reply: '回复协作消息',
+      ask: '向伙伴提问',
+      send: '发送伙伴消息',
+      peer_send: '发送伙伴消息',
+      peer_reply: '回复伙伴消息',
+      peer_list: '查看伙伴消息',
+      status: '查看协作状态',
+      complete: '提交完成',
+      list: '查看协作记录',
+    } as Record<string, string>)[op] ?? '协作操作';
+    const kind = text(args.kind) || firstText(layers, ['kind']);
+    const kindLabel = ({
+      result: '成果通报',
+      work_result: '工作成果',
+      comment: '协作评论',
+      question: '协作提问',
+      ask: '协作提问',
+      update: '进展更新',
+      decision: '协作决定',
+      blocker: '受阻说明',
+    } as Record<string, string>)[kind.toLowerCase()] ?? '';
+    addRequest('op', '动作', opLabel);
+    if (kindLabel) addRequest('kind', '消息类型', kindLabel);
+    const content = text(args.content);
+    const output = content
+      ? {
+          text: publicToolOutputText(content),
+          truncated: publicToolOutputWasTruncated(content),
+        }
+      : undefined;
+    const published = firstBoolean(layers, ['published']);
+    if (published !== undefined) addField('published', '发布状态', published ? '已发布' : '未发布');
+    const settled = firstArray(layers, ['settledWorkItems']);
+    if (settled.length > 0) addField('settledWorkItems', '结算工作项', `${settled.length} 项`);
+    // Partner-to-partner gravity: a peer_list result carries the real intercom
+    // exchange (who told whom what, and whether it was delivered), and a reply
+    // receipt carries the single message it answered. Both stay expandable.
+    const intercomSource = firstArray(layers, ['messages']);
+    const singleMessage = firstRecord(layers, ['message']);
+    const messageItems = intercomMessageItems(
+      intercomSource.length > 0
+        ? intercomSource
+        : Object.keys(singleMessage).length > 0 ? [singleMessage] : [],
+    );
+    return {
+      summary: messageItems.length && op === 'peer_list'
+        ? `${opLabel} · ${messageItems.length} 条`
+        : kindLabel ? `${opLabel} · ${kindLabel}` : opLabel,
+      request,
+      fields,
+      resultItems: messageItems,
+      ...(messageItems.length ? { resultItemsLabel: '伙伴消息' } : {}),
+      ...(output ? { output, outputLabel: '发送内容' } : {}),
+    };
+  }
+
+  if (toolId === 'agents') {
+    const opLabel = ({
+      delegate: '委派协作任务',
+      start: '委派协作任务',
+      status: '查询协作状态',
+      collect: '收取协作结果',
+      cancel: '取消委派',
+      abort: '中止委派',
+      artifact: '领取协作产物',
+    } as Record<string, string>)[op] ?? '协作操作';
+    addRequest('op', '动作', opLabel);
+    const template = text(args.agent);
+    const version = text(args.version);
+    if (template) {
+      addRequest('agent', '伙伴模板', version ? `${template} v${version}` : template, true);
+    }
+    addRequest('task', '任务简报', boundedCollaborationText(text(args.task), 2_000));
+    addRequest('expectedOutput', '预期产出', boundedCollaborationText(text(args.expectedOutput), 800));
+    const criteria = stringItems(args.acceptanceCriteria);
+    if (criteria.length > 0) {
+      addRequest('acceptanceCriteria', '验收标准', criteria.map((item, index) => `${index + 1}. ${item}`).join('\n'));
+    }
+    const allowedTools = stringItems(args.allowedTools).map((tool) => publicToolName(tool));
+    if (allowedTools.length > 0) addRequest('allowedTools', '允许工具', boundedList(allowedTools, 8));
+    const access = text(args.access).toLowerCase();
+    if (access) addRequest('access', '访问权限', access === 'write' ? '可写' : access === 'read' ? '只读' : access);
+    const contextMode = text(args.contextMode).toLowerCase();
+    if (contextMode) {
+      addRequest('contextMode', '上下文模式', contextMode === 'fresh' ? '全新上下文' : contextMode === 'inherit' ? '继承上下文' : contextMode);
+    }
+    const thinking = text(args.thinkingLevel).toLowerCase();
+    if (thinking) {
+      addRequest('thinkingLevel', '思考强度', ({ low: '低', medium: '中', high: '高' } as Record<string, string>)[thinking] ?? thinking);
+    }
+    const batch = firstRecord(layers, ['batch']);
+    const batchState = collaborationStateLabel(text(batch.state));
+    if (batchState) addField('batchState', '批次状态', batchState);
+    if (batch.abortRequested === true && text(batch.state) !== 'aborted') {
+      addField('abortRequested', '中止请求', '已发出，等待子 Agent 停止');
+    }
+    const accepted = firstBoolean(layers, ['accepted']);
+    if (accepted !== undefined) addField('accepted', '受理状态', accepted ? '已受理' : '未受理');
+    const waited = firstBoolean(layers, ['waited']);
+    if (waited !== undefined) addField('waited', '等待方式', waited ? '同步等待结果' : '后台继续运行');
+    const runs = Array.isArray(batch.runs) ? batch.runs : [];
+    if (runs.length > 0) addField('runCountCollab', '子任务', `${runs.length} 项`);
+    const resultItems = runs.slice(0, 8).flatMap((value, index): PublicToolResultItem[] => {
+      const run = record(value);
+      const runTemplate = text(run.templateId) || template || 'Agent';
+      const runState = collaborationStateLabel(text(run.state ?? run.status));
+      const runTask = boundedCollaborationText(text(run.task), 220);
+      return [{
+        id: text(run.id) || `run:${index}`,
+        label: `子任务 ${index + 1} · ${runTemplate}`,
+        text: [runState, runTask].filter(Boolean).join(' · '),
+      }];
+    });
+    return {
+      summary: [`委派 ${template || 'Agent'}`, batchState].filter(Boolean).join(' · '),
+      request,
+      fields,
+      resultItems,
+      ...(resultItems.length ? { resultItemsLabel: '子任务结果' } : {}),
+    };
+  }
+
+  if (toolId === 'agent_goal') {
+    const opLabel = ({
+      configure: '设定长期目标',
+      update: '更新长期目标',
+      complete: '标记目标完成',
+      abandon: '放弃长期目标',
+      status: '查看目标进展',
+    } as Record<string, string>)[op] ?? '目标操作';
+    addRequest('op', '动作', opLabel);
+    addRequest('summary', '目标结论', boundedCollaborationText(text(args.summary), 1_200));
+    const goal = firstRecord(layers, ['goal']);
+    const objective = boundedCollaborationText(text(goal.objective), 500);
+    if (objective) addField('objective', '目标', objective);
+    const goalState = collaborationStateLabel(text(goal.status));
+    if (goalState) addField('goalState', '目标状态', goalState);
+    const audit = record(goal.completionAudit);
+    const evidence = [
+      ...(Array.isArray(args.evidence) ? args.evidence : []),
+      ...(Array.isArray(audit.evidence) ? audit.evidence : []),
+    ];
+    const seenEvidence = new Set<string>();
+    const resultItems = evidence.flatMap((value): PublicToolResultItem[] => {
+      const item = record(value);
+      const reference = boundedCollaborationText(text(item.reference), 200);
+      const summaryText = boundedCollaborationText(text(item.summary), 300);
+      const dedupeKey = `${reference}|${summaryText}`;
+      if ((!reference && !summaryText) || seenEvidence.has(dedupeKey)) return [];
+      seenEvidence.add(dedupeKey);
+      const kindLabel = ({
+        test: '测试',
+        receipt: '回执',
+        artifact: '产物',
+      } as Record<string, string>)[text(item.kind).toLowerCase()] ?? '证据';
+      return [{
+        id: `evidence:${seenEvidence.size}:${reference || summaryText}`,
+        label: kindLabel,
+        text: [summaryText, reference].filter(Boolean).join(' · '),
+      }];
+    }).slice(0, 12);
+    return {
+      summary: [opLabel, goalState].filter(Boolean).join(' · '),
+      request,
+      fields,
+      resultItems,
+      ...(resultItems.length ? { resultItemsLabel: '完成证据' } : {}),
+    };
+  }
+
+  if (toolId === 'work_documents') {
+    const opLabel = ({
+      'authority.context': '读取权威上下文',
+      register: '登记工作文档',
+      append: '追加工作记录',
+      read: '读取工作文档',
+      list: '浏览工作文档',
+    } as Record<string, string>)[op] ?? '文档操作';
+    addRequest('op', '动作', opLabel);
+    const authorityKind = text(args.authorityKind) || firstText(layers, ['authorityKind']);
+    const authorityKindLabel = ({
+      session_goal: '会话目标',
+      room_work_item: '协作工作项',
+      todo: 'Todo',
+    } as Record<string, string>)[authorityKind.toLowerCase()] ?? authorityKind;
+    if (authorityKindLabel) addRequest('authorityKind', '权威对象', authorityKindLabel);
+    const authorityId = text(args.authorityId) || firstText(layers, ['authorityId']);
+    if (authorityId) addRequest('authorityId', '对象标识', authorityId, true);
+    const state = collaborationStateLabel(firstText(layers, ['state', 'terminalState']));
+    if (state) addField('documentState', '文档状态', state);
+    const revision = firstFiniteNumber(layers, ['authorityRevision', 'documentRevision']);
+    if (revision !== undefined) addField('authorityRevision', '权威修订', `第 ${revision} 版`);
+    return {
+      summary: [authorityKindLabel || opLabel, state].filter(Boolean).join(' · ') || opLabel,
+      request,
+      fields,
+      resultItems: [],
+    };
+  }
+
+  if (toolId === 'workspace_job') {
+    const opLabel = ({
+      start: '启动后台任务',
+      status: '查询后台任务',
+      logs: '读取任务日志',
+      cancel: '停止后台任务',
+      list: '浏览后台任务',
+    } as Record<string, string>)[op] ?? '后台任务操作';
+    addRequest('op', '动作', opLabel);
+    const job = firstRecord(layers, ['job']);
+    const command = text(job.command) || text(args.command);
+    if (command) addRequest('command', '命令', boundedCollaborationText(command, 300), true);
+    const cwd = text(job.cwd);
+    if (cwd) addRequest('cwd', '工作目录', boundedCollaborationText(cwd, 200), true);
+    const label = boundedCollaborationText(text(job.label), 120);
+    if (label) addField('jobLabel', '任务名称', label);
+    const jobState = collaborationStateLabel(text(job.status));
+    if (jobState) addField('jobState', '任务状态', jobState);
+    return {
+      summary: [label || opLabel, jobState].filter(Boolean).join(' · '),
+      request,
+      fields,
+      resultItems: [],
+    };
+  }
+
+  return undefined;
+}
+
+const intercomWorkActionLabels: Record<string, string> = {
+  accepted: '验收通过',
+  submitted: '已提交',
+  review: '待复核',
+  rework: '要求返工',
+  blocked: '受阻',
+  dispatched: '已分派',
+  assigned: '已指派',
+  released: '已解除',
+};
+
+const intercomStatusLabels: Record<string, string> = {
+  delivered: '已送达',
+  pending: '待送达',
+  queued: '待送达',
+  replied: '已回复',
+  failed: '发送失败',
+};
+
+/** Real partner-to-partner intercom traffic ("木星和地球通过引力交流"):
+ * source → target, the work action, the actual message body, and delivery
+ * state. Participant ids surface as short tails, never as full id walls. */
+function intercomMessageItems(values: unknown[]): PublicToolResultItem[] {
+  return values.slice(0, 8).flatMap((value, index): PublicToolResultItem[] => {
+    const message = record(value);
+    if (text(message.schemaVersion) !== 'rag-ime.agent-room-intercom.v1') return [];
+    const content = boundedCollaborationText(text(message.content), 400);
+    const actionLabel = intercomWorkActionLabels[text(message.workAction).toLowerCase()] ?? '';
+    if (!content && !actionLabel) return [];
+    const fromTail = participantTail(text(message.sourceParticipantId));
+    const toTail = participantTail(text(message.targetParticipantId));
+    const route = fromTail && toTail
+      ? `伙伴 #${fromTail} → 伙伴 #${toTail}`
+      : text(message.kind) === 'reply' ? '伙伴回复' : '伙伴消息';
+    const statusLabel = intercomStatusLabels[text(message.status).toLowerCase()] ?? '';
+    return [{
+      id: text(message.id) || `intercom:${index}`,
+      label: [route, actionLabel].filter(Boolean).join(' · '),
+      text: [content, statusLabel].filter(Boolean).join(' · '),
+    }];
+  });
+}
+
+function participantTail(value: string): string {
+  const match = /([0-9a-z]{4})[^0-9a-z]*$/iu.exec(value);
+  return match?.[1] ?? '';
+}
+
+function boundedCollaborationText(value: string, limit: number): string {
+  const masked = publicToolOutputText(value);
+  if (masked.length <= limit) return masked;
+  return `${masked.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+}
+
+function stringItems(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => boundedCollaborationText(text(item), 300))
+    .filter(Boolean)
+    .slice(0, 12);
 }
 
 function inspectableRawResult(
@@ -1131,7 +1499,7 @@ function managedEvidencePreview(value: string): {
   };
 }
 
-function publicToolOutputText(value: string): string {
+export function publicToolOutputText(value: string): string {
   const redacted = value
     .replace(/\r\n?/gu, '\n')
     .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, '[REDACTED_SECRET]')

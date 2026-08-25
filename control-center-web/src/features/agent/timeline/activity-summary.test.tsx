@@ -33,7 +33,7 @@ describe('Agent tool activity details', () => {
 
     const { rerender } = render(<FxActivityStack activities={[counted, invalid]} />);
 
-    const meter = screen.getByRole('progressbar', { name: 'knowledge：24 / 48 段' });
+    const meter = screen.getByRole('progressbar', { name: '知识库：24 / 48 段' });
     expect(meter).toHaveAttribute('aria-valuenow', '50');
     expect(meter).toHaveAttribute('aria-valuetext', '24 / 48 段');
     expect(meter).toHaveStyle({ '--paw-activity-progress': '0.5' });

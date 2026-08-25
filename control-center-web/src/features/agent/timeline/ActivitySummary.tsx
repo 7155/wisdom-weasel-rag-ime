@@ -6,16 +6,24 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleDashed,
+  Clock4,
   Copy,
+  Cpu,
   Database,
   ExternalLink,
+  FileText,
   GitBranch,
+  Globe,
+  Library,
+  ListChecks,
   MessageSquareText,
   Search,
   ShieldAlert,
   ShieldCheck,
+  Target,
   TerminalSquare,
   TriangleAlert,
+  Users,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -34,7 +42,7 @@ import {
   type SetStateAction,
   type UIEvent,
 } from 'react';
-import { publicToolName } from '../tool-presentation';
+import { publicToolFamily, publicToolName, type AgentToolFamily } from '../tool-presentation';
 import {
   Button,
   Dialog,
@@ -69,6 +77,8 @@ import {
   type PublicToolResultView,
 } from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
+import { routeDecisionPlanView } from './route-decision-plan';
+import { RouteDecisionPlan } from './RouteDecisionPlan';
 import { SmoothDisclosureReveal } from './SmoothDisclosureReveal';
 
 const activityDisclosureOverrides = new Map<string, boolean>();
@@ -383,8 +393,9 @@ const ActivityRow = memo(function ActivityRow({
   );
   const visibleSummary = activity.kind === 'turn_failed'
     ? publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。')
-    : publicActivitySummary(activity.summary, presentation.title);
+    : publicActivitySummary(publicProgressSummary(activity.summary, activity), presentation.title);
   const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
+  const routePlan = useMemo(() => routeDecisionPlanView(payload), [payload]);
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const [rowOpen, setRowOpen] = useActivityDisclosure(
     `row:${activity.id}`,
@@ -429,6 +440,7 @@ const ActivityRow = memo(function ActivityRow({
       >
         <div className="agent-activity-row__details">
           {presentation.detail ? <p>{presentation.detail}</p> : null}
+          {routePlan ? <RouteDecisionPlan view={routePlan} /> : null}
           <ToolProgressTimeline activity={activity} entries={progressHistory} />
           {toolView?.request.length ? <PublicToolRequest view={toolView} /> : null}
           {toolView ? <PublicToolResult activityId={activity.id} view={toolView} /> : null}
@@ -439,7 +451,9 @@ const ActivityRow = memo(function ActivityRow({
             ? <ReasoningSummaryDetails items={reasoningItemsFromPayload(payload, visibleSummary)} />
             : toolView
               ? <PublicToolFields view={toolView} />
-              : <SafeFieldList data={payload} />}
+              : routePlan
+                ? null
+                : <SafeFieldList data={payload} />}
           {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
           <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
           {toolView?.destination ? (
@@ -702,12 +716,23 @@ function ToolProgressTimeline({
       <ol className="agent-activity-row__sources">
         {entries.map((entry) => (
           <li key={entry.eventId}>
-            {checkpointOffset(entry.createdAtMs, activity.createdAtMs)} · {entry.summary} · {statusLabel(entry.status)}
+            {checkpointOffset(entry.createdAtMs, activity.createdAtMs)} · {publicProgressSummary(entry.summary, activity)} · {statusLabel(entry.status)}
           </li>
         ))}
       </ol>
     </div>
   );
+}
+
+/** Durable progress receipts fall back to `<rawToolId>执行完成`. The receipt
+ * text itself is authoritative, so only the leading raw id is translated into
+ * the public tool vocabulary; explicit Runtime summaries pass through. */
+function publicProgressSummary(summary: string, activity: AgentActivityProjection): string {
+  const rawId = text(activity.payload.toolName ?? activity.payload.toolId);
+  if (rawId && summary.startsWith(rawId)) {
+    return `${publicToolName(rawId)}${summary.slice(rawId.length)}`;
+  }
+  return summary;
 }
 
 function PublicToolResult({ activityId, view }: { activityId: string; view: PublicToolResultView }) {
@@ -726,6 +751,13 @@ function PublicToolResult({ activityId, view }: { activityId: string; view: Publ
     primary = <PublicResultList view={view} label="浏览器结果" icon={<ExternalLink size={14} />} />;
   } else if (view.resultKind === 'change' && (view.target || view.change)) {
     primary = <PublicChangeResult view={view} />;
+  } else if (view.resultKind === 'structured' && view.resultItems.length) {
+    primary = (
+      <>
+        <PublicResultList view={view} label={view.resultItemsLabel ?? '结果明细'} icon={<GitBranch size={14} />} />
+        {view.output ? <PublicToolOutput view={view} /> : null}
+      </>
+    );
   } else if (view.output) {
     primary = <PublicToolOutput view={view} />;
   }
@@ -1047,12 +1079,13 @@ export function PublicToolRequest({ view }: { view: PublicToolResultView }) {
 
 export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
   const outputText = view.output?.text ?? '';
+  const outputLabel = view.outputLabel ?? '返回片段';
   const { copy, state } = useCopyableText(outputText);
   if (!view.output) return null;
   return (
-    <section className="agent-tool-result-panel" aria-label="工具返回片段">
+    <section className="agent-tool-result-panel" aria-label={`工具${outputLabel}`}>
       <header className="agent-tool-result-panel__header">
-        <strong><TerminalSquare size={13} />返回片段</strong>
+        <strong><TerminalSquare size={13} />{outputLabel}</strong>
         <Button
           aria-live="polite"
           leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
@@ -1139,6 +1172,14 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   if (activity.kind === 'reasoning_summary') {
     return { title: '处理说明', kind: 'thinking', icon: Brain };
   }
+  if (activity.kind === 'route_decision' || routeDecisionPlanView(payload)) {
+    return {
+      title: '分派决定',
+      kind: 'subagent',
+      icon: Users,
+      detail: '按信号与权重选择伙伴；下方是这次分派的真实计划。',
+    };
+  }
   if (activity.kind === 'turn_failed') {
     const retryAttempts = finiteCount(payload.providerRetryAttempts);
     const detail = payload.retryExhausted === true && retryAttempts > 0
@@ -1214,12 +1255,43 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   if (toolId.includes('runtime')) {
     return { title: '运行环境', kind: 'runtime', icon: Database };
   }
+  const family = publicToolFamily(toolId);
+  if (family === 'collaboration') {
+    return { title: toolView?.toolLabel ?? '协作', kind: 'subagent', icon: Users };
+  }
+  if (family === 'goal') {
+    return { title: toolView?.toolLabel ?? '长期目标', kind: 'tool', icon: Target };
+  }
+  if (family === 'docs') {
+    return { title: toolView?.toolLabel ?? '工作文档', kind: 'tool', icon: FileText };
+  }
+  if (family === 'job') {
+    return { title: toolView?.toolLabel ?? '后台任务', kind: 'runtime', icon: Clock4 };
+  }
   if (toolId.includes('workspace')) {
     return { title: toolView?.toolLabel ?? '运行环境', kind: 'runtime', icon: TerminalSquare };
   }
   if (toolId.includes('planning') || toolId === 'todo') return { title: toolId === 'todo' ? 'Todo' : '规划', kind: 'tool', icon: Bot };
-  return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
+  return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: toolFamilyIcons[family] };
 }
+
+/** Per-family glyphs keep dense step rows scannable without repeating text.
+ * The accessible name stays the full tool label; the glyph is decoration. */
+const toolFamilyIcons: Record<AgentToolFamily, LucideIcon> = {
+  browser: Globe,
+  collaboration: Users,
+  docs: FileText,
+  file: FileText,
+  goal: Target,
+  job: Clock4,
+  knowledge: Library,
+  memory: Database,
+  plan: ListChecks,
+  runtime: Cpu,
+  search: Search,
+  terminal: TerminalSquare,
+  generic: Wrench,
+};
 
 function approvalModelLabel(model: string): string {
   if (!model || /(?:^|[./_-])luna(?:$|[./_-])/i.test(model)) return 'Luna Max';
@@ -1453,6 +1525,7 @@ function FxActivityDisclosure({
   }, [activity.status, setManuallyOpen]);
   const detailId = `paw-activity-detail-${useId().replace(/:/gu, '')}`;
   const label = fxActivityLabel(activity);
+  const Glyph = fxActivityGlyph(activity);
   /* Subagent receipts land after background work; the violet tone separates
      "another Agent finished this for you" from the parent's own tool calls. */
   const subagent = isSubagentActivity(activity);
@@ -1484,6 +1557,7 @@ function FxActivityDisclosure({
       >
         <span className="paw-activity__row">
           <span className="paw-chevron">▸</span>
+          <span aria-hidden="true" className="paw-activity__glyph"><Glyph size={14} /></span>
           <span className="paw-activity__label">{label}</span>
           <span className={`fx-pill ${tone}`}><i />{statusText}</span>
           {meta ? <span className="fx-meta">{meta}</span> : null}
@@ -1528,16 +1602,32 @@ function isSubagentActivity(activity: AgentActivityProjection): boolean {
     || text(activity.payload.toolId ?? activity.payload.toolName).toLowerCase().includes('subagent');
 }
 
+/* A raw Runtime id such as `room_partner` is an implementation detail, not a
+ * label. Every row resolves through the public tool vocabulary; a curated
+ * displayName only survives when it reads like a human name. */
 function fxActivityLabel(activity: AgentActivityProjection): string {
-  const display = text(activity.payload.displayName) || text(activity.payload.toolName);
+  const toolId = text(activity.payload.toolId ?? activity.payload.toolName);
+  if (toolId) return publicToolName(toolId, text(activity.payload.displayName));
+  const display = text(activity.payload.displayName);
   if (display) return display;
-  const toolId = text(activity.payload.toolId);
-  if (toolId) return publicToolName(toolId);
   if (activity.kind === 'reasoning_summary') return '思考过程';
   if (activity.kind === 'user_input_required') return '等待你的输入';
   if (activity.kind === 'turn_failed') return '本轮失败';
   if (activity.kind === 'approval') return '审批';
+  if (activity.kind === 'route_decision') return '分派决定';
   return '操作';
+}
+
+function fxActivityGlyph(activity: AgentActivityProjection): LucideIcon {
+  const toolId = text(activity.payload.toolId ?? activity.payload.toolName);
+  if (isSubagentActivity(activity)) return GitBranch;
+  if (activity.kind === 'route_decision') return Users;
+  if (toolId) return toolFamilyIcons[publicToolFamily(toolId)];
+  if (activity.kind === 'reasoning_summary') return Brain;
+  if (activity.kind === 'user_input_required') return MessageSquareText;
+  if (activity.kind === 'turn_failed') return TriangleAlert;
+  if (activity.kind.includes('approval')) return ShieldAlert;
+  return Wrench;
 }
 
 function fxActivityMeta(activity: AgentActivityProjection): string {
