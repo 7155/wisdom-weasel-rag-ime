@@ -63,8 +63,9 @@ import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProject
 import {
   roomDispatchPlanFromActivity,
   roomDispatchSourceParticipantId,
-  roomGravityToolLabel,
+  roomToolActivityLine,
   roomToolEvidence,
+  roomToolSummaryIsMachine,
   type RoomDispatchPlan,
   type RoomToolFact,
 } from './room-gravity-projection';
@@ -976,8 +977,6 @@ function roomProcessWindowRequest(activity: RoomActivityProjection, roomId: stri
 
 function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: string): string {
   const detail = activity.summary.trim();
-  const tool = roomText(activity.payload.displayName)
-    || roomGravityToolLabel(roomText(activity.payload.toolName, roomText(activity.payload.toolId, '工具')));
   if (roomText(activity.payload.approvalId)) return detail && !pawRoomRawDetail(detail) ? detail : '等待你确认这项受控操作';
   const plan = roomDispatchPlanFromActivity(activity);
   if (plan) {
@@ -985,8 +984,13 @@ function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: str
     return `${plan.reasonLabel}${plan.targetDisplayName ? ` · 交给 ${plan.targetDisplayName}` : ''}${lane}${plan.phaseName ? ` · ${plan.phaseName}` : ''}`;
   }
   if (eventType.startsWith('tool_')) {
-    if (detail && !pawRoomRawDetail(detail)) return pawRoomCompactText(detail);
-    return activity.status === 'running' ? `${tool} 正在执行` : activity.status === 'failed' ? `${tool} 执行失败` : activity.status === 'aborted' ? `${tool} 已停止` : `${tool} 已完成`;
+    /* Runtime often echoes only the machine tool id (`agents`, `room_partner`)
+       as the summary; the reader line then derives from real evidence
+       (行星协调 · 批量并行委派 已完成), never the bare id (Joshua5 mandate). */
+    if (detail && !pawRoomRawDetail(detail) && !roomToolSummaryIsMachine(detail, activity.payload)) {
+      return pawRoomCompactText(detail);
+    }
+    return roomToolActivityLine('', activity.payload, activity.status);
   }
   return detail && !pawRoomRawDetail(detail) ? pawRoomCompactText(detail) : '公开进展已更新';
 }
