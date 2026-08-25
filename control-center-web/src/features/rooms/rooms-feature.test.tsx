@@ -150,6 +150,48 @@ describe('Rooms experience', () => {
     });
   });
 
+  it('starts a new execution after refresh when the latest root is terminal despite an older stale running root', async () => {
+    const staleRootId = 'room-a:stale-running';
+    const latestRootId = 'room-a:latest-completed';
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '已完成的 Room')] },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '旧任务' }, { turnId: staleRootId }),
+        roomEvent('room-a', 2, 'user_message', { text: '最新任务' }, { turnId: latestRootId }),
+        roomEvent('room-a', 3, 'turn_completed', {
+          rootId: latestRootId,
+          dispatchId: 'room-a:latest-dispatch',
+          status: 'completed',
+        }, {
+          turnId: latestRootId,
+          participantId: 'room-a:p1',
+          sourceSessionId: 'room-a:s1',
+        }),
+      ]),
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.message': { ok: true },
+      'agent.room.participant.steer': { ok: true },
+    } });
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider><RoomsFeature /></TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    expect(screen.queryByText('当前任务仍在执行。现在发送文字会立即干预主持伙伴的当前回合。')).not.toBeInTheDocument();
+    await user.type(composer, '开始下一项任务');
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.room.message'
+    ))).toBe(true));
+    expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.room.participant.steer'
+    ))).toBe(false);
+  });
+
   it('retries the read-only role catalog once before showing a Room warning', async () => {
     let roleAttempts = 0;
     const transport = new MockControlTransport({ routes: {

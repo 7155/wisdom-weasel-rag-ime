@@ -7,12 +7,33 @@ import {
 
 import {
   roomActivityNeedsSessionAction,
+  selectActivePublicRoomTurn,
   selectPublicRoomTurnOrder,
   selectRoomExecutionOverview,
   selectRoomTurnExecution,
 } from './room-execution-lanes';
 
 describe('selectRoomTurnExecution', () => {
+  it('lets only the latest public root decide whether the Room is active', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('stale-root', 'latest-root');
+    projection.turnsById['stale-root'] = {
+      id: 'stale-root', rootId: 'stale-root', status: 'running',
+      messageIds: [], activityIds: [], participantIds: [],
+      createdAtMs: 1, updatedAtMs: 2,
+    };
+    projection.turnsById['latest-root'] = {
+      id: 'latest-root', rootId: 'latest-root', status: 'completed',
+      messageIds: [], activityIds: [], participantIds: [],
+      createdAtMs: 3, updatedAtMs: 4,
+    };
+
+    expect(selectActivePublicRoomTurn(projection)).toBeUndefined();
+
+    projection.turnsById['latest-root']!.status = 'running';
+    expect(selectActivePublicRoomTurn(projection)?.id).toBe('latest-root');
+  });
+
   it('projects an active Pi Session dispatch into the task overview without a WorkItem', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');

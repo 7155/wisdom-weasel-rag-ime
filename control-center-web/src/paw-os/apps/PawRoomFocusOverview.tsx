@@ -18,8 +18,9 @@ import {
   roomFocusMeshEdgeKindLabel,
   type RoomFocusMeshNode,
 } from './room-focus-mesh';
-import { roomFocusHasCoordinator, roomFocusOriginLabel } from './room-focus-projection';
 import {
+  roomFocusHasCoordinator,
+  roomFocusOriginLabel,
   roomFocusStateLabel,
   type RoomFocusPacket,
   type RoomFocusPacketKind,
@@ -49,13 +50,11 @@ const selectionPriority: RoomFocusState[] = [
 const FLOW_PACKET_WINDOW = 18;
 
 /**
- * Sol collaboration console — the single Room 态势 surface. Mission, the
- * pulse instrument, the chronological collaboration mesh (partners and
- * WorkItems as nodes on a top→bottom time axis,
- * ownership/accountability/review/lineage/handoff as edges), the
- * chronological flow ledger and the inspector all project the same real Room
- * data. The solar metaphor stays visual seasoning: every node keeps its real
- * role/task text (PF-CM-013, UR-023).
+ * Sol collaboration console — the single Room 态势 surface. Mission chrome,
+ * pulse, partner-only relationship graph, flow ledger and inspector all
+ * project the same real Room data. The graph deliberately excludes Sol and
+ * WorkItems as actors while keeping their task detail available in the
+ * inspector (PF-CM-013, UR-023).
  */
 export function PawRoomFocusOverview({
   focus,
@@ -164,13 +163,8 @@ function FocusPulse({ counts }: { counts: RoomFocusProjection['counts'] }) {
   );
 }
 
-/** 协作时序网 — partners and WorkItems as one chronological flow graph.
- * Columns are identity lanes (Sol origin, then each partner); vertical order
- * is real event order, so reading top→bottom is reading time. Nodes carry
- * real names and live state colors; edges draw only recorded relations
- * (ownership, accountability, review, parent/child lineage, handoffs).
- * Clicking a node drives the same selection the inspector and open-partner
- * path already use. */
+/** Partner-only collaboration graph. Sol remains mission chrome and WorkItems
+ * remain inspectable data; neither is drawn as a collaborator node. */
 function FocusMeshGraph({
   focus,
   onSelect,
@@ -181,12 +175,12 @@ function FocusMeshGraph({
   selection: FocusSelection;
 }) {
   const mesh = useMemo(() => buildRoomFocusMesh(focus), [focus]);
-  const hasActors = focus.partners.length > 0 || focus.workItems.length > 0;
+  const hasActors = focus.partners.length > 0;
   return (
     <section aria-label="协作网" className="paw-room-focus-overview__section paw-room-focus-overview__mesh">
       <header>
         <span><Waypoints aria-hidden="true" size={14} /><strong>协作网</strong></span>
-        <small>{focus.partners.length} 位伙伴 · {focus.workItems.length} 项任务 · 时间自上而下</small>
+        <small>{focus.partners.length} 位行星伙伴 · {mesh.edges.length} 条真实关系</small>
       </header>
       {hasActors ? (
         <div
@@ -196,17 +190,6 @@ function FocusMeshGraph({
           style={{ aspectRatio: `100 / ${mesh.height}` }}
         >
           <svg aria-hidden="true" focusable="false" preserveAspectRatio="none" viewBox={`0 0 100 ${mesh.height}`}>
-            {mesh.lanes.map((lane) => (
-              <line
-                className="paw-room-focus-overview__mesh-lane"
-                key={lane.id}
-                vectorEffect="non-scaling-stroke"
-                x1={lane.x}
-                x2={lane.x}
-                y1={lane.y0}
-                y2={lane.y1}
-              />
-            ))}
             {mesh.edges.map((edge) => (
               <g
                 className="paw-room-focus-overview__mesh-edge"
@@ -215,27 +198,28 @@ function FocusMeshGraph({
                 key={edge.id}
               >
                 <path d={edge.path} vectorEffect="non-scaling-stroke" />
-                {edge.tip ? <circle cx={edge.tip.x} cy={edge.tip.y} r="1.1" /> : null}
+                <circle cx={edge.tip.x} cy={edge.tip.y} r="1.1" />
               </g>
             ))}
           </svg>
+          {mesh.edges.map((edge) => (
+            <span
+              aria-hidden="true"
+              className="paw-room-focus-overview__mesh-edge-label"
+              data-kind={edge.kind}
+              key={`${edge.id}:label`}
+              style={{ left: `${edge.labelX}%`, top: `${(edge.labelY / mesh.height) * 100}%` }}
+            >{edge.label}</span>
+          ))}
           {mesh.nodes.map((node) => <FocusMeshNode
             canvasHeight={mesh.height}
             key={node.id}
             node={node}
-            selected={node.kind === 'work'
-              ? selection.kind === 'work' && selection.id === node.refId
-              : node.kind === 'partner' && selection.kind === 'partner' && selection.id === node.refId}
+            selected={selection.kind === 'partner' && selection.id === node.refId}
             onSelect={onSelect}
           />)}
         </div>
       ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，协作网会从这里生长。</p>}
-      {mesh.timeline ? (
-        <p className="paw-room-focus-overview__mesh-timespan">
-          <span>起 {packetClock(mesh.timeline.startMs)}</span>
-          <span>止 {packetClock(mesh.timeline.endMs)}</span>
-        </p>
-      ) : null}
       {mesh.edgeKinds.length ? (
         <ul aria-label="关系图例" className="paw-room-focus-overview__mesh-legend">
           {mesh.edgeKinds.map((kind) => (
@@ -259,42 +243,24 @@ function FocusMeshNode({
   selected: boolean;
 }) {
   const position = { left: `${node.x}%`, top: `${Math.round((node.y / canvasHeight) * 10000) / 100}%` };
-  if (node.kind === 'root') {
-    return (
-      <div
-        aria-label={`Sol，${roomFocusStateLabel(node.state)}`}
-        className="paw-room-focus-overview__mesh-node paw-room-focus-overview__mesh-node--root"
-        data-state={node.state}
-        role="img"
-        style={position}
-        title={node.label}
-      >
-        <i aria-hidden="true" />
-        <span><strong>Sol</strong></span>
-      </div>
-    );
-  }
   const stateLabel = roomFocusStateLabel(node.state);
   return (
     <button
-      aria-label={node.kind === 'partner'
-        ? `${node.label}，${node.sublabel ?? ''}，${stateLabel}`
-        : `${node.label}，${stateLabel}`}
+      aria-label={`${node.label}，${node.sublabel}，职责：${node.responsibility}，${stateLabel}`}
       aria-pressed={selected}
-      className={`paw-room-focus-overview__mesh-node paw-room-focus-overview__mesh-node--${node.kind}`}
+      className="paw-room-focus-overview__mesh-node paw-room-focus-overview__mesh-node--partner"
       data-tone={node.tone}
       data-state={node.state}
-      onClick={() => onSelect(node.kind === 'partner'
-        ? { kind: 'partner', id: node.refId }
-        : { kind: 'work', id: node.refId })}
+      onClick={() => onSelect({ kind: 'partner', id: node.refId })}
       style={position}
-      title={node.sublabel ? `${node.label} · ${node.sublabel}` : node.label}
+      title={`${node.label} · ${node.sublabel} · ${node.responsibility}`}
       type="button"
     >
       <i aria-hidden="true" />
       <span>
         <strong>{node.label}</strong>
-        {node.sublabel ? <small>{node.sublabel}</small> : null}
+        <small>{node.sublabel}</small>
+        <em>{node.responsibility}</em>
       </span>
     </button>
   );

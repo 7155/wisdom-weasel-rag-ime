@@ -36,6 +36,7 @@ import {
   roomWorkStateLabel,
 } from '@/features/rooms/room-presentation';
 import {
+  selectActivePublicRoomTurn,
   selectPublicRoomTurnOrder,
 } from '@/features/rooms/runtime/room-execution-lanes';
 import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-session';
@@ -126,10 +127,7 @@ export function PawRoomWorkspace({
   }));
   const pendingQuestion = projection?.pendingUserQuestion;
   const pendingGroupedInput = latestPendingGroupedRoomInput(projection);
-  const activeTurn = [...turnOrder]
-    .reverse()
-    .map((turnId) => projection?.turnsById[turnId])
-    .find((turn) => turn?.status === 'queued' || turn?.status === 'running');
+  const activeTurn = projection ? selectActivePublicRoomTurn(projection) : undefined;
   const activeWork = record?.workItems?.find((item) => ['queued', 'active', 'review', 'blocked'].includes(item.state));
   const taskBusyState = record?.roomKind === 'roleplay'
     ? undefined

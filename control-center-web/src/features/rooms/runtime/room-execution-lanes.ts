@@ -73,6 +73,21 @@ export function selectPublicRoomTurnOrder(
 }
 
 /**
+ * The newest logical public root is the only root allowed to keep the Room
+ * composer in steering mode. A historical root can remain locally incomplete
+ * after reconnect/history hydration, but it must not override a newer
+ * terminal root.
+ */
+export function selectActivePublicRoomTurn(projection: RoomProjectionState) {
+  const latestTurnId = selectPublicRoomTurnOrder(projection).at(-1);
+  if (!latestTurnId) return undefined;
+  const latestTurn = projection.turnsById[latestTurnId];
+  return latestTurn?.status === 'queued' || latestTurn?.status === 'running'
+    ? latestTurn
+    : undefined;
+}
+
+/**
  * Intercom receipts are Room-wide relationship facts, not independent public
  * conversation turns. Their delivery turn ids belong to the receiving Pi
  * Session and do not receive a matching Room `turn_completed` event. Leaving

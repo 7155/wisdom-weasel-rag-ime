@@ -79,6 +79,7 @@ import type {
 } from './room-types';
 import { RoomTurn } from './timeline/RoomTurn';
 import {
+  selectActivePublicRoomTurn,
   selectPublicRoomTurnOrder,
   selectRoomExecutionOverview,
   selectRoomTurnExecution,
@@ -334,10 +335,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
   const activeRoomTurn = useRoomLiveStore((state) => {
     const projection = state.projections[selectedId];
     if (!projection) return undefined;
-    return [...selectPublicRoomTurnOrder(projection)]
-      .reverse()
-      .map((turnId) => projection.turnsById[turnId])
-      .find((turn) => turn?.status === 'queued' || turn?.status === 'running');
+    return selectActivePublicRoomTurn(projection);
   });
   const pendingGroupedInput = useRoomLiveStore((state) => (
     latestPendingGroupedRoomInput(state.projections[selectedId])

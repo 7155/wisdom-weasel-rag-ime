@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { RoomEventPage, RoomEventSnapshot } from '@/contracts/room-reducer';
 import { roomEventFixture } from '@/test/fixtures/events';
 
+import { selectActivePublicRoomTurn } from '../runtime/room-execution-lanes';
 import { roomProjection, useRoomLiveStore } from './live-store';
 
 describe('Room live store', () => {
@@ -112,6 +113,55 @@ describe('Room live store', () => {
       useRoomLiveStore.getState().historyByRoomId['room-1']?.events.map((event) => event.sequence),
     ).toEqual([1, 2, 3, 4, 5]);
     expect(useRoomLiveStore.getState().historyByRoomId['room-1']?.hasMore).toBe(false);
+  });
+
+  it('keeps a terminal latest root authoritative after reconnect and older history hydration', () => {
+    const store = useRoomLiveStore.getState();
+    const latestRootId = 'room-1:latest-root';
+    const latestDispatchId = 'room-1:latest-dispatch';
+    const recent = [
+      { ...roomEventFixture(3, 'user_message', { text: '最新任务' }), turnId: latestRootId },
+      { ...roomEventFixture(4, 'turn_completed', {
+        rootId: latestRootId,
+        dispatchId: latestDispatchId,
+        status: 'completed',
+      }),
+        turnId: latestRootId,
+        participantId: 'participant-1',
+        sourceSessionId: 'session-1',
+      },
+    ];
+
+    expect(store.replaySnapshot('room-1', roomHistorySnapshot(recent, 3, 4))).toBe(true);
+    expect(selectActivePublicRoomTurn(roomProjection('room-1'))).toBeUndefined();
+
+    const staleRootId = 'room-1:stale-root';
+    const older = [
+      { ...roomEventFixture(1, 'user_message', { text: '旧任务' }), turnId: staleRootId },
+      { ...roomEventFixture(2, 'participant_status', { status: 'working' }),
+        turnId: staleRootId,
+        participantId: 'participant-1',
+        sourceSessionId: 'session-1',
+      },
+    ];
+    const page = {
+      schemaVersion: 'rag-ime.agent-room-event-page.v1',
+      ok: true,
+      roomId: 'room-1',
+      items: older,
+      firstSequence: 1,
+      lastSequence: 2,
+      nextBeforeSequence: 0,
+      hasMore: false,
+      retainedFirstSequence: 1,
+      retainedLastSequence: 4,
+      retainedPrefixTruncated: false,
+    } satisfies RoomEventPage;
+
+    expect(store.prependHistory('room-1', page)).toBe(true);
+    expect(roomProjection('room-1').turnsById[staleRootId]?.status).toBe('running');
+    expect(roomProjection('room-1').turnsById[latestRootId]?.status).toBe('completed');
+    expect(selectActivePublicRoomTurn(roomProjection('room-1'))).toBeUndefined();
   });
 
   it('keeps explicitly loaded history beyond the live retention window', () => {
