@@ -555,6 +555,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 @keyframes paw-window-flow-arrival { 0% { opacity: 0; transform: scale(.25); } 48% { opacity: 1; } 100% { opacity: 0; transform: scale(2); } }
 .paw-window-shell {
   position: absolute; min-width: 280px; min-height: 210px; pointer-events: auto; transform-origin: 0 0;
+  /* One query container per window, declared on the frame the pointer
+     actually drags and resizes. Every App's `@container paw-window` rule then
+     answers the true window width — including mid-gesture, while the shell's
+     inline width changes and the App tree has not re-rendered yet — and no
+     inner surface can quietly become a second `paw-window` owner. */
+  container: paw-window / inline-size;
   /* Placement is one gesture: snap, maximize, restore and viewport fit move
      position and size on the same clock, so the frame can never tear — size
      snapping while the transform still travels. Live drag/resize is direct
@@ -589,7 +595,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
 }
-.paw-window { container: paw-window / inline-size; }
 .paw-desktop[data-collaboration-focus] .paw-window-shell[data-collaboration-role='unrelated'] .paw-window {
   opacity: .84;
   filter: brightness(.94) saturate(.72);
@@ -721,6 +726,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden;
   padding-top: var(--paw-titlebar-h);
   background: transparent;
+  /* An App container, not a document. One stretch cell whose row and column
+     both floor at 0 means a wide table, a long path or a streaming code block
+     reflows or scrolls inside the App instead of pushing the window's own box
+     wider — a window can never gain the page-like overflow that would reach
+     the document as horizontal scroll. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   /* Containment instead of a pinned layer: the old translateZ(0) held one
      full-window GPU layer per window forever — with several Apps open that
      is real compositor memory and per-frame cost at idle. contain keeps the
@@ -730,8 +743,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
      still promotes the whole shell via its scoped will-change. */
   contain: layout paint;
 }
-.paw-window-body > *, .paw-window-route-surface { min-height: 0; }
-.paw-window-route-surface { width: 100%; height: 100%; overflow: hidden; }
+.paw-window-body > *, .paw-window-route-surface, .paw-window-route-surface > * { min-width: 0; min-height: 0; }
+.paw-window-route-surface {
+  width: 100%; height: 100%; overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
 .paw-window-resize { position: absolute; z-index: 8; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; touch-action: none; }
 .paw-window-resize:focus-visible { outline: 2px solid var(--paw-app-accent, var(--paw-accent)); outline-offset: -2px; background: color-mix(in srgb, var(--paw-app-accent, var(--paw-accent)) 12%, transparent); }
 .paw-window-resize[data-handle='north'], .paw-window-resize[data-handle='south'] {
@@ -1113,12 +1131,30 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-launchpad > section { width: 100%; max-height: calc(100vh - var(--paw-menu-h) - 24px); }
   .paw-launchpad section > div { grid-template-columns: repeat(3, 1fr); }
 }
+/* Window chrome ladder. The acceptance widths are 760 / 560 / 375 and they are
+   read from the window container, never the document: a 375px-wide window on a
+   1440px desktop has exactly the 375px problem. Text yields before controls —
+   the traffic lights, the App identity mark and every docked App verb survive
+   every step, and no slot is ever allowed to grow across another. */
+@container paw-window (max-width: 760px) {
+  .paw-window-titlebar { padding-inline: 12px; column-gap: 8px; }
+}
 @container paw-window (max-width: 620px) {
   .paw-window-titlebar:has(.paw-window-chrome-slot:not(:empty)) .paw-window-title { visibility: hidden; opacity: 0; }
 }
-@container paw-window (max-width: 360px) {
-  .paw-window-titlebar { padding-inline: 8px; }
+@container paw-window (max-width: 560px) {
+  /* Leading App chrome shares the traffic-light column, so a window carrying
+     one has no caption room left either — the same yield the trailing chrome
+     slot already takes one step earlier. */
+  .paw-window-titlebar:has(.paw-window-leading-slot:not(:empty)) .paw-window-title { visibility: hidden; opacity: 0; }
+}
+@container paw-window (max-width: 375px) {
+  .paw-window-titlebar { padding-inline: 8px; column-gap: 6px; }
   .paw-traffic-lights { gap: 5px; }
+  /* Labels hide before icons: the caption text goes, the identity mark and
+     every window verb stay at full size. */
+  .paw-window-title > strong { display: none; }
+  .paw-window-leading-slot { max-width: 32px; overflow: hidden; }
 }
 
 /* Reduced motion keeps every state legible through short opacity changes:

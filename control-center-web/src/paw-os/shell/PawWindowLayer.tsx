@@ -9,7 +9,17 @@ import {
 } from '@/features/paw-os/surface-context';
 import { pawApp, pawAppForPath, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
-import { satelliteGroup, type PawWindowBounds, type PawWindowNode, type PawWindowPlacement } from '../runtime/desktop-store';
+import {
+  PAW_WINDOW_MIN_HEIGHT,
+  PAW_WINDOW_MIN_WIDTH,
+  fitPawWindowBounds,
+  pawWindowArea,
+  pawWindowLayerSize,
+  satelliteGroup,
+  type PawWindowBounds,
+  type PawWindowNode,
+  type PawWindowPlacement,
+} from '../runtime/desktop-store';
 import { PawAppProcess } from '../apps/PawApps';
 import { PawAppIcon } from './PawAppIcon';
 import { PawWindowChromeProvider } from './PawWindowChrome';
@@ -56,7 +66,10 @@ export function PawWindowLayer() {
   const wantsWindowGeometry = Boolean(collaborationFocusGroup) || Boolean(participantSignature);
   const windows = usePawDesktopStore(wantsWindowGeometry ? selectWindows : selectNoWindows);
   const ids = useMemo(() => idSignature.split('\u0000').filter(Boolean), [idSignature]);
-  const [viewport, setViewport] = useState(() => desktopSize());
+  /* Focus and overview frames are laid out in window-layer coordinates, so
+   * the layer measures the layer — the same chrome-aware box the store fits
+   * ordinary windows into — instead of the raw browser viewport. */
+  const [viewport, setViewport] = useState(() => pawWindowLayerSize());
   const [focusFrameOverrides, setFocusFrameOverrides] = useState<Record<string, PawWindowBounds>>({});
   /* Keepalive identity is answered inside the subscription so the layer sees a
    * stable string: geometry churn cannot re-render it, and only an actual
@@ -109,7 +122,7 @@ export function PawWindowLayer() {
     const apply = () => {
       frame = 0;
       setViewport((current) => {
-        const next = desktopSize();
+        const next = pawWindowLayerSize();
         return current.width === next.width && current.height === next.height ? current : next;
       });
       api.getState().fitWindowsToViewport();
@@ -251,8 +264,8 @@ function roomFocusRailGlobalFrame(frame: PawWindowBounds, railTop: number): PawW
 }
 
 function clampRoomFocusRailBounds(bounds: PawWindowBounds, rail: RoomFocusRailMetrics): PawWindowBounds {
-  const width = Math.min(Math.max(280, bounds.width), Math.max(280, rail.trackWidth));
-  const height = Math.min(Math.max(210, bounds.height), Math.max(210, rail.height));
+  const width = Math.min(Math.max(PAW_WINDOW_MIN_WIDTH, bounds.width), Math.max(PAW_WINDOW_MIN_WIDTH, rail.trackWidth));
+  const height = Math.min(Math.max(PAW_WINDOW_MIN_HEIGHT, bounds.height), Math.max(PAW_WINDOW_MIN_HEIGHT, rail.height));
   return {
     x: Math.min(Math.max(0, bounds.x), Math.max(0, rail.trackWidth - width)),
     y: Math.min(Math.max(0, bounds.y), Math.max(0, rail.height - height)),
@@ -762,8 +775,8 @@ function clampFocusBounds(
 ): PawWindowBounds {
   const top = Math.max(0, reserved.modeBarHeight ?? 0);
   const bottom = Math.max(top, viewport.height - Math.max(0, reserved.ledgerHeight ?? 0));
-  const width = Math.min(Math.max(280, bounds.width), Math.max(280, viewport.width));
-  const height = Math.min(Math.max(210, bounds.height), Math.max(210, bottom - top));
+  const width = Math.min(Math.max(PAW_WINDOW_MIN_WIDTH, bounds.width), Math.max(PAW_WINDOW_MIN_WIDTH, viewport.width));
+  const height = Math.min(Math.max(PAW_WINDOW_MIN_HEIGHT, bounds.height), Math.max(PAW_WINDOW_MIN_HEIGHT, bottom - top));
   return {
     x: Math.min(Math.max(0, bounds.x), Math.max(0, viewport.width - width)),
     y: Math.min(Math.max(top, bounds.y), Math.max(top, bottom - height)),
@@ -992,7 +1005,11 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   const maximized = placement === 'maximized';
   const identityIconId = targetKind === 'room' ? 'room' : appId;
   const interactionBounds = focusFrame ?? bounds;
-  const drag = useWindowDrag(shellRef, interactionBounds, onBoundsCommit, onFocus, focusFrame ? undefined : onSnap, active, deferPointerInteractionUntilFocused);
+  /* A focus frame or rail slot is laid out by its owning mode and clamped on
+   * commit against that mode's own box, so only an ordinary desktop window
+   * answers to the shared desktop area. */
+  const containToDesktop = !focusFrame;
+  const drag = useWindowDrag(shellRef, interactionBounds, onBoundsCommit, onFocus, focusFrame ? undefined : onSnap, active, deferPointerInteractionUntilFocused, containToDesktop);
   const exit = useWindowExit(shellRef);
   const transform = focusFrame
     ? `translate3d(${focusFrame.x}px, ${focusFrame.y}px, 0)`
@@ -1038,7 +1055,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
         {overview ? (
           <button aria-label={`打开 ${title}`} className="paw-overview-window-target" onClick={onOpenFromOverview} type="button"><PawAppIcon appId={identityIconId} size={24} /><span>{title}</span></button>
         ) : (
-          <PawWindowResizeHandles active={active} bounds={interactionBounds} deferPointerInteractionUntilFocused={deferPointerInteractionUntilFocused} onBoundsCommit={onBoundsCommit} onFocus={onFocus} shellRef={shellRef} />
+          <PawWindowResizeHandles active={active} bounds={interactionBounds} containToDesktop={containToDesktop} deferPointerInteractionUntilFocused={deferPointerInteractionUntilFocused} onBoundsCommit={onBoundsCommit} onFocus={onFocus} shellRef={shellRef} />
         )}
       </section>
     </PawWindowChromeProvider>
@@ -1058,9 +1075,10 @@ const pawWindowResizeLabels: Record<PawWindowResizeHandle, string> = {
   'south-west': '调整窗口左下角',
 };
 
-function PawWindowResizeHandles({ active, bounds, deferPointerInteractionUntilFocused, onBoundsCommit, onFocus, shellRef }: {
+function PawWindowResizeHandles({ active, bounds, containToDesktop, deferPointerInteractionUntilFocused, onBoundsCommit, onFocus, shellRef }: {
   active: boolean;
   bounds: PawWindowBounds;
+  containToDesktop: boolean;
   deferPointerInteractionUntilFocused: boolean;
   onBoundsCommit: (bounds: PawWindowBounds) => void;
   onFocus: () => void;
@@ -1070,6 +1088,7 @@ function PawWindowResizeHandles({ active, bounds, deferPointerInteractionUntilFo
     <PawWindowResizeHandle
       active={active}
       bounds={bounds}
+      containToDesktop={containToDesktop}
       deferPointerInteractionUntilFocused={deferPointerInteractionUntilFocused}
       handle={handle}
       key={handle}
@@ -1080,16 +1099,17 @@ function PawWindowResizeHandles({ active, bounds, deferPointerInteractionUntilFo
   ));
 }
 
-function PawWindowResizeHandle({ active, bounds, deferPointerInteractionUntilFocused, handle, onBoundsCommit, onFocus, shellRef }: {
+function PawWindowResizeHandle({ active, bounds, containToDesktop, deferPointerInteractionUntilFocused, handle, onBoundsCommit, onFocus, shellRef }: {
   active: boolean;
   bounds: PawWindowBounds;
+  containToDesktop: boolean;
   deferPointerInteractionUntilFocused: boolean;
   handle: PawWindowResizeHandle;
   onBoundsCommit: (bounds: PawWindowBounds) => void;
   onFocus: () => void;
   shellRef: RefObject<HTMLElement | null>;
 }) {
-  const resize = useWindowResize(shellRef, bounds, handle, onBoundsCommit, onFocus, active, deferPointerInteractionUntilFocused);
+  const resize = useWindowResize(shellRef, bounds, handle, onBoundsCommit, onFocus, active, deferPointerInteractionUntilFocused, containToDesktop);
   const horizontal = handle.includes('east') || handle.includes('west');
   const vertical = handle.includes('north') || handle.includes('south');
   const keyShortcuts = [horizontal ? 'ArrowLeft ArrowRight' : '', vertical ? 'ArrowUp ArrowDown' : ''].filter(Boolean).join(' ');
@@ -1099,7 +1119,7 @@ function PawWindowResizeHandle({ active, bounds, deferPointerInteractionUntilFoc
     if ((!deltaX || !horizontal) && (!deltaY || !vertical)) return;
     event.preventDefault();
     if (!active) onFocus();
-    onBoundsCommit(resizeWindowBounds(bounds, handle, deltaX, deltaY));
+    onBoundsCommit(resizeWindowBounds(bounds, handle, deltaX, deltaY, containToDesktop ? pawWindowArea() : undefined));
   };
   return <button
     aria-keyshortcuts={keyShortcuts}
@@ -1147,11 +1167,6 @@ function layoutOverview(
   return frames;
 }
 
-function desktopSize(): { width: number; height: number } {
-  if (typeof window === 'undefined') return { width: 1280, height: 800 };
-  return { width: window.innerWidth, height: window.innerHeight - 28 };
-}
-
 const MemoizedWindowBody = memo(function WindowBody({ children }: { children: ReactNode }) {
   return <div className="paw-window-body">{children}</div>;
 });
@@ -1180,7 +1195,7 @@ function useWindowExit(ref: RefObject<HTMLElement | null>) {
   }, [ref]);
 }
 
-function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBounds, commit: (bounds: PawWindowBounds) => void, focus: () => void, snap: ((placement: PawWindowPlacement) => void) | undefined, active: boolean, deferPointerInteractionUntilFocused: boolean) {
+function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBounds, commit: (bounds: PawWindowBounds) => void, focus: () => void, snap: ((placement: PawWindowPlacement) => void) | undefined, active: boolean, deferPointerInteractionUntilFocused: boolean, containToDesktop: boolean) {
   return useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
     event.preventDefault();
@@ -1195,6 +1210,10 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
     shell.dataset.interaction = 'dragging';
     setWindowInteraction(desktopRoot, true);
     const origin = { x: event.clientX, y: event.clientY };
+    /* Measured once per gesture, never per move: the desktop cannot resize
+     * while a captured pointer owns the drag, and reading it per event would
+     * put a layout-dependent measurement on the frame path. */
+    const area = containToDesktop ? pawWindowArea() : null;
     let next = bounds;
     let frame = 0;
     const render = () => {
@@ -1203,7 +1222,11 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       publishLiveWindowFlowPoint(shell);
     };
     const move = (moveEvent: PointerEvent) => {
-      next = { ...bounds, x: bounds.x + moveEvent.clientX - origin.x, y: Math.max(0, bounds.y + moveEvent.clientY - origin.y) };
+      const travelled = { ...bounds, x: bounds.x + moveEvent.clientX - origin.x, y: bounds.y + moveEvent.clientY - origin.y };
+      /* The window tracks the pointer 1:1 and then stops at the desktop edge
+       * with the same rule fitWindowsToViewport applies, so releasing a drag
+       * never snaps the frame back to a place the pointer never visited. */
+      next = area ? fitPawWindowBounds(travelled, area) : { ...travelled, y: Math.max(0, travelled.y) };
       setSnapPreview(desktopRoot, snapPlacement(moveEvent.clientX, moveEvent.clientY));
       if (!frame) frame = window.requestAnimationFrame(render);
     };
@@ -1241,7 +1264,7 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
     window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', cancel);
-  }, [active, bounds, commit, deferPointerInteractionUntilFocused, focus, ref, snap]);
+  }, [active, bounds, commit, containToDesktop, deferPointerInteractionUntilFocused, focus, ref, snap]);
 }
 
 function setSnapPreview(root: HTMLElement | null, placement?: PawWindowPlacement): void {
@@ -1270,7 +1293,7 @@ function snapPlacement(clientX: number, clientY: number): PawWindowPlacement | u
   return undefined;
 }
 
-function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBounds, handle: PawWindowResizeHandle, commit: (bounds: PawWindowBounds) => void, focus: () => void, active: boolean, deferPointerInteractionUntilFocused: boolean) {
+function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBounds, handle: PawWindowResizeHandle, commit: (bounds: PawWindowBounds) => void, focus: () => void, active: boolean, deferPointerInteractionUntilFocused: boolean, containToDesktop: boolean) {
   return useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -1286,6 +1309,7 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
     shell.dataset.interaction = 'resizing';
     setWindowInteraction(desktopRoot, true);
     const origin = { x: event.clientX, y: event.clientY };
+    const area = containToDesktop ? pawWindowArea() : undefined;
     let next = bounds;
     let frame = 0;
     const render = () => {
@@ -1296,7 +1320,7 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
       publishLiveWindowFlowPoint(shell);
     };
     const move = (moveEvent: PointerEvent) => {
-      next = resizeWindowBounds(bounds, handle, moveEvent.clientX - origin.x, moveEvent.clientY - origin.y);
+      next = resizeWindowBounds(bounds, handle, moveEvent.clientX - origin.x, moveEvent.clientY - origin.y, area);
       if (!frame) frame = window.requestAnimationFrame(render);
     };
     const finish = () => {
@@ -1313,19 +1337,36 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
     window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', finish);
-  }, [active, bounds, commit, deferPointerInteractionUntilFocused, focus, handle, ref]);
+  }, [active, bounds, commit, containToDesktop, deferPointerInteractionUntilFocused, focus, handle, ref]);
 }
 
-function resizeWindowBounds(bounds: PawWindowBounds, handle: PawWindowResizeHandle, deltaX: number, deltaY: number): PawWindowBounds {
+/** UR-057 / PF-CM-005：每条边都跟随指针 1:1，但窗口最小尺寸与桌面边界都是硬约束。
+ *  A north/west drag moves the opposite edge, so without the area limit the
+ *  titlebar can be pushed above the desktop where no pointer can reach it. */
+export function resizeWindowBounds(
+  bounds: PawWindowBounds,
+  handle: PawWindowResizeHandle,
+  deltaX: number,
+  deltaY: number,
+  area?: PawWindowBounds,
+): PawWindowBounds {
+  const left = area?.x ?? 0;
+  const top = area?.y ?? 0;
+  const right = area ? area.x + area.width : Number.POSITIVE_INFINITY;
+  const bottom = area ? area.y + area.height : Number.POSITIVE_INFINITY;
   const next = { ...bounds };
-  if (handle.includes('east')) next.width = Math.max(280, bounds.width + deltaX);
-  if (handle.includes('south')) next.height = Math.max(210, bounds.height + deltaY);
+  if (handle.includes('east')) {
+    next.width = Math.min(Math.max(PAW_WINDOW_MIN_WIDTH, bounds.width + deltaX), Math.max(PAW_WINDOW_MIN_WIDTH, right - bounds.x));
+  }
+  if (handle.includes('south')) {
+    next.height = Math.min(Math.max(PAW_WINDOW_MIN_HEIGHT, bounds.height + deltaY), Math.max(PAW_WINDOW_MIN_HEIGHT, bottom - bounds.y));
+  }
   if (handle.includes('west')) {
-    next.width = Math.max(280, bounds.width - deltaX);
+    next.width = Math.min(Math.max(PAW_WINDOW_MIN_WIDTH, bounds.width - deltaX), Math.max(PAW_WINDOW_MIN_WIDTH, bounds.x + bounds.width - left));
     next.x = bounds.x + bounds.width - next.width;
   }
   if (handle.includes('north')) {
-    next.height = Math.max(210, bounds.height - deltaY);
+    next.height = Math.min(Math.max(PAW_WINDOW_MIN_HEIGHT, bounds.height - deltaY), Math.max(PAW_WINDOW_MIN_HEIGHT, bounds.y + bounds.height - top));
     next.y = bounds.y + bounds.height - next.height;
   }
   return next;

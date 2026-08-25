@@ -5,11 +5,11 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { createRoomProjection, type RoomActivityProjection } from '@/contracts/room-reducer';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { pawApps, type PawAppId } from '../runtime/app-registry';
-import type { PawWindowBounds, PawWindowNode } from '../runtime/desktop-store';
+import { pawWindowArea, type PawWindowBounds, type PawWindowNode } from '../runtime/desktop-store';
 import { PawDesktopProvider } from '../runtime/desktop-context';
 import { usePawDesktopApi } from '../runtime/desktop-context';
 import { PawWindowChromePortal } from './PawWindowChrome';
-import { PAW_WINDOW_FLOW_GEOMETRY_EVENT, PawRoomFocusRail, PawWindowFrame, PawWindowLayer, roomWindowFlowGroups } from './PawWindowLayer';
+import { PAW_WINDOW_FLOW_GEOMETRY_EVENT, PawRoomFocusRail, PawWindowFrame, PawWindowLayer, resizeWindowBounds, roomWindowFlowGroups } from './PawWindowLayer';
 import windowLayerSource from './PawWindowLayer.tsx?raw';
 
 const appProcessRenders = vi.hoisted(() => new Map<string, number>());
@@ -277,6 +277,136 @@ describe('PAWOS compositor window frame', () => {
     expect(commit).toHaveBeenCalledWith({ x: 84, y: 72, width: 760, height: 560 });
     expect(shell.style.transform).toBe('translate3d(84px, 72px, 0)');
     expect(processRenders).toBe(1);
+  });
+
+  it('never resizes a window below its minimum or past the desktop edge', () => {
+    const bounds = { x: 100, y: 100, width: 400, height: 300 };
+    const area = { x: 8, y: 8, width: 1000, height: 600 };
+
+    // A window has a floor: below it the titlebar can no longer hold three
+    // verbs beside an App's own chrome.
+    expect(resizeWindowBounds(bounds, 'east', -900, 0, area).width).toBe(280);
+    expect(resizeWindowBounds(bounds, 'south', 0, -900, area).height).toBe(210);
+    // And a ceiling: the far edge stops at the desktop instead of growing a
+    // frame whose corner handle no longer exists on screen.
+    expect(resizeWindowBounds(bounds, 'east', 900, 0, area)).toEqual({ x: 100, y: 100, width: 908, height: 300 });
+    // North and west move the opposite edge, so without the limit they push
+    // the titlebar above the desktop where no pointer can reach it.
+    expect(resizeWindowBounds(bounds, 'north', 0, -900, area)).toEqual({ x: 100, y: 8, width: 400, height: 392 });
+    expect(resizeWindowBounds(bounds, 'west', -900, 0, area)).toEqual({ x: 8, y: 100, width: 492, height: 300 });
+    // A Room focus card is laid out inside its own mode, which clamps on
+    // commit; the gesture floor there is that mode's own origin, never a
+    // negative frame.
+    expect(resizeWindowBounds(bounds, 'north', 0, -900).y).toBe(0);
+    expect(resizeWindowBounds(bounds, 'west', -900, 0).x).toBe(0);
+  });
+
+  it('tracks the pointer 1:1 while dragging and stops the window at the desktop edge', () => {
+    const commit = vi.fn();
+    // The gesture paints inside one rAF slot per frame; running that slot
+    // inline is what lets the assertion read the frame mid-drag.
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => undefined);
+    try {
+      render(
+        <div className="paw-desktop-root">
+          <FrameHarness initial={{ x: 20, y: 30, width: 760, height: 560 }} onCommit={commit}><div /></FrameHarness>
+        </div>,
+      );
+      const titlebar = screen.getByText('Rooms').closest('.paw-window-titlebar')!;
+      const shell = titlebar.closest('.paw-window-shell') as HTMLElement;
+      const area = pawWindowArea();
+
+      fireEvent.pointerDown(titlebar, { button: 0, clientX: 400, clientY: 300, pointerId: 31 });
+      // Inside the desktop the frame follows the pointer exactly: no easing,
+      // no rounding, no lag between the grab point and the window.
+      fireEvent.pointerMove(window, { clientX: 464, clientY: 342, pointerId: 31 });
+      expect(shell.style.transform).toBe('translate3d(84px, 72px, 0)');
+      // Past the edge it stops with the same rule fitWindowsToViewport
+      // applies, so release never snaps the window somewhere the pointer
+      // never visited.
+      fireEvent.pointerMove(window, { clientX: -600, clientY: -600, pointerId: 31 });
+      expect(shell.style.transform).toBe(`translate3d(${area.x}px, ${area.y}px, 0)`);
+      fireEvent.pointerUp(window, { clientX: -600, clientY: -600, pointerId: 31 });
+
+      expect(commit).toHaveBeenLastCalledWith({ x: area.x, y: area.y, width: 760, height: 560 });
+      expect(shell.style.transform).toBe(`translate3d(${area.x}px, ${area.y}px, 0)`);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('writes the snap preview only when the zone changes and clears it on release', () => {
+    const { container } = render(
+      <div className="paw-desktop-root">
+        <FrameHarness initial={{ x: 200, y: 200, width: 420, height: 300 }} onCommit={() => undefined}><div /></FrameHarness>
+      </div>,
+    );
+    const root = container.querySelector('.paw-desktop-root') as HTMLElement;
+    const titlebar = screen.getByText('Rooms').closest('.paw-window-titlebar')!;
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-snap-preview'] });
+    const snapPreviewWrites = () => observer.takeRecords().length;
+
+    try {
+      fireEvent.pointerDown(titlebar, { button: 0, clientX: 300, clientY: 240, pointerId: 32 });
+      snapPreviewWrites();
+      fireEvent.pointerMove(window, { clientX: 6, clientY: 240, pointerId: 32 });
+      expect(root).toHaveAttribute('data-snap-preview', 'left');
+      expect(snapPreviewWrites()).toBe(1);
+      // Staying inside the same zone must not rewrite the attribute: pointer
+      // moves outpace the frame rate, and each write would invalidate style
+      // for the whole desktop subtree.
+      fireEvent.pointerMove(window, { clientX: 4, clientY: 260, pointerId: 32 });
+      fireEvent.pointerMove(window, { clientX: 2, clientY: 280, pointerId: 32 });
+      expect(snapPreviewWrites()).toBe(0);
+
+      fireEvent.pointerUp(window, { clientX: 2, clientY: 280, pointerId: 32 });
+      expect(root).not.toHaveAttribute('data-snap-preview');
+      expect(snapPreviewWrites()).toBe(1);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  it('refits every window into the chrome-aware window area after the viewport shrinks', () => {
+    const windows = {
+      agent: { ...desktopWindowNode('agent', 'agent'), bounds: { x: 40, y: 40, width: 1180, height: 900 } },
+    };
+    window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
+      windows,
+      stack: ['agent'],
+      activeWindowId: 'agent',
+    }));
+
+    withViewport(1280, 1000, () => {
+      render(
+        <ControlTransportProvider transport={createPreviewTransport()}>
+          <PawDesktopProvider>
+            <CaptureDesktopApi />
+            <PawWindowLayer />
+          </PawDesktopProvider>
+        </ControlTransportProvider>,
+      );
+
+      withViewport(900, 640, () => {
+        act(() => capturedDesktopApi!.getState().fitWindowsToViewport());
+        const area = pawWindowArea();
+        const bounds = capturedDesktopApi!.getState().windows.agent!.bounds;
+
+        expect(bounds.x).toBeGreaterThanOrEqual(area.x);
+        expect(bounds.y).toBeGreaterThanOrEqual(area.y);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(area.x + area.width);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(area.y + area.height);
+        // The menu bar above and the Dock gutter below are chrome, never
+        // window area: a refitted window keeps its bottom edge — and the
+        // resize handle on it — above the shelf rather than behind it.
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(640 - 34 - 76);
+      });
+    });
   });
 
   it('exposes restore identity after a window is maximized', () => {
@@ -637,6 +767,18 @@ function EnterRoomFocus() {
     store.getState().setCollaborationFocusGroup('room:room-a');
   }, [store]);
   return null;
+}
+
+function withViewport(width: number, height: number, run: () => void): void {
+  const original = { width: window.innerWidth, height: window.innerHeight };
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+  try {
+    run();
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: original.width });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: original.height });
+  }
 }
 
 function transformCoordinate(transform: string, axis: 'x' | 'y'): number {
