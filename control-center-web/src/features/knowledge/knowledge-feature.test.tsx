@@ -32,9 +32,26 @@ describe('document knowledge library', () => {
     const user = userEvent.setup();
     renderKnowledge(createTransport(), '/knowledge', true);
 
-    expect(await screen.findByRole('region', { name: '切换文档知识库' })).toBeInTheDocument();
-    expect(screen.queryByRole('complementary', { name: '文档知识库' })).not.toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: '当前知识库' })).toHaveTextContent('伙伴运行资料');
+    const band = await screen.findByRole('region', { name: '切换文档知识库' });
+
+    // A window wide enough for the rail uses the rail as its library selector,
+    // so the command band names the current library instead of repeating a
+    // select beside it. The labelled 当前知识库 selector stays in the same DOM
+    // behind the container query that narrow windows switch on — nothing here
+    // re-renders on resize.
+    expect(within(band).getByText('伙伴运行资料')).toBeVisible();
+    const narrowSelector = screen.getByRole('combobox', { hidden: true, name: '当前知识库' });
+    expect(narrowSelector).toHaveTextContent('伙伴运行资料');
+    expect(narrowSelector).not.toBeVisible();
+
+    // The rail carries the index only: one window may never offer two
+    // identically named 刷新知识库 or 新建知识库 buttons.
+    const rail = screen.getByRole('complementary', { name: '文档知识库' });
+    expect(within(rail).getByRole('button', { name: /伙伴运行资料/ })).toHaveAttribute('aria-current', 'page');
+    expect(within(rail).queryByRole('button', { name: '刷新知识库' })).not.toBeInTheDocument();
+    expect(within(rail).queryByRole('button', { name: '新建知识库' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { hidden: true, name: '刷新知识库' })).toHaveLength(1);
+
     await user.click(screen.getByRole('tab', { name: '知识图谱' }));
     expect(await screen.findByRole('button', { name: /重建图谱/ })).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: '设置' }));

@@ -333,6 +333,13 @@ export function KnowledgeFeature() {
       <h1 className="knowledge-feature__title">知识库</h1>
       <QueryState error={pageError} isPending={queries.bases.isPending} onRetry={refresh}>
         <div className="knowledge-library" data-empty={!bases.length || undefined} data-native-layout={appSurface ? 'app' : undefined}>
+          {/* Inside a PAWOS window the library index and the workspace share one
+              window-bound grid. The command band spans both columns and always
+              carries service health and library actions; the rail below it is
+              the wide-window selector. A narrow window drops the rail and the
+              band's labelled 当前知识库 selector takes over — both states live
+              in the same DOM so the swap is a container query, not a resize
+              re-render. */}
           {appSurface ? (
             <KnowledgeBaseSwitcher
               base={selectedBase}
@@ -345,17 +352,17 @@ export function KnowledgeFeature() {
               selectedBaseId={selectedBaseId}
               worker={worker}
             />
-          ) : (
-            <KnowledgeBaseRail
-              bases={bases}
-              onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
-              onRefresh={refresh}
-              onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
-              refreshing={queries.bases.isFetching || queries.worker.isFetching}
-              selectedBaseId={selectedBaseId}
-              worker={worker}
-            />
-          )}
+          ) : null}
+          <KnowledgeBaseRail
+            bases={bases}
+            onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
+            onRefresh={refresh}
+            onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
+            refreshing={queries.bases.isFetching || queries.worker.isFetching}
+            selectedBaseId={selectedBaseId}
+            variant={appSurface ? 'app' : 'web'}
+            worker={worker}
+          />
           <section className="knowledge-library__detail" aria-label="知识库详情">
             {selectedBase ? (
               <>
@@ -544,6 +551,7 @@ function KnowledgeBaseRail({
   onSelect,
   refreshing,
   selectedBaseId,
+  variant = 'web',
   worker,
 }: {
   bases: readonly DocumentKnowledgeBase[];
@@ -552,44 +560,56 @@ function KnowledgeBaseRail({
   onSelect: (baseId: string) => void;
   refreshing: boolean;
   selectedBaseId: string;
+  variant?: 'web' | 'app';
   worker: WorkerState;
 }) {
+  // In a PAWOS window the command band above the rail already owns refresh,
+  // create, delete, service health and the narrow-window selector, so the app
+  // rail carries only the library index. Duplicating those controls would put
+  // two identically named buttons in the same window.
+  const app = variant === 'app';
   return (
-    <aside className="knowledge-base-rail" aria-label="文档知识库">
+    <aside className="knowledge-base-rail" aria-label="文档知识库" data-variant={variant}>
       <header>
         <div><strong>知识库</strong><span>{bases.length} 个独立库</span></div>
-        <div className="knowledge-base-rail__actions">
-          <IconButton disabled={refreshing} icon={<RefreshCw size={14} />} label="刷新知识库" onClick={onRefresh} size="small" tooltip />
-          <IconButton icon={<FolderPlus size={15} />} label="新建知识库" onClick={(event) => onCreate(event.currentTarget)} size="small" tooltip />
-        </div>
+        {app ? null : (
+          <div className="knowledge-base-rail__actions">
+            <IconButton disabled={refreshing} icon={<RefreshCw size={14} />} label="刷新知识库" onClick={onRefresh} size="small" tooltip />
+            <IconButton icon={<FolderPlus size={15} />} label="新建知识库" onClick={(event) => onCreate(event.currentTarget)} size="small" tooltip />
+          </div>
+        )}
       </header>
-      <div className="knowledge-base-rail__mobile">
-        <Field htmlFor="knowledge-mobile-base" label="当前知识库">
-          <Select
-            disabled={!bases.length}
-            id="knowledge-mobile-base"
-            onValueChange={onSelect}
-            options={bases.map((base) => ({
-              value: base.id,
-              label: `${base.name} · ${base.documentCount} 个文件`,
-            }))}
-            value={selectedBaseId || bases[0]?.id || ''}
-          />
-        </Field>
-        <span className="knowledge-base-rail__mobile-worker" data-state={worker.tone}>
-          <i aria-hidden="true" />
-          {worker.label}
-        </span>
-        <div className="knowledge-base-rail__actions">
-          <IconButton disabled={refreshing} icon={<RefreshCw size={15} />} label="刷新知识库" onClick={onRefresh} size="large" tooltip />
-          <IconButton icon={<FolderPlus size={16} />} label="新建知识库" onClick={(event) => onCreate(event.currentTarget)} size="large" tooltip />
+      {app ? null : (
+        <div className="knowledge-base-rail__mobile">
+          <Field htmlFor="knowledge-mobile-base" label="当前知识库">
+            <Select
+              disabled={!bases.length}
+              id="knowledge-mobile-base"
+              onValueChange={onSelect}
+              options={bases.map((base) => ({
+                value: base.id,
+                label: `${base.name} · ${base.documentCount} 个文件`,
+              }))}
+              value={selectedBaseId || bases[0]?.id || ''}
+            />
+          </Field>
+          <span className="knowledge-base-rail__mobile-worker" data-state={worker.tone}>
+            <i aria-hidden="true" />
+            {worker.label}
+          </span>
+          <div className="knowledge-base-rail__actions">
+            <IconButton disabled={refreshing} icon={<RefreshCw size={15} />} label="刷新知识库" onClick={onRefresh} size="large" tooltip />
+            <IconButton icon={<FolderPlus size={16} />} label="新建知识库" onClick={(event) => onCreate(event.currentTarget)} size="large" tooltip />
+          </div>
         </div>
-      </div>
-      <div className="knowledge-base-rail__worker" data-state={worker.tone}>
-        <i aria-hidden="true" />
-        <span>知识服务</span>
-        <b>{worker.label}</b>
-      </div>
+      )}
+      {app ? null : (
+        <div className="knowledge-base-rail__worker" data-state={worker.tone}>
+          <i aria-hidden="true" />
+          <span>知识服务</span>
+          <b>{worker.label}</b>
+        </div>
+      )}
       {bases.length ? (
         <Virtuoso
           className="knowledge-base-rail__list"
@@ -614,9 +634,11 @@ function KnowledgeBaseRail({
   );
 }
 
-/** PAWOS window command band: library selection, live counts, service health,
+/** PAWOS window command band: library identity, live counts, service health,
     and library-level actions in one row, so the workspace below starts at the
-    top of the window instead of under a stacked header sheet. */
+    top of the window instead of under a stacked header sheet. A wide window
+    reads its selection from the rail and shows the library name here; a narrow
+    window hides the rail and promotes the labelled 当前知识库 selector. */
 function KnowledgeBaseSwitcher({
   base,
   bases,
@@ -640,6 +662,7 @@ function KnowledgeBaseSwitcher({
 }) {
   return (
     <section aria-label="切换文档知识库" className="knowledge-base-switcher">
+      <p className="knowledge-base-switcher__current">{base ? base.name : '还没有知识库'}</p>
       <Field htmlFor="knowledge-native-base" label="当前知识库">
         <Select
           disabled={!bases.length}
