@@ -29,6 +29,7 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { parsePiModelCatalogOptions, type PiModelOption } from '@/features/agent/model-catalog-options';
 import { roleItems, sessionItems, type SessionSummary } from '@/features/agent/types';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
+import { evidenceEchoFocusFromRoute } from '@/features/evidence-echo/evidence-echo';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import { usePawOsAppSurface, usePawOsDesktop } from '@/features/paw-os/surface-context';
@@ -81,6 +82,14 @@ export function PawAgentApp({
   const targetKind = target?.kind;
   const targetId = target?.id;
   const targetRoomId = target?.kind === 'participant' ? target.roomId : undefined;
+  /* 反向证据链只对它自己指名的那段 Session 生效；在同一扇窗里换一段
+     Session 之后，落点就过期了，不该继续劫持视图。 */
+  const evidenceFocus = useMemo(() => {
+    const focus = evidenceEchoFocusFromRoute(initialRoute);
+    if (!focus) return '';
+    const routeSessionId = new URLSearchParams(initialRoute.split('?', 2)[1] ?? '').get('session') ?? '';
+    return routeSessionId && selection.kind === 'session' && selection.id === routeSessionId ? focus.nodeId : '';
+  }, [initialRoute, selection]);
 
   useEffect(() => {
     setSelection(initialSelection(initialRoute, targetKind, targetId, targetRoomId));
@@ -312,6 +321,7 @@ export function PawAgentApp({
             persona={personas.find((item) => item.roleId === sessions.find((session) => session.id === selection.id)?.roleId)}
             record={sessions.find((item) => item.id === selection.id)}
             recordId={selection.id}
+            traceFocusNodeId={evidenceFocus}
             onNewWork={() => setSelection({ kind: 'new' })}
             onSessionCreated={(created, draft) => {
               optimisticSessionsRef.current[created.id] = created;

@@ -23,6 +23,7 @@ import ReactMarkdown from 'react-markdown';
 import { Virtuoso } from 'react-virtuoso';
 import remarkGfm from 'remark-gfm';
 import { Button, Disclosure, EmptyState, IconButton, Input, Select, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
+import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
 import type { ControlTransport } from '@/platform/transport';
 import type {
@@ -461,6 +462,9 @@ export function KnowledgeDocumentViewer({
           <TabsContent value="chunks"><ChunkGallery detail={detail} focusHit={focusHit?.documentId === selectedDocumentId ? focusHit : null} hasMore={hasMoreChunks} loadingMore={loadingMoreChunks} onLoadMore={onLoadMoreChunks} /></TabsContent>
           <TabsContent value="artifacts"><ArtifactGallery assets={detail.assets} document={detail.document} tables={detail.tables} transport={transport} /></TabsContent>
         </Tabs>
+      ) : null}
+      {selectedDocument ? (
+        <EvidenceEchoUsage appId="knowledge" entityId={selectedDocument.id} entityLabel={selectedDocument.name} />
       ) : null}
     </div>
   );

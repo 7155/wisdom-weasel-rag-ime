@@ -28,6 +28,7 @@ import { MarkdownPreview } from '@/features/agent/file-preview/MarkdownPreview';
 import { RichHtmlPreview } from '@/features/agent/file-preview/RichHtmlPreview';
 import '@/features/agent/file-preview/file-preview.css';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
+import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '@/paw-os/shell/PawWindowChrome';
 import { writeClipboardText } from '@/platform/clipboard';
 import { SvgFilePreview } from './SvgFilePreview';
@@ -91,9 +92,10 @@ const FILE_FAMILY: Record<string, string> = {
   diff: 'diff', patch: 'diff',
 };
 
-export function PawOsFilesApp() {
+export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } = {}) {
   const transport = useControlTransport();
   const windowChromeTarget = usePawWindowChromeTarget();
+  const requested = useMemo(() => requestedWorkspaceFile(initialRoute), [initialRoute]);
   const generationRef = useRef(0);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState('');
@@ -185,6 +187,10 @@ export function PawOsFilesApp() {
         : '';
       setSelectedSessionId((current) => {
         if (next.some((session) => session.id === current && authorizedRoots(session).length)) return current;
+        // 深链指名的那段 Session 先于活跃 Session：它才是这个文件的授权来源。
+        if (requested.sessionId && next.some((session) => session.id === requested.sessionId && authorizedRoots(session).length)) {
+          return requested.sessionId;
+        }
         if (next.some((session) => session.id === activeId && authorizedRoots(session).length)) return activeId;
         return next.find((session) => authorizedRoots(session).length)?.id ?? next[0]?.id ?? '';
       });
@@ -193,7 +199,7 @@ export function PawOsFilesApp() {
     } finally {
       setSessionsLoading(false);
     }
-  }, [transport]);
+  }, [requested.sessionId, transport]);
 
   const loadDirectory = useCallback(async (path: string, force = false) => {
     if (!selectedSessionId || loadingPaths.has(path) || (!force && entries[path])) return;
@@ -233,6 +239,25 @@ export function PawOsFilesApp() {
     // Directory state is intentionally reset whenever Session authority changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSessionId, roots.join('\u0000')]);
+
+  /* 正向证据链落点：路由指名的那个文件在这段 Session 的授权工作区里时，展开
+     它的目录链并直接打开它。只走一次——之后这扇窗属于翻看它的人。 */
+  const openedRequestRef = useRef('');
+  useEffect(() => {
+    const path = requested.path;
+    if (!path || !selectedSessionId || !roots.length) return;
+    const chain = ancestorDirectories(path, roots);
+    if (!chain.length) return;
+    const request = `${selectedSessionId}\u0000${path}`;
+    if (openedRequestRef.current === request) return;
+    openedRequestRef.current = request;
+    setExpanded((current) => new Set([...current, ...chain]));
+    for (const directory of chain) if (!roots.includes(directory)) void loadDirectory(directory, true);
+    setSelectedFile({ path, name: pathName(path), kind: 'file' });
+    // loadDirectory changes identity with every listing; the one-shot guard,
+    // not the dependency list, is what keeps this from re-opening the file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requested.path, roots.join('\u0000'), selectedSessionId]);
 
   useEffect(() => {
     setTreeFocusPath((current) => {
@@ -813,6 +838,7 @@ export function PawOsFilesApp() {
                   )}
                 </footer>
               ) : null}
+              <EvidenceEchoUsage appId="files" entityId={selectedFile.path} entityLabel={selectedFile.name} />
             </>
           )}
         </main>
@@ -878,6 +904,16 @@ function highlightMatch(name: string, query: string): ReactNode {
       {name.slice(index + query.length)}
     </>
   );
+}
+
+/** `/files?session=…&path=…` — 正向证据链把一个具体文件交给这扇窗。 */
+function requestedWorkspaceFile(initialRoute: string): { sessionId: string; path: string } {
+  const query = new URLSearchParams(initialRoute.split('?', 2)[1] ?? '');
+  const path = (query.get('path') ?? '').trim();
+  return {
+    sessionId: (query.get('session') ?? '').trim().slice(0, 200),
+    path: path.startsWith('/') ? path.slice(0, 1_000) : '',
+  };
 }
 
 function authorizedRoots(session: SessionSummary | null): string[] {

@@ -54,6 +54,14 @@ import {
   orderContextTraceNodes,
   type AssemblyEvidenceValue,
 } from '@/features/agent/status/context-evidence';
+import {
+  evidenceEchoAppLabel,
+  evidenceEchoNodeEntities,
+  openEvidenceEchoEntity,
+  type EvidenceEchoEntity,
+} from '@/features/evidence-echo/evidence-echo';
+import '@/features/evidence-echo/evidence-echo.css';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
 import { CopyTextButton } from '@/features/agent/file-preview/CopyTextButton';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
@@ -110,15 +118,19 @@ const traceEventDisclosureOverrideLimit = 512;
 
 export function PawContextTrace({
   active,
+  focusNodeId = '',
   projection,
   sessionId,
 }: {
   active: boolean;
+  /** 反向证据链落点：打开后要滚到并高亮的那个装配节点。 */
+  focusNodeId?: string;
   projection?: AgentProjectionState;
   sessionId: string;
 }) {
   const transport = useControlTransport();
-  const [mode, setMode] = useState<TraceMode>('events');
+  const desktop = usePawOsDesktop();
+  const [mode, setMode] = useState<TraceMode>(focusNodeId ? 'assembly' : 'events');
   const [filter, setFilter] = useState<TraceFilter>('all');
   const [turns, setTurns] = useState<DebugTurnSummary[]>([]);
   const [selectedTurnId, setSelectedTurnId] = useState('');
@@ -247,9 +259,18 @@ export function PawContextTrace({
   const cacheSummary = useMemo(() => summarizeCache(context), [context]);
   const traceTurns = useMemo(() => projectionTraceTurns(projection), [projection]);
   const traceCounts = useMemo(() => countTraceEvents(traceTurns), [traceTurns]);
+  const traceRootRef = useRef<HTMLElement>(null);
+
+  /* 反向落点：Session 打开后把那一个装配节点滚进视野。找不到就什么也不做，
+     不改变用户当前的阅读位置。 */
+  useEffect(() => {
+    if (!focusNodeId || mode !== 'assembly' || !assemblyNodes.length) return;
+    const node = traceRootRef.current?.querySelector(`[data-trace-node="${CSS.escape(focusNodeId)}"]`);
+    node?.scrollIntoView({ block: 'center' });
+  }, [assemblyNodes, focusNodeId, mode]);
 
   return (
-    <section className="paw-agent-next an-trace" aria-label="当前 Agent 轨迹">
+    <section className="paw-agent-next an-trace" aria-label="当前 Agent 轨迹" ref={traceRootRef}>
       <aside className="an-trace-rail">
         <header>
           <strong>轮次</strong>
@@ -369,11 +390,16 @@ export function PawContextTrace({
               {assemblyNodes.length
                 ? assemblyNodes.map((node) => {
                     const evidence = assemblyStageEvidence(node.stage, context);
+                    const entities = evidenceEchoNodeEntities(node, { sessionId });
+                    const focused = Boolean(focusNodeId) && node.nodeId === focusNodeId;
                     return (
                     <Disclosure
                       className="an-node"
                       contentClassName="an-node-body"
                       data-disp={node.disposition}
+                      data-echo-focus={focused || undefined}
+                      data-trace-node={node.nodeId}
+                      defaultOpen={focused}
                       key={node.nodeId}
                       summary={(
                         <>
@@ -383,6 +409,13 @@ export function PawContextTrace({
                           <span className="n-label">{node.label || node.stage}</span>
                           <span className="n-sub">{node.sourceKind}{node.summary ? ` · ${node.summary}` : ''}</span>
                         </span>
+                        {entities.map((entity) => (
+                          <EvidenceEchoOpen
+                            desktop={desktop}
+                            entity={entity}
+                            key={`${entity.appId}:${entity.entityId}`}
+                          />
+                        ))}
                         <span className="n-bar"><i style={{ width: `${barWidth(node.tokenEstimate, maxToken(assemblyNodes))}%` }} /></span>
                         <span className="n-tok">{formatNumber(node.tokenEstimate)} <small>tok</small></span>
                         <span aria-hidden="true" className="an-disclosure-caret">›</span>
@@ -573,6 +606,32 @@ function FallbackNodes({ context }: { context: DebugContextRecord }) {
         <span>当前由 Runtime 的 debugContext 提供完整捕获内容；节点时序与处置证据需 contextTrace 才能显示。</span>
       </div>
     </>
+  );
+}
+
+/* 正向证据链：只有当这个装配节点确实记录了某个具体证据实体的标识时，摘要行
+   才多出一个可点的入口。解析不出标识的节点保持不可点击——一个打不开东西的
+   链接比没有链接更糟。 */
+function EvidenceEchoOpen({
+  desktop,
+  entity,
+}: {
+  desktop: ReturnType<typeof usePawOsDesktop>;
+  entity: EvidenceEchoEntity;
+}) {
+  return (
+    <button
+      aria-label={`在 ${evidenceEchoAppLabel(entity.appId)} 打开 ${entity.label}`}
+      className="evidence-echo-open"
+      onClick={(interaction) => {
+        interaction.stopPropagation();
+        openEvidenceEchoEntity(desktop, entity);
+      }}
+      type="button"
+    >
+      <b>{evidenceEchoAppLabel(entity.appId)}</b>
+      <span>{entity.label}</span>
+    </button>
   );
 }
 

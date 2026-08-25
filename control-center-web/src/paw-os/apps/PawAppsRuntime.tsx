@@ -54,7 +54,7 @@ function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, ta
     case 'browser':
       return <PawBrowserApp target={target?.kind === 'browser-target' ? target : undefined} />;
     case 'files':
-      return <FilesApp />;
+      return <FilesApp initialRoute={initialRoute} />;
     case 'terminal':
       return <TerminalApp />;
     case 'project-workbench':
