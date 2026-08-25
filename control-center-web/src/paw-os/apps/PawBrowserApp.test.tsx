@@ -687,6 +687,31 @@ describe('PAW Browser App', () => {
     expect(within(historyRegion).getByText('Yesterday doc')).toBeInTheDocument();
   });
 
+  it('reopens a history entry in the same guest and leaves History behind', async () => {
+    const user = userEvent.setup();
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getHistory: async () => [
+        { id: 'h-one', title: 'Yesterday doc', url: 'https://yesterday.example/read', visitedAt: 1 },
+      ],
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    const loadURL = vi.fn(async () => undefined);
+    Object.assign(guest, { loadURL });
+
+    await user.click(await screen.findByRole('button', { name: '浏览历史' }));
+    const historyRegion = await screen.findByRole('region', { name: '浏览历史' });
+    await user.click(within(historyRegion).getByRole('button', { name: /^Yesterday doc/ }));
+
+    expect(loadURL).toHaveBeenCalledWith('https://yesterday.example/read');
+    expect(screen.queryByRole('region', { name: '浏览历史' })).toBeNull();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '页面地址' }))
+      .toHaveValue('https://yesterday.example/read'));
+    // Reopening reuses the one visible guest instead of spawning a tab.
+    expect(document.querySelectorAll('webview')).toHaveLength(1);
+  });
+
   it('clears History only through the persistent Browser host authority after an in-App confirmation', async () => {
     const user = userEvent.setup();
     const clearHistory = vi.fn(async () => []);
