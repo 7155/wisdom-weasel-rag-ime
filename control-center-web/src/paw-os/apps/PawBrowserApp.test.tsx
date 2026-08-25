@@ -434,6 +434,35 @@ describe('PAW Browser App', () => {
     expect(localStorage.getItem('paw.browser.history.v1')).toBeNull();
   });
 
+  it('saves a normalized start page through the host and opens it in the blank guest', async () => {
+    const user = userEvent.setup();
+    let startPage = 'about:blank';
+    const setStartPage = vi.fn(async (value: string) => { startPage = value; return { startPage }; });
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', extensionCount: 0, extensionsPath: '/tmp/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage }),
+      setStartPage,
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    const loadURL = vi.fn(async () => undefined);
+    Object.assign(guest, { loadURL });
+
+    await user.click(await screen.findByRole('button', { name: 'Browser 设置' }));
+    const field = await screen.findByRole('textbox', { name: 'Browser 启动页' });
+    await user.clear(field);
+    await user.type(field, 'start.example/home');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    // A bare host is committed as the same absolute URL the omnibox would open.
+    await waitFor(() => expect(setStartPage).toHaveBeenCalledWith('https://start.example/home'));
+    expect(await screen.findByText('启动页已保存')).toBeInTheDocument();
+    expect(field).toHaveValue('https://start.example/home');
+    await waitFor(() => expect(loadURL).toHaveBeenCalledWith('https://start.example/home'));
+    expect(screen.getByRole('button', { name: '打开启动页' }))
+      .toHaveAttribute('title', '打开启动页 https://start.example/home');
+  });
+
   it('manages real Electron session extensions from Browser settings', async () => {
     const user = userEvent.setup();
     const installed = [
