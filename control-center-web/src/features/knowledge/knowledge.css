@@ -119,11 +119,12 @@ main.knowledge-feature[data-paw-os-app='knowledge'] {
 }
 
 /* A PAWOS Knowledge window already owns the App navigation, so the library
-   keeps a compact switcher row instead of a second sidebar. `align-items:
-   stretch` is load-bearing: the flowing-sheet route uses `align-items: start`
-   so the page can grow, but inside a fixed window that detaches the detail
-   column from its minmax(0, 1fr) row and the library clips it without a
-   scrollbar anywhere. */
+   keeps one compact command band (selection, counts, health, actions) instead
+   of a sidebar plus a stacked header sheet — the tab workspace is the first
+   object in the window. `align-items: stretch` is load-bearing: the
+   flowing-sheet route uses `align-items: start` so the page can grow, but
+   inside a fixed window that detaches the detail column from its
+   minmax(0, 1fr) row and the library clips it without a scrollbar anywhere. */
 main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-native-layout='app'] {
   height: 100%;
   min-height: 0;
@@ -293,25 +294,27 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
 }
 
 /* -------------------------------------------------------------------------
-   Library switcher (PAWOS window) — one labelled row instead of a sidebar.
+   Library command band (PAWOS window) — one cold-white row carrying library
+   selection, live counts, service health, and library-level actions. It
+   replaces both the sidebar and the stacked base-header sheet, so the tab
+   workspace below is the first object in the window.
    ------------------------------------------------------------------------- */
 .knowledge-base-switcher {
-  display: grid;
+  display: flex;
   min-width: 0;
-  min-height: 58px;
+  min-height: 50px;
   align-items: center;
-  padding: 9px 14px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--k-hairline);
-  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
-  grid-template-columns: minmax(220px, 420px) minmax(150px, 1fr) auto;
-  gap: 10px 16px;
-  -webkit-backdrop-filter: blur(16px) saturate(120%);
-  backdrop-filter: blur(16px) saturate(120%);
+  background: var(--color-surface);
+  gap: 6px 14px;
 }
 
 .knowledge-base-switcher > .ui-field {
   display: grid;
-  min-width: 0;
+  min-width: 210px;
+  flex: 0 1 380px;
   align-items: center;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 9px;
@@ -327,6 +330,25 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   font-size: 14px;
 }
 
+/* Live counts stay a quiet single line, never a stat dashboard. */
+.knowledge-base-switcher__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.knowledge-base-switcher__meta b {
+  color: var(--k-ink);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: var(--font-weight-semibold);
+}
+
+.knowledge-base-switcher__meta i { width: 3px; height: 3px; border-radius: 50%; background: var(--color-border-strong); }
+
 .knowledge-base-switcher__worker {
   display: inline-flex;
   min-height: var(--control-height-sm);
@@ -335,9 +357,10 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.4;
+  white-space: nowrap;
 }
 
-.knowledge-base-switcher__actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.knowledge-base-switcher__actions { display: flex; align-items: center; justify-content: flex-end; margin-left: auto; gap: 6px; }
 
 /* -------------------------------------------------------------------------
    Detail column and base header.
@@ -2069,19 +2092,66 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-libr
   display: none;
 }
 
+/* The window detail column holds only the tab workspace — the command band
+   above already carries the library identity — so the Tabs root gets the one
+   height-constrained row and the scroll chain stays window → library →
+   detail → active tab panel. */
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__detail {
   border-radius: 0;
   background: var(--color-surface);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-base-header {
-  min-height: 72px;
-  padding: 10px 48px 10px 18px;
-  background: var(--color-surface);
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-panel { padding: 12px 18px 26px; }
+
+/* Materials opens on the file workspace, not on instrumentation: the panel
+   heading duplicates the active 资料 tab, the stat sheet collapses to one
+   quiet line, and the import affordance becomes a compact bar. The workspace
+   then fills the remaining window height (the tab panel above stays the one
+   scroll owner). */
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-materials { min-height: 100%; }
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-materials > .knowledge-panel__toolbar { display: none; }
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-2);
+  padding: 0 0 8px;
+  border-block: 0;
+  border-bottom: 1px solid var(--k-hairline-soft);
+  gap: 4px 18px;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-panel { padding: 14px 18px 26px; }
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats > div {
+  display: inline-flex;
+  align-items: baseline;
+  padding: 0;
+  gap: 6px;
+}
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats > div + div { border-left: 0; }
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats dt { letter-spacing: normal; font-size: 13px; }
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats dd { font-size: 13px; }
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone {
+  min-height: 46px;
+  justify-content: flex-start;
+  padding: 6px 12px;
+  border-radius: 10px;
+}
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone > svg { padding: 5px; }
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone > span {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-workspace { min-height: 380px; }
+main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-list__body { min-height: 300px; }
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-viewer { padding: 0; }
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-viewer__bar {
   min-height: 54px;
@@ -2173,15 +2243,11 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
   display: none;
 }
 
-/* Window-size responsiveness rides the library container, not the viewport. */
+/* Window-size responsiveness rides the library container, not the viewport.
+   The command band itself wraps on its own flex flow; narrower windows only
+   drop its secondary meta line. */
 @container knowledge-library (max-width: 900px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher { grid-template-columns: minmax(0, 1fr) auto; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__worker { grid-column: 1; grid-row: 2; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__actions { grid-column: 2; grid-row: 1 / span 2; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-header { align-items: flex-start; flex-direction: column; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-header > div:first-child { min-width: 0; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-header dl { width: 100%; min-width: 0; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-header dl div:first-child { border-left: 0; padding-left: 0; }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__meta { display: none; }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-workspace,
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__results { overflow: visible; grid-template-columns: minmax(0, 1fr); }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list,
@@ -2192,12 +2258,8 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
 }
 
 @container knowledge-library (max-width: 560px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher { align-items: stretch; grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .ui-field { grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__worker,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-header dl { min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-header p { display: none; }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .ui-field { flex-basis: 100%; grid-template-columns: minmax(0, 1fr); }
+  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__actions { margin-left: 0; justify-content: flex-start; }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__form { grid-template-columns: minmax(0, 1fr); }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-grid { grid-template-columns: minmax(0, 1fr); }
   main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-fields,

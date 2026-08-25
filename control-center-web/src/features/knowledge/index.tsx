@@ -335,8 +335,10 @@ export function KnowledgeFeature() {
         <div className="knowledge-library" data-empty={!bases.length || undefined} data-native-layout={appSurface ? 'app' : undefined}>
           {appSurface ? (
             <KnowledgeBaseSwitcher
+              base={selectedBase}
               bases={bases}
               onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
+              onDelete={(trigger) => { rememberDialogTrigger(trigger); setDeleteBaseOpen(true); }}
               onRefresh={refresh}
               onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
               refreshing={queries.bases.isFetching || queries.worker.isFetching}
@@ -357,7 +359,11 @@ export function KnowledgeFeature() {
           <section className="knowledge-library__detail" aria-label="知识库详情">
             {selectedBase ? (
               <>
-                <KnowledgeBaseHeader base={selectedBase} onDelete={(trigger) => { rememberDialogTrigger(trigger); setDeleteBaseOpen(true); }} worker={worker} />
+                {/* Inside a PAWOS window the command band above already carries
+                    the library identity, counts, and delete action, so the tab
+                    workspace is the first object on screen. The web route keeps
+                    the full header sheet. */}
+                {appSurface ? null : <KnowledgeBaseHeader base={selectedBase} onDelete={(trigger) => { rememberDialogTrigger(trigger); setDeleteBaseOpen(true); }} worker={worker} />}
                 <Tabs className="knowledge-library__tabs" onValueChange={(value) => selectTab(asDetailTab(value))} value={tab}>
                   <TabsList aria-label="知识库管理视图">
                     <TabsTrigger value="materials"><Files aria-hidden="true" size={14} />资料</TabsTrigger>
@@ -608,17 +614,24 @@ function KnowledgeBaseRail({
   );
 }
 
+/** PAWOS window command band: library selection, live counts, service health,
+    and library-level actions in one row, so the workspace below starts at the
+    top of the window instead of under a stacked header sheet. */
 function KnowledgeBaseSwitcher({
+  base,
   bases,
   onCreate,
+  onDelete,
   onRefresh,
   onSelect,
   refreshing,
   selectedBaseId,
   worker,
 }: {
+  base: DocumentKnowledgeBase | null;
   bases: readonly DocumentKnowledgeBase[];
   onCreate: (trigger: HTMLElement) => void;
+  onDelete: (trigger: HTMLElement) => void;
   onRefresh: () => void;
   onSelect: (baseId: string) => void;
   refreshing: boolean;
@@ -632,19 +645,27 @@ function KnowledgeBaseSwitcher({
           disabled={!bases.length}
           id="knowledge-native-base"
           onValueChange={onSelect}
-          options={bases.map((base) => ({
-            value: base.id,
-            label: `${base.name} · ${base.documentCount} 个文件`,
+          options={bases.map((item) => ({
+            value: item.id,
+            label: `${item.name} · ${item.documentCount} 个文件`,
           }))}
           value={selectedBaseId || bases[0]?.id || ''}
         />
       </Field>
+      {base ? (
+        <span aria-label={`${base.documentCount} 个文件，${base.chunkCount} 个段落`} className="knowledge-base-switcher__meta">
+          <b>{base.documentCount}</b> 文件
+          <i aria-hidden="true" />
+          <b>{base.chunkCount}</b> 段落
+        </span>
+      ) : null}
       <span className="knowledge-base-switcher__worker" data-state={worker.tone}>
         <i aria-hidden="true" />
         知识服务：{worker.label}
       </span>
       <div className="knowledge-base-switcher__actions">
         <IconButton disabled={refreshing} icon={<RefreshCw size={15} />} label="刷新知识库" onClick={onRefresh} size="small" tooltip />
+        {base ? <IconButton icon={<Trash2 size={15} />} label="删除知识库" onClick={(event) => onDelete(event.currentTarget)} size="small" tooltip /> : null}
         <Button leadingIcon={<FolderPlus size={15} />} onClick={(event) => onCreate(event.currentTarget)} size="small">新建知识库</Button>
       </div>
     </section>
