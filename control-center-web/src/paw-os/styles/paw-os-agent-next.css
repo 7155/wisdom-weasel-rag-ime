@@ -328,8 +328,9 @@
    身份，而不是让读者在一列同样的行里再找一遍。 */
 .an-node[data-echo-focus] { border-inline-start: 3px solid var(--an-cobalt); background: var(--an-paper-soft); }
 .an-node[data-echo-focus] .n-ord { color: var(--an-cobalt); }
-/* 摘要行里的正向入口用 Agent 轨迹自己的墨色与纸色，不引入第二套按钮样式。 */
-.an-node > summary .evidence-echo-open { border-color: var(--an-hairline); background: var(--an-paper); color: var(--an-ink-2); font-family: inherit; }
+/* 摘要行里的正向入口用 Agent 轨迹自己的墨色与纸色，不引入第二套按钮样式。
+   它先于 token 条让位：标签再长也不能把这一行的读数挤出去。 */
+.an-node > summary .evidence-echo-open { min-width: 0; max-width: 148px; flex: 0 1 auto; border-color: var(--an-hairline); background: var(--an-paper); color: var(--an-ink-2); font-family: inherit; }
 .an-node > summary .evidence-echo-open b { color: var(--an-ink-3); font-weight: 650; }
 .an-node > summary .evidence-echo-open:hover { border-color: var(--an-cobalt); background: var(--an-paper-bright); color: var(--an-ink); }
 .an-disclosure-caret { width: 16px; flex: none; color: var(--an-ink-3); font-size: 20px; line-height: 1; text-align: center; transform: rotate(0deg); transition: transform 160ms ease, color 160ms ease; }

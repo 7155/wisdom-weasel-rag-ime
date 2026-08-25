@@ -68,14 +68,16 @@ export type EvidenceEchoUsage = {
 };
 
 /** 一个装配节点最多解析出这么多实体，避免一条 metadata 撑爆摘要行。 */
-const MAX_TARGETS_PER_NODE = 8;
+const MAX_TARGETS_PER_NODE = 6;
 const MAX_ID_LENGTH = 500;
 const MAX_LABEL_LENGTH = 120;
 
-const DEFAULT_SESSION_SCAN_LIMIT = 8;
-const DEFAULT_TRACES_PER_SESSION = 4;
-const DEFAULT_TRACE_FETCH_LIMIT = 24;
-const DEFAULT_ROW_LIMIT = 12;
+/* 打开一条记忆不该换来一串请求。默认预算是 1 次 Session 列表 + 最多 6 次
+   trace 列表 + 最多 12 次 trace 读取，全部并发且可取消。 */
+const DEFAULT_SESSION_SCAN_LIMIT = 6;
+const DEFAULT_TRACES_PER_SESSION = 3;
+const DEFAULT_TRACE_FETCH_LIMIT = 12;
+const DEFAULT_ROW_LIMIT = 8;
 
 /** 能穿过 Runtime `_public_metadata` 清洗的那组扁平引用键。 */
 const REFERENCE_KEYS: ReadonlyArray<{

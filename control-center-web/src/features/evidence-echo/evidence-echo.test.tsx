@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
-import { MockControlTransport } from '@/test/mock-transport';
+import type { ControlRequest } from '@/platform/transport';
+import { MockControlTransport, type MockControlTransportOptions } from '@/test/mock-transport';
 import {
   collectEvidenceEchoUsage,
   evidenceEchoFocusFromRoute,
@@ -167,7 +168,7 @@ function traceNode(metadata: Record<string, unknown>) {
   };
 }
 
-function usageTransport(overrides: ConstructorParameters<typeof MockControlTransport>[0]['routes'] = {}) {
+function usageTransport(overrides: MockControlTransportOptions['routes'] = {}) {
   return new MockControlTransport({
     routes: {
       'agent.sessions.list': {
@@ -177,13 +178,13 @@ function usageTransport(overrides: ConstructorParameters<typeof MockControlTrans
           { id: 'session-b', title: '检查发布门禁', roleId: 'engineer', updatedAtMs: 1_000 },
         ],
       },
-      'agent.session.contextTraces.list': (request) => ({
+      'agent.session.contextTraces.list': (request: ControlRequest) => ({
         ok: true,
         items: request.params?.sessionId === 'session-a'
           ? [{ traceId: 'trace-a', sessionId: 'session-a', turnId: 'turn-a', createdAtMs: 1_100 }]
           : [{ traceId: 'trace-b', sessionId: 'session-b', turnId: 'turn-b', createdAtMs: 900 }],
       }),
-      'agent.session.contextTrace.get': (request) => (
+      'agent.session.contextTrace.get': (request: ControlRequest) => (
         String(request.params?.traceId) === 'trace-a'
           ? contextTrace('session-a', 'trace-a', 'turn-a', { memoryAtomIds: 'atom-context-order' }, 1_200)
           : contextTrace('session-b', 'trace-b', 'turn-b', { itemCount: 0 }, 950)
