@@ -209,6 +209,19 @@ export function MemoryFeature() {
           summary={summaryPayload}
           summaryState={summaryState}
         />
+        {/* Narrow windows collapse both the PAWOS App rail and the view tab
+            strip. Memory then owns a labelled page selector of its own so the
+            six pages never degrade into an unlabelled icon strip. */}
+        <div className="memory-app-nav">
+          <span className="memory-app-nav__label">页面</span>
+          <Select
+            aria-label="记忆页面"
+            className="memory-app-nav__select"
+            onValueChange={(next) => openView(normalizeMemoryView(next))}
+            options={memoryViewOptions()}
+            value={view}
+          />
+        </div>
         <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ViewTabs
           className="memory-view-tabs"
@@ -569,6 +582,15 @@ function normalizeMemoryView(value: string): MemoryView {
     : 'catalog';
 }
 
+const memoryViewOrder: readonly MemoryView[] = [
+  'catalog',
+  'roleBooks',
+  'timeline',
+  'relations',
+  'organize',
+  'preferences',
+];
+
 function memoryViewLabel(view: MemoryView): string {
   return ({
     catalog: '记忆库',
@@ -578,6 +600,10 @@ function memoryViewLabel(view: MemoryView): string {
     organize: '记忆整理',
     preferences: '记忆偏好',
   } as const)[view];
+}
+
+function memoryViewOptions(): { value: MemoryView; label: string }[] {
+  return memoryViewOrder.map((view) => ({ value: view, label: memoryViewLabel(view) }));
 }
 
 function memoryViewStatus(
