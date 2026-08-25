@@ -1,0 +1,193 @@
+import { describe, expect, it } from 'vitest';
+import { createRoomProjection } from '@/contracts/room-reducer';
+import type { AssistantMessage } from '../model/types';
+import {
+  roomApprovalDecision,
+  roomPhase,
+  roomTranscript,
+  roomTranscriptRetrySource,
+} from './room-transcript';
+
+const NAMES: Record<string, string> = {
+  'participant-a': 'Mars',
+  'participant-b': 'Venus',
+};
+
+const options = {
+  actorName: (participantId?: string | null) => participantId ? NAMES[participantId] ?? '伙伴' : 'Sol',
+  actorRole: (participantId?: string | null) => participantId === 'participant-a' ? '实现' : '',
+};
+
+describe('roomTranscript', () => {
+  it('folds one Runtime loop into one assistant card with its public blocks', () => {
+    const projection = roomProjection();
+
+    const { messages } = roomTranscript(projection, options);
+
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant']);
+    const user = messages[0]!;
+    expect(user.role === 'user' && user.text).toBe('请完成主线迁移');
+    const card = messages[1] as AssistantMessage;
+    expect(card.actor).toBe('Mars');
+    expect(card.actorRole).toBe('实现');
+    expect(card.turnId).toBe('root-a');
+    expect(card.blocks.map((block) => block.kind)).toEqual(['tool', 'tool', 'text']);
+  });
+
+  it('names tools by their reader-facing label instead of the Runtime id', () => {
+    const { messages } = roomTranscript(roomProjection(), options);
+
+    const card = messages[1] as AssistantMessage;
+    const tool = card.blocks.find((block) => block.id === 'tool:tool-a');
+    expect(tool).toMatchObject({ kind: 'tool', name: '读取文件', status: 'running' });
+    expect(tool?.kind === 'tool' && tool.summary).toBe('读取文件 正在执行');
+  });
+
+  it('keeps a pending approval on the card and links it back to its activity', () => {
+    const projection = roomProjection();
+
+    const { messages, activityByBlockId } = roomTranscript(projection, options);
+
+    const card = messages[1] as AssistantMessage;
+    const approval = card.blocks.find((block) => block.id === 'approval:approval-a');
+    expect(approval).toMatchObject({ kind: 'tool', name: '受控操作审批', status: 'pending' });
+    expect(activityByBlockId['approval:approval-a']).toBe(projection.activitiesById['approval-a']);
+    expect(roomApprovalDecision(projection.activitiesById['approval-a']!)).toEqual({
+      approvalId: 'approval-a',
+      payloadSha256: 'a'.repeat(64),
+    });
+  });
+
+  it('starts a new card when the speaking partner changes inside one turn', () => {
+    const projection = roomProjection();
+    projection.messageOrder.push('message-agent-b');
+    projection.messagesById['message-agent-b'] = {
+      id: 'message-agent-b', roomId: projection.roomId, turnId: 'root-a', participantId: 'participant-b',
+      sourceSessionId: 'session-b', role: 'assistant', status: 'completed', text: '我来复核。',
+      projectionKind: 'post', sequence: 5, createdAtMs: 140,
+    };
+
+    const { messages } = roomTranscript(projection, options);
+
+    expect(messages.map((message) => message.role === 'assistant' ? message.actor : 'user'))
+      .toEqual(['user', 'Mars', 'Venus']);
+  });
+
+  it('marks a streaming reply so the progressive renderer keeps a mutable tail', () => {
+    const projection = roomProjection();
+    projection.messagesById['message-agent']!.status = 'streaming';
+
+    const card = roomTranscript(projection, options).messages[1] as AssistantMessage;
+
+    expect(card.blocks.at(-1)).toMatchObject({ kind: 'text', streaming: true });
+  });
+
+  it('reports a failed turn as a card error with a retry source', () => {
+    const projection = roomProjection();
+    projection.turnOrder.push('root-a');
+    projection.turnsById['root-a'] = {
+      id: 'root-a', rootId: 'root-a', status: 'failed', messageIds: ['message-user'],
+      activityIds: [], participantIds: ['participant-a'], createdAtMs: 100, updatedAtMs: 145,
+      failure: '503 upstream request failed',
+    };
+
+    const { messages } = roomTranscript(projection, options);
+
+    expect((messages.at(-1) as AssistantMessage).error).toBe('503 upstream request failed');
+    expect(roomTranscriptRetrySource(projection, 'root-a')).toEqual({
+      rootId: 'root-a',
+      text: '请完成主线迁移',
+    });
+  });
+
+  it('withdraws retry once newer user input has superseded the failure', () => {
+    const projection = roomProjection();
+    projection.turnOrder.push('root-a');
+    projection.turnsById['root-a'] = {
+      id: 'root-a', rootId: 'root-a', status: 'failed', messageIds: ['message-user'],
+      activityIds: [], participantIds: ['participant-a'], createdAtMs: 100, updatedAtMs: 145,
+      failure: '503 upstream request failed',
+    };
+    projection.messageOrder.push('message-user-new');
+    projection.messagesById['message-user-new'] = {
+      id: 'message-user-new', roomId: projection.roomId, turnId: 'root-b', participantId: null,
+      sourceSessionId: '', role: 'user', status: 'completed', text: '改用新的方案继续',
+      projectionKind: 'post', sequence: 6, createdAtMs: 160,
+    };
+
+    expect(roomTranscriptRetrySource(projection, 'root-a')).toBeUndefined();
+  });
+
+  it('restricts a partner satellite to that partner\u2019s own public lane', () => {
+    const projection = roomProjection();
+    projection.activityOrder.push('tool-b');
+    projection.activitiesById['tool-b'] = {
+      id: 'tool-b', turnId: 'root-a', participantId: 'participant-b', sourceSessionId: 'session-b',
+      kind: 'tool', status: 'completed', summary: '写入完成',
+      payload: { sourceEventType: 'tool_finished', toolName: 'write' },
+      sequence: 6, createdAtMs: 150, updatedAtMs: 150,
+    };
+
+    const { messages } = roomTranscript(projection, { ...options, participantId: 'participant-a' });
+
+    const blockIds = messages.flatMap((message) => message.role === 'assistant' ? message.blocks.map((block) => block.id) : []);
+    expect(blockIds).toContain('tool:tool-a');
+    expect(blockIds).not.toContain('tool:tool-b');
+  });
+
+  it('derives the run phase from real turn status', () => {
+    const projection = roomProjection();
+    expect(roomPhase(projection)).toBe('idle');
+    projection.turnOrder.push('root-a');
+    projection.turnsById['root-a'] = {
+      id: 'root-a', rootId: 'root-a', status: 'running', messageIds: [], activityIds: [],
+      participantIds: [], createdAtMs: 100, updatedAtMs: 100,
+    };
+    expect(roomPhase(projection)).toBe('responding');
+  });
+
+  it('drops execution-only projections that were never public', () => {
+    const projection = roomProjection();
+    projection.messageOrder.push('message-internal');
+    projection.messagesById['message-internal'] = {
+      id: 'message-internal', roomId: projection.roomId, turnId: 'root-a', participantId: 'participant-a',
+      sourceSessionId: 'session-a', role: 'assistant', status: 'completed', text: '内部执行记录',
+      projectionKind: 'execution', sequence: 7, createdAtMs: 170,
+    };
+
+    const blockIds = roomTranscript(projection, options).messages
+      .flatMap((message) => message.role === 'assistant' ? message.blocks.map((block) => block.id) : []);
+
+    expect(blockIds).not.toContain('text:message-internal');
+  });
+});
+
+function roomProjection() {
+  const projection = createRoomProjection('room-live');
+  projection.messageOrder.push('message-user', 'message-agent');
+  projection.messagesById['message-user'] = {
+    id: 'message-user', roomId: 'room-live', turnId: 'root-a', participantId: null,
+    sourceSessionId: '', role: 'user', status: 'completed', text: '请完成主线迁移',
+    projectionKind: 'post', sequence: 1, createdAtMs: 100,
+  };
+  projection.messagesById['message-agent'] = {
+    id: 'message-agent', roomId: 'room-live', turnId: 'root-a', participantId: 'participant-a',
+    sourceSessionId: 'session-a', role: 'assistant', status: 'completed', text: '已接入生产 reducer。',
+    projectionKind: 'post', sequence: 4, createdAtMs: 130,
+  };
+  projection.activityOrder.push('tool-a', 'approval-a');
+  projection.activitiesById['tool-a'] = {
+    id: 'tool-a', turnId: 'root-a', participantId: 'participant-a', sourceSessionId: 'session-a',
+    kind: 'tool', status: 'running',
+    summary: '```json\n{"path":"/Volumes/private/workspace/PawWindowLayer.tsx"}\n```',
+    payload: { sourceEventType: 'tool_started', toolName: 'read' },
+    sequence: 2, createdAtMs: 110, updatedAtMs: 110,
+  };
+  projection.activitiesById['approval-a'] = {
+    id: 'approval-a', turnId: 'root-a', participantId: 'participant-a', sourceSessionId: 'session-a',
+    kind: 'approval_required', status: 'waiting', summary: '批准受控迁移操作',
+    payload: { sourceEventType: 'approval_required', approvalId: 'approval-a', payloadSha256: 'a'.repeat(64) },
+    sequence: 3, createdAtMs: 120, updatedAtMs: 120,
+  };
+  return projection;
+}

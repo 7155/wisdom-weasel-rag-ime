@@ -1,0 +1,79 @@
+# Conversation UI — vendored clean-room package
+
+The modules in this directory are vendored from the clean-room conversation
+package delivered as `conversation_ui_standalone.zip` at the repository root
+(added on `main` in commit `5241e914`; the archive expands to
+`claude_conversation_ui_standalone/`).
+
+That package is an independent React + TypeScript reimplementation of the
+*observable interaction behaviour* of a long-running agent conversation UI. It
+is not vendor source, contains no proprietary bundle, and by construction
+imports nothing from any host repository. Its stated host boundary is a single
+`ConversationTransport` interface.
+
+## Vendored files
+
+| File here | Package source |
+| --- | --- |
+| `model/types.ts` | `src/model/types.ts` |
+| `model/queue.ts` | `src/model/queue.ts` |
+| `transport.ts` | `src/transport.ts` |
+| `hooks/usePinnedTranscript.ts` | `src/hooks/usePinnedTranscript.ts` |
+| `hooks/useVirtualTranscript.ts` | `src/hooks/useVirtualTranscript.ts` |
+| `hooks/useSessionScrollMemory.ts` | `src/hooks/useSessionScrollMemory.ts` |
+| `components/VirtualTranscript.tsx` | `src/components/VirtualTranscript.tsx` |
+| `components/TranscriptRow.tsx` | `src/components/TranscriptRow.tsx` |
+| `components/UserTurn.tsx` | `src/components/UserTurn.tsx` |
+| `components/AssistantTurn.tsx` | `src/components/AssistantTurn.tsx` |
+| `components/ThinkingBlock.tsx` | `src/components/ThinkingBlock.tsx` |
+| `components/ToolCard.tsx` | `src/components/ToolCard.tsx` |
+| `components/SteerReceipt.tsx` | `src/components/SteerReceipt.tsx` |
+| `components/MessageActions.tsx` | `src/components/MessageActions.tsx` |
+| `components/QueueTray.tsx` | `src/components/QueueTray.tsx` |
+| `components/JumpToBottom.tsx` | `src/components/JumpToBottom.tsx` |
+| `components/ConversationSurface.tsx` | `src/components/ConversationSurface.tsx` |
+| `conversation-ui.css` | `src/styles.css` |
+
+`ConversationSurfaceContext.tsx`, `use-conversation-queue.ts`, `adapters/**`,
+`index.ts` and this file are PAWOS additions.
+
+## Local adaptations
+
+- **State ownership is inverted.** The package ships a `ConversationProvider`
+  that owns a reducer and drives `transport.send()` itself. PAWOS already
+  reduces authoritative Runtime SSE into `useRoomLiveStore` /
+  `useAgentLiveStore`, and those stores own optimistic append, admission
+  state, snapshot recovery and resume tokens. Re-homing that in the package
+  reducer would fork the source of truth, so the vendored components read a
+  `ConversationSurfaceController` supplied by the host instead of
+  `useConversation()`. The transcript craft is unchanged; only where the
+  transcript comes from changed.
+- **Markdown.** `AssistantTurn` renders text blocks through this app's
+  `MarkdownBody`, which already wraps the sibling vendored clean-room
+  progressive renderer (`features/agent/timeline/progressive-markdown/`) plus
+  PAWOS link/HTML/code policy. The package's bare demo Markdown renderer is
+  not vendored.
+- **Copy is Simplified Chinese** to match the rest of the desktop.
+- **Colour.** `conversation-ui.css` keeps the `ccui-*` class namespace but
+  resolves every `--ccui-*` variable from PAWOS `--paw-*` desktop tokens.
+- **Host slots.** `renderAssistantBlock` / `renderAssistantFooter` let a host
+  keep Runtime-specific presentation (pending approvals, background process
+  links) inside the shared card without forking the card.
+- `ResizeObserver` guards were added to the two scroll hooks so the surface
+  also mounts in the jsdom test environment.
+
+## Deliberately not vendored
+
+- `context/ConversationProvider.tsx`, `model/reducer.ts` — superseded by the
+  PAWOS live stores, per the state-ownership note above.
+- `model/sideChat.ts`, `components/SideChatPanel.tsx` — no Pi Runtime contract
+  backs a per-conversation side chat today, and wiring the panel to anything
+  else would put invented data on a real transcript.
+- `components/Composer.tsx`, `hooks/useAutoGrowTextarea.ts` — input stays with
+  the PAWOS composers (`RoomComposer`, `AgentComposer`), which own attachments,
+  mentions, model/permission pickers and command palettes. Only the queue tray
+  is shared.
+- `rendering/**` — already vendored under
+  `features/agent/timeline/progressive-markdown/`.
+- `demo/`, `examples/`, `tools/`, `analysis/` — reference material, not product
+  code.
