@@ -1039,7 +1039,19 @@ export function PawSessionWorkspace({
           </div>
         </div>
 
-        {panel !== 'none' ? <aside className="paw-session-workspace__side" aria-label="Session 工具侧栏" data-tool={panel}>
+        {/* 工具侧栏是一层浮卡：只覆盖在消息流之上，绝不挤压对话列。
+            在浮层内按 Esc 关闭并把焦点还给“Session 工具”触发钮。 */}
+        {panel !== 'none' ? <aside
+          className="paw-session-workspace__side"
+          aria-label="Session 工具侧栏"
+          data-tool={panel}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            event.stopPropagation();
+            setPanel('none');
+            toolMenuButtonRef.current?.focus();
+          }}
+        >
           {panel === 'files' ? (
             <AgentFilesPanel
               sessionId={recordId}
