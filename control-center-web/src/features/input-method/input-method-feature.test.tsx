@@ -247,30 +247,34 @@ describe('InputMethodFeature', () => {
     expect(screen.getByRole('heading', { level: 3, name: '候选界面' })).toBeInTheDocument();
     const interactionTrigger = screen.getByRole('button', { name: /^输入体验/ });
     const displayTrigger = screen.getByRole('button', { name: /^候选界面/ });
-    expect(interactionTrigger).toHaveAttribute('aria-expanded', 'true');
+    // 设置台视口：分组默认全部收起，首屏只读分组索引与待保存状态。
+    expect(interactionTrigger).toHaveAttribute('aria-expanded', 'false');
     expect(displayTrigger).toHaveAttribute('aria-expanded', 'false');
     const interactionPanel = document.getElementById(interactionTrigger.getAttribute('aria-controls')!);
     const displayPanel = document.getElementById(displayTrigger.getAttribute('aria-controls')!);
-    expect(interactionPanel).not.toHaveAttribute('inert');
+    expect(interactionPanel).toHaveAttribute('inert');
     expect(displayPanel).toHaveAttribute('inert');
+    await user.click(interactionTrigger);
+    expect(interactionTrigger).toHaveAttribute('aria-expanded', 'true');
+    expect(interactionPanel).not.toHaveAttribute('inert');
+    expect(screen.getByRole('switch', { name: '上屏后联想' })).toBeDisabled();
+    expect(screen.getByLabelText('联想候选停留时间')).toHaveValue(4000);
     await user.click(displayTrigger);
     expect(displayTrigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByLabelText('联想候选数量')).toHaveValue(5);
     await user.click(interactionTrigger);
     expect(interactionTrigger).toHaveAttribute('aria-expanded', 'false');
     expect(interactionPanel).toHaveAttribute('inert');
     expect(document.querySelectorAll(".input-settings-group[data-open='true']")).toHaveLength(1);
-    await user.click(interactionTrigger);
-    expect(document.querySelector('.input-settings-save')?.compareDocumentPosition(document.querySelector('.input-settings-grid')!))
+    // 台账（状态 + 保存）排在分组索引之前：关键动作不落在折叠内容之下。
+    expect(document.querySelector('.input-settings-ledger')?.compareDocumentPosition(document.querySelector('.input-settings-grid')!))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.getByRole('list', { name: '输入链路状态' }).children).toHaveLength(2);
     expect(screen.getByText('本机模型已加载')).toBeInTheDocument();
     expect(screen.getByText('降级')).toBeInTheDocument();
-    expect(screen.getByLabelText('联想候选停留时间')).toHaveValue(4000);
-    expect(screen.getByLabelText('联想候选数量')).toHaveValue(5);
     expect(screen.getByLabelText('生成框最长等待')).toHaveValue(8000);
     expect(screen.getByLabelText('联想候选数量').closest('.input-setting-editor-row')).not.toBeNull();
     expect(screen.getByText(/需重新载入/)).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: '上屏后联想' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
   });
 
@@ -558,7 +562,8 @@ describe('InputMethodFeature', () => {
     });
     renderFeature(transport);
 
-    await user.click(await screen.findByRole('combobox', { name: 'Option+数字行为' }));
+    await user.click(await screen.findByRole('button', { name: /^输入体验/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Option+数字行为' }));
     await user.click(await screen.findByRole('option', { name: '关闭' }));
     await user.click(screen.getByRole('button', { name: /^候选界面/ }));
     const candidateCount = screen.getByLabelText('联想候选数量');
@@ -699,6 +704,7 @@ describe('InputMethodFeature', () => {
     const maxTokens = screen.getByLabelText('单次联想长度');
     await user.clear(maxTokens);
     await user.type(maxTokens, '12');
+    await user.click(screen.getByRole('button', { name: /^输入体验/ }));
     const modelBudget = screen.getByLabelText('本机模型最长等待');
     await user.clear(modelBudget);
     await user.type(modelBudget, '1200');
@@ -830,6 +836,7 @@ describe('InputMethodFeature', () => {
   });
 
   it('keeps settings visible when the input source query fails', async () => {
+    const user = userEvent.setup();
     renderFeature(new MockControlTransport({
       routes: {
         'input.source.get': () => { throw new Error('source probe unavailable'); },
@@ -842,6 +849,7 @@ describe('InputMethodFeature', () => {
 
     expect(await screen.findByText('读取失败')).toBeInTheDocument();
     expect(screen.getByText('上屏后联想')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^输入体验/ }));
     expect(screen.getByRole('switch', { name: '上屏后联想' })).toBeChecked();
   });
 
@@ -1098,6 +1106,7 @@ describe('InputMethodFeature', () => {
   });
 
   it('presents the generation stage as a native-suggestion schematic plus three real-setting lanes', async () => {
+    const user = userEvent.setup();
     renderFeature(new MockControlTransport({
       routes: {
         'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
@@ -1142,6 +1151,15 @@ describe('InputMethodFeature', () => {
       },
     }));
 
+    // 管线默认收起成一行真实状态；示意与车道细节按需展开。
+    const pipelineToggle = await screen.findByRole('button', { name: '生成步骤详情' });
+    expect(pipelineToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('上下文获取 · 就绪')).toBeInTheDocument();
+    expect(screen.getByText('记忆召回 · 已启用')).not.toHaveAttribute('data-off');
+    expect(screen.getByText('本机联想 · 就绪')).toBeInTheDocument();
+    await user.click(pipelineToggle);
+    expect(pipelineToggle).toHaveAttribute('aria-expanded', 'true');
+
     // 面板示意只按真实设置绘制：候选数量、紧凑样式、采纳方式与停留时长。
     const figure = await screen.findByRole('figure', { name: '上屏后智能候选面板示意' });
     expect(figure).toHaveAttribute('data-enabled', 'true');
@@ -1183,6 +1201,7 @@ describe('InputMethodFeature', () => {
   });
 
   it('keeps the generation stage honest when completion and recall are switched off', async () => {
+    const user = userEvent.setup();
     renderFeature(new MockControlTransport({
       routes: {
         'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
@@ -1200,6 +1219,11 @@ describe('InputMethodFeature', () => {
         'input.lexicon.review': emptyReview,
       },
     }));
+
+    // 收起态的一行概览同样诚实：关闭的车道不冒充在跑。
+    expect(await screen.findByText('记忆召回 · 已关闭')).toHaveAttribute('data-off');
+    expect(screen.getByText('本机联想 · 已关闭')).toHaveAttribute('data-off');
+    await user.click(screen.getByRole('button', { name: '生成步骤详情' }));
 
     const figure = await screen.findByRole('figure', { name: '上屏后智能候选面板示意' });
     expect(figure).toHaveAttribute('data-enabled', 'false');
@@ -1232,8 +1256,8 @@ describe('InputMethodFeature', () => {
     expect(await screen.findByRole('radiogroup', { name: '使用方式' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '记忆增强' })).toBeInTheDocument();
     expect(screen.getByText('召回更详尽、可展开时间线，其余与标准一致。')).toBeInTheDocument();
-    expect(document.querySelectorAll('.input-mode-card')).toHaveLength(4);
-    expect(document.querySelector('.input-mode-choice .ui-segmented')).toBeNull();
+    expect(document.querySelectorAll('.input-mode-deck .input-mode-card')).toHaveLength(4);
+    expect(document.querySelector('.input-mode-console .ui-segmented')).toBeNull();
 
     // 每张卡片带真实写入的事实签名；标准与记忆增强的分界键在两侧都被强调。
     const memoryCard = screen.getByRole('radio', { name: '记忆增强' });
@@ -1245,6 +1269,140 @@ describe('InputMethodFeature', () => {
     const safeCard = screen.getByRole('radio', { name: '安全' });
     expect(within(safeCard).getByText('联想关闭')).toHaveAttribute('data-off');
     expect(within(safeCard).getByText('远程生成关闭')).toHaveAttribute('data-off');
+  });
+
+  it('keeps the mode decision console first and the detail ledgers behind it', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    expect(await screen.findByRole('radiogroup', { name: '使用方式' })).toBeInTheDocument();
+    await screen.findByRole('list', { name: '输入链路状态' });
+
+    // 主决策（模式选择 + 保存）是第一段内容，不需要往下翻。
+    const body = document.querySelector('.mgmt-page__body')!;
+    expect(body.firstElementChild!.querySelector('.input-mode-deck')).not.toBeNull();
+    expect(body.firstElementChild!.textContent).toContain('保存使用方式');
+    const modeConsole = document.querySelector('.input-mode-console')!;
+    for (const selector of ['.input-pipeline', '.input-status-grid', '.input-settings-ledger']) {
+      const later = document.querySelector(selector);
+      expect(later).not.toBeNull();
+      expect(modeConsole.compareDocumentPosition(later!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
+
+    // 紧凑模式选择：宽窗横向四联，窗口收窄退到 2×2，不再是巨卡叠墙。
+    expect(inputMethodCss).toMatch(/\.input-mode-deck\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/s);
+    expect(inputMethodCss).toMatch(/@media \(max-width: 980px\)[\s\S]*?\.input-mode-deck\s*\{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    expect(inputMethodCss).toMatch(/@container paw-window \(max-width: 900px\)[\s\S]*?\.input-mode-deck\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+    // OS 控件语言：沿用 paw-os-controls 的尺度令牌；不透明表面，无渐变泡泡卡。
+    expect(inputMethodCss).toMatch(/--paw-control-h/);
+    expect(inputMethodCss).toMatch(/--paw-control-radius/);
+    expect(inputMethodCss).toMatch(/--paw-panel-radius/);
+    expect(inputMethodCss).not.toMatch(/linear-gradient/);
+  });
+
+  it('folds the mode diff ledger on demand while the count and save stay in view', async () => {
+    const user = userEvent.setup();
+    renderFeature(new MockControlTransport({
+      capabilities: {
+        features: {
+          managementWorkContract: true,
+          configurationSettingsWorkContract: true,
+        },
+      },
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 5,
+          settings: {
+            interaction: { postCommit: { enabled: true } },
+            memory: { enabled: true, recall: { detailLevel: 'compact', timelineEnabled: false } },
+            rag: { lanes: { tagMemo: true, timeDailyBook: true } },
+          },
+        },
+        'configuration.schema': { ok: true, sections: [] },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    await user.click(await screen.findByRole('radio', { name: '记忆增强' }));
+    const toggle = screen.getByRole('button', { name: '差异清单' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const panel = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(panel).not.toHaveAttribute('inert');
+    expect(screen.getByText('召回详细程度：紧凑 → 详尽')).toBeInTheDocument();
+
+    await user.click(toggle);
+
+    // 收起后逐行清单折叠，但改动数量与保存动作仍然同屏在场。
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(panel).toHaveAttribute('inert');
+    expect(screen.getByText('改用记忆增强将改动 2 项')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存使用方式' })).toBeInTheDocument();
+  });
+
+  it('keeps the settings save action fixed while the diff table folds', async () => {
+    const user = userEvent.setup();
+    renderFeature(new MockControlTransport({
+      capabilities: {
+        features: {
+          managementWorkContract: true,
+          configurationSettingsWorkContract: true,
+        },
+      },
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 12,
+          settings: { display: { maxPostCommitCandidates: 5 } },
+        },
+        'configuration.schema': {
+          ok: true,
+          sections: [{
+            id: 'display',
+            fields: [{
+              key: 'display.maxPostCommitCandidates',
+              type: 'integer',
+              min: 1,
+              max: 8,
+              applyMode: 'reload',
+            }],
+          }],
+        },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    await user.click(await screen.findByRole('button', { name: /^候选界面/ }));
+    const candidateCount = screen.getByLabelText('联想候选数量');
+    await user.clear(candidateCount);
+    await user.type(candidateCount, '6');
+
+    const ledger = document.body.querySelector<HTMLElement>('.input-settings-ledger');
+    expect(ledger).not.toBeNull();
+    expect(within(ledger!).getByText('1 项待保存')).toBeInTheDocument();
+    const toggle = within(ledger!).getByRole('button', { name: '差异清单' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const panel = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(panel).not.toHaveAttribute('inert');
+
+    await user.click(toggle);
+
+    // 差异表折叠后，待保存计数与保存动作仍然直接可见。
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(panel).toHaveAttribute('inert');
+    expect(within(ledger!).getByText('1 项待保存')).toBeInTheDocument();
+    expect(within(ledger!).getByRole('button', { name: '保存输入体验设置' })).toBeInTheDocument();
   });
 
   it('keeps the 当前 marker on the active mode while another card is only a draft', async () => {

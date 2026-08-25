@@ -193,6 +193,11 @@ export function InputMethodFeature() {
   const settingsWriteAvailability = queries.settingsMutationAvailability();
   const inferredMode = inferInputMode(settings);
   const [modeDraft, setModeDraft] = useState<InputMode | ''>('');
+  /* 视口台账开关：差异清单可折叠，生成管线默认收起。关键动作（选择
+   * 模式、保存）始终留在首屏，细节按需展开而不是把页面推成长卷。 */
+  const [modeLedgerOpen, setModeLedgerOpen] = useState(true);
+  const [pipelineOpen, setPipelineOpen] = useState(false);
+  const [settingsLedgerOpen, setSettingsLedgerOpen] = useState(true);
   const displayedMode = modeDraft || inferredMode;
   const pendingModeChanges = useMemo(() => modeDraft
     ? Object.fromEntries(Object.entries(inputModeChanges[modeDraft]).filter(([key, value]) => (
@@ -291,6 +296,177 @@ export function InputMethodFeature() {
       title="输入法"
     >
       <ManagementSection
+        description="每张卡片列出它真实写入的设置；核对差异清单后保存，其余键不动。"
+        title="使用方式"
+        trailing={(
+          <StatusBadge
+            label={queries.overview.isPending ? '正在读取模式' : profileLabel(reportedProfile)}
+            tone={overviewError ? 'danger' : 'neutral'}
+          />
+        )}
+      >
+        {runtimeModeMismatch ? (
+          <InlineNotice title="运行端与已保存设置不一致" tone="warning">
+            运行端仍报告「{runtimeProfileMode}」，已保存设置对应「{inferredMode}」。刷新核对，必要时重新载入输入法设置。
+          </InlineNotice>
+        ) : null}
+        <div className="input-mode-console">
+          <RadioGroup.Root
+            aria-label="使用方式"
+            className="input-mode-deck"
+            disabled={settingsWriteAvailability.state !== 'available'}
+            onValueChange={(next) => setModeDraft(next as InputMode)}
+            value={displayedMode as InputMode}
+          >
+            {inputModes.map((mode) => (
+              <RadioGroup.Item
+                aria-label={mode.label}
+                className="input-mode-card"
+                data-current={mode.value === inferredMode || undefined}
+                key={mode.value}
+                value={mode.value}
+              >
+                <span className="input-mode-card__head">
+                  <span aria-hidden="true" className="input-mode-card__glyph"><mode.icon size={15} /></span>
+                  <strong>{mode.label}</strong>
+                  {mode.value === inferredMode ? <span className="input-mode-card__current">当前</span> : null}
+                  <RadioGroup.Indicator className="input-mode-card__check">
+                    <Check aria-hidden="true" size={13} />
+                  </RadioGroup.Indicator>
+                </span>
+                <small className="input-mode-card__note">{mode.description}</small>
+                <span className="input-mode-card__facts">
+                  {modeFactChips(mode.value).map((chip) => (
+                    <span
+                      data-highlight={chip.highlight || undefined}
+                      data-off={chip.off || undefined}
+                      key={chip.key}
+                    >
+                      {chip.label}
+                    </span>
+                  ))}
+                </span>
+              </RadioGroup.Item>
+            ))}
+          </RadioGroup.Root>
+          <div className="input-mode-decision">
+            <div aria-live="polite" className="input-mode-delta">
+              {modeDraft && modeDiffItems.length ? (
+                <>
+                  <div className="input-mode-delta__head">
+                    <strong>改用{modeDraft}将改动 {modeDiffItems.length} 项</strong>
+                    <button
+                      aria-controls="input-mode-ledger-panel"
+                      aria-expanded={modeLedgerOpen}
+                      className="input-ledger-toggle"
+                      id="input-mode-ledger-trigger"
+                      onClick={() => setModeLedgerOpen((current) => !current)}
+                      type="button"
+                    >
+                      差异清单
+                      <ChevronDown aria-hidden="true" size={14} />
+                    </button>
+                  </div>
+                  <InputSettingsDisclosure
+                    id="input-mode-ledger-panel"
+                    labelledBy="input-mode-ledger-trigger"
+                    open={modeLedgerOpen}
+                  >
+                    <ul>
+                      {modeDiffItems.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </InputSettingsDisclosure>
+                </>
+              ) : modeDraft ? (
+                <span>所选方式与当前设置一致，无需保存。</span>
+              ) : inferredMode ? (
+                <span>当前设置与「{inferredMode}」一致。</span>
+              ) : (
+                <span>当前设置不属于任何预设。</span>
+              )}
+            </div>
+            <ManagementMutationWorkflow
+              availability={queries.settingsMutationAvailability(
+                runtimeRevision === null
+                  ? '当前设置状态尚未同步，刷新后才能继续。'
+                    : !modeDraft
+                    ? inferredMode
+                      ? `正在使用${inferredMode}；选择其他方式后可保存。`
+                      : '选择一种使用方式后可保存。'
+                    : modeDiffItems.length === 0
+                      ? '当前设置已符合所选模式。'
+                      : '',
+              )}
+              description="只写入差异清单里的设置，其余不动。"
+              draftKey={JSON.stringify({ mode: modeDraft, changes: pendingModeChanges, runtimeRevision })}
+              mutationKey={['input-method', 'mutation', 'mode']}
+              onApply={async (preview) => parseManagementWorkReceipt(
+                await queries.requestSettingsMutation({
+                  pathId: inputSettingsMutationPathIds.apply,
+                  body: {
+                    changes: preview.context.changes,
+                    expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                    previewToken: preview.previewToken,
+                    payloadSha256: preview.payloadSha256,
+                    confirmText: preview.requiredConfirm,
+                  },
+                }),
+                inputSettingsMutationPathIds.apply,
+                preview.payloadSha256,
+              )}
+              onApplied={() => {
+                // 保存成功后清空草稿：勾选状态回到“真实生效的模式”，
+                // 回执与撤销入口仍由工作流自身保留。
+                setModeDraft('');
+                void Promise.all([queries.settings.refetch(), queries.overview.refetch()]);
+              }}
+              onPreview={async () => {
+                if (!modeDraft || runtimeRevision === null || modeDiffItems.length === 0) {
+                  throw new Error('运行模式或当前设置版本已失效，请刷新后重试。');
+                }
+                const context = { mode: modeDraft, changes: { ...pendingModeChanges } };
+                const parsed = parseManagementWorkPreview(
+                  await queries.requestSettingsMutation({
+                    pathId: inputSettingsMutationPathIds.preview,
+                    body: { changes: context.changes, expectedRuntimeRevision: runtimeRevision },
+                  }),
+                  inputSettingsMutationPathIds.apply,
+                  context,
+                );
+                return {
+                  ...parsed,
+                  summary: {
+                    ...parsed.summary,
+                    title: `使用${modeDraft}？`,
+                    items: modeDiffItems,
+                  },
+                };
+              }}
+              onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+                await queries.requestSettingsMutation({
+                  pathId: inputSettingsMutationPathIds.rollback,
+                  body: {
+                    receiptId: receipt.receiptId,
+                    rollbackToken: receipt.rollbackToken,
+                    payloadSha256: receipt.payloadSha256,
+                    confirmText: 'rollback',
+                  },
+                }),
+                inputSettingsMutationPathIds.rollback,
+                preview.payloadSha256,
+              )}
+              onRolledBack={() => {
+                setModeDraft('');
+                void Promise.all([queries.settings.refetch(), queries.overview.refetch()]);
+              }}
+              risk={modeDraft === '调试模式' || modeDraft === '安全模式' ? 'R2' : 'R1'}
+              title="保存使用方式"
+            />
+          </div>
+        </div>
+      </ManagementSection>
+
+      <ManagementSection
         description="上下文、记忆、本机联想三步生成，与原生候选并排出现。"
         title="智能候选"
         trailing={(
@@ -306,38 +482,80 @@ export function InputMethodFeature() {
           isPending={settingsPending}
           onRetry={() => void Promise.all([queries.settings.refetch(), queries.schema.refetch()])}
         >
-          <SuggestionPanelPreview panel={panel} />
-          <ol aria-label="智能候选的生成步骤" className="input-gen-lanes">
-            <GenerationLane
-              badges={[{ label: contextLive.value, tone: contextLive.tone }]}
-              facts={contextLane.facts}
-              icon={TextCursorInput}
-              liveDetail={contextLive.detail}
-              summary={contextLane.summary}
-              title="上下文获取"
-            />
-            <GenerationLane
-              badges={[recallLane.enabled
-                ? { label: '已启用', tone: 'success' }
-                : { label: '已关闭', tone: 'neutral' }]}
-              dimmed={!recallLane.enabled}
-              facts={recallLane.facts}
-              icon={BookMarked}
-              summary={recallLane.summary}
-              title="记忆召回"
-            />
-            <GenerationLane
-              badges={completionLane.enabled
-                ? [{ label: predictorLive.value, tone: predictorLive.tone }, ...(modelHealthBadge ? [modelHealthBadge] : [])]
-                : [{ label: '已关闭', tone: 'neutral' }]}
-              dimmed={!completionLane.enabled}
-              facts={completionLane.facts}
-              icon={Sparkles}
-              liveDetail={completionLane.enabled ? predictorLive.detail : undefined}
-              summary={completionLane.summary}
-              title="本机联想"
-            />
-          </ol>
+          {/* 一行事实概览常驻视口：三步各自的真实状态。示意图与车道细节
+              折叠在后面，按需展开，不把首屏推成长卷。 */}
+          <div className="input-pipeline" data-open={pipelineOpen ? 'true' : 'false'}>
+            <button
+              aria-controls="input-pipeline-panel"
+              aria-expanded={pipelineOpen}
+              aria-label="生成步骤详情"
+              className="input-pipeline__summary"
+              id="input-pipeline-trigger"
+              onClick={() => setPipelineOpen((current) => !current)}
+              type="button"
+            >
+              <span className="input-pipeline__steps">
+                <span className="input-pipeline__step" data-tone={contextLive.tone}>
+                  上下文获取 · {contextLive.value}
+                </span>
+                <span
+                  className="input-pipeline__step"
+                  data-off={!recallLane.enabled || undefined}
+                  data-tone={recallLane.enabled ? 'success' : 'neutral'}
+                >
+                  记忆召回 · {recallLane.enabled ? '已启用' : '已关闭'}
+                </span>
+                <span
+                  className="input-pipeline__step"
+                  data-off={!completionLane.enabled || undefined}
+                  data-tone={completionLane.enabled ? predictorLive.tone : 'neutral'}
+                >
+                  本机联想 · {completionLane.enabled ? predictorLive.value : '已关闭'}
+                </span>
+              </span>
+              <ChevronDown aria-hidden="true" size={16} />
+            </button>
+            <InputSettingsDisclosure
+              id="input-pipeline-panel"
+              labelledBy="input-pipeline-trigger"
+              open={pipelineOpen}
+            >
+              <div className="input-pipeline__detail">
+                <SuggestionPanelPreview panel={panel} />
+                <ol aria-label="智能候选的生成步骤" className="input-gen-lanes">
+                  <GenerationLane
+                    badges={[{ label: contextLive.value, tone: contextLive.tone }]}
+                    facts={contextLane.facts}
+                    icon={TextCursorInput}
+                    liveDetail={contextLive.detail}
+                    summary={contextLane.summary}
+                    title="上下文获取"
+                  />
+                  <GenerationLane
+                    badges={[recallLane.enabled
+                      ? { label: '已启用', tone: 'success' }
+                      : { label: '已关闭', tone: 'neutral' }]}
+                    dimmed={!recallLane.enabled}
+                    facts={recallLane.facts}
+                    icon={BookMarked}
+                    summary={recallLane.summary}
+                    title="记忆召回"
+                  />
+                  <GenerationLane
+                    badges={completionLane.enabled
+                      ? [{ label: predictorLive.value, tone: predictorLive.tone }, ...(modelHealthBadge ? [modelHealthBadge] : [])]
+                      : [{ label: '已关闭', tone: 'neutral' }]}
+                    dimmed={!completionLane.enabled}
+                    facts={completionLane.facts}
+                    icon={Sparkles}
+                    liveDetail={completionLane.enabled ? predictorLive.detail : undefined}
+                    summary={completionLane.summary}
+                    title="本机联想"
+                  />
+                </ol>
+              </div>
+            </InputSettingsDisclosure>
+          </div>
 
           {modelStatusUnavailable ? (
             <div className="input-inline-action">
@@ -418,158 +636,6 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="每张卡片列出它真实写入的设置；核对差异后保存。"
-        title="使用方式"
-        trailing={(
-          <StatusBadge
-            label={queries.overview.isPending ? '正在读取模式' : profileLabel(reportedProfile)}
-            tone={overviewError ? 'danger' : 'neutral'}
-          />
-        )}
-      >
-        {runtimeModeMismatch ? (
-          <InlineNotice title="运行端与已保存设置不一致" tone="warning">
-            运行端仍报告「{runtimeProfileMode}」，已保存设置对应「{inferredMode}」。刷新核对，必要时重新载入输入法设置。
-          </InlineNotice>
-        ) : null}
-        <div className="input-mode-layout">
-          <div className="input-mode-choice">
-            <RadioGroup.Root
-              aria-label="使用方式"
-              className="input-mode-cards"
-              disabled={settingsWriteAvailability.state !== 'available'}
-              onValueChange={(next) => setModeDraft(next as InputMode)}
-              value={displayedMode as InputMode}
-            >
-              {inputModes.map((mode) => (
-                <RadioGroup.Item
-                  aria-label={mode.label}
-                  className="input-mode-card"
-                  data-current={mode.value === inferredMode || undefined}
-                  key={mode.value}
-                  value={mode.value}
-                >
-                  <span className="input-mode-card__head">
-                    <span aria-hidden="true" className="input-mode-card__glyph"><mode.icon size={15} /></span>
-                    <strong>{mode.label}</strong>
-                    {mode.value === inferredMode ? <span className="input-mode-card__current">当前</span> : null}
-                    <RadioGroup.Indicator className="input-mode-card__check">
-                      <Check aria-hidden="true" size={13} />
-                    </RadioGroup.Indicator>
-                  </span>
-                  <small className="input-mode-card__note">{mode.description}</small>
-                  <span className="input-mode-card__facts">
-                    {modeFactChips(mode.value).map((chip) => (
-                      <span
-                        data-highlight={chip.highlight || undefined}
-                        data-off={chip.off || undefined}
-                        key={chip.key}
-                      >
-                        {chip.label}
-                      </span>
-                    ))}
-                  </span>
-                </RadioGroup.Item>
-              ))}
-            </RadioGroup.Root>
-            <div aria-live="polite" className="input-mode-delta">
-              {modeDraft && modeDiffItems.length ? (
-                <>
-                  <strong>改用{modeDraft}将改动 {modeDiffItems.length} 项</strong>
-                  <ul>
-                    {modeDiffItems.map((item) => <li key={item}>{item}</li>)}
-                  </ul>
-                </>
-              ) : modeDraft ? (
-                <span>所选方式与当前设置一致，无需保存。</span>
-              ) : inferredMode ? (
-                <span>当前设置与「{inferredMode}」一致。</span>
-              ) : (
-                <span>当前设置不属于任何预设。</span>
-              )}
-            </div>
-          </div>
-          <ManagementMutationWorkflow
-            availability={queries.settingsMutationAvailability(
-              runtimeRevision === null
-                ? '当前设置状态尚未同步，刷新后才能继续。'
-                  : !modeDraft
-                  ? inferredMode
-                    ? `正在使用${inferredMode}；选择其他方式后可保存。`
-                    : '选择一种使用方式后可保存。'
-                  : modeDiffItems.length === 0
-                    ? '当前设置已符合所选模式。'
-                    : '',
-            )}
-            description="只写入差异清单里的设置，其余不动。"
-            draftKey={JSON.stringify({ mode: modeDraft, changes: pendingModeChanges, runtimeRevision })}
-            mutationKey={['input-method', 'mutation', 'mode']}
-            onApply={async (preview) => parseManagementWorkReceipt(
-              await queries.requestSettingsMutation({
-                pathId: inputSettingsMutationPathIds.apply,
-                body: {
-                  changes: preview.context.changes,
-                  expectedRuntimeRevision: preview.expectedRuntimeRevision,
-                  previewToken: preview.previewToken,
-                  payloadSha256: preview.payloadSha256,
-                  confirmText: preview.requiredConfirm,
-                },
-              }),
-              inputSettingsMutationPathIds.apply,
-              preview.payloadSha256,
-            )}
-            onApplied={() => {
-              // 保存成功后清空草稿：勾选状态回到“真实生效的模式”，
-              // 回执与撤销入口仍由工作流自身保留。
-              setModeDraft('');
-              void Promise.all([queries.settings.refetch(), queries.overview.refetch()]);
-            }}
-            onPreview={async () => {
-              if (!modeDraft || runtimeRevision === null || modeDiffItems.length === 0) {
-                throw new Error('运行模式或当前设置版本已失效，请刷新后重试。');
-              }
-              const context = { mode: modeDraft, changes: { ...pendingModeChanges } };
-              const parsed = parseManagementWorkPreview(
-                await queries.requestSettingsMutation({
-                  pathId: inputSettingsMutationPathIds.preview,
-                  body: { changes: context.changes, expectedRuntimeRevision: runtimeRevision },
-                }),
-                inputSettingsMutationPathIds.apply,
-                context,
-              );
-              return {
-                ...parsed,
-                summary: {
-                  ...parsed.summary,
-                  title: `使用${modeDraft}？`,
-                  items: modeDiffItems,
-                },
-              };
-            }}
-            onRollback={async (receipt, preview) => parseManagementWorkReceipt(
-              await queries.requestSettingsMutation({
-                pathId: inputSettingsMutationPathIds.rollback,
-                body: {
-                  receiptId: receipt.receiptId,
-                  rollbackToken: receipt.rollbackToken,
-                  payloadSha256: receipt.payloadSha256,
-                  confirmText: 'rollback',
-                },
-              }),
-              inputSettingsMutationPathIds.rollback,
-              preview.payloadSha256,
-            )}
-            onRolledBack={() => {
-              setModeDraft('');
-              void Promise.all([queries.settings.refetch(), queries.overview.refetch()]);
-            }}
-            risk={modeDraft === '调试模式' || modeDraft === '安全模式' ? 'R2' : 'R1'}
-            title="保存使用方式"
-          />
-        </div>
-      </ManagementSection>
-
-      <ManagementSection
         description="候选数量、触发时机与本机联想参数，只保存本次改动。"
         title="输入体验设置"
         trailing={(
@@ -587,28 +653,49 @@ export function InputMethodFeature() {
         >
           {settingsGroups.length ? (
             <div className="input-settings-layout">
-              <div className="mgmt-stack input-settings-save">
-                <div className="input-settings-save__heading">
-                  <div>
-                    <h3 className="input-settings-diff-title">待保存更改</h3>
-                    <p>{diffRows.length ? '核对下表后保存。' : '下方的修改会先在这里列出。'}</p>
-                  </div>
+              <div
+                className="input-settings-ledger"
+                data-attention={hasInvalidChanges || diffRows.length > 0 || undefined}
+              >
+                <div className="input-settings-ledger__row">
+                  <h3 className="input-settings-diff-title">待保存更改</h3>
                   <StatusBadge
                     label={hasInvalidChanges ? '需要修正' : diffRows.length ? `${diffRows.length} 项待保存` : '尚未修改'}
                     tone={hasInvalidChanges ? 'danger' : diffRows.length ? 'info' : 'neutral'}
                   />
+                  {diffRows.length ? (
+                    <button
+                      aria-controls="input-settings-ledger-panel"
+                      aria-expanded={settingsLedgerOpen}
+                      className="input-ledger-toggle"
+                      id="input-settings-ledger-trigger"
+                      onClick={() => setSettingsLedgerOpen((current) => !current)}
+                      type="button"
+                    >
+                      差异清单
+                      <ChevronDown aria-hidden="true" size={14} />
+                    </button>
+                  ) : (
+                    <span className="input-settings-ledger__hint">下方分组里的修改会先在这里列出。</span>
+                  )}
                 </div>
                 {diffRows.length ? (
-                  <DataTable
-                    caption="输入设置待保存更改"
-                    columns={[
-                      { key: 'key', label: '设置项', width: '34%' },
-                      { key: 'before', label: '当前' },
-                      { key: 'after', label: '目标' },
-                      { key: 'applyMode', label: '生效方式', width: '20%' },
-                    ]}
-                    rows={diffRows}
-                  />
+                  <InputSettingsDisclosure
+                    id="input-settings-ledger-panel"
+                    labelledBy="input-settings-ledger-trigger"
+                    open={settingsLedgerOpen}
+                  >
+                    <DataTable
+                      caption="输入设置待保存更改"
+                      columns={[
+                        { key: 'key', label: '设置项', width: '34%' },
+                        { key: 'before', label: '当前' },
+                        { key: 'after', label: '目标' },
+                        { key: 'applyMode', label: '生效方式', width: '20%' },
+                      ]}
+                      rows={diffRows}
+                    />
+                  </InputSettingsDisclosure>
                 ) : null}
                 <ManagementMutationWorkflow
                   availability={queries.settingsMutationAvailability(
@@ -620,7 +707,7 @@ export function InputMethodFeature() {
                         ? '修改至少一个输入设置后才能保存。'
                         : '',
                   )}
-                  description="只提交上表改动，按各项的生效方式处理。"
+                  description="只提交差异清单里的改动，按各项的生效方式处理。"
                   draftKey={JSON.stringify({ changes: pendingChanges, runtimeRevision })}
                   mutationKey={['input-method', 'mutation', 'settings']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -832,7 +919,8 @@ function InputSettingsGroup({
   onChange: (key: string, value: DraftValue) => void;
   settings: Record<string, unknown>;
 }) {
-  const [userOpen, setUserOpen] = useState(id === 'interaction');
+  // 视口台账：所有分组默认收起，首屏只读分组索引与待保存状态。
+  const [userOpen, setUserOpen] = useState(false);
   const [advancedUserOpen, setAdvancedUserOpen] = useState(false);
   const dailyFields = fields.filter((field) => stringValue(field.key) !== 'models.path');
   const advancedFields = fields.filter((field) => stringValue(field.key) === 'models.path');
