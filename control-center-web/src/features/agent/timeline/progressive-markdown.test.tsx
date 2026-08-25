@@ -17,14 +17,14 @@ describe('progressive markdown streaming path', () => {
     );
     const second = scanIncrementalMarkdown(
       first,
-      '第一段。\n\n第二段完成。\n\n第三段还在生成',
+      '第一段。\n\n第二段还在生成，现在完成。\n\n第三段还在生成',
     );
 
     expect(first.chunks).toHaveLength(1);
     expect(second.chunks).toHaveLength(2);
     // Chunk object identity is the contract React.memo freezes on.
     expect(second.chunks[0]).toBe(first.chunks[0]);
-    expect(second.chunks[1]?.text).toBe('第二段完成。');
+    expect(second.chunks[1]?.text).toBe('第二段还在生成，现在完成。');
   });
 
   it('freezes completed chunk DOM identity while only the streaming tail updates', () => {
