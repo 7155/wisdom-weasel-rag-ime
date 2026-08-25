@@ -174,7 +174,7 @@ export function evidenceEchoRoute(entity: EvidenceEchoEntity): string {
   }
   if (entity.appId === 'knowledge') {
     const base = entity.baseId ? `base=${encodeURIComponent(entity.baseId)}&` : '';
-    return `/knowledge?${base}document=${encodeURIComponent(entity.entityId)}`;
+    return `/knowledge?${base}document=${encodeURIComponent(entity.entityId)}&tab=viewer`;
   }
   if (entity.appId === 'files') {
     const session = entity.sessionId ? `session=${encodeURIComponent(entity.sessionId)}&` : '';
