@@ -325,6 +325,15 @@
   animation: paw-browser-start-orbit 7s linear infinite;
 }
 
+/* Decorative start-page motion spends frames only in the focused window: an
+   unfocused Browser keeps the halo visible but still, so several open App
+   windows never multiply idle animation work on the compositor. Status
+   signals (agent runner, live traces) are information and keep running. */
+.paw-desktop-root .paw-window-shell:not([data-active]) .paw-browser-start-halo,
+.paw-desktop-root .paw-window-shell:not([data-active]) .paw-browser-start-halo::after {
+  animation-play-state: paused;
+}
+
 .paw-desktop-root .paw-browser-start > strong {
   color: var(--paw-browser-ink);
   font-size: 19px;
