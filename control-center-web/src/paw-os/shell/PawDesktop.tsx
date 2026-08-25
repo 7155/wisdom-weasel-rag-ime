@@ -379,7 +379,8 @@ function Wayfinder({ onOpen, onSelect, selectedApps }: {
 }) {
   const desktopApps: PawAppId[] = ['project-workbench', 'agent', 'files', 'browser', 'terminal'];
   const shortcutsRef = useRef<HTMLDivElement>(null);
-  // Roving arrows walk the shortcut column like a real desktop: focus moves
+  const running = usePawRunningApps();
+  // Roving arrows walk the shortcut list like a real desktop: focus moves
   // between identities without tabbing out of the Wayfinder, and Enter on the
   // focused identity still opens it (owned by the per-button handler below).
   const walkShortcuts = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -403,27 +404,62 @@ function Wayfinder({ onOpen, onSelect, selectedApps }: {
       <div aria-hidden="true" className="paw-field-media">
         <PawCompositionField effects />
       </div>
+      {/* The first viewport leads with the actionable list: one dense
+          Wayfinder instrument over the fog field instead of a sparse icon
+          scatter. Each row keeps the selection/open contracts (click selects,
+          double-click or Enter opens) and mirrors the Dock's open/minimized
+          running language so live work is visible from the desktop. */}
       <div className="paw-desktop-shortcuts" aria-label="桌面 App" onKeyDown={walkShortcuts} ref={shortcutsRef}>
-        {desktopApps.map((id) => (
-          <button
-            aria-selected={selectedApps.has(id) || undefined}
-            data-app={id}
-            data-desktop-app={id}
-            key={id}
-            onClick={(event) => onSelect(id, event.shiftKey || event.metaKey || event.ctrlKey)}
-            onDoubleClick={() => onOpen(id)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') onOpen(id);
-            }}
-            type="button"
-          >
-            <span><PawAppIcon appId={id} size={48} /></span>
-            <strong>{pawApp(id).shortLabel}</strong>
-          </button>
-        ))}
+        <header aria-hidden="true">项目场</header>
+        {desktopApps.map((id) => {
+          const open = running.open.has(id);
+          const minimizedOnly = open && !running.visible.has(id);
+          return (
+            <button
+              aria-selected={selectedApps.has(id) || undefined}
+              data-app={id}
+              data-desktop-app={id}
+              data-minimized={minimizedOnly || undefined}
+              data-open={open || undefined}
+              key={id}
+              onClick={(event) => onSelect(id, event.shiftKey || event.metaKey || event.ctrlKey)}
+              onDoubleClick={() => onOpen(id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') onOpen(id);
+              }}
+              title={minimizedOnly ? `${pawApp(id).shortLabel} · 已最小化` : open ? `${pawApp(id).shortLabel} · 运行中` : undefined}
+              type="button"
+            >
+              <span><PawAppIcon appId={id} size={28} /></span>
+              <strong>{pawApp(id).shortLabel}</strong>
+              <i aria-hidden="true" />
+            </button>
+          );
+        })}
       </div>
     </section>
   );
+}
+
+/* One projection answers "which Apps are running, which are hidden" for both
+ * the Wayfinder list and the Dock. The sorted string signature keeps the
+ * store subscription referentially stable, so rows and pills re-render only
+ * when an App's running state actually changes. */
+function usePawRunningApps(): { open: ReadonlySet<PawAppId>; visible: ReadonlySet<PawAppId> } {
+  const signature = usePawDesktopStore((state) => Object.values(state.windows)
+    .map((node) => `${node.appId}\u0001${node.minimized ? '1' : '0'}`)
+    .sort()
+    .join('\u0000'));
+  return useMemo(() => {
+    const open = new Set<PawAppId>();
+    const visible = new Set<PawAppId>();
+    for (const item of signature.split('\u0000').filter(Boolean)) {
+      const [appId, minimized] = item.split('\u0001') as [PawAppId, string];
+      open.add(appId);
+      if (minimized === '0') visible.add(appId);
+    }
+    return { open, visible };
+  }, [signature]);
 }
 
 function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }: {
@@ -435,20 +471,7 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
 }) {
   const dockRef = useRef<HTMLElement>(null);
   useDockMagnification(dockRef);
-  const dockStateSignature = usePawDesktopStore((state) => Object.values(state.windows)
-    .map((node) => `${node.appId}\u0001${node.minimized ? '1' : '0'}`)
-    .sort()
-    .join('\u0000'));
-  const dockState = useMemo(() => {
-    const open = new Set<PawAppId>();
-    const visible = new Set<PawAppId>();
-    for (const item of dockStateSignature.split('\u0000').filter(Boolean)) {
-      const [appId, minimized] = item.split('\u0001') as [PawAppId, string];
-      open.add(appId);
-      if (minimized === '0') visible.add(appId);
-    }
-    return { open, visible };
-  }, [dockStateSignature]);
+  const dockState = usePawRunningApps();
   return (
     <nav aria-label="PAWOS 工具架" className="paw-dock" ref={dockRef}>
       {pawDockAppIds.map((appId) => {

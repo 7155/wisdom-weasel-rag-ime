@@ -164,6 +164,28 @@ describe('PAWOS shell visual language', () => {
     expect(rule(shellCss, '.paw-desktop-root .paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
   });
 
+  it('keeps the Wayfinder list dense on one blur-free plate with a single style owner', () => {
+    // One owner: the migrated theme may not re-style the desktop list, so the
+    // identity wash/ring language can never be overridden back into a second
+    // hardcoded plate recipe like the pre-density desktop.
+    expect(shellCss).not.toContain('.paw-desktop-shortcuts');
+    const plate = rule(pawOsCss, '.paw-desktop-shortcuts');
+    expect(plate).not.toContain('backdrop-filter');
+    expect(plate).toContain('background: rgb(249 251 254 / .66);');
+    // List ink stays AA-readable composited over the brightest fog band.
+    const ground = composite('rgb(249 251 254 / .66)', '#f5f8fc');
+    expect(contrast(hexToRgb('#0f172a'), ground)).toBeGreaterThanOrEqual(7);
+    expect(contrast(hexToRgb('#5d6675'), ground)).toBeGreaterThanOrEqual(4.5);
+    // Rows carry the Dock's running shape language: long pill = visible
+    // window, short soft pill = minimized only — never colour alone.
+    const running = rule(pawOsCss, '.paw-desktop-shortcuts button[data-open] > i');
+    expect(running).toContain('var(--paw-identity-dot)');
+    expect(running).toContain('height: 3px');
+    expect(rule(pawOsCss, '.paw-desktop-shortcuts button[data-minimized] > i')).toContain('width: 6px');
+    // Dense rows resolve the md ladder step, not the launcher's 48px tile.
+    expect(rule(appIconCss, '.paw-desktop-shortcuts .paw-app-icon')).toContain('var(--paw-icon-step-md)');
+  });
+
   it('re-pairs the window title ink on the dark Terminal chrome', () => {
     expect(shellCss).toMatch(/\.paw-window-shell\[data-app='terminal'\] \.paw-window-title\s*\{\s*color:\s*#8fd08a;/);
     expect(shellCss).toMatch(/\.paw-window-shell\[data-app='terminal'\]:not\(\[data-active\]\) \.paw-window-title\s*\{\s*color:\s*#93a0ae;/);

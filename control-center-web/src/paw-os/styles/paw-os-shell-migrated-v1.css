@@ -222,46 +222,10 @@
   to { opacity: .78; }
 }
 
-/* ---------------------------------------------------- Desktop shortcuts
- * Full-colour identities remain unframed at every real placement. Labels sit
- * on their own opaque pill so wallpaper contrast can never wash them out. */
-.paw-desktop-root .paw-desktop-shortcuts {
-  left: 22px;
-  top: 22px;
-  grid-template-columns: 84px;
-  gap: 12px;
-}
-.paw-desktop-root .paw-desktop-shortcuts button {
-  gap: 7px;
-  padding: 7px 5px;
-  border-radius: 12px;
-}
-.paw-desktop-root .paw-desktop-shortcuts button:hover {
-  background: rgb(255 255 255 / .5);
-}
-.paw-desktop-root .paw-desktop-shortcuts button[aria-selected='true'] {
-  background: rgb(255 255 255 / .66);
-  box-shadow: 0 0 0 1.5px rgb(47 107 255 / .55), 0 6px 18px -8px rgb(31 43 66 / .3);
-}
-.paw-desktop-root .paw-desktop-shortcuts button > span {
-  width: 56px;
-  height: 56px;
-  border: 0;
-  border-radius: 14px;
-  background: transparent;
-  box-shadow: none;
-}
-.paw-desktop-root .paw-desktop-shortcuts button strong {
-  max-width: 80px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  color: #273142;
-  background: rgb(255 255 255 / .78);
-  font-size: 13px;
-  line-height: 1.4;
-  font-weight: 620;
-  text-shadow: 0 1px 0 #fff;
-}
+/* ------------------------------------------------------- Wayfinder list
+ * The dense desktop App/project list is fully owned by paw-os.css so its
+ * identity wash/ring/dot language can never be overridden back into a second
+ * plate recipe here. This theme keeps only the lasso. */
 .paw-desktop-root .paw-selection-lasso {
   border: 1px solid rgb(47 107 255 / .72);
   border-radius: 6px;

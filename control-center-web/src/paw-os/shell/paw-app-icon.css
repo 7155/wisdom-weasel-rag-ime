@@ -9,9 +9,9 @@
 :root {
   --paw-icon-step-xs: 16px; /* menu bar App identity */
   --paw-icon-step-sm: 20px; /* window titlebar */
-  --paw-icon-step-md: 28px; /* overview targets, App runtime headers */
+  --paw-icon-step-md: 28px; /* overview targets, App runtime headers, Wayfinder list rows */
   --paw-icon-step-lg: 34px; /* Dock, native App nav header */
-  --paw-icon-step-xl: 48px; /* desktop shortcuts, launcher */
+  --paw-icon-step-xl: 48px; /* launcher */
 }
 
 .paw-app-icon {
@@ -56,13 +56,13 @@
   background: transparent;
   box-shadow: none;
 }
-.paw-desktop-shortcuts button > span { width: 56px; height: 56px; }
+.paw-desktop-shortcuts button > span { width: 32px; height: 32px; }
 .paw-menu-app .paw-app-icon { width: var(--paw-icon-step-xs); height: var(--paw-icon-step-xs); }
 .paw-window-title .paw-app-icon { width: var(--paw-icon-step-sm); height: var(--paw-icon-step-sm); }
 .paw-overview-window-target > .paw-app-icon { width: var(--paw-icon-step-md); height: var(--paw-icon-step-md); }
 .paw-dock .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
 .paw-native-nav > header .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
-.paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-xl); height: var(--paw-icon-step-xl); }
+.paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-md); height: var(--paw-icon-step-md); }
 .paw-launchpad .paw-app-icon { width: var(--paw-icon-step-xl); height: var(--paw-icon-step-xl); }
 
 /* One selected / running language. Hover, selection, the current-App plate
