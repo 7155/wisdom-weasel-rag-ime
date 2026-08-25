@@ -716,7 +716,8 @@ describe('Agent experience', () => {
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue(
       '读取输入法工具书，并把结果作为可展开卡片保留。',
     );
-    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
+    // 禁用的发送钮把原因写进可及名称（“发送（…）”），所以按前缀匹配。
+    expect(screen.getByRole('button', { name: /^发送（/ })).toBeDisabled();
 
     pendingForkCatalog.resolve(forkListFixture());
     expect(await screen.findByText('发送后将从这里重新生成后续对话')).toBeInTheDocument();
@@ -2394,7 +2395,8 @@ describe('Agent experience', () => {
 
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('working'));
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById[failedTurnId]?.status).toBe('failed');
-    expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled();
+    // 禁用的发送钮把原因写进可及名称（“发送（…）”），所以按前缀匹配。
+    expect(await screen.findByRole('button', { name: /^发送（/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重试本轮' })).toBeEnabled();
     expect(screen.getByText('模型服务请求失败，请重试或切换模型。')).toBeInTheDocument();
