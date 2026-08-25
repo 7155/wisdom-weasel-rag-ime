@@ -274,16 +274,24 @@
 
 .ccui-thinking-summary:disabled { cursor: default; }
 
-.ccui-thinking-dot {
+/* Status marks are lit spheres, not flat dots, so this surface and the PAWOS
+   Agent transcript (`.paw-conv-planet`) read as the same product. The 1.2s
+   pulse is unchanged; only the body gained its highlight and terminator. */
+.ccui-thinking-dot,
+.ccui-tool-status {
+  --ccui-mark: var(--ccui-faint);
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--ccui-faint);
+  background:
+    radial-gradient(circle at 32% 27%, rgb(255 255 255 / 88%) 0 13%, rgb(255 255 255 / 0%) 46%),
+    radial-gradient(circle at 76% 82%, rgb(8 16 34 / 32%) 0 16%, rgb(8 16 34 / 0%) 60%),
+    radial-gradient(circle at 42% 38%, var(--ccui-mark) 0 54%, color-mix(in srgb, var(--ccui-mark) 48%, #0b1220) 100%);
 }
 
 .ccui-thinking.is-running .ccui-thinking-dot {
-  background: var(--ccui-accent);
+  --ccui-mark: var(--ccui-accent);
   animation: ccui-pulse 1.2s ease-in-out infinite;
 }
 
@@ -329,21 +337,14 @@
 
 .ccui-tool-head:disabled { cursor: default; }
 
-.ccui-tool-status {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ccui-faint);
-}
-
 .ccui-tool-card.status-running .ccui-tool-status {
-  background: var(--ccui-accent);
-  animation: ccui-pulse 1.2s infinite;
+  --ccui-mark: var(--ccui-accent);
+  animation: ccui-pulse 1.2s ease-in-out infinite;
 }
 
-.ccui-tool-card.status-success .ccui-tool-status { background: var(--ccui-success); }
-.ccui-tool-card.status-error .ccui-tool-status { background: var(--ccui-danger); }
-.ccui-tool-card.status-cancelled .ccui-tool-status { background: var(--ccui-warning); }
+.ccui-tool-card.status-success .ccui-tool-status { --ccui-mark: var(--ccui-success); }
+.ccui-tool-card.status-error .ccui-tool-status { --ccui-mark: var(--ccui-danger); }
+.ccui-tool-card.status-cancelled .ccui-tool-status { --ccui-mark: var(--ccui-warning); }
 
 .ccui-tool-main {
   display: flex;

@@ -655,9 +655,15 @@
     0 0 8px color-mix(in srgb, var(--paw-planet-core) 22%, transparent);
 }
 
-/* The pill already reserves 5px for its settled dot; a live planet needs the
-   orbit clearance instead of eating the label. */
-.paw-desktop-root .paw-chatfx .fx-pill .paw-conv-planet { margin-inline-end: 2px; }
+/* In a status pill the tone is the authority on colour and the planet is the
+   authority on motion: an identical body reads ok / run / wait / danger /
+   subagent-violet without a second vocabulary of coloured dots. */
+.paw-desktop-root .paw-chatfx :is(.fx-pill, .agent-fx-pill) .paw-conv-planet { margin-inline-end: 2px; }
+.paw-desktop-root .paw-chatfx :is(.fx-pill.ok, .agent-fx-pill[data-tone='ok']) .paw-conv-planet { --paw-planet-core: var(--paw-chat-ok); }
+.paw-desktop-root .paw-chatfx :is(.fx-pill.run, .agent-fx-pill[data-tone='run']) .paw-conv-planet { --paw-planet-core: var(--paw-chat-accent); }
+.paw-desktop-root .paw-chatfx :is(.fx-pill.wait, .agent-fx-pill[data-tone='wait'], .agent-fx-pill[data-tone='warn']) .paw-conv-planet { --paw-planet-core: var(--paw-chat-warn); }
+.paw-desktop-root .paw-chatfx :is(.fx-pill.danger, .agent-fx-pill[data-tone='danger']) .paw-conv-planet { --paw-planet-core: var(--paw-chat-danger); }
+.paw-desktop-root .paw-chatfx .fx-pill.vio .paw-conv-planet { --paw-planet-core: var(--paw-chat-violet); }
 
 /* 思考/执行条上的行星是这条胶囊里唯一的动源，给它一点呼吸边距。 */
 .paw-desktop-root .paw-chatfx .agent-assistant-pending > .paw-conv-planet { margin-inline: 3px 1px; }

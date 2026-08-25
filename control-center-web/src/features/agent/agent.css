@@ -440,10 +440,7 @@
 .paw-conv-planet[data-state='failed'] { --paw-planet-core: var(--color-danger); }
 .paw-conv-planet[data-state='done'] { --paw-planet-core: var(--color-success); }
 
-.paw-conv-planet[data-state='idle'] {
-  --paw-planet-core: color-mix(in srgb, var(--color-text-tertiary) 70%, var(--color-surface));
-  --paw-planet-shade: color-mix(in srgb, var(--color-text-tertiary) 92%, #0b1220);
-}
+.paw-conv-planet[data-state='idle'] { --paw-planet-core: color-mix(in srgb, var(--color-text-tertiary) 70%, var(--color-surface)); }
 
 .paw-conv-planet__body {
   width: 100%;
