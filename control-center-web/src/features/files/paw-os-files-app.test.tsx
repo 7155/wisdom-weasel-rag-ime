@@ -21,6 +21,138 @@ describe('PawOsFilesApp', () => {
     expect(filesCss).toMatch(/\.paw-files-app__title\s*\{[^}]*position:\s*absolute;/s);
   });
 
+  it('frames itself as an App window: fixed chrome bands around one scrolling workspace', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [] },
+      },
+    });
+
+    const { container } = renderApp(transport, <PawOsFilesApp />);
+    const app = container.querySelector('.paw-files-app') as HTMLElement;
+    await screen.findByRole('tree', { name: '项目文件' });
+
+    // Scope bar, workspace, status bar — no extra wrapper between the window
+    // and the band that has to absorb the resize.
+    expect([...app.children].map((child) => child.className)).toEqual([
+      'paw-files-app__title',
+      'paw-files-app__toolbar',
+      'paw-files-app__workspace',
+      'paw-files-statusbar',
+    ]);
+    // The chrome bands keep their own height and the workspace takes the
+    // rest, with no row template restated per band combination.
+    expect(filesCss).toMatch(/\.paw-files-app\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/s);
+    expect(filesCss).toMatch(/\.paw-files-app > :is\([^)]*\)\s*\{[^}]*flex:\s*0 0 auto;/s);
+    expect(filesCss).toMatch(/\.paw-files-app__workspace\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0;/s);
+    expect(filesCss).not.toMatch(/grid-template-rows:\s*[^;]*\b\d+px\b[^;]*;/);
+    // Both panes own a local scroll instead of growing the window.
+    expect(filesCss).toMatch(/\.paw-files-tree__scroll\s*\{[^}]*overflow:\s*auto;/s);
+    expect(filesCss).toMatch(/\.paw-files-preview__body\s*\{[^}]*overflow:\s*auto;/s);
+  });
+
+  it('keeps every scope-bar and reader control on the shared 32px control height', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [] },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    await screen.findByRole('tree', { name: '项目文件' });
+
+    // The shared control language owns the scale; Files only re-points it,
+    // including on the scope bar, which window chrome portals out of the App.
+    expect(filesCss).toMatch(/\.paw-files-app,\s*\n\.paw-files-app__toolbar \{[^}]*--paw-files-control-h: var\(--paw-control-h, 32px\);/s);
+    for (const declaration of [
+      /\.paw-files-scope,\s*\n\.paw-files-filter \{[^}]*height: var\(--paw-files-control-h\);/s,
+      /\.paw-files-preview__action\s*\{[^}]*width: var\(--paw-files-control-h\);[^}]*height: var\(--paw-files-control-h\);/s,
+      /\.paw-files-preview__back\s*\{[^}]*height: var\(--paw-files-control-h\);/s,
+    ]) expect(filesCss).toMatch(declaration);
+    // Control surfaces stay opaque so their ink never lands on an unknown backdrop.
+    expect(filesCss).toContain('--paw-files-control-bg: var(--paw-control-bg, #fff);');
+    expect(filesCss).not.toMatch(/(?:min-)?height:\s*30px/);
+
+    // The refresh action keeps an accessible name for the width where its
+    // visible label retires, so the icon-only state is never anonymous.
+    expect(screen.getByRole('button', { name: '刷新文件' })).toBeInTheDocument();
+    expect(filesCss).toMatch(/@container paw-files-tools \(max-width: 420px\)[\s\S]*?\.paw-files-refresh > span\s*\{\s*display:\s*none;/s);
+  });
+
+  it('keeps the open file, its selection, and expanded directories across a layout swap', async () => {
+    // jsdom cannot evaluate @container queries, so this drives the exact
+    // <=620px rules from paw-os-files-app.css on and off the way a
+    // continuous window drag-resize would cross the breakpoint.
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': (request: ControlRequest) => {
+          const path = String(request.query?.path ?? '');
+          if (path === '/workspace/paw/docs') return {
+            ok: true,
+            path,
+            items: [{ path: `${path}/guide.md`, name: 'guide.md', kind: 'file', byteSize: 42 }],
+          };
+          return { ok: true, path, items: [{ path: '/workspace/paw/docs', name: 'docs', kind: 'directory' }] };
+        },
+        'agent.session.workspace.read': (request: ControlRequest) => ({
+          ok: true,
+          path: request.query?.path,
+          content: '# Guide',
+          byteSize: 7,
+          truncated: false,
+        }),
+      },
+    });
+
+    const { container } = renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '展开目录 docs' }));
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 guide.md' }));
+    expect(await screen.findByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
+
+    const narrow = applyNarrowLayout();
+    try {
+      // The window observer that notices the crossing is stubbed out in
+      // jsdom; a viewport resize reaches the same handler, because the shell
+      // re-clamps every window against the viewport.
+      window.dispatchEvent(new Event('resize'));
+
+      // Crossing into the single-pane layout hides the rail with CSS only —
+      // it stays mounted, so nothing about the selection is discarded.
+      expect(screen.getByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
+      expect(container.querySelector('.paw-files-tree')).not.toBeNull();
+      expect(container.querySelector('.paw-files-tree__row[data-selected]')).toHaveAttribute('title', '/workspace/paw/docs/guide.md');
+      // Keyboard focus follows the layout instead of falling out of the App
+      // with the rail that used to hold it.
+      await waitFor(() => expect(screen.getByRole('button', { name: '返回文件列表' })).toHaveFocus());
+    } finally {
+      narrow.remove();
+    }
+
+    // Widening back to the split layout restores the rail beside the very
+    // same open file, still expanded and still marked as the selection.
+    expect(screen.getByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: '收起目录 docs' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('treeitem', { name: '打开文件 guide.md' })).toHaveAttribute('data-selected', 'true');
+    expect(screen.getByRole('button', { name: '复制文件内容' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制文件路径' })).toBeInTheDocument();
+  });
+
   it('browses only the selected Session authorized roots and previews a file', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
@@ -649,15 +781,7 @@ describe('PawOsFilesApp', () => {
   });
 
   it('returns from the narrow reader to the tree with expansion and focus preserved', async () => {
-    // jsdom cannot evaluate @container queries, so this emulates the exact
-    // <=560px rules from paw-os-files-app.css: an open file replaces the tree
-    // and the Back affordance becomes visible.
-    const narrowEmulation = document.createElement('style');
-    narrowEmulation.textContent = `
-      .paw-files-app__workspace[data-file-open] .paw-files-tree { display: none; }
-      .paw-files-preview__back { display: inline-flex; }
-    `;
-    document.head.append(narrowEmulation);
+    const narrowEmulation = applyNarrowLayout();
 
     const user = userEvent.setup();
     const transport = new MockControlTransport({
@@ -1009,6 +1133,21 @@ describe('PawOsFilesApp', () => {
     expect(screen.queryByText('还没有可浏览的 Session。')).not.toBeInTheDocument();
   });
 });
+
+/** jsdom cannot evaluate @container queries, so the single-pane layout is
+    driven by hand. These are the exact `@container paw-files (max-width:
+    620px)` rules from paw-os-files-app.css that change behaviour: an open
+    file replaces the rail, and the labelled Back pill appears. */
+function applyNarrowLayout(): HTMLStyleElement {
+  const emulation = document.createElement('style');
+  emulation.textContent = `
+    .paw-files-app__workspace:not([data-file-open]) .paw-files-preview { display: none; }
+    .paw-files-app__workspace[data-file-open] .paw-files-tree { display: none; }
+    .paw-files-preview__back { display: inline-flex; }
+  `;
+  document.head.append(emulation);
+  return emulation;
+}
 
 function renderApp(transport: MockControlTransport, child: React.ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

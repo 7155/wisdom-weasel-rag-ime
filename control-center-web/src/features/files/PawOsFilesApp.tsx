@@ -114,7 +114,12 @@ export function PawOsFilesApp() {
   const [copiedAction, setCopiedAction] = useState<'' | 'path' | 'content'>('');
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const treeRef = useRef<HTMLElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Whether this App currently holds keyboard focus. A focusout that names no
+  // new target means the focused element was hidden, not that someone moved
+  // away, so the flag survives exactly the case the layout swap creates.
+  const holdsFocusRef = useRef(false);
   const pendingFocusPathRef = useRef('');
   const typeaheadRef = useRef({ text: '', at: 0 });
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
@@ -403,6 +408,29 @@ export function PawOsFilesApp() {
     if (selectedFile && treeHidden()) backButtonRef.current?.focus();
   }, [selectedFile]);
 
+  // A window drag-resize can cross the single-pane breakpoint while a file is
+  // open. The rail is hidden by CSS, which strands whatever it held outside
+  // the focus order; this hands focus to the return path instead, so changing
+  // the window size never costs the person their place. Focus is only ever
+  // reclaimed from this App's own hidden rail, never from another window.
+  useEffect(() => {
+    if (!selectedFile) return;
+    const repairStrandedRailFocus = (): void => {
+      const rail = treeRef.current;
+      if (!rail || !holdsFocusRef.current || !treeHidden()) return;
+      const active = document.activeElement;
+      const stranded = active === document.body || (active instanceof HTMLElement && rail.contains(active));
+      if (stranded) backButtonRef.current?.focus();
+    };
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(repairStrandedRailFocus) : null;
+    if (observer && workspaceRef.current) observer.observe(workspaceRef.current);
+    window.addEventListener('resize', repairStrandedRailFocus);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', repairStrandedRailFocus);
+    };
+  }, [selectedFile]);
+
   useEffect(() => {
     const path = pendingFocusPathRef.current;
     if (!path) return;
@@ -563,11 +591,17 @@ export function PawOsFilesApp() {
   return (
     <>
       {windowChromeTarget ? <PawWindowChromePortal>{filesTools}</PawWindowChromePortal> : null}
-      <section className="paw-files-app" data-session-error={sessionError ? true : undefined} data-tools-in-window-chrome={windowChromeTarget ? true : undefined}>
+      <section
+        className="paw-files-app"
+        onBlur={(event) => {
+          if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) holdsFocusRef.current = false;
+        }}
+        onFocus={() => { holdsFocusRef.current = true; }}
+      >
         <h1 className="paw-files-app__title">Session 文件</h1>
         {windowChromeTarget ? null : filesTools}
         {sessionError ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionError}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}
-        <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined}>
+        <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined} ref={workspaceRef}>
         <aside className="paw-files-tree" aria-label="Session 授权工作区" ref={treeRef}>
           {roots.length ? (
             <header className="paw-files-tree__head">
