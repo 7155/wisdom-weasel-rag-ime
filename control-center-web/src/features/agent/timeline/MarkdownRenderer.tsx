@@ -6,6 +6,7 @@ import type { AgentBlockRenderProps } from './renderer-contract';
 import { CodeContentBlock, StreamingCursor } from './CodeDiffRenderers';
 import {
   ProgressiveMarkdown,
+  useDeferredStreaming,
   type ProgressiveChunkRenderContext,
 } from './progressive-markdown';
 import { text } from './renderer-values';
@@ -37,6 +38,10 @@ export function MarkdownBody({
   streamingTail?: boolean;
   text: string;
 }) {
+  /* Deferred settle latch: the progressive renderer stays mounted for one
+     transition render after the stream ends, so the final whole-document
+     parse never swaps render modes inside the urgent settle commit. */
+  const progressiveMode = useDeferredStreaming(streamingTail);
   const standaloneHtml = useMemo(() => standaloneHtmlSource(source), [source]);
   if (!source) return null;
   if (standaloneHtml) {
@@ -44,7 +49,7 @@ export function MarkdownBody({
       ? <HtmlOutputPlaceholder />
       : <InlineHtmlOutput content={standaloneHtml} />;
   }
-  if (!streamingTail) {
+  if (!progressiveMode) {
     return (
       <div className="agent-markdown">
         <StableMarkdownFragment source={source} />
@@ -53,15 +58,16 @@ export function MarkdownBody({
   }
   // Live path: the cleanroom scanner freezes the stable prefix chunk-by-chunk
   // (React.memo keeps frozen DOM identical per token batch) while only the
-  // active tail re-parses. holdBack stays off: PAWOS batches live-store
-  // commits upstream and the transcript must show delivered text
-  // synchronously rather than re-pace it through a rAF scheduler.
+  // active tail re-parses. holdBack is on: the safe-text release scheduler
+  // turns batched live-store commits into a paced Markdown-safe reveal — the
+  // visible typing motion. It starts fully flushed on mount (restores and
+  // Virtuoso remounts never replay) and flushes instantly under reduced
+  // motion or a hidden document, so the transcript stays truthful.
   return (
     <ProgressiveMarkdown
       className="agent-markdown"
       documentKey={documentKey}
-      holdBack={false}
-      isStreaming
+      isStreaming={streamingTail}
       renderChunk={renderProgressiveChunk}
       text={source}
     />
@@ -232,96 +238,6 @@ function MarkdownFragment({
       {source}
     </ReactMarkdown>
   );
-}
-
-export function partitionStreamingMarkdown(source: string): {
-  stable: string;
-  active: string;
-} {
-  const partition = partitionStreamingMarkdownFragments(source);
-  return {
-    stable: partition.stableFragments.join(''),
-    active: partition.active,
-  };
-}
-
-export function partitionStreamingMarkdownFragments(source: string): {
-  stableFragments: string[];
-  active: string;
-} {
-  let offset = 0;
-  const stableBoundaries: number[] = [];
-  let previousLineWasBlank = false;
-  let fenceCharacter = '';
-  let fenceLength = 0;
-  let fenceLanguage = '';
-  let terminalHtmlFenceClosed = false;
-
-  while (offset < source.length) {
-    const newline = source.indexOf('\n', offset);
-    const lineEnd = newline >= 0 ? newline + 1 : source.length;
-    const line = source.slice(offset, lineEnd);
-    const content = line.replace(/\r?\n$/u, '');
-    const fence = /^(`{3,}|~{3,})(?:[^`~].*)?$/u.exec(content);
-    if (
-      previousLineWasBlank
-      && !fenceCharacter
-      && isSafeMarkdownFragmentStart(content, Boolean(fence))
-    ) {
-      stableBoundaries.push(offset);
-    }
-
-    if (fence) {
-      const marker = fence[1] ?? '';
-      if (!fenceCharacter) {
-        fenceCharacter = marker[0] ?? '';
-        fenceLength = marker.length;
-        fenceLanguage = content.slice(marker.length).trim().split(/\s+/u)[0]?.toLowerCase() ?? '';
-        terminalHtmlFenceClosed = false;
-      } else if (marker[0] === fenceCharacter && marker.length >= fenceLength) {
-        terminalHtmlFenceClosed = fenceLanguage === 'html' || fenceLanguage === 'htm';
-        fenceCharacter = '';
-        fenceLength = 0;
-        fenceLanguage = '';
-      }
-    } else if (content.trim()) {
-      terminalHtmlFenceClosed = false;
-    }
-    previousLineWasBlank = !fenceCharacter && content.trim() === '';
-    offset = lineEnd;
-  }
-
-  // A closing fence is itself a stable streaming boundary. Waiting for a
-  // following paragraph made an HTML card sit as a placeholder even though
-  // the model had already delivered a complete document. VCP-style rendering
-  // promotes the closed block immediately while the rest of the reply may
-  // continue streaming later.
-  if (terminalHtmlFenceClosed && stableBoundaries.at(-1) !== source.length) {
-    stableBoundaries.push(source.length);
-  }
-
-  const stableEnd = stableBoundaries.at(-1) ?? 0;
-  if (stableEnd <= 0) return { stableFragments: [], active: source };
-  const stableFragments: string[] = [];
-  let fragmentStart = 0;
-  for (const boundary of stableBoundaries) {
-    if (boundary > stableEnd) break;
-    if (boundary > fragmentStart) {
-      stableFragments.push(source.slice(fragmentStart, boundary));
-    }
-    fragmentStart = boundary;
-  }
-  return {
-    stableFragments,
-    active: source.slice(stableEnd),
-  };
-}
-
-function isSafeMarkdownFragmentStart(line: string, fenced: boolean): boolean {
-  if (!line.trim()) return false;
-  if (fenced || /^#{1,6}[ \t]+\S/u.test(line)) return true;
-  if (/^[ \t]/u.test(line)) return false;
-  return !/^(?:[-+*][ \t]+|\d+[.)][ \t]+|>|:{1,3}[ \t]|\[[^\]]+\]:)/u.test(line);
 }
 
 type MarkdownAstNode = {

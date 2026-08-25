@@ -936,6 +936,34 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   to { background-position: -110% 0; }
 }
 
+/* Chunk-commit entrance. A frozen chunk's DOM nodes are inserted exactly once
+   (React.memo keeps them for the rest of the stream), so animating direct
+   children of the progressive container plays one soft rise per committed
+   block and can never replay on later token batches. The settled document
+   (no [data-progressive-markdown]) is excluded on purpose: the final
+   whole-document parse must not re-fade prose the reader already has. */
+.agent-markdown[data-progressive-markdown] > * {
+  animation: agent-stream-block-enter 0.32s ease-out backwards;
+}
+@keyframes agent-stream-block-enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Open-fence fast path: while a fenced block is still unclosed, its caption
+   carries a slow accent sweep so a long silent code stream still reads as
+   alive even when tokens land between visual lines. */
+.agent-code-block[data-streaming] > figcaption {
+  background:
+    linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--color-accent) 9%, transparent) 50%, transparent 70%)
+    0 0 / 240% 100% no-repeat;
+  animation: agent-code-stream-sweep 1.9s linear infinite;
+}
+@keyframes agent-code-stream-sweep {
+  from { background-position: 180% 0; }
+  to { background-position: -80% 0; }
+}
+
 .ui-dialog.agent-review-dialog { display: grid; width: min(760px, calc(100vw - 28px)); max-height: min(760px, calc(100dvh - 28px)); grid-template-rows: auto auto minmax(0, 1fr) auto auto; gap: 12px; overflow: hidden; }
 .ui-dialog.agent-approval-dialog { display: grid; width: min(520px, calc(100vw - 28px)); gap: 14px; }
 .agent-review-dialog .ui-dialog__header, .agent-approval-dialog .ui-dialog__header { display: grid; gap: 4px; }
@@ -2643,6 +2671,11 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
     opacity: 0;
   }
 
+  .agent-markdown[data-progressive-markdown] > *,
+  .agent-code-block[data-streaming] > figcaption {
+    animation: none;
+  }
+
   .agent-streaming-cursor,
   .agent-context-snapshot-state[data-state='restoring']::before,
   .agent-assistant-pending > svg,
@@ -2876,6 +2909,11 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 :root[data-reduce-motion='true'] .agent-markdown__active-tail::after {
   animation: none;
   opacity: 0;
+}
+
+:root[data-reduce-motion='true'] .agent-markdown[data-progressive-markdown] > *,
+:root[data-reduce-motion='true'] .agent-code-block[data-streaming] > figcaption {
+  animation: none;
 }
 
 :root[data-reduce-motion='true'] .agent-streaming-cursor,

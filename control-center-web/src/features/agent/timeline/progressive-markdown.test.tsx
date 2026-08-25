@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TooltipProvider } from '@/components/primitives';
 import { MarkdownBody } from './MarkdownRenderer';
@@ -6,8 +6,12 @@ import {
   INITIAL_SCAN_STATE,
   scanIncrementalMarkdown,
 } from './progressive-markdown';
+import { findSafeInlineBoundary } from './progressive-markdown/safeInlineBoundary';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  document.documentElement.removeAttribute('data-reduce-motion');
+});
 
 describe('progressive markdown streaming path', () => {
   it('reuses committed chunk objects across append-only scans', () => {
@@ -27,7 +31,30 @@ describe('progressive markdown streaming path', () => {
     expect(second.chunks[1]?.text).toBe('第二段还在生成，现在完成。');
   });
 
-  it('freezes completed chunk DOM identity while only the streaming tail updates', () => {
+  it('does not treat headings inside a fenced block as commit boundaries', () => {
+    const scanned = scanIncrementalMarkdown(
+      INITIAL_SCAN_STATE,
+      '稳定说明。\n\n```md\n\n# 这是代码，不是新章节\n```\n\n后续段落还在生成',
+    );
+
+    // One committed chunk for the intro, one for the whole closed fence; the
+    // heading line inside the fence never splits the code block apart.
+    expect(scanned.chunks.map((chunk) => chunk.text)).toEqual([
+      '稳定说明。',
+      '```md\n\n# 这是代码，不是新章节\n```',
+    ]);
+  });
+
+  it('never pulls a CJK tail back to a distant space the way it holds back Latin words', () => {
+    // Latin: an incomplete trailing word is held back to the last space.
+    expect(findSafeInlineBoundary('progress on wor')).toBe('progress on '.length);
+    // CJK after a space: ideographs are complete display units — releasing
+    // them immediately is correct, pinning to the ASCII space is not.
+    const mixed = 'PAWOS 渲染优化已经生效';
+    expect(findSafeInlineBoundary(mixed)).toBe(mixed.length);
+  });
+
+  it('freezes completed chunk DOM identity while only the streaming tail updates', async () => {
     const view = render(
       <MarkdownBody
         documentKey="msg-freeze"
@@ -49,8 +76,10 @@ describe('progressive markdown streaming path', () => {
         text={'第一段结论已经写完。\n\n第二段正在生成，补充细节'}
       />,
     );
+    // Appended text flows through the rAF release scheduler, so it lands a
+    // few frames after the commit rather than in the same synchronous render.
+    expect(await screen.findByText('第二段正在生成，补充细节')).toBeInTheDocument();
     expect(screen.getByText('第一段结论已经写完。')).toBe(frozenParagraph);
-    expect(screen.getByText('第二段正在生成，补充细节')).toBeInTheDocument();
 
     view.rerender(
       <MarkdownBody
@@ -59,8 +88,8 @@ describe('progressive markdown streaming path', () => {
         text={'第一段结论已经写完。\n\n第二段正在生成，补充细节。\n\n第三段开始'}
       />,
     );
+    const promotedParagraph = await screen.findByText('第二段正在生成，补充细节。');
     expect(screen.getByText('第一段结论已经写完。')).toBe(frozenParagraph);
-    const promotedParagraph = screen.getByText('第二段正在生成，补充细节。');
 
     view.rerender(
       <MarkdownBody
@@ -70,9 +99,9 @@ describe('progressive markdown streaming path', () => {
       />,
     );
     // A chunk committed once may never remount on later tail growth.
+    expect(await screen.findByText('第三段开始，仍在续写')).toBeInTheDocument();
     expect(screen.getByText('第一段结论已经写完。')).toBe(frozenParagraph);
     expect(screen.getByText('第二段正在生成，补充细节。')).toBe(promotedParagraph);
-    expect(screen.getByText('第三段开始，仍在续写')).toBeInTheDocument();
   });
 
   it('keeps streaming motion on the active tail only', () => {
@@ -96,7 +125,7 @@ describe('progressive markdown streaming path', () => {
     expect(frozenParagraph).not.toHaveAttribute('data-stream-tail');
   });
 
-  it('streams an open fence into the code island without re-parsing per token', () => {
+  it('streams an open fence into the code island without re-parsing per token', async () => {
     const view = render(
       <TooltipProvider>
         <MarkdownBody
@@ -116,6 +145,8 @@ describe('progressive markdown streaming path', () => {
     expect(island!.querySelector('pre')).toHaveAttribute('data-language', 'ts');
     // The open fence body reaches the island verbatim, not through ReactMarkdown.
     expect(island!.closest('.agent-markdown__active-tail')).not.toBeNull();
+    // The streaming figure carries the CSS hook for the caption sweep.
+    expect(island).toHaveAttribute('data-streaming', 'true');
 
     view.rerender(
       <TooltipProvider>
@@ -126,9 +157,11 @@ describe('progressive markdown streaming path', () => {
         />
       </TooltipProvider>,
     );
-    // The island is a live DOM node that grows in place per token batch.
+    // The island is a live DOM node that grows in place as the release
+    // scheduler paces the appended tokens in.
+    await waitFor(() =>
+      expect(island!.querySelector('code')?.textContent).toContain('const b = 2;'));
     expect(document.querySelector('figure.agent-code-block')).toBe(island);
-    expect(island!.querySelector('code')?.textContent).toContain('const b = 2;');
     expect(screen.getByText('说明如下。')).toBe(frozenIntro);
 
     view.rerender(
@@ -142,9 +175,11 @@ describe('progressive markdown streaming path', () => {
     );
     // Once the fence closes, the tail falls back to the parsed Markdown path
     // and still renders the same kind of code block.
-    const settledFence = document.querySelector('figure.agent-code-block pre');
-    expect(settledFence).toHaveAttribute('data-language', 'ts');
-    expect(settledFence?.textContent).toContain('const c = 3;');
+    await waitFor(() => {
+      const settledFence = document.querySelector('figure.agent-code-block pre');
+      expect(settledFence).toHaveAttribute('data-language', 'ts');
+      expect(settledFence?.textContent).toContain('const c = 3;');
+    });
   });
 
   it('keeps a streaming open HTML fence on the inert placeholder', () => {
@@ -159,5 +194,78 @@ describe('progressive markdown streaming path', () => {
     expect(screen.getByRole('status')).toHaveTextContent('正在生成 HTML 预览');
     expect(screen.queryByTitle('HTML 输出预览')).not.toBeInTheDocument();
     expect(document.querySelector('figure.agent-code-block')).toBeNull();
+  });
+
+  it('shows already-delivered text synchronously on mount and paces only appended text', async () => {
+    const view = render(
+      <MarkdownBody
+        documentKey="msg-holdback"
+        streamingTail
+        text={'第一段落已经送达。\n\n第二段也已经送达。'}
+      />,
+    );
+
+    // Mount starts fully flushed: a Virtuoso remount or a restored mid-stream
+    // snapshot must never replay the reveal from zero.
+    expect(screen.getByText('第一段落已经送达。')).toBeInTheDocument();
+    expect(screen.getByText('第二段也已经送达。')).toBeInTheDocument();
+
+    view.rerender(
+      <MarkdownBody
+        documentKey="msg-holdback"
+        streamingTail
+        text={'第一段落已经送达。\n\n第二段也已经送达。\n\n新追加的第三段'}
+      />,
+    );
+    // Text appended after mount goes through the release scheduler: withheld
+    // in the commit itself, revealed a few frames later.
+    expect(screen.queryByText('新追加的第三段')).not.toBeInTheDocument();
+    expect(await screen.findByText('新追加的第三段')).toBeInTheDocument();
+  });
+
+  it('flushes appended text instantly when the user disabled motion', () => {
+    document.documentElement.setAttribute('data-reduce-motion', 'true');
+    const view = render(
+      <MarkdownBody
+        documentKey="msg-reduced-motion"
+        streamingTail
+        text={'第一段落已经送达。'}
+      />,
+    );
+
+    view.rerender(
+      <MarkdownBody
+        documentKey="msg-reduced-motion"
+        streamingTail
+        text={'第一段落已经送达。\n\n新追加的第二段'}
+      />,
+    );
+    // Reduced motion means the reveal is skipped, not the text: delivery is
+    // synchronous with the commit.
+    expect(screen.getByText('新追加的第二段')).toBeInTheDocument();
+  });
+
+  it('settles from the progressive renderer to the whole-document parse after the stream ends', async () => {
+    const view = render(
+      <MarkdownBody
+        documentKey="msg-settle"
+        streamingTail
+        text={'第一段结论。\n\n第二段收尾。'}
+      />,
+    );
+    expect(document.querySelector('[data-progressive-markdown]')).not.toBeNull();
+
+    view.rerender(
+      <MarkdownBody
+        documentKey="msg-settle"
+        text={'第一段结论。\n\n第二段收尾。'}
+      />,
+    );
+    // The deferred latch keeps the progressive renderer mounted through the
+    // settle commit, then hands off to the plain settled document.
+    await waitFor(() =>
+      expect(document.querySelector('[data-progressive-markdown]')).toBeNull());
+    expect(screen.getByText('第一段结论。')).toBeInTheDocument();
+    expect(screen.getByText('第二段收尾。')).toBeInTheDocument();
   });
 });
