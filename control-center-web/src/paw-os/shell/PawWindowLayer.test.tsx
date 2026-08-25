@@ -142,10 +142,25 @@ describe('PAWOS compositor window frame', () => {
       const shell = await screen.findByLabelText('伙伴 1窗口');
       expect(shell).not.toHaveAttribute('data-focus-locked');
       expect(shell).toHaveAttribute('data-frame-mode', 'focus-card');
-      expect(shell.querySelector('.paw-traffic-lights')).toBeInTheDocument();
-      expect(within(shell).queryByRole('button', { name: '最小化窗口' })).not.toBeInTheDocument();
+      /* One chrome language: a focus-card satellite carries the same
+         traffic-light cluster, in the same slot and the same order, as the
+         Room window it orbits — never a lone top-right X. Inside the focus
+         layout both drop maximize together, because the layout owns
+         geometry, so the two clusters stay verb-for-verb identical. */
+      const roomShell = await screen.findByLabelText('Room A窗口');
+      expect(roomShell.querySelectorAll('.paw-traffic-lights')).toHaveLength(1);
+      const clusterVerbs = (host: HTMLElement) => [...host.querySelectorAll('.paw-traffic-lights button')]
+        .map((button) => button.getAttribute('data-action'));
+      expect(clusterVerbs(shell)).toEqual(['close', 'minimize']);
+      expect(clusterVerbs(roomShell)).toEqual(['close', 'minimize']);
       expect(within(shell).getByRole('button', { name: '关闭窗口' })).toBeInTheDocument();
-      expect((await screen.findByLabelText('Room A窗口')).querySelectorAll('.paw-traffic-lights')).toHaveLength(1);
+      expect(within(shell).getByRole('button', { name: '最小化窗口' })).toBeInTheDocument();
+      /* The lights stay the first children so the shared nth-child
+         red/yellow/green rules never slide onto the wrong verb. */
+      expect(shell.querySelector('.paw-traffic-lights')!.firstElementChild)
+        .toHaveAttribute('data-action', 'close');
+      expect(roomShell.querySelector('.paw-traffic-lights')!.firstElementChild)
+        .toHaveAttribute('data-action', 'close');
       expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(8);
 
       const initialTransform = shell.style.transform;

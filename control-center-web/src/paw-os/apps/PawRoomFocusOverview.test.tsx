@@ -330,6 +330,50 @@ describe('PawRoomFocusOverview', () => {
     expect(screen.queryByRole('button', { name: '显示全部' })).not.toBeInTheDocument();
   });
 
+  it('draws no Sol anywhere until a partner really hosts the Room', () => {
+    /* Venus is the only coordinator in the fixture; demote her and the whole
+       console has to stop naming an origin nobody sits at. */
+    const unhosted = {
+      ...focus,
+      partners: focus.partners.map((partner) => partner.collaborationRole === 'coordinator'
+        ? { ...partner, collaborationRole: 'reviewer' }
+        : partner),
+    };
+    const { container } = render(<PawRoomFocusOverview focus={unhosted} onOpenParticipant={vi.fn()} />);
+
+    // No mission header, no Sol centre body, no origin lifeline.
+    expect(container.querySelector('.paw-room-focus-overview__mission--dormant')).not.toBeNull();
+    expect(container.querySelector('.paw-room-focus-overview__sol')).toBeNull();
+    expect(screen.queryByRole('img', { name: /^Sol，/ })).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-room-focus-overview')).not.toHaveAttribute('data-coordinator');
+    // The ledger still has to name where a root packet came from — as the
+    // shared main Room, not as a star that has not risen.
+    const packets = within(screen.getByRole('region', { name: '往来记录' })).getByRole('list', { name: '往来事件' });
+    expect(packets).toHaveTextContent('主 Room → Earth');
+    expect(packets).not.toHaveTextContent('Sol → Earth');
+  });
+
+  it('lights the Sol mission the moment a connected coordinator takes the chair', () => {
+    const { container } = render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+
+    expect(container.querySelector('.paw-room-focus-overview')).toHaveAttribute('data-coordinator', 'true');
+    expect(container.querySelector('.paw-room-focus-overview__mission--dormant')).toBeNull();
+    expect(container.querySelector('.paw-room-focus-overview__sol')).not.toBeNull();
+    expect(screen.getByRole('img', { name: /^Sol，/ })).toBeInTheDocument();
+  });
+
+  it('drops Sol again when the only coordinator disconnects', () => {
+    const dropped = {
+      ...focus,
+      partners: focus.partners.map((partner) => partner.collaborationRole === 'coordinator'
+        ? { ...partner, state: 'disconnected' as const }
+        : partner),
+    };
+    render(<PawRoomFocusOverview focus={dropped} onOpenParticipant={vi.fn()} />);
+
+    expect(screen.queryByRole('img', { name: /^Sol，/ })).not.toBeInTheDocument();
+  });
+
   it('keeps the full acceptance checklist reachable through the inspector disclosure', () => {
     const acceptance = Array.from({ length: 18 }, (_, index) => `验收项 ${index + 1}`);
     const withAcceptance = {

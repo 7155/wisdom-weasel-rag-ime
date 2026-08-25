@@ -580,6 +580,47 @@ describe('PAWOS semantic type roles', () => {
     }
   });
 
+  it('opens the Room tools aside on the same edge as the control cluster that opens it', () => {
+    // Named areas, so the trailing side survives any body re-ordering.
+    expect(roomMigratedCss).toMatch(
+      /:not\(\[data-panel='none'\]\) \.paw-room-workspace__body\s*\{[^}]*grid-template-areas:\s*'room-main room-tools';/s,
+    );
+    expect(roomMigratedCss).toMatch(/\.paw-room-tools\[data-side='trailing'\]\s*\{[^}]*grid-area:\s*room-tools;/s);
+    expect(roomMigratedCss).toMatch(/\.paw-room-workspace__main\s*\{\s*grid-area:\s*room-main;\s*\}/s);
+    // The cluster is trailing in the portalled titlebar and in the fallback
+    // header alike — never leading against a trailing panel.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-room-workspace__header > \.paw-room-window-chrome\s*\{[^}]*justify-content:\s*flex-end;/s,
+    );
+    expect(roomMigratedCss).not.toMatch(
+      /\.paw-room-workspace__header > \.paw-room-window-chrome\s*\{[^}]*justify-content:\s*flex-start;/s,
+    );
+  });
+
+  it('gives every Room window one traffic-light language and no isolated card close', () => {
+    // Focus-card satellites inherit the shared titlebar instead of redefining
+    // a shorter bar with buttons hidden behind nth-child.
+    expect(roomMigratedCss).not.toContain('.paw-focus-card-close');
+    expect(roomMigratedCss).not.toMatch(
+      /\[data-frame-mode='focus-card'\][^{]*\.paw-traffic-lights button:nth-child\(\d\)[^{]*\{[^}]*display:\s*none;/s,
+    );
+    expect(roomMigratedCss).not.toMatch(
+      /\[data-frame-mode='focus-card'\] \.paw-window-titlebar\s*\{[^}]*grid-template-columns:/s,
+    );
+    // Leading App chrome docks after the lights so the shared nth-child
+    // red/yellow/green rules keep landing on close/minimize/maximize.
+    expect(pawOsCss).toMatch(/\.paw-window-leading-slot\s*\{[^}]*margin-inline-start:/s);
+    expect(shellMigratedCss).toMatch(/\.paw-traffic-lights button:nth-child\(1\)\s*\{[^}]*#f04438/s);
+    // 退出协作聚焦 shares the leading edge with every window's red light.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-collaboration-focus-exit\s*\{[^}]*right:\s*auto;[^}]*left:\s*14px;/s,
+    );
+    // The focus modebar reads in the same column rhythm as a titlebar.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-room-focus-modebar\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*148px minmax\(0, 1fr\) minmax\(0, auto\);/s,
+    );
+  });
+
   it('preserves explicit Focus frames and resize handles throughout the 721–820px gap', () => {
     const narrowStart = pawOsCss.indexOf('@media (max-width: 820px)');
     const narrowEnd = pawOsCss.indexOf('@media (max-width: 700px)', narrowStart);
