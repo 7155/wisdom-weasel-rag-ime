@@ -33,6 +33,22 @@ export type SceneBodyKind = 'moon' | 'planet' | 'star';
 export type SceneCenterKind = 'planet' | 'sun' | 'core';
 export type SceneMode = 'session' | 'room' | 'galaxy';
 
+/** Visual surface archetype rendered for a body — vocabulary, not identity. */
+export type SceneSurface = 'sun' | 'gas' | 'rocky' | 'ice' | 'cratered';
+
+/**
+ * Deterministic surface per real identity: galaxy Rooms are stars, Session
+ * moons are cratered or icy satellites, Room partners spread across gas /
+ * rocky / ice worlds. The same id always keeps the same surface, so a body
+ * never changes material between polls.
+ */
+export function bodySurface(kind: SceneBodyKind, id: string): SceneSurface {
+  if (kind === 'star') return 'sun';
+  const unit = starfieldUnit(`${id}:surface`);
+  if (kind === 'moon') return unit < 0.3 ? 'ice' : 'cratered';
+  return unit < 0.42 ? 'gas' : unit < 0.78 ? 'rocky' : 'ice';
+}
+
 export interface SceneBody {
   /** Real Runtime identity: subagent run id / participant id / Room id. */
   id: string;
@@ -49,6 +65,7 @@ export interface SceneBody {
   paletteIndex: number;
   /** Deterministic 0.85..1.15 so working bodies never move in lockstep. */
   speedFactor: number;
+  surface: SceneSurface;
   motion: StarfieldMotion;
 }
 
@@ -58,6 +75,7 @@ export interface SceneCenter {
   title: string;
   subtitle: string;
   size: number;
+  surface: SceneSurface;
   motion: StarfieldMotion;
 }
 
@@ -85,6 +103,16 @@ export function sceneBodyAriaLabel(mode: SceneMode, body: SceneBody): string {
   if (mode === 'session') return `${body.title} 卫星 · ${body.detail} · ${body.subtitle}`;
   if (mode === 'room') return `${body.title}，${body.subtitle}`;
   return `${body.title} · ${body.subtitle}`;
+}
+
+/**
+ * Content signature of a scene model. The model is plain deterministic data
+ * built in stable key order, so equal content always serializes equally —
+ * the WebGL stage uses this to skip a full scene rebuild (geometry, GPU
+ * uploads) when a poll tick returned an unchanged sky.
+ */
+export function sceneModelSignature(model: StarfieldSceneModel): string {
+  return JSON.stringify(model);
 }
 
 function speedFactor(id: string): number {
@@ -120,6 +148,7 @@ export function buildSessionSceneModel(
     size: 0.3,
     paletteIndex: Math.floor(starfieldUnit(`${moon.runId}:hue`) * 6),
     speedFactor: speedFactor(moon.runId),
+    surface: bodySurface('moon', moon.runId),
     motion: subagentMotion(moon.state, moon.attention),
   }));
   return {
@@ -131,6 +160,7 @@ export function buildSessionSceneModel(
       title: options.sessionTitle,
       subtitle: options.busy ? '正在执行' : 'Session 主星',
       size: 1.2,
+      surface: 'gas',
       motion: sessionCoreMotion(options.busy),
     },
     bodies,
@@ -159,6 +189,7 @@ export function buildRoomSceneModel(
     size: 0.56,
     paletteIndex: planet.orbitIndex % 6,
     speedFactor: speedFactor(planet.participantId),
+    surface: bodySurface('planet', planet.participantId),
     motion: roomBodyMotion(planet.state),
   }));
   return {
@@ -170,6 +201,7 @@ export function buildRoomSceneModel(
       title: 'Sol',
       subtitle: model.goal.title,
       size: 1.5,
+      surface: 'sun',
       motion: roomBodyMotion(model.goal.state),
     },
     bodies,
@@ -206,6 +238,7 @@ export function buildGalaxySceneModel(model: GalaxyStarfieldModel): StarfieldSce
       size: Math.round((0.42 + system.scale * 0.28) * 100) / 100,
       paletteIndex: system.hueIndex,
       speedFactor: speedFactor(system.roomId),
+      surface: bodySurface('star', system.roomId),
       motion: galaxySystemMotion(system.active),
     };
   });
