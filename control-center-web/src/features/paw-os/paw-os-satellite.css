@@ -114,7 +114,10 @@
 .paw-os-satellite__package-feedback > span { font-size: 11px; line-height: 1.5; }
 .paw-os-satellite__package-feedback > .ui-button { grid-column: 2; justify-self: start; }
 .paw-os-satellite__package-feedback[data-error] { border-color: color-mix(in srgb, var(--color-danger) 42%, var(--color-border-soft)); background: color-mix(in srgb, var(--color-danger) 8%, var(--color-paper)); color: var(--color-danger); }
-.paw-os-satellite--room-panel { background: color-mix(in srgb, var(--paw-panel-strong) 86%, transparent); -webkit-backdrop-filter: blur(16px) saturate(120%); backdrop-filter: blur(16px) saturate(120%); }
+/* Satellite panels ride an opaque white window shell: glass here blurs a flat
+   colour while pinning one compositor layer per satellite — with a full Room
+   of satellites that multiplies for nothing visible. Near-opaque, no blur. */
+.paw-os-satellite--room-panel { background: color-mix(in srgb, var(--paw-panel-strong) 97%, transparent); }
 .paw-os-satellite__room-panel-body { min-width: 0; min-height: 0; overflow: auto; padding: 10px; background: color-mix(in srgb, var(--paw-panel-soft) 34%, transparent); }
 .paw-os-satellite__room-panel-body > .paw-room-focus-overview { min-height: 100%; border: 1px solid var(--paw-line-soft); border-radius: 12px; }
 .paw-os-satellite__room-panel-body > .room-cockpit { min-height: 100%; border: 1px solid var(--paw-line-soft); }

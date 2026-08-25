@@ -335,6 +335,55 @@ describe('PAWOS compositor window frame', () => {
     expect(root).not.toHaveAttribute('data-window-interaction');
   });
 
+  it('coalesces a viewport resize burst into one refit per animation frame', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      frames[handle - 1] = () => undefined;
+    });
+    try {
+      render(
+        <ControlTransportProvider transport={createPreviewTransport()}>
+          <PawDesktopProvider>
+            <PawWindowLayer />
+          </PawDesktopProvider>
+        </ControlTransportProvider>,
+      );
+      expect(frames).toHaveLength(0);
+
+      act(() => {
+        for (let index = 0; index < 5; index += 1) fireEvent(window, new Event('resize'));
+      });
+      // A viewport drag emits resize far faster than the frame rate; the whole
+      // burst owes exactly one refit of every window.
+      expect(frames).toHaveLength(1);
+
+      act(() => {
+        frames.splice(0).forEach((callback) => callback(performance.now()));
+      });
+      act(() => {
+        fireEvent(window, new Event('resize'));
+      });
+      expect(frames).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps live window geometry out of the layer subscription on an ordinary desktop', () => {
+    // Only collaboration focus frames and Room flow paths read bounds. Without
+    // them the layer holds a frozen empty record, so moving one window cannot
+    // re-render the layer, the focus frames, the flow groups or the rail.
+    expect(windowLayerSource).toMatch(/const wantsWindowGeometry = Boolean\(collaborationFocusGroup\) \|\| Boolean\(participantSignature\)/);
+    expect(windowLayerSource).toMatch(/usePawDesktopStore\(wantsWindowGeometry \? selectWindows : selectNoWindows\)/);
+    // Room projection keepalive answers inside the subscription, so geometry
+    // churn produces the same string instead of a new render.
+    expect(windowLayerSource).toMatch(/roomProjectionKeepaliveIds\(state\.windows, overviewOpen\)\.join/);
+  });
+
   it('coalesces live flow geometry into one React write per animation frame', () => {
     expect(windowLayerSource).toContain('function useLiveWindowFlowPoints');
     expect(windowLayerSource).toMatch(/requestAnimationFrame\(flush\)/);

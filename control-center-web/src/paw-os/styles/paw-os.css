@@ -605,7 +605,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden;
   padding-top: var(--paw-titlebar-h);
   background: transparent;
-  transform: translateZ(0);
+  /* Containment instead of a pinned layer: the old translateZ(0) held one
+     full-window GPU layer per window forever — with several Apps open that
+     is real compositor memory and per-frame cost at idle. contain keeps the
+     same containing-block behaviour for fixed/absolute App descendants (so
+     in-App popovers still anchor and clip to the window) while letting App
+     layout/paint invalidations stop at the window boundary. The drag path
+     still promotes the whole shell via its scoped will-change. */
+  contain: layout paint;
 }
 .paw-window-body > *, .paw-window-route-surface { min-height: 0; }
 .paw-window-route-surface { width: 100%; height: 100%; overflow: hidden; }

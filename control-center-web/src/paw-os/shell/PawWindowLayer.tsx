@@ -22,10 +22,12 @@ import type { RoomProjectionState } from '@/contracts/room-reducer';
 const noRoomProjections: Record<string, RoomProjectionState> = {};
 const selectRoomProjections = (state: { projections: Record<string, RoomProjectionState> }) => state.projections;
 const selectNoRoomProjections = () => noRoomProjections;
+const noWindows: Record<string, PawWindowNode> = {};
+const selectWindows = (state: { windows: Record<string, PawWindowNode> }) => state.windows;
+const selectNoWindows = () => noWindows;
 
 export function PawWindowLayer() {
   const api = usePawDesktopApi();
-  const windows = usePawDesktopStore((state) => state.windows);
   const idSignature = usePawDesktopStore((state) => Object.keys(state.windows).join('\u0000'));
   const overviewOpen = usePawDesktopStore((state) => state.overviewOpen);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
@@ -43,10 +45,26 @@ export function PawWindowLayer() {
   const wantsRoomProjections = Boolean(collaborationFocusGroup?.startsWith('room:'))
     || Boolean(participantSignature);
   const projections = useRoomLiveStore(wantsRoomProjections ? selectRoomProjections : selectNoRoomProjections);
+  /* Live window geometry is the layer's most expensive input: the whole
+   * windows record changes identity on every bounds commit, focus change and
+   * runtime title bind. Only collaboration focus frames and Room flow paths
+   * actually read bounds, so an ordinary desktop subscribes to a frozen empty
+   * record and the layer stops re-rendering — and stops re-deriving focus
+   * frames, flow groups and the rail — every time one window moves. Each
+   * PawWindow still owns its own node subscription, so the window that moved
+   * is the only thing React touches. */
+  const wantsWindowGeometry = Boolean(collaborationFocusGroup) || Boolean(participantSignature);
+  const windows = usePawDesktopStore(wantsWindowGeometry ? selectWindows : selectNoWindows);
   const ids = useMemo(() => idSignature.split('\u0000').filter(Boolean), [idSignature]);
   const [viewport, setViewport] = useState(() => desktopSize());
   const [focusFrameOverrides, setFocusFrameOverrides] = useState<Record<string, PawWindowBounds>>({});
-  const keptRoomIds = useMemo(() => roomProjectionKeepaliveIds(windows, overviewOpen), [overviewOpen, windows]);
+  /* Keepalive identity is answered inside the subscription so the layer sees a
+   * stable string: geometry churn cannot re-render it, and only an actual
+   * Room window open/close/minimize produces a new value. */
+  const keptRoomSignature = usePawDesktopStore(
+    (state) => roomProjectionKeepaliveIds(state.windows, overviewOpen).join('\u0000'),
+  );
+  const keptRoomIds = useMemo(() => keptRoomSignature.split('\u0000').filter(Boolean), [keptRoomSignature]);
   const focusedRoomId = collaborationFocusGroup?.startsWith('room:') ? collaborationFocusGroup.slice('room:'.length) : '';
   const computedFocusFrames = useMemo(() => collaborationFocusGroup
     ? layoutCollaborationFocus(
@@ -82,14 +100,29 @@ export function PawWindowLayer() {
   useEffect(() => {
     setFocusFrameOverrides({});
   }, [collaborationFocusGroup, viewport.height, viewport.width]);
+  /* A viewport drag emits resize events far faster than the frame rate, and
+   * each one used to refit every window and replace the viewport object. Both
+   * now happen at most once per frame, and an unchanged desktop size keeps its
+   * existing object so the focus/overview layouts do not recompute at all. */
   useEffect(() => {
-    const update = () => {
-      setViewport(desktopSize());
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      setViewport((current) => {
+        const next = desktopSize();
+        return current.width === next.width && current.height === next.height ? current : next;
+      });
       api.getState().fitWindowsToViewport();
     };
-    update();
+    apply();
+    const update = () => {
+      if (!frame) frame = window.requestAnimationFrame(apply);
+    };
     window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [api]);
   const overviewFrames = useMemo(() => {
     if (!overviewOpen) return new Map<string, OverviewFrame>();
