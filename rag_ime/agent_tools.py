@@ -3765,6 +3765,17 @@ class ControlToolGateway:
         )
         goal = workflow["goal"] if isinstance(workflow.get("goal"), Mapping) else {}
         self._publish_workflow(session_id, f"goal:{operation}")
+        goal_id = str(goal.get("goalId") or "")
+        if self.work_documents is not None and goal_id:
+            try:
+                self.work_documents.observe_authority(  # type: ignore[attr-defined,union-attr]
+                    "session_goal",
+                    goal_id,
+                )
+            except Exception:
+                # The observer persists its own retry record. The Goal
+                # transition is already durable and must not be replayed.
+                pass
         summary = {
             "confirm_setup": "长期目标已确认并开始执行",
             "update": "长期目标已更新",

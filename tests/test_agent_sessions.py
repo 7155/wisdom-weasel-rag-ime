@@ -7,8 +7,16 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 
-from rag_ime.agent_sessions import AgentSessionNotFound, AgentSessionStore
+from rag_ime.agent_context_runtime import AgentContextRuntime
+from rag_ime.agent_room_work import AgentRoomWorkStore
+from rag_ime.agent_rooms import AgentRoomStore
+from rag_ime.agent_sessions import (
+    AgentGoalExecutionBlocked,
+    AgentSessionNotFound,
+    AgentSessionStore,
+)
 from rag_ime.contracts.json_schema import validate_contract
+from rag_ime.work_documents import WorkDocumentService
 
 
 class AgentSessionStoreTests(unittest.TestCase):
@@ -1324,6 +1332,229 @@ class AgentSessionStoreTests(unittest.TestCase):
                 str(approval["approvalId"]),
                 tool_call_id="tool:workspace-shell:2",
             )
+
+
+class GoalCompletionAuthorityGateTests(unittest.TestCase):
+    """Goal complete is a terminal authority receipt, not a prose claim.
+
+    It must not succeed while Room WorkItems this Session is responsible for
+    are still open without an explicit blocked/failed/cancelled reconciliation,
+    or while the Root WorkDocument bound to the Goal sits in a broken ``error``
+    lifecycle that cannot accept the terminal receipt.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-goal-gate-")
+        self.root = Path(self.tmp.name)
+        self.db_path = self.root / "rag-ime.sqlite"
+        self.store = AgentSessionStore(self.db_path)
+        self.store.initialize()
+        self.facilitator = self.store.create(title="Room facilitator")
+        self.worker = self.store.create(title="Room implementer")
+        self.rooms = AgentRoomStore(self.db_path, room_dir=self.root / "rooms")
+        self.rooms.initialize()
+        self.room = self.rooms.create(
+            title="完成权威门",
+            routing_policy="moderator",
+            participants=[
+                {
+                    "sessionId": self.facilitator["id"],
+                    "roleId": "coordinator",
+                    "roleVersion": "1",
+                    "displayName": "协调者",
+                    "collaborationRole": "coordinator",
+                },
+                {
+                    "sessionId": self.worker["id"],
+                    "roleId": "worker",
+                    "roleVersion": "1",
+                    "displayName": "实施者",
+                    "collaborationRole": "implementer",
+                },
+            ],
+        )
+        self.facilitator_participant = str(self.room["participants"][0]["id"])
+        self.worker_participant = str(self.room["participants"][1]["id"])
+        self.work = AgentRoomWorkStore(self.db_path)
+        self.work.initialize()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _confirm_goal(self, session_id: str) -> dict[str, object]:
+        return self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "交付 Room 请求并验收全部委派工作",
+            },
+        )["workflow"]["goal"]
+
+    def _complete(self, session_id: str, revision: object) -> dict[str, object]:
+        return self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "complete",
+                "expectedRevision": revision,
+                "summary": "全部委派工作均已验收",
+                "evidence": [
+                    {
+                        "kind": "test",
+                        "summary": "聚焦测试通过",
+                        "reference": "tests.test_agent_sessions",
+                    }
+                ],
+            },
+        )["workflow"]["goal"]
+
+    def _create_item(self, *, state: str, client_message_id: str, owner: str = "", creator: str = "", accountable: str = "") -> dict[str, object]:
+        return self.work.create(
+            room_id=str(self.room["id"]),
+            objective="实现一个受验收约束的变更",
+            expected_output="通过验收的变更与证据",
+            current_owner_participant_id=owner or self.worker_participant,
+            created_by_participant_id=creator or self.facilitator_participant,
+            accountable_participant_id=accountable or self.facilitator_participant,
+            client_message_id=client_message_id,
+            acceptance_criteria=["变更可运行且满足需求"],
+            state=state,
+        )
+
+    def test_goal_complete_rejects_open_delegated_work_items(self) -> None:
+        session_id = str(self.facilitator["id"])
+        goal = self._confirm_goal(session_id)
+        item = self._create_item(state="active", client_message_id="work:gate:open")
+
+        with self.assertRaises(AgentGoalExecutionBlocked) as blocked:
+            self._complete(session_id, goal["revision"])
+        self.assertEqual(blocked.exception.error_code, "goal_open_work_items")
+        self.assertEqual(self.store.agent_goal(session_id)["status"], "active")
+
+        self.work.block(
+            str(self.worker["id"]),
+            {
+                "workId": item["id"],
+                "reason": "上游接口尚未冻结",
+                "nextStep": "等待接口冻结后继续",
+            },
+        )
+        completed = self._complete(session_id, goal["revision"])
+        self.assertEqual(completed["status"], "completed")
+
+    def test_goal_complete_rejects_review_items_until_explicit_verdict(self) -> None:
+        session_id = str(self.facilitator["id"])
+        goal = self._confirm_goal(session_id)
+        item = self._create_item(state="review", client_message_id="work:gate:review")
+
+        with self.assertRaises(AgentGoalExecutionBlocked) as blocked:
+            self._complete(session_id, goal["revision"])
+        self.assertEqual(blocked.exception.error_code, "goal_open_work_items")
+
+        accepted = self.work.accept(
+            session_id,
+            {
+                "workId": item["id"],
+                "expectedRevision": item["revision"],
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["test:tests.test_agent_sessions"],
+                "reason": "实现可运行且满足验收标准。",
+            },
+        )
+        self.assertEqual(accepted["state"], "done")
+        completed = self._complete(session_id, goal["revision"])
+        self.assertEqual(completed["status"], "completed")
+
+    def test_goal_complete_ignores_reconciled_and_unowned_work_items(self) -> None:
+        session_id = str(self.facilitator["id"])
+        goal = self._confirm_goal(session_id)
+        for index, state in enumerate(("blocked", "done", "failed", "cancelled")):
+            self._create_item(
+                state=state,
+                client_message_id=f"work:gate:terminal:{index}",
+            )
+        # An open item that this Session neither owns, created, nor is
+        # accountable for is another participant's responsibility.
+        self._create_item(
+            state="queued",
+            client_message_id="work:gate:other",
+            owner=self.worker_participant,
+            creator=self.worker_participant,
+            accountable=self.worker_participant,
+        )
+
+        completed = self._complete(session_id, goal["revision"])
+        self.assertEqual(completed["status"], "completed")
+
+    def test_goal_cancel_stays_available_while_work_items_are_open(self) -> None:
+        session_id = str(self.facilitator["id"])
+        goal = self._confirm_goal(session_id)
+        self._create_item(state="active", client_message_id="work:gate:cancel")
+
+        cancelled = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "用户改变了优先级，显式放弃剩余委派工作。",
+            },
+        )["workflow"]["goal"]
+        self.assertEqual(cancelled["status"], "cancelled")
+
+    def test_goal_complete_rejects_error_state_root_work_document(self) -> None:
+        session_id = str(self.facilitator["id"])
+        goal = self._confirm_goal(session_id)
+        workspace = self.root / "workspace"
+        (workspace / "docs").mkdir(parents=True)
+        (workspace / "docs" / "root.md").write_text(
+            "# Root WorkDocument\n",
+            encoding="utf-8",
+        )
+        documents = WorkDocumentService(
+            self.db_path,
+            sessions=self.store,
+            context_runtime=AgentContextRuntime(self.db_path),
+        )
+        documents.initialize()
+        registered = documents.register(
+            {
+                "authorityKind": "session_goal",
+                "authorityId": goal["goalId"],
+                "authorityRevision": goal["revision"],
+                "workspaceRoot": str(workspace),
+                "sourcePath": "docs/root.md",
+                "title": "Root WorkDocument",
+            }
+        )
+        self.assertEqual(registered["document"]["state"], "active")
+        authority_key = f"session_goal:{goal['goalId']}"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "UPDATE work_documents SET state = 'error', error = ? "
+                "WHERE authority_key = ?",
+                ("simulated reconciler crash", authority_key),
+            )
+            conn.commit()
+
+        with self.assertRaises(AgentGoalExecutionBlocked) as blocked:
+            self._complete(session_id, goal["revision"])
+        self.assertEqual(
+            blocked.exception.error_code,
+            "goal_root_work_document_error",
+        )
+        self.assertEqual(self.store.agent_goal(session_id)["status"], "active")
+
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "UPDATE work_documents SET state = 'active', error = '' "
+                "WHERE authority_key = ?",
+                (authority_key,),
+            )
+            conn.commit()
+        completed = self._complete(session_id, goal["revision"])
+        self.assertEqual(completed["status"], "completed")
 
 
 if __name__ == "__main__":
