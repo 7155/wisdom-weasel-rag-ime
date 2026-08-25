@@ -14,6 +14,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  Target,
   TerminalSquare,
   TriangleAlert,
   Wrench,
@@ -35,6 +36,7 @@ import {
   type UIEvent,
 } from 'react';
 import { publicToolName } from '../tool-presentation';
+import { agentToolGlyph } from './tool-glyphs';
 import {
   Button,
   Dialog,
@@ -712,12 +714,15 @@ function ToolProgressTimeline({
 
 function PublicToolResult({ activityId, view }: { activityId: string; view: PublicToolResultView }) {
   let primary: ReactNode = null;
+  let outputRendered = false;
   if (view.resultKind === 'semantic' && view.preview) {
     primary = <SemanticToolPreview preview={view.preview} />;
   } else if (view.resultKind === 'terminal' && view.output) {
     primary = <PublicTerminalResult view={view} />;
+    outputRendered = true;
   } else if (view.resultKind === 'code' && view.output) {
     primary = <PublicCodeResult view={view} />;
+    outputRendered = true;
   } else if (view.resultKind === 'matches' && view.resultItems.length) {
     primary = <PublicResultList view={view} label="搜索匹配结果" icon={<Search size={14} />} />;
   } else if (view.resultKind === 'files' && view.resultItems.length) {
@@ -728,10 +733,20 @@ function PublicToolResult({ activityId, view }: { activityId: string; view: Publ
     primary = <PublicChangeResult view={view} />;
   } else if (view.output) {
     primary = <PublicToolOutput view={view} />;
+    outputRendered = true;
   }
+  // A collaboration receipt can carry both a semantic card and the concrete
+  // body that was sent or written; a change card carries its content below
+  // the +/- statistics. Never hide the real payload behind the summary card.
+  const supplementalOutput = !outputRendered
+    && view.output
+    && (view.resultKind === 'semantic' || view.resultKind === 'change')
+    ? <PublicToolOutput view={view} />
+    : null;
   return (
     <>
       {primary}
+      {supplementalOutput}
       {view.rawResult ? <InspectableToolResult activityId={activityId} view={view} /> : null}
     </>
   );
@@ -1049,10 +1064,11 @@ export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
   const outputText = view.output?.text ?? '';
   const { copy, state } = useCopyableText(outputText);
   if (!view.output) return null;
+  const label = view.outputLabel;
   return (
-    <section className="agent-tool-result-panel" aria-label="工具返回片段">
+    <section className="agent-tool-result-panel" aria-label={label ? `工具${label}` : '工具返回片段'}>
       <header className="agent-tool-result-panel__header">
-        <strong><TerminalSquare size={13} />返回片段</strong>
+        <strong><TerminalSquare size={13} />{label ?? '返回片段'}</strong>
         <Button
           aria-live="polite"
           leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
@@ -1063,7 +1079,7 @@ export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
           {state === 'copied' ? '已复制结果' : '复制结果'}
         </Button>
       </header>
-      <pre aria-label="工具返回内容" role="region" tabIndex={0}>{outputText}</pre>
+      <pre aria-label={label ? `${label}正文` : '工具返回内容'} role="region" tabIndex={0}>{outputText}</pre>
       {view.output.truncated ? (
         <small>此处显示安全截断片段；完整结果仍由本机工具回执保留。</small>
       ) : null}
@@ -1072,11 +1088,18 @@ export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
   );
 }
 
+const semanticPreviewIcons: Record<string, LucideIcon> = {
+  collaboration: MessageSquareText,
+  delegation: Bot,
+  goal: Target,
+};
+
 function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResultView['preview']> }) {
+  const PreviewIcon = semanticPreviewIcons[preview.kind] ?? BookOpenText;
   return (
     <section className="agent-tool-preview" data-kind={preview.kind} aria-label={`${preview.title}内容`}>
       <header>
-        <span><BookOpenText size={17} /></span>
+        <span><PreviewIcon size={17} /></span>
         <div>
           <strong>{preview.title}</strong>
           {preview.description ? <p>{preview.description}</p> : null}
@@ -1215,10 +1238,10 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     return { title: '运行环境', kind: 'runtime', icon: Database };
   }
   if (toolId.includes('workspace')) {
-    return { title: toolView?.toolLabel ?? '运行环境', kind: 'runtime', icon: TerminalSquare };
+    return { title: toolView?.toolLabel ?? '运行环境', kind: 'runtime', icon: agentToolGlyph(toolId, activity.kind) };
   }
-  if (toolId.includes('planning') || toolId === 'todo') return { title: toolId === 'todo' ? 'Todo' : '规划', kind: 'tool', icon: Bot };
-  return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
+  if (toolId.includes('planning') || toolId === 'todo') return { title: toolId === 'todo' ? 'Todo' : '规划', kind: 'tool', icon: agentToolGlyph(toolId, activity.kind) };
+  return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: agentToolGlyph(toolId, activity.kind) };
 }
 
 function approvalModelLabel(model: string): string {
@@ -1452,7 +1475,14 @@ function FxActivityDisclosure({
     if (activity.status === 'failed' && previous !== 'failed') setManuallyOpen(true);
   }, [activity.status, setManuallyOpen]);
   const detailId = `paw-activity-detail-${useId().replace(/:/gu, '')}`;
-  const label = fxActivityLabel(activity);
+  const isTool = ['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind);
+  const toolView = useMemo(
+    () => (isTool ? publicToolResultView(activity) : null),
+    [activity, isTool],
+  );
+  const header = fxActivityHeader(activity, toolView);
+  const label = header.label;
+  const Glyph = header.glyph;
   /* Subagent receipts land after background work; the violet tone separates
      "another Agent finished this for you" from the parent's own tool calls. */
   const subagent = isSubagentActivity(activity);
@@ -1475,7 +1505,7 @@ function FxActivityDisclosure({
       <button
         aria-controls={detailId}
         aria-expanded={open}
-        aria-label={`${label}，${statusText}${meta ? `，${meta}` : ''}`}
+        aria-label={`${label}${header.hint ? `，${header.hint}` : ''}，${statusText}${meta ? `，${meta}` : ''}`}
         className="paw-activity"
         data-state={activity.status}
         onClick={(event) => toggleDisclosurePreservingAnchor(event, setManuallyOpen)}
@@ -1484,7 +1514,11 @@ function FxActivityDisclosure({
       >
         <span className="paw-activity__row">
           <span className="paw-chevron">▸</span>
+          <span aria-hidden="true" className="paw-activity__glyph" data-kind={header.glyphKind}>
+            <Glyph size={13} />
+          </span>
           <span className="paw-activity__label">{label}</span>
+          {header.hint ? <span className="paw-activity__hint">{header.hint}</span> : null}
           <span className={`fx-pill ${tone}`}><i />{statusText}</span>
           {meta ? <span className="fx-meta">{meta}</span> : null}
           {progress ? <span
@@ -1528,16 +1562,62 @@ function isSubagentActivity(activity: AgentActivityProjection): boolean {
     || text(activity.payload.toolId ?? activity.payload.toolName).toLowerCase().includes('subagent');
 }
 
-function fxActivityLabel(activity: AgentActivityProjection): string {
-  const display = text(activity.payload.displayName) || text(activity.payload.toolName);
-  if (display) return display;
-  const toolId = text(activity.payload.toolId);
-  if (toolId) return publicToolName(toolId);
-  if (activity.kind === 'reasoning_summary') return '思考过程';
-  if (activity.kind === 'user_input_required') return '等待你的输入';
-  if (activity.kind === 'turn_failed') return '本轮失败';
-  if (activity.kind === 'approval') return '审批';
-  return '操作';
+interface FxActivityHeader {
+  label: string;
+  hint: string;
+  glyph: LucideIcon;
+  glyphKind: string;
+}
+
+/** One compact identity per FX row: glyph + readable Tool name + concrete
+ * hint (target, sent message, or result summary). Raw tool ids such as
+ * “工具 agents” never reach the row label (PF-CM-006 / PF-CM-007). */
+function fxActivityHeader(
+  activity: AgentActivityProjection,
+  toolView: PublicToolResultView | null,
+): FxActivityHeader {
+  const toolId = text(activity.payload.toolId ?? activity.payload.toolName).toLowerCase().trim();
+  if (toolView) {
+    const hint = boundedInlineSummary(toolView.error ?? toolView.summary, 96);
+    return {
+      label: toolView.toolLabel,
+      hint: hint === toolView.toolLabel ? '' : hint,
+      glyph: agentToolGlyph(toolId, activity.kind),
+      glyphKind: fxGlyphKind(toolId, activity.kind),
+    };
+  }
+  const fallbackLabel = activity.kind === 'reasoning_summary'
+    ? '思考过程'
+    : activity.kind === 'user_input_required'
+      ? '等待你的输入'
+      : activity.kind === 'turn_failed'
+        ? '本轮失败'
+        : activity.kind.includes('approval')
+          ? '审批'
+          : toolId
+            ? publicToolName(toolId)
+            : '操作';
+  const hint = activity.kind === 'turn_failed'
+    ? boundedInlineSummary(publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。'), 96)
+    : boundedInlineSummary(publicActivitySummary(activity.summary, fallbackLabel), 96);
+  return {
+    label: fallbackLabel,
+    hint: hint === fallbackLabel || hint === `${fallbackLabel}已更新` ? '' : hint,
+    glyph: agentToolGlyph(toolId, activity.kind),
+    glyphKind: fxGlyphKind(toolId, activity.kind),
+  };
+}
+
+/** Stable tone family for the row glyph so collaboration, delegation, and
+ * thinking rows separate visually inside a dense step tree. */
+function fxGlyphKind(toolId: string, activityKind: string): string {
+  if (activityKind === 'reasoning_summary') return 'thinking';
+  if (activityKind.includes('approval') || activityKind === 'user_input_required') return 'approval';
+  if (toolId === 'agents' || toolId.includes('subagent')) return 'delegation';
+  if (toolId.startsWith('room')) return 'collaboration';
+  if (toolId === 'agent_goal' || toolId === 'work_documents' || toolId === 'todo' || toolId === 'planning') return 'plan';
+  if (toolId.includes('memory') || toolId.includes('knowledge')) return 'memory';
+  return 'tool';
 }
 
 function fxActivityMeta(activity: AgentActivityProjection): string {

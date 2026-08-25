@@ -639,7 +639,7 @@
   overflow: clip;
   opacity: 0;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
     opacity 150ms ease;
   will-change: height;
 }
@@ -770,6 +770,13 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-tool-preview__items a { margin: 0; color: var(--color-text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .agent-tool-preview__items a { text-decoration-color: color-mix(in srgb, var(--color-memory) 48%, transparent); text-underline-offset: 3px; }
 .agent-tool-preview__items a:hover { color: var(--color-memory); }
+/* Collaboration, delegation, and goal receipts reuse the semantic preview
+   frame with their own hue, so a Room message, a delegated TaskBrief, and a
+   goal audit separate at a glance (PF-CM-007 / PF-CM-010). */
+.agent-tool-preview[data-kind='collaboration'] { --color-memory: var(--color-info); --color-memory-soft: var(--color-info-soft); }
+.agent-tool-preview[data-kind='delegation'] { --color-memory: var(--color-accent); --color-memory-soft: var(--color-accent-soft); }
+.agent-tool-preview[data-kind='goal'] { --color-memory: var(--color-success); --color-memory-soft: var(--color-success-soft); }
+.agent-tool-preview:is([data-kind='collaboration'], [data-kind='delegation'], [data-kind='goal']) .agent-tool-preview__items li { grid-template-columns: minmax(72px, max-content) minmax(0, 1fr); }
 .agent-tool-result-view { min-width: 0; margin-top: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); overflow: hidden; }
 .agent-tool-result-view > header { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px 5px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
 .agent-tool-result-view > header > strong { display: inline-flex; min-width: 0; align-items: center; gap: 6px; color: var(--color-text); font-size: 13px; }

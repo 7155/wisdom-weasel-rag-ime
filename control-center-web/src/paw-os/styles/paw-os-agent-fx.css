@@ -242,7 +242,7 @@
 .paw-desktop-root .paw-chatfx .agent-turn-work__reveal {
   min-width: 0;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
     opacity 150ms ease;
 }
 
@@ -370,6 +370,51 @@
   background: var(--paw-chat-surface-hover);
 }
 
+/* One compact glyph per Tool family keeps small frames readable where a raw
+   label such as “工具 agents” previously crowded the row (PF-CM-006/007). */
+.paw-desktop-root .paw-chatfx .paw-activity__glyph {
+  display: inline-grid;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--paw-chat-text-tertiary) 12%, transparent);
+  color: var(--paw-chat-text-secondary);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='thinking'],
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='collaboration'] {
+  background: color-mix(in srgb, var(--paw-chat-accent) 13%, transparent);
+  color: var(--paw-chat-accent);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='delegation'] {
+  background: color-mix(in srgb, var(--paw-chat-violet) 14%, transparent);
+  color: var(--paw-chat-violet);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='plan'] {
+  background: color-mix(in srgb, var(--paw-chat-ok) 14%, transparent);
+  color: var(--paw-chat-ok);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='approval'] {
+  background: color-mix(in srgb, var(--paw-chat-warn) 15%, transparent);
+  color: var(--paw-chat-warn);
+}
+
+/* The concrete object of a step (file, message, target) rides in the row so
+   a reader can scan the tree without opening every disclosure. */
+.paw-desktop-root .paw-chatfx .paw-activity__hint {
+  overflow: hidden;
+  max-width: min(46ch, 52vw);
+  color: var(--paw-chat-text-tertiary);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .paw-desktop-root .paw-chatfx .paw-chevron {
   display: inline-grid;
   width: 16px;
@@ -433,7 +478,7 @@
   color: var(--paw-chat-text-secondary);
   font-size: 13px;
   transition:
-    height 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
     opacity 150ms ease,
     margin 200ms ease;
 }
