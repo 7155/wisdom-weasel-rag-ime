@@ -1,5 +1,11 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import type { AssistantBlock, AssistantMessage, RunPhase, TranscriptMessage, UserMessage } from './model/types';
+import type {
+  AssistantBlock,
+  AssistantMessage,
+  RunPhase,
+  TranscriptMessage,
+  UserMessage,
+} from './model/types';
 
 /**
  * PAWOS keeps conversation state in its Runtime-fed live stores, so the
@@ -23,15 +29,23 @@ export interface ConversationSurfaceController {
   phase: RunPhase;
   capabilities: ConversationSurfaceCapabilities;
   retry?(message: AssistantMessage): void;
+  /** Per-card guard: a Room only retries the newest unsuperseded failure. */
+  canRetry?(message: AssistantMessage): boolean;
+  retryPending?: boolean;
   edit?(message: UserMessage): void;
   fork?(message: TranscriptMessage): void;
   rewind?(message: TranscriptMessage): void;
   interruptSteer?(message: UserMessage): void;
   cancelSteer?(message: UserMessage): void;
   /** Host override for a Runtime block the shared card cannot present alone. */
-  renderAssistantBlock?(block: AssistantBlock, message: AssistantMessage): ReactNode | undefined;
-  /** Host slot below an assistant card (approvals, background-process links). */
-  renderAssistantFooter?(message: AssistantMessage): ReactNode | undefined;
+  renderBlock?(block: AssistantBlock, message: AssistantMessage): ReactNode | undefined;
+  /** Host body inside a tool card's disclosure (structured diff, tool facts). */
+  renderBlockDetail?(block: AssistantBlock, message: AssistantMessage): ReactNode | undefined;
+  /** Host action row under a card head; stays visible so an approval never
+   *  hides behind a disclosure. */
+  renderBlockAction?(block: AssistantBlock, message: AssistantMessage): ReactNode | undefined;
+  /** Host slot below an assistant card (terminal receipts, session links). */
+  renderMessageFooter?(message: AssistantMessage): ReactNode | undefined;
   formatTimestamp(timestamp: number): string;
 }
 
@@ -66,4 +80,8 @@ export function conversationClock(timestamp: number): string {
   return timestamp
     ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp))
     : '';
+}
+
+export function conversationBusy(phase: RunPhase): boolean {
+  return phase === 'sending' || phase === 'responding' || phase === 'stopping';
 }

@@ -1,26 +1,32 @@
-import React, { useCallback, useMemo, useRef } from "react";
-import { useConversation } from "../context/ConversationProvider";
-import { usePinnedTranscript } from "../hooks/usePinnedTranscript";
-import { useSessionScrollMemory } from "../hooks/useSessionScrollMemory";
-import { useVirtualTranscript } from "../hooks/useVirtualTranscript";
-import type { TranscriptMessage } from "../model/types";
-import { JumpToBottom } from "./JumpToBottom";
-import { TranscriptRow } from "./TranscriptRow";
+import { useCallback, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { conversationBusy, useConversationSurface } from '../ConversationSurfaceContext';
+import { usePinnedTranscript } from '../hooks/usePinnedTranscript';
+import { useSessionScrollMemory } from '../hooks/useSessionScrollMemory';
+import { useVirtualTranscript } from '../hooks/useVirtualTranscript';
+import type { TranscriptMessage } from '../model/types';
+import { JumpToBottom } from './JumpToBottom';
+import { TranscriptRow } from './TranscriptRow';
 
+/* A first guess only: every mounted row reports its real height back through
+ * the virtualizer's ResizeObserver, and the guess is never used again. */
 function estimateMessage(message: TranscriptMessage): number {
-  if (message.role === "user") return Math.min(240, 74 + Math.ceil(message.text.length / 65) * 22);
+  if (message.role === 'user') return Math.min(240, 74 + Math.ceil(message.text.length / 65) * 22);
   let size = 56;
   for (const block of message.blocks) {
-    if (block.kind === "text") size += Math.min(640, 38 + Math.ceil(block.text.length / 72) * 22);
-    else if (block.kind === "thinking") size += block.detail ? 62 : 38;
+    if (block.kind === 'text') size += Math.min(640, 38 + Math.ceil(block.text.length / 72) * 22);
+    else if (block.kind === 'thinking') size += block.detail ? 62 : 38;
     else size += block.output ? 88 : 58;
   }
   return Math.max(80, size);
 }
 
-export function VirtualTranscript() {
-  const controller = useConversation();
-  const { messages, phase, conversationId } = controller.state;
+export function VirtualTranscript({ empty, label, lead }: {
+  label: string;
+  lead?: ReactNode;
+  empty?: ReactNode;
+}) {
+  const surface = useConversationSurface();
+  const { conversationId, messages, phase } = surface;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sizerRef = useRef<HTMLDivElement | null>(null);
   const pinned = usePinnedTranscript(scrollRef, sizerRef);
@@ -34,64 +40,56 @@ export function VirtualTranscript() {
     scrollRef,
   });
 
-  useSessionScrollMemory(
-    conversationId,
-    pinned.captureAnchor,
-    pinned.restoreAnchor,
-    scrollRef,
+  useSessionScrollMemory(conversationId, pinned.captureAnchor, pinned.restoreAnchor, scrollRef);
+
+  const messageIndex = useMemo(
+    () => new Map(messages.map((message, index) => [message.id, index])),
+    [messages],
   );
 
-  const busy = phase === "sending" || phase === "responding" || phase === "stopping";
-  const messageIndex = useMemo(() => new Map(messages.map((message, index) => [message.id, index])), [messages]);
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).matches("input,textarea,button,[contenteditable=true]")) return;
-    const current = document.activeElement?.closest<HTMLElement>("[data-message-id]")?.dataset.messageId;
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).matches('input,textarea,button,[contenteditable=true]')) return;
+    const current = document.activeElement?.closest<HTMLElement>('[data-message-id]')?.dataset.messageId;
     const index = current ? messageIndex.get(current) ?? messages.length - 1 : messages.length - 1;
-    if (event.key === "ArrowUp") {
+    const scroller = scrollRef.current;
+    if (event.key === 'ArrowUp') {
       event.preventDefault();
-      virtual.scrollToIndex(Math.max(0, index - 1), "center");
-    } else if (event.key === "ArrowDown") {
+      virtual.scrollToIndex(Math.max(0, index - 1), 'center');
+    } else if (event.key === 'ArrowDown') {
       event.preventDefault();
-      virtual.scrollToIndex(Math.min(messages.length - 1, index + 1), "center");
-    } else if (event.key === "PageUp") {
+      virtual.scrollToIndex(Math.min(messages.length - 1, index + 1), 'center');
+    } else if (event.key === 'PageUp' && scroller) {
       event.preventDefault();
-      scrollRef.current?.scrollBy({ top: -(scrollRef.current?.clientHeight ?? 600) * 0.8 });
-    } else if (event.key === "PageDown") {
+      scroller.scrollTop -= (scroller.clientHeight || 600) * 0.8;
+    } else if (event.key === 'PageDown' && scroller) {
       event.preventDefault();
-      scrollRef.current?.scrollBy({ top: (scrollRef.current?.clientHeight ?? 600) * 0.8 });
+      scroller.scrollTop += (scroller.clientHeight || 600) * 0.8;
     }
   };
 
   return (
     <div className="ccui-transcript-shell">
       <div
-        ref={scrollRef}
-        role="feed"
-        aria-label="Conversation"
-        aria-busy={busy}
-        tabIndex={0}
-        data-autoscroll-container=""
+        aria-busy={conversationBusy(phase)}
+        aria-label={label}
         className="ccui-transcript-scroll"
         onKeyDown={onKeyDown}
+        ref={scrollRef}
+        role="log"
+        tabIndex={0}
       >
-        <div
-          ref={sizerRef}
-          data-rocksteady-sizer=""
-          className="ccui-transcript-sizer"
-          style={{ height: virtual.totalSize }}
-        >
-          {virtual.virtualRows.map(row => {
+        {lead ? <div className="ccui-transcript-lead">{lead}</div> : null}
+        <div className="ccui-transcript-sizer" ref={sizerRef} style={{ height: virtual.totalSize }}>
+          {virtual.virtualRows.map((row) => {
             const message = messages[row.index];
             if (!message) return null;
             return (
               <div
+                className="ccui-virtual-row"
+                data-index={row.index}
+                data-message-id={message.id}
                 key={row.key}
                 ref={virtual.measureElement(row.key)}
-                data-message-id={message.id}
-                data-rs-index={row.index}
-                data-index={row.index}
-                className="ccui-virtual-row"
                 style={{ transform: `translateY(${row.start}px)` }}
               >
                 <TranscriptRow message={message} />
@@ -99,15 +97,9 @@ export function VirtualTranscript() {
             );
           })}
         </div>
-        {messages.length === 0 ? (
-          <div className="ccui-empty-transcript">
-            <div className="ccui-empty-mark">AI</div>
-            <h2>Start a working conversation</h2>
-            <p>Keep the composer usable while agents work. Follow-ups can queue, steer, or branch without turning the transcript into a control panel.</p>
-          </div>
-        ) : null}
+        {messages.length === 0 && empty ? <div className="ccui-empty-transcript">{empty}</div> : null}
       </div>
-      <JumpToBottom visible={pinned.showJumpToBottom} onClick={() => pinned.scrollToBottom("smooth")} />
+      <JumpToBottom onClick={() => pinned.scrollToBottom('smooth')} visible={pinned.showJumpToBottom} />
     </div>
   );
 }

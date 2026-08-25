@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+
+/* Vendored clean-room scroll behaviour. See ../ATTRIBUTION.md. */
 
 export interface ScrollAnchor {
   pinned: boolean;
@@ -7,6 +9,11 @@ export interface ScrollAnchor {
   fallbackScrollTop?: number;
 }
 
+/**
+ * Pin-to-latest that a reader can always win. Growth keeps the view at the
+ * bottom only while the reader is already there; any scroll, wheel, touch or
+ * pointer intent above the fold releases the pin until they come back.
+ */
 export function usePinnedTranscript(
   scrollRef: RefObject<HTMLElement | null>,
   contentRef: RefObject<HTMLElement | null>,
@@ -27,12 +34,13 @@ export function usePinnedTranscript(
     return Math.max(0, scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop);
   }, [scrollRef]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "instant") => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const scroller = scrollRef.current;
     if (!scroller) return;
     programmatic.current = true;
     updatePinned(true);
-    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    if (typeof scroller.scrollTo === 'function') scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    else scroller.scrollTop = scroller.scrollHeight;
     requestAnimationFrame(() => {
       programmatic.current = false;
       setShowJumpToBottom(false);
@@ -53,27 +61,27 @@ export function usePinnedTranscript(
       if (programmatic.current) return;
       if (gapToBottom() > 24) updatePinned(false);
     };
-    scroller.addEventListener("scroll", onScroll, { passive: true });
-    scroller.addEventListener("wheel", onIntent, { passive: true });
-    scroller.addEventListener("touchstart", onIntent, { passive: true });
-    scroller.addEventListener("pointerdown", onIntent, { passive: true });
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    scroller.addEventListener('wheel', onIntent, { passive: true });
+    scroller.addEventListener('touchstart', onIntent, { passive: true });
+    scroller.addEventListener('pointerdown', onIntent, { passive: true });
     onScroll();
     return () => {
-      scroller.removeEventListener("scroll", onScroll);
-      scroller.removeEventListener("wheel", onIntent);
-      scroller.removeEventListener("touchstart", onIntent);
-      scroller.removeEventListener("pointerdown", onIntent);
+      scroller.removeEventListener('scroll', onScroll);
+      scroller.removeEventListener('wheel', onIntent);
+      scroller.removeEventListener('touchstart', onIntent);
+      scroller.removeEventListener('pointerdown', onIntent);
     };
   }, [gapToBottom, scrollRef, updatePinned]);
 
   useLayoutEffect(() => {
     const content = contentRef.current;
-    if (!content) return;
+    if (!content || typeof ResizeObserver !== 'function') return;
     let frame = 0;
     const observer = new ResizeObserver(() => {
       if (!pinnedRef.current) return;
       if (frame) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => scrollToBottom("instant"));
+      frame = requestAnimationFrame(() => scrollToBottom('auto'));
     });
     observer.observe(content);
     return () => {
@@ -86,8 +94,8 @@ export function usePinnedTranscript(
     const scroller = scrollRef.current;
     if (!scroller || pinnedRef.current) return { pinned: pinnedRef.current };
     const viewportTop = scroller.getBoundingClientRect().top;
-    const rows = Array.from(scroller.querySelectorAll<HTMLElement>("[data-message-id]"));
-    const row = rows.find(element => element.getBoundingClientRect().bottom > viewportTop);
+    const rows = [...scroller.querySelectorAll<HTMLElement>('[data-message-id]')];
+    const row = rows.find((element) => element.getBoundingClientRect().bottom > viewportTop);
     if (!row?.dataset.messageId) return { pinned: false };
     return {
       pinned: false,
@@ -101,14 +109,15 @@ export function usePinnedTranscript(
     const scroller = scrollRef.current;
     if (!scroller) return;
     if (anchor.pinned) {
-      scrollToBottom("instant");
+      scrollToBottom('auto');
       return;
     }
     updatePinned(false);
     if (anchor.fallbackScrollTop !== undefined) scroller.scrollTop = anchor.fallbackScrollTop;
-    if (!anchor.messageId) return;
+    const messageId = anchor.messageId;
+    if (!messageId) return;
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      const row = scroller.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.messageId!)}"]`);
+      const row = scroller.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
       if (!row) return;
       const viewportTop = scroller.getBoundingClientRect().top;
       const actualOffset = row.getBoundingClientRect().top - viewportTop;

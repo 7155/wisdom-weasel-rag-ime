@@ -1,37 +1,71 @@
-import React from "react";
-import type { AssistantMessage } from "../model/types";
-import { useConversation } from "../context/ConversationProvider";
-import { ProgressiveMarkdown } from "../rendering/react/ProgressiveMarkdown";
-import { MessageActions } from "./MessageActions";
-import { ThinkingBlock } from "./ThinkingBlock";
-import { ToolCard } from "./ToolCard";
+import { MarkdownBody } from '@/features/agent/timeline/MarkdownRenderer';
+import { useConversationSurface } from '../ConversationSurfaceContext';
+import type { AssistantMessage } from '../model/types';
+import { MessageActions } from './MessageActions';
+import { ThinkingBlock } from './ThinkingBlock';
+import { ToolCard } from './ToolCard';
 
 export function AssistantTurn({ message }: { message: AssistantMessage }) {
-  const controller = useConversation();
-  const text = message.blocks.filter(block => block.kind === "text").map(block => block.kind === "text" ? block.text : "").join("\n");
+  const surface = useConversationSurface();
+  const { capabilities } = surface;
+  const streaming = message.blocks.some((block) => block.kind === 'text' && block.streaming);
+  const copyText = message.blocks
+    .map((block) => block.kind === 'text' ? block.text : '')
+    .filter(Boolean)
+    .join('\n\n');
+  const retryable = Boolean(
+    capabilities.retry && surface.retry && (surface.canRetry?.(message) ?? true),
+  );
+  const footer = surface.renderMessageFooter?.(message);
   return (
-    <article className="ccui-turn ccui-assistant-turn" aria-label="Assistant response">
+    <article className="ccui-turn ccui-assistant-turn" data-turn-id={message.turnId}>
+      {message.actor ? (
+        <header className="ccui-assistant-head">
+          <strong>{message.actor}</strong>
+          {message.actorRole ? <small>{message.actorRole}</small> : null}
+          <time dateTime={new Date(message.timestamp).toISOString()}>{surface.formatTimestamp(message.timestamp)}</time>
+        </header>
+      ) : null}
       <div className="ccui-assistant-body">
-        {message.blocks.map(block => {
-          if (block.kind === "thinking") return <ThinkingBlock key={block.id} block={block} />;
-          if (block.kind === "tool") return <ToolCard key={block.id} block={block} />;
-          return (
-            <ProgressiveMarkdown
+        {message.blocks.map((block) => {
+          const override = surface.renderBlock?.(block, message);
+          if (override !== undefined) return <div className="ccui-host-block" key={block.id}>{override}</div>;
+          const detail = surface.renderBlockDetail?.(block, message);
+          if (block.kind === 'thinking') {
+            return <ThinkingBlock block={block} key={block.id} {...(detail ? { detail } : {})} />;
+          }
+          if (block.kind === 'tool') {
+            const action = surface.renderBlockAction?.(block, message);
+            return <ToolCard
+              block={block}
               key={block.id}
-              documentKey={`${message.id}:${block.id}`}
-              text={block.text}
-              isStreaming={Boolean(block.streaming)}
-            />
+              {...(action ? { action } : {})}
+              {...(detail ? { detail } : {})}
+            />;
+          }
+          return (
+            <div className="ccui-markdown" key={block.id}>
+              <MarkdownBody
+                documentKey={`${message.id}:${block.id}`}
+                streamingTail={Boolean(block.streaming)}
+                text={block.text}
+              />
+            </div>
           );
         })}
-        {message.error ? <div className="ccui-error-card">{message.error}</div> : null}
+        {streaming ? <small className="ccui-live-hint">正在生成公开回复</small> : null}
+        {message.error ? <div className="ccui-error-card" role="status">{message.error}</div> : null}
       </div>
+      {footer ? <div className="ccui-assistant-host-footer">{footer}</div> : null}
       <div className="ccui-assistant-footer">
         <MessageActions
-          text={text}
-          onRetry={() => void controller.retryAssistant(message.id)}
-          onFork={controller.capabilities.fork ? () => void controller.forkFrom(message.id) : undefined}
-          onRewind={controller.capabilities.rewind ? () => void controller.rewindTo(message.id) : undefined}
+          retryLabel="再试一次"
+          retryPending={Boolean(surface.retryPending)}
+          text={copyText}
+          {...(capabilities.copy && copyText ? { onCopy: () => undefined } : {})}
+          {...(retryable ? { onRetry: () => surface.retry?.(message) } : {})}
+          {...(capabilities.fork && surface.fork ? { onFork: () => surface.fork?.(message) } : {})}
+          {...(capabilities.rewind && surface.rewind ? { onRewind: () => surface.rewind?.(message) } : {})}
         />
       </div>
     </article>

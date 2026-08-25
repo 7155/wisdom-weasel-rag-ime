@@ -1,5 +1,10 @@
-import { useEffect, useRef, type RefObject } from "react";
-import type { ScrollAnchor } from "./usePinnedTranscript";
+import { useEffect, useRef, type RefObject } from 'react';
+import type { ScrollAnchor } from './usePinnedTranscript';
+
+/* Vendored clean-room scroll memory. See ../ATTRIBUTION.md.
+ *
+ * Reading position survives switching away and back, so a long transcript is
+ * not silently reset to the bottom by window navigation. */
 
 const memory = new Map<string, ScrollAnchor>();
 
@@ -28,4 +33,9 @@ export function useSessionScrollMemory(
       memory.delete(sessionKey);
     },
   };
+}
+
+/** Test/host escape hatch: forget every remembered reading position. */
+export function clearConversationScrollMemory(): void {
+  memory.clear();
 }

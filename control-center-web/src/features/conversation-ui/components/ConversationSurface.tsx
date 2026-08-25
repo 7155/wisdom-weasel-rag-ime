@@ -1,39 +1,51 @@
-import React from "react";
-import { useConversation } from "../context/ConversationProvider";
-import { Composer } from "./Composer";
-import { SideChatPanel } from "./SideChatPanel";
-import { VirtualTranscript } from "./VirtualTranscript";
+import type { ReactNode } from 'react';
+import {
+  ConversationSurfaceProvider,
+  type ConversationSurfaceController,
+} from '../ConversationSurfaceContext';
+import { VirtualTranscript } from './VirtualTranscript';
 
+/**
+ * The one conversation shell PAWOS mounts wherever a transcript is read: the
+ * Room's public timeline, a partner satellite, a Session. The host owns state
+ * and passes a controller; the shell owns reading — pinned scroll, variable
+ * height virtualization, turn cards, tool receipts and steer receipts.
+ *
+ * `children` land in the surface foot, below the transcript, which is where a
+ * host puts its queue tray and composer when it wants them inside the same
+ * scroll container boundary.
+ */
 export function ConversationSurface({
-  title = "Agent session",
-  subtitle,
-  rightSlot,
+  children,
+  controller,
+  density = 'comfortable',
+  empty,
+  label,
+  lead,
 }: {
-  title?: string;
-  subtitle?: string;
-  rightSlot?: React.ReactNode;
+  controller: ConversationSurfaceController;
+  label: string;
+  density?: 'comfortable' | 'compact';
+  lead?: ReactNode;
+  empty?: ReactNode;
+  children?: ReactNode;
 }) {
-  const controller = useConversation();
-  const { phase, queue } = controller.state;
   return (
-    <section className="ccui-conversation-surface">
-      <header className="ccui-conversation-header">
-        <div className="ccui-conversation-title">
-          <h1>{title}</h1>
-          <div className="ccui-conversation-subtitle">
-            <span className={`ccui-phase-dot phase-${phase}`} />
-            <span>{subtitle ?? (phase === "idle" ? "Ready" : phase === "responding" ? "Working" : phase === "sending" ? "Sending" : phase === "stopping" ? "Stopping" : "Needs attention")}</span>
-            {queue.length ? <span>· {queue.length} queued</span> : null}
-          </div>
-        </div>
-        <div className="ccui-conversation-header-actions">
-          {controller.capabilities.sideChat ? <button type="button" onClick={() => controller.toggleSideChat(true)}>Side chat <kbd>⌘;</kbd></button> : null}
-          {rightSlot}
-        </div>
-      </header>
-      <VirtualTranscript />
-      <Composer />
-      <SideChatPanel />
-    </section>
+    <ConversationSurfaceProvider controller={controller}>
+      <section
+        aria-label={label}
+        className="ccui-conversation-surface"
+        data-conversation-id={controller.conversationId}
+        data-density={density}
+        data-phase={controller.phase}
+      >
+        <VirtualTranscript
+          label={`${label}时间线`}
+          {...(lead ? { lead } : {})}
+          {...(empty ? { empty } : {})}
+        />
+        {children ? <div className="ccui-surface-foot">{children}</div> : null}
+      </section>
+    </ConversationSurfaceProvider>
   );
 }

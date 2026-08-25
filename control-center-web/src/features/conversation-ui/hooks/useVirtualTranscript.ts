@@ -1,4 +1,6 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+
+/* Vendored clean-room virtualizer. See ../ATTRIBUTION.md. */
 
 export interface VirtualRow {
   key: string;
@@ -19,14 +21,14 @@ export interface UseVirtualTranscriptOptions<T> {
 /**
  * Small variable-height virtualizer designed for chat timelines.
  * It keeps measured row sizes by stable key and uses asymmetric overscan:
- * substantially more history above, because users tend to scroll upward.
+ * substantially more history above, because readers scroll upward.
  */
 export function useVirtualTranscript<T>({
   items,
   getKey,
   estimateSize,
   scrollRef,
-  overscanTop = 1400,
+  overscanTop = 1_400,
   overscanBottom = 600,
 }: UseVirtualTranscriptOptions<T>) {
   const sizeCache = useRef(new Map<string, number>());
@@ -56,7 +58,7 @@ export function useVirtualTranscript<T>({
     let frame = 0;
     const read = () => {
       frame = 0;
-      setViewport(previous => {
+      setViewport((previous) => {
         const next = { top: scroller.scrollTop, height: scroller.clientHeight };
         return previous.top === next.top && previous.height === next.height ? previous : next;
       });
@@ -65,18 +67,19 @@ export function useVirtualTranscript<T>({
       if (!frame) frame = requestAnimationFrame(read);
     };
     read();
-    scroller.addEventListener("scroll", schedule, { passive: true });
-    const resize = new ResizeObserver(schedule);
-    resize.observe(scroller);
+    scroller.addEventListener('scroll', schedule, { passive: true });
+    const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
+    resize?.observe(scroller);
     return () => {
-      scroller.removeEventListener("scroll", schedule);
-      resize.disconnect();
+      scroller.removeEventListener('scroll', schedule);
+      resize?.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
   }, [scrollRef]);
 
   useLayoutEffect(() => {
-    observerRef.current = new ResizeObserver(entries => {
+    if (typeof ResizeObserver !== 'function') return;
+    observerRef.current = new ResizeObserver((entries) => {
       let changed = false;
       let scrollAdjustment = 0;
       const scroller = scrollRef.current;
@@ -85,20 +88,19 @@ export function useVirtualTranscript<T>({
         const key = elementToKey.current.get(entry.target);
         if (!key) continue;
         const next = Math.max(1, Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height));
-        const row = geometry.rows.find(candidate => candidate.key === key);
+        const row = geometry.rows.find((candidate) => candidate.key === key);
         const previous = sizeCache.current.get(key) ?? row?.size;
-        if (previous !== next) {
-          // If a fully-above row changes height, compensate scrollTop by the same
-          // delta so the first visible content keeps its screen position.
-          if (scroller && row && previous !== undefined && row.start + previous <= scroller.scrollTop) {
-            scrollAdjustment += next - previous;
-          }
-          sizeCache.current.set(key, next);
-          changed = true;
+        if (previous === next) continue;
+        // If a fully-above row changes height, compensate scrollTop by the same
+        // delta so the first visible content keeps its screen position.
+        if (scroller && row && previous !== undefined && row.start + previous <= scroller.scrollTop) {
+          scrollAdjustment += next - previous;
         }
+        sizeCache.current.set(key, next);
+        changed = true;
       }
       if (scrollAdjustment && scroller) scroller.scrollTop += scrollAdjustment;
-      if (changed) setMeasurementEpoch(epoch => epoch + 1);
+      if (changed) setMeasurementEpoch((epoch) => epoch + 1);
     });
     return () => observerRef.current?.disconnect();
   }, [scrollRef]);
@@ -110,20 +112,23 @@ export function useVirtualTranscript<T>({
   }, []);
 
   const virtualRows = useMemo(() => {
-    const from = Math.max(0, viewport.top - overscanTop);
-    const to = viewport.top + viewport.height + overscanBottom;
     const rows = layout.rows;
     if (rows.length === 0) return [];
+    /* No measurable viewport means no honest window to cull against — a
+     * headless or not-yet-laid-out scroller renders the whole transcript
+     * rather than an arbitrary slice of it. */
+    if (viewport.height <= 0) return rows;
 
+    const from = Math.max(0, viewport.top - overscanTop);
+    const to = viewport.top + viewport.height + overscanBottom;
     let low = 0;
     let high = rows.length - 1;
     let startIndex = rows.length - 1;
     while (low <= high) {
       const mid = (low + high) >> 1;
       const row = rows[mid]!;
-      if (row.start + row.size < from) {
-        low = mid + 1;
-      } else {
+      if (row.start + row.size < from) low = mid + 1;
+      else {
         startIndex = mid;
         high = mid - 1;
       }
@@ -138,13 +143,13 @@ export function useVirtualTranscript<T>({
     return visible;
   }, [layout.rows, overscanBottom, overscanTop, viewport]);
 
-  const scrollToIndex = useCallback((index: number, align: "start" | "center" | "end" = "center") => {
+  const scrollToIndex = useCallback((index: number, align: 'start' | 'center' | 'end' = 'center') => {
     const scroller = scrollRef.current;
     const row = layout.rows[index];
     if (!scroller || !row) return;
-    const top = align === "start"
+    const top = align === 'start'
       ? row.start
-      : align === "end"
+      : align === 'end'
         ? row.start + row.size - scroller.clientHeight
         : row.start + row.size / 2 - scroller.clientHeight / 2;
     scroller.scrollTop = Math.max(0, top);

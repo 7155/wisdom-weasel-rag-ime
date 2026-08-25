@@ -1,28 +1,46 @@
-export { ConversationProvider, useConversation } from "./context/ConversationProvider";
+import './conversation-ui.css';
+
+export { ConversationSurface } from './components/ConversationSurface';
+export { VirtualTranscript } from './components/VirtualTranscript';
+export { QueueTray } from './components/QueueTray';
+export { ToolCard } from './components/ToolCard';
+export { ThinkingBlock } from './components/ThinkingBlock';
+export { SteerReceipt } from './components/SteerReceipt';
+export { MessageActions } from './components/MessageActions';
+export {
+  ConversationSurfaceProvider,
+  conversationBusy,
+  conversationClock,
+  NO_CAPABILITIES,
+  useConversationSurface,
+  type ConversationSurfaceCapabilities,
+  type ConversationSurfaceController,
+} from './ConversationSurfaceContext';
+export { useConversationQueue, type ConversationQueueController } from './use-conversation-queue';
+export {
+  FRONTEND_QUEUE_CAP,
+  createQueuedDraft,
+  editQueuedDraft,
+  enqueueQueuedDraft,
+  mergeQueueAttachments,
+  mergeQueueBackToDraft,
+  removeQueuedDraft,
+  reorderQueuedDrafts,
+} from './model/queue';
+export { clearConversationScrollMemory } from './hooks/useSessionScrollMemory';
 export type {
-  ConversationController,
-  ConversationProviderProps,
-  BusySubmitMode,
-} from "./context/ConversationProvider";
-export { ConversationSurface } from "./components/ConversationSurface";
-export { VirtualTranscript } from "./components/VirtualTranscript";
-export { Composer } from "./components/Composer";
-export { QueueTray } from "./components/QueueTray";
-export { SideChatPanel } from "./components/SideChatPanel";
-export { ProgressiveMarkdown } from "./rendering/react/ProgressiveMarkdown";
-export { FRONTEND_QUEUE_CAP } from "./model/queue";
-export type {
-  ConversationState,
+  AssistantBlock,
+  AssistantMessage,
+  AttachmentRef,
+  DeliveryStatus,
+  QueuedDraft,
+  RunPhase,
+  SteerReceiptState,
+  TextBlock,
+  ThinkingBlock as ThinkingBlockModel,
+  ToolCallBlock,
+  ToolStatus,
   TranscriptMessage,
   UserMessage,
-  AssistantMessage,
-  AssistantBlock,
-  QueuedDraft,
-  SideChatState,
-  AttachmentRef,
-} from "./model/types";
-export type {
-  ConversationTransport,
-  SendPayload,
-  AgentEvent,
-} from "./transport";
+} from './model/types';
+export type { AgentEvent, ConversationTransport, SendPayload } from './transport';
