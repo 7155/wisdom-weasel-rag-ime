@@ -14,7 +14,6 @@ import {
   STARFIELD_VIEWBOX,
   type GalaxyStarfieldModel,
   type RoomStarfieldModel,
-  type RoomStarfieldPlanet,
   type SessionStarfieldModel,
 } from '../starfield-projection';
 import {
@@ -203,18 +202,11 @@ export function buildSessionSceneModel(
 
 /**
  * Sol is the Room facilitator's star, not scenery: it only lights when a
- * participant is actually hosting this Room (`coordinator`, still connected).
- * A Room where nobody hosts renders a partner-only constellation around an
- * empty origin rather than inventing a center that owns nothing.
+ * participant is actually hosting this Room. `model.hasCoordinator` carries
+ * that one shared decision (`roomFocusHasCoordinator`) down from the Room
+ * focus projection; a Room where nobody hosts renders a partner-only
+ * constellation around an empty origin instead of inventing a center.
  */
-export function roomHostsSol(
-  planets: readonly Pick<RoomStarfieldPlanet, 'collaborationRole' | 'state'>[],
-): boolean {
-  return planets.some((planet) => (
-    planet.collaborationRole === 'coordinator' && planet.state !== 'disconnected'
-  ));
-}
-
 export function buildRoomSceneModel(
   model: RoomStarfieldModel,
   roomId: string,
@@ -241,7 +233,7 @@ export function buildRoomSceneModel(
     speedFactor: speedFactor(planet.participantId),
     motion: roomBodyMotion(planet.state),
   }));
-  const hosted = roomHostsSol(model.planets);
+  const hosted = model.hasCoordinator;
   const bodyIds = new Set(bodies.map((body) => body.id));
   return {
     seed: roomId,

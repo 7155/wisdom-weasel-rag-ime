@@ -813,6 +813,7 @@ export function PawRoomStarfield({
 
   const renderDetail = (bodyId: string): ReactNode | null => {
     if (bodyId === 'center') {
+      if (!model.hasCoordinator) return null;
       return (
         <>
           <header className="paw-sf__card-head">
@@ -883,7 +884,7 @@ export function PawRoomStarfield({
           </span>
         </>
       )}
-      legendLabel="Sol 星空图例"
+      legendLabel={model.hasCoordinator ? 'Sol 星空图例' : 'Room 星空图例'}
       mode="room"
       nowMs={nowMs}
       renderDetail={renderDetail}

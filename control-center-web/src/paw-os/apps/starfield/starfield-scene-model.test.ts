@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomStarfieldModel, SessionStarfieldModel } from '../starfield-projection';
 import { buildGalaxyStarfield } from '../starfield-projection';
+import { roomFocusHasCoordinator } from '../room-focus-projection';
 import {
   buildGalaxySceneModel,
   buildRoomSceneModel,
@@ -39,7 +40,7 @@ function sessionModel(): SessionStarfieldModel {
   };
 }
 
-function roomModel(options: { hosted?: boolean } = {}): RoomStarfieldModel {
+function roomModel(options: { hosted?: boolean; hostState?: RoomStarfieldModel['planets'][number]['state'] } = {}): RoomStarfieldModel {
   const hosted = options.hosted ?? true;
   const planet = (
     participantId: string,
@@ -64,9 +65,16 @@ function roomModel(options: { hosted?: boolean } = {}): RoomStarfieldModel {
     ownedWorkCount: 1,
     currentAction: '正在实现投影',
   });
+  const planets = [
+    planet('participant-earth', options.hostState ?? 'running', 0),
+    planet('participant-mars', 'blocked', 1),
+  ];
   return {
     goal: { title: '交付星空 v2', state: 'running', stateLabel: '进行中' },
-    planets: [planet('participant-earth', 'running', 0), planet('participant-mars', 'blocked', 1)],
+    // Derived exactly as `buildRoomStarfield` does, so the fixture never
+    // claims a host the shared gate would not grant.
+    hasCoordinator: roomFocusHasCoordinator(planets),
+    planets,
     beams: [{
       id: 'handoff-1',
       sourceParticipantId: 'participant-earth',
@@ -120,6 +128,11 @@ describe('starfield scene model', () => {
     flipped.moons[0]!.state = 'completed';
     flipped.moons[0]!.active = false;
     expect(sceneModelSignature(buildSessionSceneModel(flipped, { busy: true, sessionTitle: 'S' }))).not.toBe(same);
+  });
+
+  it('omits Sol until a coordinator hosts the Room', () => {
+    const dormant = buildRoomSceneModel({ ...roomModel(), hasCoordinator: false }, 'room-1');
+    expect(dormant.center).toBeNull();
   });
 
   it('projects the Room into Sol, partner planets and real handoff links', () => {
@@ -176,8 +189,7 @@ describe('starfield scene model', () => {
     expect(unhosted.links.map((link) => link.id)).toEqual(['handoff-1']);
 
     // A coordinator who dropped off cannot host either.
-    const offline = roomModel();
-    offline.planets[0]!.state = 'disconnected';
+    const offline = roomModel({ hostState: 'disconnected' });
     expect(buildRoomSceneModel(offline, 'room-1').center).toBeNull();
 
     // With no visible source and no Sol, a handoff from off-stage is dropped.

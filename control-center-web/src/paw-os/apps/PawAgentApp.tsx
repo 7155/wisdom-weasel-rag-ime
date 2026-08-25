@@ -35,7 +35,7 @@ import { usePawOsAppSurface, usePawOsDesktop } from '@/features/paw-os/surface-c
 import { PawSessionWorkspace } from './PawSessionWorkspace';
 import { PawRoomWorkspace } from './PawRoomWorkspace';
 import { PawAgentHome } from './PawAgentHome';
-import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
+import { PawWindowLeadingPortal, usePawWindowLeadingChromeTarget } from '../shell/PawWindowChrome';
 
 type Selection =
   | { kind: 'new'; draft?: string }
@@ -52,7 +52,9 @@ export function PawAgentApp({
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const surface = usePawOsAppSurface();
-  const windowChromeTarget = usePawWindowChromeTarget();
+  /* The rail toggle reveals a leading-edge aside, so it docks in the leading
+     titlebar slot and falls back inline only when that slot is absent. */
+  const windowChromeTarget = usePawWindowLeadingChromeTarget();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [personas, setPersonas] = useState<AgentPersonaV1[]>([]);
@@ -224,7 +226,7 @@ export function PawAgentApp({
   const railToggle = <button aria-controls="paw-agent-work-records" aria-expanded={railOpen} aria-label={railOpen ? '收起工作记录' : '打开工作记录'} className="paw-agent-rail-toggle" onClick={() => setRailOpen((open) => !open)} ref={railToggleRef} type="button"><PanelLeft size={16} /></button>;
   return (
     <main className="paw-agent-app" data-rail-open={railOpen || undefined} data-selection={selection.kind}>
-      {windowChromeTarget ? <PawWindowChromePortal>{railToggle}</PawWindowChromePortal> : null}
+      {windowChromeTarget ? <PawWindowLeadingPortal>{railToggle}</PawWindowLeadingPortal> : null}
       <aside aria-label="Agent 工作记录" className="paw-agent-rail" id="paw-agent-work-records">
         <header>
           <span><strong>工作记录</strong></span>
