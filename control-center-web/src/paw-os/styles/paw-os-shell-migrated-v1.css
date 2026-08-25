@@ -178,10 +178,11 @@
 }
 
 /* Wayfinder fog terrain. The wallpaper is one photographic landscape in the
-   shell's own glacial palette: six desaturated slate ridge lines dissolving
-   into valley fog under a diffuse horizon light that is never drawn as a
-   shape. Colour discipline: cool greys and slate blues, one pale warmth at
-   the light gap — no line work, no icons, nothing that asks to be read. */
+   shell's own glacial palette: six slate ridge lines running from pale ice to
+   near-black, dissolving into valley fog under a diffuse horizon light that is
+   never drawn as a shape, with a cold light pillar giving the gap a vertical
+   axis. Colour discipline: glacial blues and slate, one whisper of low sun
+   inside the gap — no line work, no icons, nothing that asks to be read. */
 .paw-desktop-root .paw-wayfinder .paw-composition-field {
   opacity: 1;
   filter: none;
@@ -191,41 +192,84 @@
    hold static densities so the SVG rasterizes exactly once. The earlier
    stepped weather clocks re-rastered the full-bleed grain/blur stack (and
    re-blurred the chrome glass above it) every second or two forever, which
-   starved the pointer on large screens. Live light now belongs to the
-   `.paw-field-live` HTML overlay, whose glow answers Runtime energy on the
-   compositor alone. */
-.paw-desktop-root .paw-field__bloom { opacity: .66; }
-.paw-desktop-root .paw-field__warmth { opacity: .64; }
+   starved the pointer on large screens. Everything that moves now belongs to
+   the `.paw-field-live` HTML overlay below, which the compositor owns
+   outright. */
+.paw-desktop-root .paw-field__bloom { opacity: .7; }
+.paw-desktop-root .paw-field__warmth { opacity: .6; }
 .paw-desktop-root .paw-field__mist { opacity: .85; }
 .paw-desktop-root .paw-field__mist--near { opacity: .7; }
-.paw-desktop-root .paw-field__daylight { opacity: .3; }
+.paw-desktop-root .paw-field__daylight { opacity: .34; }
+
+/* Cold aurora over the terrain — the wallpaper's idle life. Two spectral
+   veils in glacial cyan and steel blue (never violet, never warm) cross the
+   sky against each other, and one sheen breathes on the light gap. Each is a
+   single pre-blurred gradient, so a veil costs one paint at promotion and
+   nothing after that; the loops are long enough that motion registers as
+   weather rather than as animation, and they alternate so no cycle ever
+   snaps back to its start. */
+.paw-desktop-root .paw-field-live__veil--high {
+  background:
+    radial-gradient(52% 44% at 32% 44%, rgb(138 226 226 / .3), rgb(138 226 226 / 0) 72%),
+    radial-gradient(48% 40% at 68% 58%, rgb(122 168 232 / .26), rgb(122 168 232 / 0) 74%);
+  animation: paw-field-veil-high 132s ease-in-out infinite alternate;
+}
+.paw-desktop-root .paw-field-live__veil--low {
+  background:
+    radial-gradient(50% 46% at 64% 42%, rgb(150 206 236 / .26), rgb(150 206 236 / 0) 72%),
+    radial-gradient(46% 42% at 28% 62%, rgb(206 236 242 / .24), rgb(206 236 242 / 0) 70%);
+  animation: paw-field-veil-low 96s ease-in-out infinite alternate;
+}
+.paw-desktop-root .paw-field-live__sheen {
+  background: radial-gradient(
+    closest-side,
+    rgb(255 252 244 / .52),
+    rgb(226 242 252 / .24) 50%,
+    rgb(255 255 255 / 0) 82%
+  );
+  animation: paw-field-sheen 34s ease-in-out infinite alternate;
+}
 .paw-desktop-root .paw-field-live__glow {
   background: radial-gradient(
     circle,
     rgb(255 255 255 / .8),
-    rgb(253 251 245 / .38) 45%,
+    rgb(233 246 252 / .38) 45%,
     rgb(255 255 255 / 0) 72%
   );
 }
 
-/* Optical depth over the field: the menu-bar aurora triad washes the top of
-   the sky and a quiet vignette settles the horizon behind Dock and windows.
-   One composited layer — no filter, no animation, nothing to re-rasterize. */
+/* Optical depth over the field: a cold wash across the top of the sky and a
+   quiet vignette settling the horizon behind Dock and windows. One composited
+   layer — no filter, no animation, nothing to re-rasterize. */
 .paw-desktop-root .paw-field-media::after {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(88rem 30rem at 14% -12%, rgb(47 107 255 / .09), transparent 60%),
-    radial-gradient(70rem 26rem at 50% -14%, rgb(112 72 232 / .06), transparent 58%),
-    radial-gradient(64rem 24rem at 88% -10%, rgb(15 139 128 / .06), transparent 56%),
-    radial-gradient(150% 108% at 50% 8%, transparent 66%, rgb(20 30 52 / .16) 100%);
+    radial-gradient(88rem 30rem at 14% -12%, rgb(41 96 232 / .12), transparent 60%),
+    radial-gradient(70rem 26rem at 50% -14%, rgb(28 148 190 / .09), transparent 58%),
+    radial-gradient(64rem 24rem at 88% -10%, rgb(18 146 138 / .08), transparent 56%),
+    radial-gradient(150% 112% at 50% 6%, transparent 58%, rgb(12 22 44 / .3) 100%);
   content: '';
 }
 
 @keyframes paw-field-arrive {
   from { opacity: .62; transform: scale(1.012); }
   to { opacity: 1; transform: scale(1); }
+}
+/* Ambient choreography: transform and opacity only, on layers the compositor
+   already owns. Nothing here can reach the picture's raster. */
+@keyframes paw-field-veil-high {
+  from { transform: translate3d(-3%, -1.4%, 0) scale(1); opacity: .38; }
+  to { transform: translate3d(4%, 1.8%, 0) scale(1.09); opacity: .62; }
+}
+@keyframes paw-field-veil-low {
+  from { transform: translate3d(3.5%, 1.6%, 0) scale(1.07); opacity: .5; }
+  to { transform: translate3d(-4%, -1.2%, 0) scale(1); opacity: .3; }
+}
+@keyframes paw-field-sheen {
+  from { transform: scale(.96); opacity: .34; }
+  to { transform: scale(1.07); opacity: .68; }
 }
 
 /* ------------------------------------------------------- Wayfinder list
@@ -686,6 +730,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-wayfinder .paw-composition-field,
+  .paw-desktop-root .paw-field-live__veil,
+  .paw-desktop-root .paw-field-live__sheen,
   .paw-desktop-root .paw-field-live__glow,
   .paw-desktop-root .paw-launchpad,
   .paw-desktop-root .paw-launchpad > section,
