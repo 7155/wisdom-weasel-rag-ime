@@ -8,10 +8,10 @@ export {
   type TranscriptAnchor,
   type TranscriptRowGeometry,
 } from './message-anchor';
-
 export {
   createChatPerformanceMarker,
   measureAgentChatOperation,
+  measureAgentChatOperationAsync,
   messageLengthBucket,
   noopAgentChatTelemetrySink,
   observeAgentChatLongTasks,

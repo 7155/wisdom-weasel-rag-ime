@@ -29,8 +29,12 @@ export type TranscriptFollowEvent =
   | { type: 'conversation-switched' };
 
 /**
- * True when the live selection intersects the transcript root. Used so a
- * submit does not yank the reader off text they are still highlighting.
+ * True when the live selection intersects the transcript root.
+ *
+ * Submitting a prompt normally claims the end of the transcript, but a reader
+ * who is mid-selection is quoting or copying an earlier turn, and jumping
+ * collapses that highlight under them. The transcript then stays where it is
+ * and the unseen count reports the new turn instead.
  */
 export function transcriptHasLiveSelection(root: ParentNode | null | undefined): boolean {
   if (!root || typeof document === 'undefined') return false;
@@ -82,27 +86,6 @@ export function reduceTranscriptFollow(
         ? state
         : FOLLOWING_TRANSCRIPT;
   }
-}
-
-/**
- * Whether the reader is holding a live selection inside the transcript.
- *
- * Submitting a prompt normally claims the end of the transcript, but a reader
- * who is mid-selection is quoting or copying an earlier turn, and scrolling
- * away collapses that selection under them. The transcript stays where it is
- * and the unseen count reports the new turn instead.
- *
- * The selection is passed in rather than read here so the rule can be tested
- * without a live document.
- */
-export function transcriptSelectionIsLive(
-  root: Node | null | undefined,
-  selection: { isCollapsed: boolean; anchorNode: Node | null; focusNode: Node | null } | null,
-): boolean {
-  if (!root || !selection || selection.isCollapsed) return false;
-  const { anchorNode, focusNode } = selection;
-  if (!anchorNode || !focusNode) return false;
-  return root.contains(anchorNode) && root.contains(focusNode);
 }
 
 /** Bounded so a long unattended stream cannot widen the jump control. */

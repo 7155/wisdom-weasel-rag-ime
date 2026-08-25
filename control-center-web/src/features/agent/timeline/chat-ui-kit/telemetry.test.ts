@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createChatPerformanceMarker,
   measureAgentChatOperation,
+  measureAgentChatOperationAsync,
   messageLengthBucket,
   observeAgentChatLongTasks,
   performanceMarkTelemetrySink,

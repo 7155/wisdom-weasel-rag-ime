@@ -46,6 +46,20 @@ export function measureAgentChatOperation<T>(
   }
 }
 
+export async function measureAgentChatOperationAsync<T>(
+  name: string,
+  fields: AgentChatPerformanceSample['fields'],
+  operation: () => Promise<T>,
+  sink: AgentChatTelemetrySink = performanceMarkTelemetrySink,
+): Promise<T> {
+  const start = monotonicNow();
+  try {
+    return await operation();
+  } finally {
+    sink({ name, durationMs: monotonicNow() - start, fields });
+  }
+}
+
 export interface ChatPerformanceMarker {
   mark(name: string): void;
   measure(
