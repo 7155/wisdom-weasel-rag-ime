@@ -235,6 +235,11 @@ describe('PAWOS shell visual language', () => {
     // resting shell must never hold a compositor layer.
     expect(rule(pawOsCss, ".paw-window-shell[data-interaction='dragging']")).toContain('will-change: transform');
     expect(shell).not.toContain('will-change');
+    // Same doctrine for the Room flow overlay: a resting flow SVG holds no
+    // full-viewport layer; promotion is scoped to a live drag stream or a
+    // live packet pulse, the only times its geometry mutates per frame.
+    expect(rule(pawOsCss, '.paw-room-window-flow')).not.toContain('will-change');
+    expect(pawOsCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-room-window-flow,\s*\.paw-room-window-flow:has\(g\[data-live\]\)\s*\{[^}]*will-change: transform/s);
   });
 
   it('signs the focused window with a static aurora hairline in its own App key', () => {
