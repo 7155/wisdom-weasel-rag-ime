@@ -472,10 +472,9 @@ export class StarfieldStage {
     this.bodies = [];
     this.links = [];
     this.pickTargets = [];
-    this.center = null;
     this.anchorById.clear();
 
-    if (model.center) this.buildCenter(model);
+    this.center = model.center ? this.buildCenter(model) : null;
     const drawnRings = new Set<string>();
     for (const body of model.bodies) this.buildBody(model, body, drawnRings);
     for (const runtime of this.bodies) this.anchorById.set(runtime.body.id, runtime.anchor);
@@ -520,7 +519,7 @@ export class StarfieldStage {
     return material;
   }
 
-  private buildCenter(model: StarfieldSceneModel): void {
+  private buildCenter(model: StarfieldSceneModel): CenterRuntime {
     const center = model.center!;
     const group = new THREE.Group();
     const toneColor = TONE_COLORS[center.motion.tone];
@@ -605,7 +604,7 @@ export class StarfieldStage {
 
     this.modelRoot.add(group);
     this.pickTargets.push(mesh);
-    this.center = {
+    return {
       mesh,
       group,
       glow,

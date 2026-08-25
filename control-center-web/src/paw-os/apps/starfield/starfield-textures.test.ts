@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import {
   archetypeForPalette,
   archetypeForSeed,
@@ -9,6 +10,7 @@ import {
   generateStarMap,
   generateSunMap,
   periodicFbm,
+  StarfieldTextureFactory,
   type GeneratedTextureData,
   type PlanetArchetype,
 } from './starfield-textures';
@@ -129,5 +131,28 @@ describe('starfield procedural textures', () => {
     ]);
     expect(archetypeForPalette(7)).toBe(archetypeForPalette(1));
     expect(archetypeForSeed('session-1')).toBe(archetypeForSeed('session-1'));
+  });
+});
+
+describe('starfield texture factory', () => {
+  it('caches by identity, marks ownership, and survives dispose cleanly', () => {
+    const factory = new StarfieldTextureFactory();
+    const sun = factory.sun('sol');
+    expect(factory.sun('sol')).toBe(sun);
+    expect(factory.sun('other')).not.toBe(sun);
+    expect(factory.owns(sun)).toBe(true);
+    expect(factory.owns(new THREE.Texture())).toBe(false);
+
+    const pair = factory.planet({ seed: 'p', archetype: 'terra', baseColor: 0x5b9bf0, width: 32 });
+    // Albedo is sRGB while the normal map stays linear, both wrapping in x.
+    expect(pair.map.colorSpace).toBe(THREE.SRGBColorSpace);
+    expect(pair.normalMap.colorSpace).toBe(THREE.NoColorSpace);
+    expect(pair.map.wrapS).toBe(THREE.RepeatWrapping);
+    expect(factory.planet({ seed: 'p', archetype: 'terra', baseColor: 0x5b9bf0, width: 32 }).map).toBe(pair.map);
+
+    factory.dispose();
+    expect(factory.owns(sun)).toBe(false);
+    // A fresh acquire after dispose regenerates rather than reusing disposed GPU state.
+    expect(factory.sun('sol')).not.toBe(sun);
   });
 });
