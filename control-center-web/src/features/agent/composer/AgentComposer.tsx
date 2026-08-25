@@ -53,6 +53,7 @@ import { ModelPicker } from './ModelPicker';
 import { PermissionPicker } from './PermissionPicker';
 import { ToolPicker } from './ToolPicker';
 import { permissionLabel } from './permission-policy';
+import { ContextUsagePopover, type ContextUsageTelemetry } from '../status/ContextUsagePopover';
 import type {
   AgentCommand,
   AgentPermissionSelection,
@@ -135,6 +136,7 @@ export function AgentComposer({
   imageSupport = 'unknown',
   showJumpLatest = false,
   onJumpLatest,
+  contextUsage,
 }: {
   assistantName?: string;
   draft: string;
@@ -174,6 +176,7 @@ export function AgentComposer({
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
   showJumpLatest?: boolean;
   onJumpLatest?: () => void;
+  contextUsage?: ContextUsageTelemetry | null;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandPanelRef = useRef<HTMLDivElement>(null);
@@ -529,6 +532,10 @@ export function AgentComposer({
               pending={modelChanging}
               requestOpen={modelPickerRequest}
               onChange={onModelChange}
+            />
+            <ContextUsagePopover
+              sessionId={session?.id}
+              telemetry={contextUsage}
             />
             {busy ? (
               <div className="agent-composer__delivery" role="radiogroup" aria-label="消息投递方式">

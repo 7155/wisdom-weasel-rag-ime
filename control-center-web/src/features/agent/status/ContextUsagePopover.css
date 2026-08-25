@@ -1,0 +1,196 @@
+/* Context Usage popover — chat-native Cursor-style breakdown over one PAWOS control language. */
+
+.agent-context-usage {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.agent-context-usage__trigger {
+  display: inline-flex;
+  min-height: var(--paw-control-h-sm, 28px);
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--paw-control-line, rgb(23 26 33 / .16));
+  border-radius: var(--paw-control-radius, 8px);
+  background: var(--paw-control-bg, #fff);
+  color: var(--paw-control-muted, #5d6675);
+  font: 600 12px/1.2 var(--font-sans, inherit);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.agent-context-usage__trigger:hover {
+  border-color: var(--paw-control-line-strong, rgb(23 26 33 / .3));
+  color: var(--paw-control-ink, #171a21);
+}
+
+.agent-context-usage__trigger[aria-expanded='true'] {
+  border-color: var(--paw-focus-line, rgb(47 107 255 / .55));
+  color: var(--paw-control-ink, #171a21);
+  box-shadow: 0 0 0 3px var(--paw-focus-halo, rgb(47 107 255 / .14));
+}
+
+.agent-context-usage__trigger:focus-visible {
+  outline: 2px solid var(--paw-focus-line, rgb(47 107 255 / .55));
+  outline-offset: 2px;
+}
+
+.agent-context-usage__spark {
+  width: 28px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8ebef;
+}
+
+.agent-context-usage__spark > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7c5cbf, #e85a3c);
+}
+
+.agent-context-usage__popover {
+  position: absolute;
+  z-index: 40;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: min(360px, calc(100vw - 24px));
+  padding: 14px 14px 12px;
+  border: 1px solid var(--paw-panel-line, rgb(23 26 33 / .1));
+  border-radius: var(--paw-panel-radius, 12px);
+  background: var(--paw-panel-bg, #fff);
+  box-shadow: var(--paw-menu-shadow, 0 18px 44px -12px rgb(23 32 52 / .24), 0 3px 10px rgb(23 26 33 / .08));
+  color: var(--paw-control-ink, #171a21);
+  animation: agent-context-usage-in 160ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.agent-context-usage__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.agent-context-usage__header strong {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.agent-context-usage__header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--paw-control-muted, #5d6675);
+  cursor: pointer;
+}
+
+.agent-context-usage__header button:hover {
+  background: var(--paw-control-bg-soft, #f6f8fb);
+  color: var(--paw-control-ink, #171a21);
+}
+
+.agent-context-usage__summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.agent-context-usage__summary > b {
+  font-weight: 650;
+}
+
+.agent-context-usage__summary > span {
+  color: var(--paw-control-muted, #5d6675);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-context-usage__bar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  background: #eef1f5;
+}
+
+.agent-context-usage__bar > i {
+  display: block;
+  min-width: 2px;
+  height: 100%;
+}
+
+.agent-context-usage__bar > i[data-free] {
+  min-width: 0;
+  background: transparent;
+}
+
+.agent-context-usage__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-context-usage__list > li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.agent-context-usage__list > li[data-dominant] {
+  background: var(--paw-control-bg-soft, #f6f8fb);
+}
+
+.agent-context-usage__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.agent-context-usage__list strong {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-context-usage__list b {
+  color: var(--paw-control-muted, #5d6675);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-context-usage__empty,
+.agent-context-usage__note {
+  margin: 8px 0 0;
+  color: var(--paw-control-muted, #5d6675);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@keyframes agent-context-usage-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-context-usage__popover { animation: none; }
+}

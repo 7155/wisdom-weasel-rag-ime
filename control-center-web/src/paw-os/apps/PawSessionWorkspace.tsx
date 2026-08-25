@@ -1032,6 +1032,7 @@ export function PawSessionWorkspace({
                 capabilityPolicyPending={capabilityMutation?.status === 'pending'}
                 catalog={catalog}
                 commands={commands}
+                contextUsage={projection?.telemetry?.context ?? null}
                 draft={draft}
                 helpRequest={helpRequest}
                 imageSupport={imageSupport}
