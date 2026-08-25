@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRoomProjection, reduceRoomEvents, type RoomProjectionState } from '@/contracts/room-reducer';
+import { createRoomProjection, parseRoomEventSnapshot, reduceRoomEvents, type RoomProjectionState } from '@/contracts/room-reducer';
 import { parseRoomEvent } from '@/contracts/validators';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
@@ -118,6 +118,26 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(screen.getByLabelText('Sol 协作态势').textContent).not.toContain('route_decision');
   });
 
+  it('keeps one row per task in the production snapshot window — the paper UI double-count is gone', () => {
+    // Production reduces the snapshot's recent event page (373 events), not the
+    // full history. In that window the paper UI showed 任务树 6 项 / 完成 5,
+    // because the Core acceptance migration task was counted twice: once as
+    // WorkItem …0002 and again as its own bare dispatch row. One task, one row.
+    const page = parseRoomEventSnapshot(JSON.parse(readFileSync(resolve(root, 'room/snapshot.json'), 'utf8')));
+    const projection = reduceRoomEvents(createRoomProjection(harness.room.id), page.events);
+    const focus = buildRoomFocusProjection(harness.room, projection);
+
+    expect(focus.counts).toEqual({ active: 0, review: 0, blocked: 1, completed: 4 });
+    expect(focus.workItems).toHaveLength(5);
+    const objectives = focus.workItems.map((item) => item.objective);
+    expect(new Set(objectives).size).toBe(objectives.length);
+    // Every task the designer named stays visible with its real long text.
+    expect(objectives.some((objective) => objective.includes('Core acceptance migration'))).toBe(true);
+    expect(objectives.some((objective) => objective.includes('smoke test'))).toBe(true);
+    // The dispatch itself is flow, not a duplicate task row.
+    expect(focus.flow.some((packet) => packet.kind === 'dispatch')).toBe(true);
+  });
+
   it('renders the fixture route decisions as dispatch cards in the public chronology', () => {
     // The opening scene up to the parallel delegate_batch wave (seq 68-73).
     const slice = readFileSync(resolve(root, 'room/history.jsonl'), 'utf8')
@@ -146,5 +166,12 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(waveCard).toHaveTextContent('实现原创 3D 方块生存游戏的纯逻辑核心');
     // The dead label pattern (planet · 分派 with no plan) is gone.
     expect(container.textContent).not.toContain('route_decision');
+
+    // Category words are replaced by glyphs in the tight rows (图4); the full
+    // meaning stays in the accessible label, and the concrete tool is named.
+    const glyphs = [...container.querySelectorAll('.paw-room-activity-glyph')];
+    expect(glyphs.length).toBeGreaterThanOrEqual(1);
+    expect(glyphs.some((glyph) => (glyph.getAttribute('aria-label') ?? '').startsWith('工具'))).toBe(true);
+    expect(container.textContent).not.toContain('· 工具');
   });
 });
