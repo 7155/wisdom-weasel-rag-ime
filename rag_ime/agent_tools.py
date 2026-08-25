@@ -924,6 +924,20 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "accept 必须指向之后提交且提出 passed/satisfied 的复核 WorkItem。"
                 ),
             },
+            "proposedOperabilityVerdict": {
+                "type": "string",
+                "enum": ["passed", "failed", "unverified"],
+                "description": (
+                    "post kind=work_result 必填：Partner 对真实路径是否运行的诚实提交判定。"
+                ),
+            },
+            "proposedRequirementVerdict": {
+                "type": "string",
+                "enum": ["satisfied", "not_satisfied", "unverified"],
+                "description": (
+                    "post kind=work_result 必填：Partner 对需求是否满足的诚实提交判定。"
+                ),
+            },
             "phase": {
                 "type": "string",
                 "minLength": 1,
@@ -1087,6 +1101,16 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             {
                 "required": ["op", "content"],
                 "properties": {"op": {"const": "post"}},
+                "if": {
+                    "required": ["kind"],
+                    "properties": {"kind": {"const": "work_result"}},
+                },
+                "then": {
+                    "required": [
+                        "proposedOperabilityVerdict",
+                        "proposedRequirementVerdict",
+                    ],
+                },
             },
             {
                 "required": ["op"],

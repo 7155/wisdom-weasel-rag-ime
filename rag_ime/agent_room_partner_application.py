@@ -8,7 +8,6 @@ from typing import Any, Callable
 
 from .agent_room_prompt_context import agent_message_text
 from .agent_room_turn_registry import RoomSessionBusyError
-from .agent_room_work import infer_proposed_verdicts_from_summary
 from .contracts.json_schema import validate_contract
 
 
@@ -335,12 +334,22 @@ class RoomPartnerApplicationService:
                 return
             result = str(post.get("content") or "")
             self.dispatch_store.record_result(child_dispatch_id, result)
+            work_result = post.get("workResult")
+            work_result = (
+                work_result if isinstance(work_result, Mapping) else {}
+            )
             self._settle_dispatch(
                 record,
                 phase="completed",
                 result=result,
                 completion_source="room_post",
                 post_id=str(post.get("postId") or ""),
+                proposed_operability=str(
+                    work_result.get("proposedOperabilityVerdict") or ""
+                ),
+                proposed_requirement=str(
+                    work_result.get("proposedRequirementVerdict") or ""
+                ),
             )
             return
         data = payload.get("data")
@@ -385,6 +394,8 @@ class RoomPartnerApplicationService:
         result: str,
         completion_source: str,
         post_id: str = "",
+        proposed_operability: str = "",
+        proposed_requirement: str = "",
     ) -> Mapping[str, object]:
         source = self.rooms.participant(str(record["sourceParticipantId"]))
         target = self.rooms.participant(str(record["targetParticipantId"]))
@@ -403,6 +414,8 @@ class RoomPartnerApplicationService:
             child_dispatch_id=str(record["childDispatchId"]),
             source=source,
             target=target,
+            proposed_operability=proposed_operability,
+            proposed_requirement=proposed_requirement,
         )
         if phase == "completed":
             work_state = str((settled_work or {}).get("state") or "review")
@@ -476,7 +489,8 @@ class RoomPartnerApplicationService:
                 f"{child_dispatch_id} 与 WorkItem {record['workItemId']}；"
                 "检查 WorkDocument 和证据后，用非空 reason 显式 accept，或 return。"
                 "审查报告 unverified、changes_required、failed 或未解决 HIGH/MEDIUM "
-                "时必须 return，不得写成 passed/satisfied。"
+                "时必须 return，不得写成 passed/satisfied；Runtime 会机械拒绝"
+                "在这种提交之上 accept。"
             )
         try:
             self.wake_schedules.create_room_wake(
@@ -2365,6 +2379,8 @@ class RoomPartnerApplicationService:
         child_dispatch_id: str,
         source: Mapping[str, object],
         target: Mapping[str, object],
+        proposed_operability: str = "",
+        proposed_requirement: str = "",
     ) -> Mapping[str, object] | None:
         if self.room_work is None or not work_item or not work_item.get("id"):
             return work_item
@@ -2416,10 +2432,9 @@ class RoomPartnerApplicationService:
                     result[:4_000]
                     or "Partner Session completed the delegated WorkItem."
                 )
-                (
-                    proposed_operability,
-                    proposed_requirement,
-                ) = infer_proposed_verdicts_from_summary(summary)
+                # The typed work_result post carries the Partner's structured
+                # proposals; the Work ledger infers from FAILED/UNVERIFIED
+                # prose markers only when both axes are absent.
                 current = self.room_work.submit(
                     str(target["sessionId"]),
                     {
@@ -2548,6 +2563,31 @@ class RoomPartnerApplicationService:
             "blocked",
         }:
             raise ValueError("room_partner post kind is invalid")
+        work_result_proposal: dict[str, str] = {}
+        if kind == "work_result":
+            proposed_operability = _text(
+                args.get("proposedOperabilityVerdict"),
+                maximum=40,
+            )
+            proposed_requirement = _text(
+                args.get("proposedRequirementVerdict"),
+                maximum=40,
+            )
+            if (
+                proposed_operability not in {"passed", "failed", "unverified"}
+                or proposed_requirement
+                not in {"satisfied", "not_satisfied", "unverified"}
+            ):
+                raise ValueError(
+                    "post kind=work_result requires proposedOperabilityVerdict "
+                    "(passed/failed/unverified) and proposedRequirementVerdict "
+                    "(satisfied/not_satisfied/unverified) stating the Partner's "
+                    "honest submission verdicts"
+                )
+            work_result_proposal = {
+                "proposedOperabilityVerdict": proposed_operability,
+                "proposedRequirementVerdict": proposed_requirement,
+            }
         root_id, dispatch_id = self._active_root(source)
         room = self.rooms.get(str(source["roomId"]))
         post_id = f"room-post:{tool_call_id}"
@@ -2577,6 +2617,11 @@ class RoomPartnerApplicationService:
                     )
                 }
                 if _text(args.get("workItemId"), maximum=320)
+                else {}
+            ),
+            **(
+                {"workResult": work_result_proposal}
+                if work_result_proposal
                 else {}
             ),
         }

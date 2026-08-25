@@ -47,10 +47,10 @@
     }
   },
   "summary": {
-    "pathCount": 521,
+    "pathCount": 522,
     "dispositionCounts": {
       "delete_old_implementation": 20,
-      "keep_release": 501
+      "keep_release": 502
     },
     "groupCounts": {
       "control_center_release_ui": 269,
@@ -60,7 +60,7 @@
       "project_harness": 11,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
-      "session_room_skill_flow": 201
+      "session_room_skill_flow": 202
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -2921,6 +2921,13 @@
     },
     {
       "path": "rag_ime/db/migrations/0161_room_partner_async_dispatches.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0162_agent_room_work_item_proposed_verdicts.sql",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",

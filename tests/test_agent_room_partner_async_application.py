@@ -168,6 +168,10 @@ class RoomPartnerAsyncApplicationTest(unittest.TestCase):
                         "authorActorRef": self.target["id"],
                         "kind": "work_result",
                         "content": "实现和回归证据已交付",
+                        "workResult": {
+                            "proposedOperabilityVerdict": "failed",
+                            "proposedRequirementVerdict": "unverified",
+                        },
                     }
                 },
             }
@@ -175,7 +179,16 @@ class RoomPartnerAsyncApplicationTest(unittest.TestCase):
 
         record = self.dispatches.get("room-child:one")
         self.assertEqual(record["status"], "review")
-        self.assertEqual(self.work.items[str(work["id"])]["state"], "review")
+        submitted_item = self.work.items[str(work["id"])]
+        self.assertEqual(submitted_item["state"], "review")
+        self.assertEqual(
+            submitted_item["proposedOperabilityVerdict"],
+            "failed",
+        )
+        self.assertEqual(
+            submitted_item["proposedRequirementVerdict"],
+            "unverified",
+        )
         self.assertEqual(self.phases, ["assigned", "submitted"])
         self.assertEqual(record["wake"]["state"], "scheduled")
         wake = self.wakes.get(str(record["wake"]["scheduleId"]))
