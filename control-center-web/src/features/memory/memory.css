@@ -124,7 +124,7 @@ main[data-route-id='memory'] {
 .memory-second-brain {
   display: grid;
   min-width: 0;
-  gap: var(--space-4);
+  gap: var(--space-3);
   container: memory-second-brain / inline-size;
 }
 
@@ -148,7 +148,11 @@ main[data-route-id='memory'] {
 .memory-second-brain__mode strong { font-size: 14px; line-height: 18px; }
 .memory-second-brain__mode small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ============================== the pipeline ============================== */
+/* ============================== the pipeline ==============================
+   A compact spine, not a dashboard: one thin rail carries the four stages
+   with their live counts, and the 整理状态 disclosure holds the per-source
+   breakdowns, index/governance signals, and the provenance promise. The
+   workspace below always owns the first screen. */
 
 .memory-pipeline {
   min-width: 0;
@@ -158,17 +162,29 @@ main[data-route-id='memory'] {
   overflow: hidden;
 }
 
-.memory-pipeline__stages {
-  display: grid;
+.memory-pipeline__rail {
+  display: flex;
   min-width: 0;
-  margin: 0;
-  padding: 6px 8px;
-  list-style: none;
   align-items: stretch;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 4px;
+  padding: 5px 6px;
 }
 
-.memory-pipeline__stage { min-width: 0; display: grid; }
+/* Narrow windows scroll the spine horizontally; the stages never stack into
+   a card wall above the content. */
+.memory-pipeline__stages {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.memory-pipeline__stage { display: grid; flex: 1 0 auto; }
 
 /* The spine is a gradient of the four layer identities: raw amber warms
    into working gold, then the pink of organized memory, then settled
@@ -202,9 +218,8 @@ main[data-route-id='memory'] {
   position: relative;
   display: grid;
   width: 100%;
-  min-width: 0;
   align-items: center;
-  padding: 12px 12px 10px;
+  padding: 5px 10px;
   border: 0;
   border-radius: var(--radius-2);
   background: transparent;
@@ -212,9 +227,8 @@ main[data-route-id='memory'] {
   font: inherit;
   text-align: left;
   cursor: pointer;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
-  gap: 5px 11px;
+  grid-template-columns: 26px auto auto;
+  gap: 9px;
   transition: background var(--duration-enter) var(--ease-standard);
 }
 
@@ -226,58 +240,46 @@ main[data-route-id='memory'] {
 
 .memory-pipeline__stage-icon {
   display: grid;
-  grid-area: 1 / 1;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border: 1px solid color-mix(in srgb, var(--stage-signal, var(--memory-signal)) 26%, var(--color-border));
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--stage-signal-soft, var(--memory-signal-soft));
   color: var(--stage-signal-strong, var(--memory-signal-strong));
   place-items: center;
   transition: background var(--duration-enter) var(--ease-standard), border-color var(--duration-enter) var(--ease-standard);
 }
 
-.memory-pipeline__stage-index {
-  grid-area: 2 / 1;
-  align-self: start;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
 .memory-pipeline__stage-copy {
   display: grid;
-  grid-area: 1 / 2;
   min-width: 0;
-  gap: 1px;
+  gap: 0;
 }
 
 .memory-pipeline__stage-copy small {
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   font-size: 12px;
-  line-height: 1.4;
-  letter-spacing: .02em;
+  line-height: 1.35;
+  letter-spacing: .01em;
+  white-space: nowrap;
 }
 
 .memory-pipeline__stage-copy strong {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.3;
   letter-spacing: -.01em;
 }
 
 .memory-pipeline__stage-count {
   display: inline-flex;
-  grid-area: 1 / 3;
   align-items: baseline;
   gap: 3px;
+  padding-left: 2px;
   color: var(--color-text-primary);
   font-family: var(--font-ui);
-  font-size: 20px;
-  line-height: 1.15;
+  font-size: 16px;
+  line-height: 1.2;
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums lining-nums;
 }
@@ -291,19 +293,6 @@ main[data-route-id='memory'] {
 
 .memory-pipeline__stage-count[data-unknown] { color: var(--color-text-tertiary); }
 
-/* Truncate the tail instead of wrapping: the detail is a scent, not a table. */
-.memory-pipeline__stage-detail {
-  grid-area: 2 / 2 / 2 / -1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  line-height: 1.45;
-  font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .memory-pipeline__stage[data-active] > button {
   background: color-mix(in srgb, var(--stage-signal, var(--memory-signal)) 6%, var(--color-paper));
   box-shadow: inset 0 -2px 0 var(--stage-signal, var(--memory-signal));
@@ -315,46 +304,94 @@ main[data-route-id='memory'] {
   background: color-mix(in srgb, var(--stage-signal, var(--memory-signal)) 16%, var(--color-paper));
 }
 
-/* Connectors carry the real quantity waiting to move to the next stage. */
+/* Connectors carry direction only; the waiting quantity stays an honest,
+   clickable count on the 整理 stage itself. */
 .memory-pipeline__flow {
   display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  padding-inline: 7px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding-inline: 1px;
   color: var(--color-text-tertiary);
 }
 
-.memory-pipeline__flow span {
-  max-width: 110px;
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.memory-pipeline__flow svg { opacity: .7; }
+.memory-pipeline__flow svg { opacity: .6; }
 
 /* Work waiting to move belongs to the organize stage, whichever layer owns
    the workspace right now. */
 .memory-pipeline__flow[data-tone='active'] { color: var(--memory-organize-strong); }
-.memory-pipeline__flow[data-tone='active'] span { font-weight: 650; }
 .memory-pipeline__flow[data-tone='active'] svg { opacity: 1; }
 
 .memory-pipeline[data-state='pending'] .memory-pipeline__stage-count,
 .memory-pipeline[data-state='error'] .memory-pipeline__stage-count { color: var(--color-text-tertiary); }
 
-.memory-pipeline__meta {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
+.memory-pipeline__toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px 22px;
-  padding: 9px 16px 10px;
+  gap: 7px;
+  margin-block: 2px;
+  padding: 0 10px 0 12px;
+  border: 0;
+  border-left: 1px solid var(--color-border-soft);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.memory-pipeline__toggle:focus-visible {
+  border-radius: var(--radius-1);
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.memory-pipeline__toggle > i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-info); }
+.memory-pipeline__toggle > i[data-tone='success'] { background: var(--color-success); }
+.memory-pipeline__toggle > i[data-tone='warning'] { background: var(--color-warning); }
+.memory-pipeline__toggle svg {
+  color: var(--color-text-tertiary);
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+
+.memory-pipeline[data-expanded] .memory-pipeline__toggle svg { transform: rotate(180deg); }
+
+.memory-pipeline__summary {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 11px 16px 12px;
   border-top: 1px solid var(--color-border-soft);
   background: color-mix(in srgb, var(--color-surface-subtle) 44%, var(--color-paper));
+}
+
+.memory-pipeline__facts {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  gap: 8px 18px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.memory-pipeline__facts > div {
+  min-width: 0;
+  padding-left: 9px;
+  border-left: 2px solid var(--fact-signal, var(--color-border));
+}
+
+.memory-pipeline__facts > div[data-stage='evidence'] { --fact-signal: var(--memory-evidence); }
+.memory-pipeline__facts > div[data-stage='organize'] { --fact-signal: var(--memory-organize); }
+.memory-pipeline__facts > div[data-stage='atoms'] { --fact-signal: var(--memory-atoms); }
+.memory-pipeline__facts > div[data-stage='books'] { --fact-signal: var(--memory-books); }
+.memory-pipeline__facts dt { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; }
+.memory-pipeline__facts dd {
+  margin: 2px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .memory-pipeline__signals {
@@ -968,7 +1005,7 @@ main[data-route-id='memory'] {
   align-items: end;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-5) 0 var(--space-3);
+  padding: var(--space-3) 0;
 }
 
 .memory-layer-heading > div { min-width: 0; }
@@ -1108,16 +1145,15 @@ main[data-route-id='memory'] {
   gap: var(--space-2);
 }
 
+/* A flat working band on the cold white surface, not a floating hero card. */
 .memory-curation__progress-card {
   display: grid;
   min-width: 0;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-3);
-  background: var(--color-paper);
-  box-shadow: var(--shadow-card);
+  padding: var(--space-4) 0;
+  border-block: 1px solid var(--color-border-strong);
+  background: transparent;
   grid-template-columns: minmax(220px, .9fr) minmax(300px, 1.35fr) minmax(176px, auto);
 }
 
@@ -2171,7 +2207,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
   background: #fff;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__meta {
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__summary {
   background: #fafbfd;
 }
 
@@ -2305,7 +2341,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] :where(.memory-layer-list
 /* UR-102 memory semantic typography */
 main[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span { font-size: 13px; }
 main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__signal strong { font-size: 13px; }
-main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__stage-copy strong { font-size: 15px; }
+main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__stage-copy strong { font-size: 14px; }
 main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong { font-size: 14px; }
 /* UR-102 memory semantic typography end */
 
@@ -2327,6 +2363,8 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
   .memory-pipeline__stage[data-active] > button:hover {
     background: color-mix(in srgb, var(--memory-signal) 9%, var(--color-paper));
   }
+
+  .memory-pipeline__toggle:hover { color: var(--color-text-primary); }
 
   .memory-curation__days li > button:hover,
   .memory-curation__apps li:hover { transform: translateX(2px); }
@@ -2395,6 +2433,7 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
   .memory-second-brain > .memory-view-tabs > [role='tabpanel'],
   .memory-second-brain[data-view='catalog'] .memory-catalog-detail,
   .memory-preferences__persistence i { animation: none; }
+  .memory-pipeline__toggle svg { transition: none; }
   .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface { animation: none; }
   .memory-relation-tooltip { animation: memory-relation-tooltip-fade 120ms linear both; }
   .memory-relation-canvas__focus { animation: memory-relation-tooltip-fade 120ms linear both; }
@@ -2414,6 +2453,7 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 :root[data-reduce-motion='true'] .memory-second-brain > .memory-view-tabs > [role='tabpanel'],
 :root[data-reduce-motion='true'] .memory-second-brain[data-view='catalog'] .memory-catalog-detail,
 :root[data-reduce-motion='true'] .memory-preferences__persistence i { animation: none; }
+:root[data-reduce-motion='true'] .memory-pipeline__toggle svg { transition: none; }
 :root[data-reduce-motion='true'] .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface { animation: none; }
 :root[data-reduce-motion='true'] .memory-relation-tooltip { animation: memory-relation-tooltip-fade 120ms linear both; }
 :root[data-reduce-motion='true'] .memory-relation-canvas__focus { animation: memory-relation-tooltip-fade 120ms linear both; }
@@ -2433,13 +2473,7 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 }
 
 @container memory-second-brain (max-width: 920px) {
-  .memory-pipeline__stages {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px;
-  }
-
-  .memory-pipeline__flow { display: none; }
-  .memory-pipeline__stage:nth-child(n + 4) > button { border-top: 1px solid var(--color-border-soft); border-radius: 0; }
+  .memory-pipeline__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
   .memory-explorer { grid-template-columns: 210px minmax(0, 1fr); }
   .memory-curation__backlog-grid { grid-template-columns: minmax(0, 1fr); }
@@ -2453,10 +2487,20 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 }
 
 @container memory-second-brain (max-width: 680px) {
-  .memory-pipeline__stages { grid-template-columns: minmax(0, 1fr); padding-block: 4px; }
-  .memory-pipeline__stage > button { padding-block: 9px 8px; border-radius: 0; }
-  .memory-pipeline__stage:not(:first-child) > button { border-top: 1px solid var(--color-border-soft); }
-  .memory-pipeline__meta { padding-inline: 14px; }
+  /* The spine keeps a single scrollable row; only the status toggle wraps
+     onto its own thin line so the rail never becomes a card wall. */
+  .memory-pipeline__rail { flex-wrap: wrap; }
+  .memory-pipeline__toggle {
+    min-height: 36px;
+    flex: 1 1 100%;
+    justify-content: space-between;
+    margin: 0;
+    border-top: 1px solid var(--color-border-soft);
+    border-left: 0;
+  }
+
+  .memory-pipeline__facts { grid-template-columns: minmax(0, 1fr); }
+  .memory-pipeline__summary { padding-inline: 14px; }
 
   .memory-second-brain[data-view='catalog'] .memory-layer-workspace { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
   .memory-second-brain[data-view='catalog'] .memory-layer-list { height: 100%; max-height: none; border-bottom: 0; }

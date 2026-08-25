@@ -233,137 +233,146 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         </div>
       </header>
 
-      <ActivityTimelineCalendar
-        busy={busy}
-        canWrite={canWrite}
-        date={date}
-        days={calendarDays}
-        error={calendar.error as Error | null}
-        isLoading={capabilities.isPending || (canReadCalendar && calendar.isPending)}
-        onMoveMonth={moveMonth}
-        onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
-        organizeActive={buildActive}
-        organizeFailed={Boolean(buildError)}
-        organizeMessage={buildProgressMessage}
-        onSelect={chooseDate}
-        summary={calendarSummary}
-        today={today}
-        unavailable={!capabilities.isPending && !canReadCalendar}
-      />
+      {/* Master-detail viewport: the journal is the primary object and owns
+          the first screen; the month calendar accompanies it as a side rail
+          instead of a dashboard the reader must scroll past. */}
+      <div className="activity-timeline__layout">
+        <div className="activity-timeline__main">
+          <DailyJournal
+            canRead={canRead}
+            canWrite={canWrite}
+            date={date}
+            hasError={Boolean(timeline.error)}
+            isLoading={capabilities.isPending || (canRead && timeline.isPending)}
+            item={item}
+            semanticReady={semanticReady}
+            onBuild={() => build.mutate({ targetDate: date })}
+            onOpenSource={() => setSelectedReference({
+              kind: 'timeline',
+              referenceId: timelineId,
+              label: `${formatDateHeading(date)} 的活动时间线`,
+            })}
+            onSelectTask={setSelectedTaskId}
+            status={status}
+            tasks={tasks}
+            timelineId={timelineId}
+            busy={busy}
+          />
 
-      <DailyJournal
-        canRead={canRead}
-        canWrite={canWrite}
-        date={date}
-        hasError={Boolean(timeline.error)}
-        isLoading={capabilities.isPending || (canRead && timeline.isPending)}
-        item={item}
-        semanticReady={semanticReady}
-        onBuild={() => build.mutate({ targetDate: date })}
-        onOpenSource={() => setSelectedReference({
-          kind: 'timeline',
-          referenceId: timelineId,
-          label: `${formatDateHeading(date)} 的活动时间线`,
-        })}
-        onSelectTask={setSelectedTaskId}
-        status={status}
-        tasks={tasks}
-        timelineId={timelineId}
-        busy={busy}
-      />
-
-      {error ? (
-        <InlineNotice title="时间线暂时不可用" tone="danger">
-          {friendlyTimelineError(error)}
-        </InlineNotice>
-      ) : null}
-
-      {!capabilities.isPending && !canRead ? (
-        <InlineNotice title="当前服务未开放每日活动读取" tone="warning">
-          不会发送时间线请求；更新本机服务后再刷新此页。
-        </InlineNotice>
-      ) : !capabilities.isPending && canRead && !canWrite ? (
-        <InlineNotice title="每日活动为只读状态" tone="info">
-          可以查看现有时间线，但当前服务不会接收整理、发布或删除操作。
-        </InlineNotice>
-      ) : null}
-
-      {capabilities.isPending || (canRead && timeline.isPending) ? (
-        <div className="activity-timeline__loading" role="status">
-          <RefreshCw aria-hidden="true" size={18} />
-          <span>正在读取当天活动</span>
-        </div>
-      ) : !canRead || timeline.error ? null : timelineId && !semanticReady ? (
-        <div className="activity-timeline__semantic-empty">
-          <Sparkles aria-hidden="true" size={19} />
-          <span>当天来源已经收集；整理并核对通过后，这里会显示当天的活动故事。</span>
-        </div>
-      ) : timelineId ? (
-        <>
-          {tasks.length ? (
-            <ActivityDayMap date={date} onSelect={setSelectedTaskId} tasks={tasks} />
+          {error ? (
+            <InlineNotice title="时间线暂时不可用" tone="danger">
+              {friendlyTimelineError(error)}
+            </InlineNotice>
           ) : null}
 
-          {taskGroups.length ? (
-            <div className="activity-timeline__periods" aria-label={`${date} 活动分段`}>
-              {taskGroups.map((group) => (
-                <TimelinePeriodBand
-                  key={group.period}
-                  onSelect={setSelectedTaskId}
-                  period={group.period}
-                  tasks={group.tasks}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="activity-timeline__semantic-empty">
-              <ListTree aria-hidden="true" size={19} />
-              <span>这份时间线还没有可显示的活动记录。</span>
-            </div>
-          )}
+          {!capabilities.isPending && !canRead ? (
+            <InlineNotice title="当前服务未开放每日活动读取" tone="warning">
+              不会发送时间线请求；更新本机服务后再刷新此页。
+            </InlineNotice>
+          ) : !capabilities.isPending && canRead && !canWrite ? (
+            <InlineNotice title="每日活动为只读状态" tone="info">
+              可以查看现有时间线，但当前服务不会接收整理、发布或删除操作。
+            </InlineNotice>
+          ) : null}
 
-          <footer className="activity-timeline__decision-bar">
-            <div>
-              <LockKeyhole aria-hidden="true" size={16} />
-              <span>{decisionCopy(status, stringValue(item.approvedBookId))}</span>
+          {capabilities.isPending || (canRead && timeline.isPending) ? (
+            <div className="activity-timeline__loading" role="status">
+              <RefreshCw aria-hidden="true" size={18} />
+              <span>正在读取当天活动</span>
             </div>
-            <div>
-              {status === 'draft' && semanticReady ? (
-                <>
-                  <Button
-                    disabled={busy || !canWrite}
-                    leadingIcon={<X size={15} />}
-                    onClick={() => setRejectOpen(true)}
-                    size="small"
-                    variant="quiet"
-                  >
-                    驳回
-                  </Button>
-                  <Button
-                    disabled={busy || !canWrite}
-                    leadingIcon={<Check size={15} />}
-                    onClick={() => approve.mutate({ timelineId, sourceEventHash: stringValue(item.sourceEventHash) })}
-                    size="small"
-                    variant="primary"
-                  >
-                    立即发布
-                  </Button>
-                </>
+          ) : !canRead || timeline.error ? null : timelineId && !semanticReady ? (
+            <div className="activity-timeline__semantic-empty">
+              <Sparkles aria-hidden="true" size={19} />
+              <span>当天来源已经收集；整理并核对通过后，这里会显示当天的活动故事。</span>
+            </div>
+          ) : timelineId ? (
+            <>
+              {tasks.length ? (
+                <ActivityDayMap date={date} onSelect={setSelectedTaskId} tasks={tasks} />
+              ) : null}
+
+              {taskGroups.length ? (
+                <div className="activity-timeline__periods" aria-label={`${date} 活动分段`}>
+                  {taskGroups.map((group) => (
+                    <TimelinePeriodBand
+                      key={group.period}
+                      onSelect={setSelectedTaskId}
+                      period={group.period}
+                      tasks={group.tasks}
+                    />
+                  ))}
+                </div>
               ) : (
-                <Button
-                  disabled={busy || !canWrite}
-                  leadingIcon={<Sparkles size={15} />}
-                  loading={build.isPending}
-                  onClick={() => build.mutate({ targetDate: date })}
-                  size="small"
-                >
-                  {semanticReady ? '重新整理' : '整理这一天'}
-                </Button>
+                <div className="activity-timeline__semantic-empty">
+                  <ListTree aria-hidden="true" size={19} />
+                  <span>这份时间线还没有可显示的活动记录。</span>
+                </div>
               )}
-            </div>
-          </footer>
-        </>
-      ) : null}
+
+              <footer className="activity-timeline__decision-bar">
+                <div>
+                  <LockKeyhole aria-hidden="true" size={16} />
+                  <span>{decisionCopy(status, stringValue(item.approvedBookId))}</span>
+                </div>
+                <div>
+                  {status === 'draft' && semanticReady ? (
+                    <>
+                      <Button
+                        disabled={busy || !canWrite}
+                        leadingIcon={<X size={15} />}
+                        onClick={() => setRejectOpen(true)}
+                        size="small"
+                        variant="quiet"
+                      >
+                        驳回
+                      </Button>
+                      <Button
+                        disabled={busy || !canWrite}
+                        leadingIcon={<Check size={15} />}
+                        onClick={() => approve.mutate({ timelineId, sourceEventHash: stringValue(item.sourceEventHash) })}
+                        size="small"
+                        variant="primary"
+                      >
+                        立即发布
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      disabled={busy || !canWrite}
+                      leadingIcon={<Sparkles size={15} />}
+                      loading={build.isPending}
+                      onClick={() => build.mutate({ targetDate: date })}
+                      size="small"
+                    >
+                      {semanticReady ? '重新整理' : '整理这一天'}
+                    </Button>
+                  )}
+                </div>
+              </footer>
+            </>
+          ) : null}
+        </div>
+
+        <aside className="activity-timeline__rail">
+          <ActivityTimelineCalendar
+            busy={busy}
+            canWrite={canWrite}
+            date={date}
+            days={calendarDays}
+            error={calendar.error as Error | null}
+            isLoading={capabilities.isPending || (canReadCalendar && calendar.isPending)}
+            onMoveMonth={moveMonth}
+            onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
+            organizeActive={buildActive}
+            organizeFailed={Boolean(buildError)}
+            organizeMessage={buildProgressMessage}
+            onSelect={chooseDate}
+            summary={calendarSummary}
+            today={today}
+            unavailable={!capabilities.isPending && !canReadCalendar}
+          />
+        </aside>
+      </div>
 
       <TaskDetailDialog
         onClose={() => setSelectedTaskId('')}
