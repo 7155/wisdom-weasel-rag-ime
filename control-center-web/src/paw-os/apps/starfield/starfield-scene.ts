@@ -736,9 +736,6 @@ export class StarfieldStage {
     for (const runtime of this.bodies) this.anchorById.set(runtime.body.id, runtime.anchor);
     if (this.center) this.anchorById.set('center', this.center.group);
     for (const link of model.links) this.buildLink(link);
-    if (model.mode === 'room' && model.ringRadii.length >= 1) {
-      this.modelRoot.add(this.buildAsteroidBelt(model));
-    }
     this.applySelectionHighlight();
   }
 
@@ -1019,46 +1016,6 @@ export class StarfieldStage {
     return geometry;
   }
 
-  /** Sparse rocky belt between Room orbits — decoration only. */
-  private buildAsteroidBelt(model: StarfieldSceneModel): THREE.Points {
-    const random = seededRandom(`${model.seed}:belt`);
-    const inner = Math.max(1.2, (model.ringRadii[0] ?? 3) * 0.72);
-    const outer = Math.min(
-      SCENE_STAGE_RADIUS * 1.15,
-      (model.ringRadii[model.ringRadii.length - 1] ?? inner + 2) * 0.92,
-    );
-    const count = 420;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    for (let index = 0; index < count; index += 1) {
-      const radius = inner + random() * Math.max(0.4, outer - inner);
-      const angle = random() * Math.PI * 2;
-      const elev = (random() - 0.5) * 0.35;
-      positions[index * 3] = Math.cos(angle) * radius;
-      positions[index * 3 + 1] = elev;
-      positions[index * 3 + 2] = Math.sin(angle) * radius;
-      const shade = 0.45 + random() * 0.4;
-      colors[index * 3] = shade;
-      colors[index * 3 + 1] = shade * 0.92;
-      colors[index * 3 + 2] = shade * 0.8;
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const material = new THREE.PointsMaterial({
-      size: 0.12,
-      map: this.dotTexture,
-      transparent: true,
-      opacity: 0.7,
-      vertexColors: true,
-      depthWrite: false,
-      sizeAttenuation: true,
-    });
-    const points = new THREE.Points(geometry, material);
-    points.name = 'sf-asteroid-belt';
-    return points;
-  }
-
   private buildBody(model: StarfieldSceneModel, body: SceneBody, drawnRings: Set<string>): void {
     const orbitGroup = new THREE.Group();
     orbitGroup.rotation.z = body.inclinationRad;
@@ -1195,14 +1152,20 @@ export class StarfieldStage {
     });
   }
 
+  /**
+   * Orbit guide in the reference's single soft ink (q-jade/solar-system uses
+   * 0x8cb8ce at low opacity for every path): one consistent quiet line per
+   * orbit that only brightens under a working body, so the paths read as a
+   * calm chart instead of a tangle of competing colors.
+   */
   private buildOrbitPath(semiMajor: number, eccentricity: number, working: boolean): THREE.LineLoop {
     const positions = ellipticOrbitSamples(semiMajor, eccentricity, 160);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     return new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({
-      color: working ? 0x93b0e2 : 0x4a5878,
+      color: 0x8cb8ce,
       transparent: true,
-      opacity: working ? 0.45 : 0.24,
+      opacity: working ? 0.42 : 0.2,
     }));
   }
 
@@ -1438,8 +1401,6 @@ export class StarfieldStage {
       this.backdropRoot.rotation.y += dt * 0.004;
       const spiral = this.backdropRoot.getObjectByName('sf-spiral');
       if (spiral) spiral.rotation.y += dt * 0.01;
-      const belt = this.modelRoot.getObjectByName('sf-asteroid-belt');
-      if (belt) belt.rotation.y += dt * 0.02;
       this.updateFlourishes();
       animated = true;
     }
