@@ -117,8 +117,11 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     ]);
     const nextTabs = rows(record(tabsValue).items);
     const nextTraces = rows(record(tracesValue).items);
-    setTabs(nextTabs);
-    setTraces(nextTraces);
+    /* The shell polls every second while the window is open; keeping the
+     * previous array identity when nothing changed lets an idle poll cost
+     * zero renders instead of re-rendering the whole Browser App. */
+    setTabs((current) => sameRecords(current, nextTabs) ? current : nextTabs);
+    setTraces((current) => sameRecords(current, nextTraces) ? current : nextTraces);
     const selectedStillExists = selectedTabId > 0
       && nextTabs.some((tab) => number(tab.tabId) === selectedTabId);
     const nextTabId = selectedStillExists ? selectedTabId : number(nextTabs[0]?.tabId);
@@ -132,7 +135,9 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
         pathId: 'browser.snapshot.latest',
         query: { deviceId: 'paw-browser', tabId: nextTabId, includeMarkdown: true },
       }));
-      if (liveSnapshot.snapshotId) setSnapshot(liveSnapshot);
+      if (liveSnapshot.snapshotId) {
+        setSnapshot((current) => current.snapshotId === liveSnapshot.snapshotId ? current : liveSnapshot);
+      }
     }
   }, [selectedTabId, transport]);
 
@@ -171,7 +176,8 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       }
     }
     void boot();
-    const timer = window.setInterval(() => { if (active) void refreshShell().catch(() => undefined); }, 1_000);
+    // A hidden document cannot show fresher tabs; skip the tick entirely.
+    const timer = window.setInterval(() => { if (active && !document.hidden) void refreshShell().catch(() => undefined); }, 1_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [electronHost, refreshShell, transport]);
 
@@ -1034,6 +1040,12 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       </main>
     </>
   );
+}
+
+/* Poll payloads are small (≤30 rows); a serialized compare is far cheaper
+ * than the App re-render a fresh array identity would force every second. */
+function sameRecords(current: BrowserRecord[], next: BrowserRecord[]): boolean {
+  return current.length === next.length && JSON.stringify(current) === JSON.stringify(next);
 }
 
 function BrowserTraceRow({ trace }: { trace: BrowserRecord }) {

@@ -155,13 +155,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  /* The wallpaper is its own sealed paint world: a weather step can never
-     invalidate desktop chrome, and desktop work can never re-rasterize the
-     field's one-time filters (ridge depth-of-field, film grain). */
+  /* The wallpaper is its own sealed paint world: desktop work can never
+     re-rasterize the field's one-time filters (ridge depth-of-field, film
+     grain), and the picture itself carries no animation that could
+     invalidate the chrome glass above it. */
   contain: strict;
 }
 .paw-composition-field {
-  --paw-composition-energy: 0;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -172,23 +172,43 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   opacity: 1;
   transition: opacity 220ms var(--paw-ease-out);
 }
-/* The pulse bloom rests invisible; the field JS animates it only on real
-   Runtime signals, so a quiet desktop stays a quiet picture. */
-.paw-field__signal { opacity: 0; transform-box: fill-box; transform-origin: center; }
+/* Live light overlay — the only part of the wallpaper that ever moves. The
+   SVG picture below it rasterizes once and is never invalidated again; Runtime
+   pulses land here as compositor-only opacity/scale on one pre-blurred glow,
+   and the residual energy keeps the light gap slightly lit after activity.
+   The custom property lives on this two-node subtree so an energy write can
+   never trigger a style pass over the terrain. */
+.paw-field-live {
+  --paw-composition-energy: 0;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.paw-field-live__glow {
+  position: absolute;
+  /* The light gap sits at 985,552 of the 1440x900 picture. */
+  left: 68.4%;
+  top: 61.3%;
+  width: 34%;
+  min-width: 320px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  opacity: calc(var(--paw-composition-energy, 0) * .3);
+  /* The centring offset is the separate translate property, so the pulse's
+     transform keyframes cannot knock the glow off the light gap. */
+  translate: -50% -50%;
+  transition: opacity 640ms var(--paw-ease-out);
+}
 /* Collaboration focus recedes the wallpaper with opacity alone (the focus
-   plane above supplies the darkness) and pauses every ambient wallpaper
-   animation, so nothing drifts or breathes behind focused work. */
+   plane above supplies the darkness) and clears the live light entirely, so
+   nothing glows or pulses behind focused work. The pulse driver also skips
+   choreography while focus, a hidden document or a window gesture owns the
+   stage. */
 .paw-desktop[data-collaboration-focus] .paw-composition-field {
   opacity: .7;
 }
-.paw-desktop[data-collaboration-focus] .paw-composition-field * {
-  animation-play-state: paused;
-}
-/* A live window drag/resize owns the frame budget the same way: freeze the
-   weather in place (play-state, not reset) so the wallpaper costs nothing
-   mid-gesture and resumes from the same sky at rest. */
-.paw-desktop-root[data-window-interaction] .paw-composition-field * {
-  animation-play-state: paused;
+.paw-desktop[data-collaboration-focus] .paw-field-live {
+  opacity: 0;
 }
 .paw-desktop[data-collaboration-focus] .paw-wayfinder,
 .paw-desktop[data-collaboration-focus] .paw-dock {
@@ -1011,17 +1031,19 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
     transform: none !important;
   }
   .paw-composition-field,
-  .paw-composition-field * {
+  .paw-composition-field *,
+  .paw-field-live * {
     animation: none !important;
     transform: none !important;
     will-change: auto !important;
   }
 }
 /* The explicit reduce-motion setting quiets the wallpaper exactly like the
-   system preference: no ambient drift, no pulse choreography, and the drift
-   layers release their compositor promotion since nothing moves. */
+   system preference: the picture is already still, and the live glow drops
+   its pulse choreography (the driver also skips WAAPI on both signals). */
 :root[data-reduce-motion='true'] .paw-composition-field,
-:root[data-reduce-motion='true'] .paw-composition-field * {
+:root[data-reduce-motion='true'] .paw-composition-field *,
+:root[data-reduce-motion='true'] .paw-field-live * {
   animation: none !important;
   transform: none !important;
   will-change: auto !important;

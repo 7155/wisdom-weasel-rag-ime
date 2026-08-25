@@ -52,6 +52,14 @@ export function PawDesktop() {
   }), [menuSignature]);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
   const collaborationFocus = Boolean(collaborationFocusGroup);
+  /* The wallpaper only spends frames when somebody can actually watch it.
+   * The picture itself is a one-time raster; this attribute gates the live
+   * pulse overlay: a focused App window, the Launchpad veil, the overview
+   * plane and a hidden document all mean the field is covered or unseen, so
+   * the pulse driver swallows Runtime/audio pulses outright. Collaboration
+   * focus and live drag/resize keep their own suspension rules. */
+  const documentHidden = useDocumentHidden();
+  const ambientPaused = documentHidden || Boolean(activeWindowId) || launchpadOpen || overviewOpen;
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
@@ -322,6 +330,7 @@ export function PawDesktop() {
   return (
     <div
       className="paw-desktop"
+      data-ambient-paused={ambientPaused || undefined}
       data-collaboration-focus={collaborationFocus || undefined}
       data-overview={overviewOpen || undefined}
       onContextMenu={openContextMenu}
@@ -378,6 +387,18 @@ export function PawDesktop() {
       ) : null}
     </div>
   );
+}
+
+/* One subscription to the platform visibility signal: a hidden document can
+ * never be watched, so the wallpaper weather pauses with it. */
+function useDocumentHidden(): boolean {
+  const [hidden, setHidden] = useState(() => typeof document !== 'undefined' && document.visibilityState === 'hidden');
+  useEffect(() => {
+    const update = () => setHidden(document.visibilityState === 'hidden');
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return hidden;
 }
 
 /* The half-minute clock tick lives in its own leaf so it re-renders one
