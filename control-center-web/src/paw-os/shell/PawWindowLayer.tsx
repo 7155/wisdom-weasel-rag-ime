@@ -19,13 +19,26 @@ import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-sessi
 import { roomActivityFlowKind } from '@/features/rooms/room-flow-projection';
 import type { RoomProjectionState } from '@/contracts/room-reducer';
 
+const noRoomProjections: Record<string, RoomProjectionState> = {};
+const selectRoomProjections = (state: { projections: Record<string, RoomProjectionState> }) => state.projections;
+const selectNoRoomProjections = () => noRoomProjections;
+
 export function PawWindowLayer() {
   const api = usePawDesktopApi();
   const windows = usePawDesktopStore((state) => state.windows);
   const idSignature = usePawDesktopStore((state) => Object.keys(state.windows).join('\u0000'));
   const overviewOpen = usePawDesktopStore((state) => state.overviewOpen);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
-  const projections = useRoomLiveStore((state) => state.projections);
+  /* Room projections stream — during a live turn they change many times per
+   * second. The layer only reads them for flow groups (which require a
+   * participant window) and the focus mode bar, so an ordinary desktop
+   * subscribes to a constant instead and never re-renders on Room events. */
+  const wantsRoomProjections = useMemo(
+    () => Boolean(collaborationFocusGroup?.startsWith('room:'))
+      || Object.values(windows).some((node) => node.target?.kind === 'participant'),
+    [collaborationFocusGroup, windows],
+  );
+  const projections = useRoomLiveStore(wantsRoomProjections ? selectRoomProjections : selectNoRoomProjections);
   const ids = useMemo(() => idSignature.split('\u0000').filter(Boolean), [idSignature]);
   const [viewport, setViewport] = useState(() => desktopSize());
   const [focusFrameOverrides, setFocusFrameOverrides] = useState<Record<string, PawWindowBounds>>({});

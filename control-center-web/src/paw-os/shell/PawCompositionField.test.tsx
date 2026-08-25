@@ -56,114 +56,81 @@ describe('PAWOS Wayfinder fog terrain', () => {
     expect(desktopCss).toMatch(/\.paw-composition-field\s*\{[^}]*inset:\s*0/s);
     expect(desktopCss).toMatch(/\.paw-composition-field\s*\{[^}]*width:\s*100%/s);
     expect(desktopCss).toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-composition-field\s*\{[^}]*opacity:\s*\.7/s);
+    // The live glow clears entirely behind focused work.
+    expect(desktopCss).toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-field-live\s*\{[^}]*opacity:\s*0/s);
     expect(shellCss).toMatch(/\.paw-wayfinder \.paw-composition-field\s*\{[^}]*opacity:\s*1/s);
   });
 
-  it('answers the existing pulse contract and playing audio without new callers', () => {
+  it('rasterizes the picture exactly once: nothing ever animates inside the SVG', () => {
+    // The freeze fix. The picture is a module constant that React reconciles
+    // by reference; no SMIL, no WAAPI target, no CSS animation and no custom
+    // property ever lands on an SVG node, so the full-bleed grain/blur stack
+    // rasterizes one time and the raster pipeline stays empty at rest.
+    expect(compositionSource).toContain('const pawFieldPicture = (');
+    expect(compositionSource).not.toContain('<animate');
+    expect(compositionSource).not.toMatch(/querySelector(All)?<SVG/);
+    expect(compositionSource).not.toMatch(/SVGSVGElement|SVGGElement|SVGCircleElement/);
+    // The retired stepped weather clocks stay retired: they invalidated the
+    // SVG's paint every second or two forever, which starved the pointer.
+    expect(shellCss).not.toMatch(/@keyframes paw-field-(mist-drift|cirrus-drift|breathe|daylight)/);
+    expect(shellCss).not.toMatch(/\.paw-field__[\w-]*[^{]*\{[^}]*animation:/s);
+    expect(desktopCss).not.toMatch(/\.paw-field__[\w-]*[^{]*\{[^}]*animation:/s);
+    // Static rest densities replace the old animated swells.
+    expect(shellCss).toMatch(/\.paw-field__bloom\s*\{\s*opacity:\s*\.66;\s*\}/);
+    expect(shellCss).toMatch(/\.paw-field__warmth\s*\{\s*opacity:\s*\.64;\s*\}/);
+    expect(shellCss).toMatch(/\.paw-field__daylight\s*\{\s*opacity:\s*\.3;\s*\}/);
+    // A still picture holds no compositor promotions open.
+    expect(shellCss).not.toMatch(/paw-field__[\w-]*[^{]*\{[^}]*will-change/s);
+  });
+
+  it('drives Runtime pulses and playing audio through the HTML overlay, never the picture', () => {
     expect(compositionSource).toContain('PAW_COMPOSITION_PULSE_EVENT');
     expect(compositionSource).toContain('--paw-composition-energy');
-    expect(compositionSource).toContain('field.dataset.drive = source');
+    expect(compositionSource).toContain('live.dataset.drive = source');
     expect(compositionSource).toContain("document.addEventListener('timeupdate', handleMedia, true)");
-    expect(compositionSource).toContain("querySelector<SVGCircleElement>('.paw-field__signal')");
-    expect(compositionSource).toContain("querySelectorAll<SVGGElement>('.paw-field__mist')");
-    // The horizon keeps residual light after activity via the energy custom
-    // property that the bloom reads in CSS.
-    expect(shellCss).toMatch(/\.paw-field__bloom\s*\{[^}]*var\(--paw-composition-energy/s);
-    // Pulse animations are id-scoped so cancelling them can never kill the
-    // CSS-driven ambient mist drift on the same elements.
+    expect(compositionSource).toContain("querySelector<HTMLElement>('.paw-field-live__glow')");
+    // Pulse animations are id-scoped so a fresh pulse cancels exactly the
+    // previous pulse and nothing else on the overlay.
     expect(compositionSource).toContain("const pulseId = 'paw-field-pulse'");
     expect(compositionSource).toContain('if (animation.id === pulseId) animation.cancel()');
+    // Residual horizon light: the glow's rest opacity reads the energy custom
+    // property, and the property lives on the two-node overlay subtree.
+    expect(desktopCss).toMatch(/\.paw-field-live\s*\{[^}]*--paw-composition-energy:\s*0/s);
+    expect(desktopCss).toMatch(/\.paw-field-live__glow\s*\{[^}]*var\(--paw-composition-energy/s);
+    // The centring offset is the separate translate property, so the pulse's
+    // transform keyframes cannot knock the glow off the light gap.
+    expect(desktopCss).toMatch(/\.paw-field-live__glow\s*\{[^}]*translate:\s*-50% -50%/s);
+    expect(shellCss).toMatch(/\.paw-field-live__glow\s*\{[^}]*radial-gradient/s);
+    // The overlay ignores the pointer and never carries a filter.
+    expect(desktopCss).toMatch(/\.paw-field-live\s*\{[^}]*pointer-events:\s*none/s);
+    expect(desktopCss).not.toMatch(/\.paw-field-live[\w_-]*\s*\{[^}]*filter:/s);
   });
 
-  it('keeps every filter on static geometry so the moving weather is cheap to draw', () => {
-    // Ridge depth-of-field and film grain rasterize once and never animate;
-    // everything that moves (mist, cirrus, daylight, warmth, signal) is plain
-    // gradient geometry with no filter attribute, so a weather step repaints
-    // cached gradients instead of re-running Gaussian blurs.
-    expect(compositionSource).not.toContain('paw-field-mist-soften');
-    expect(compositionSource).toContain('url(#paw-field-mist-ball)');
-    expect(compositionSource).toContain('url(#paw-field-daylight)');
-    for (const line of compositionSource.split('\n')) {
-      if (!/paw-field__(mist|cirrus|daylight|warmth|signal|bloom)/.test(line)) continue;
-      expect(line, `animated layer stays filter-free: ${line.trim()}`).not.toContain('filter=');
-    }
-    // The wallpaper is one sealed paint world behind the desktop.
-    expect(desktopCss).toMatch(/\.paw-field-media\s*\{[^}]*contain:\s*strict/s);
-  });
-
-  it('moves on a stepped minutes-long clock and pauses whenever it cannot be watched', () => {
-    // steps() turns sixty invisible sub-pixel updates per second into one
-    // visible update every few seconds — the picture moves the same, the
-    // idle desktop stops re-rasterizing and re-blurring chrome glass.
-    expect(shellCss).toMatch(/paw-field-mist-drift 2[0-9]{2}s steps\([45][0-9]\)/);
-    expect(shellCss).toMatch(/paw-field-cirrus-drift 3[0-9]{2}s steps\(/);
-    expect(shellCss).toMatch(/paw-field-daylight 1[0-9]{2}s steps\(/);
-    expect(shellCss).toMatch(/paw-field-breathe 26s steps\(/);
-    // A live window drag/resize freezes the weather in place instead of
-    // resetting it (collaboration focus has its own identical pause rule).
-    expect(desktopCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-composition-field \*\s*\{[^}]*animation-play-state:\s*paused/s);
-    // Pulses stay silent while hidden, focused-away or mid-gesture: no energy
-    // write, no bloom transition, no WAAPI.
+  it('stays silent whenever it cannot be watched and under both reduced-motion signals', () => {
+    // Hidden document, unwatched wallpaper, collaboration focus and a live
+    // window drag/resize all swallow pulses entirely — no energy write, no
+    // glow transition, no WAAPI.
     expect(compositionSource).toContain('if (pulsesSuspended()) return;');
     expect(compositionSource).toContain('if (document.hidden) return true;');
-    expect(compositionSource).toContain("field.closest('[data-collaboration-focus]')");
+    expect(compositionSource).toContain("live.closest('[data-ambient-paused]')");
+    expect(compositionSource).toContain("live.closest('[data-collaboration-focus]')");
     expect(compositionSource).toContain('root?.dataset.windowInteraction');
-  });
-
-  it('steps every ambient weather clock no faster than once every few seconds', () => {
-    // Each visible step invalidates a full-bleed SVG raster (with the grain
-    // pass on top) and re-runs the chrome backdrop blurs above the field.
-    // Rare steps keep the watched idle desktop around one repaint per second
-    // in total across all six clocks; a sub-second clock here is a P0 jank
-    // regression (the warmth breathe once stepped every single second).
-    const clocks = [...shellCss.matchAll(/paw-field-(?:mist-drift|cirrus-drift|daylight|breathe) (\d+)s steps\((\d+)\)/g)];
-    expect(clocks.length).toBeGreaterThanOrEqual(6);
-    for (const [clock, duration, steps] of clocks) {
-      expect(Number(duration) / Number(steps), `at most one repaint every 4s: ${clock}`).toBeGreaterThanOrEqual(4);
-    }
-  });
-
-  it('freezes entirely whenever the shell marks the wallpaper unwatched', () => {
-    // A focused App window, the Launchpad veil, the overview plane and a
-    // hidden document all mean nobody is watching the scenery. The desktop
-    // shell stamps one attribute from those store slices plus the platform
-    // visibility signal, and CSS freezes every weather clock in place.
-    expect(desktopCss).toMatch(/\.paw-desktop\[data-ambient-paused\] \.paw-composition-field \*\s*\{[^}]*animation-play-state:\s*paused/s);
+    // The desktop shell stamps the unwatched signal from its store slices
+    // plus the platform visibility signal: a focused App window, the
+    // Launchpad veil, the overview plane or a hidden document all mean
+    // nobody is watching the scenery, so pulses never fire behind work.
     expect(desktopShellSource).toContain('data-ambient-paused={ambientPaused || undefined}');
     expect(desktopShellSource).toMatch(/ambientPaused = documentHidden \|\| Boolean\(activeWindowId\) \|\| launchpadOpen \|\| overviewOpen/);
     expect(desktopShellSource).toContain("document.addEventListener('visibilitychange', update)");
-    // Pulses respect the same signal: playing audio or runtime events can
-    // never restart wallpaper choreography behind a focused window.
-    expect(compositionSource).toContain("field.closest('[data-ambient-paused]')");
-  });
-
-  it('rests still under both reduced-motion signals and keeps the pulse bloom invisible at rest', () => {
+    // Both reduced-motion signals drop the choreography and keep only the
+    // residual light.
     expect(compositionSource).toContain("window.matchMedia('(prefers-reduced-motion: reduce)')");
     expect(compositionSource).toContain("getAttribute('data-reduce-motion') === 'true'");
-    expect(desktopCss).toMatch(/prefers-reduced-motion:[^)]+\)[^{]*\{[\s\S]*\.paw-composition-field \*/);
-    expect(desktopCss).toMatch(/:root\[data-reduce-motion='true'\] \.paw-composition-field \*/);
-    expect(desktopCss).toMatch(/\.paw-field__signal\s*\{[^}]*opacity:\s*0/s);
-    // The warmth core holds a static rest opacity, so a killed breathe
-    // animation can never snap it to full strength.
-    expect(shellCss).toMatch(/\.paw-field__warmth\s*\{[^}]*opacity:\s*\.64/s);
-    // Ambient drift is minutes-long weather, not UI motion.
-    expect(shellCss).toMatch(/paw-field-mist-drift 2[0-9]{2}s/);
+    expect(desktopCss).toMatch(/prefers-reduced-motion:[^)]+\)[^{]*\{[\s\S]*\.paw-field-live \*/);
+    expect(desktopCss).toMatch(/:root\[data-reduce-motion='true'\] \.paw-field-live \*/);
   });
 
-  it('stays fully quiet while collaboration focus owns the desktop', () => {
-    // The pulse driver skips choreography behind the focus plane, and CSS
-    // pauses the ambient drift/breathe so nothing animates under focused work.
-    expect(compositionSource).toContain("field.closest('[data-collaboration-focus]')");
-    expect(desktopCss).toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-composition-field \*\s*\{[^}]*animation-play-state:\s*paused/s);
-  });
-
-  it('keeps ambient motion off the filter path and inside a bounded raster budget', () => {
-    // The forever-animated drift groups may never carry an SVG filter: a
-    // filtered drift re-runs its Gaussian blur every frame. The fog banks are
-    // pre-blurred radial gradients instead.
-    expect(compositionSource).not.toContain('paw-field-mist-soften');
-    expect(compositionSource).not.toMatch(/paw-field__mist-drift"\s+filter=/);
-    expect(compositionSource).toContain('url(#paw-field-mist-ball)');
+  it('keeps the one-time filters and containment that seal the picture', () => {
     // Both grain speckle passes resolve from one feTurbulence evaluation on
     // one full-bleed surface (dark keys off red noise, light off green).
     expect(compositionSource.match(/<feTurbulence/g)).toHaveLength(1);
@@ -174,17 +141,17 @@ describe('PAWOS Wayfinder fog terrain', () => {
     expect(compositionSource).toContain('url(#paw-field-dof-midfar)');
     expect(compositionSource).not.toMatch(/paw-field-dof-mid\)/);
     expect(compositionSource).not.toMatch(/paw-field-dof-close\)/);
-    // No wallpaper layer holds a standing compositor promotion: will-change
-    // on the drift/warmth subtrees pinned several near-full-viewport GPU
-    // layers for scenery that steps once every few seconds at most, and the
-    // unwatched-freeze contract already removes all idle work. Reduced motion
-    // still releases any stray promotion defensively.
-    expect(shellCss.match(/paw-field[^{]*\{[^}]*will-change/g)).toBeNull();
-    expect(desktopCss.match(/will-change:\s*auto\s*!important/g)?.length).toBeGreaterThanOrEqual(2);
+    // The fog banks stay pre-blurred gradients, not filtered geometry.
+    expect(compositionSource).toContain('url(#paw-field-mist-ball)');
+    for (const line of compositionSource.split('\n')) {
+      if (!/paw-field__(mist|cirrus|daylight|warmth|bloom)/.test(line)) continue;
+      expect(line, `soft layer stays filter-free: ${line.trim()}`).not.toContain('filter=');
+    }
+    // The wallpaper is one sealed paint world behind the desktop.
+    expect(desktopCss).toMatch(/\.paw-field-media\s*\{[^}]*contain:\s*strict/s);
     // Mode dims spend opacity, never a held full-viewport filter raster of
     // the wallpaper: no filter under overview or collaboration focus.
     expect(desktopCss).not.toMatch(/\.paw-desktop\[data-overview\] \.paw-wayfinder\s*\{[^}]*filter:/s);
     expect(desktopCss).not.toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-composition-field\s*\{[^}]*filter:/s);
-    expect(desktopCss).not.toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-wayfinder,\s*\.paw-desktop\[data-collaboration-focus\] \.paw-dock\s*\{[^}]*filter:/s);
   });
 });

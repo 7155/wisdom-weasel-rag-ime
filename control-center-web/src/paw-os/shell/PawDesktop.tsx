@@ -52,12 +52,12 @@ export function PawDesktop() {
   }), [menuSignature]);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
   const collaborationFocus = Boolean(collaborationFocusGroup);
-  /* The wallpaper weather only spends frames when somebody can actually watch
-   * it. A focused App window, the Launchpad veil, the overview plane and a
-   * hidden document all mean the field is covered or unseen, so the shell
-   * stamps one attribute and CSS freezes every ambient clock in place
-   * (play-state, not reset — the sky resumes exactly where it stopped).
-   * Collaboration focus and live drag/resize keep their own pause rules. */
+  /* The wallpaper only spends frames when somebody can actually watch it.
+   * The picture itself is a one-time raster; this attribute gates the live
+   * pulse overlay: a focused App window, the Launchpad veil, the overview
+   * plane and a hidden document all mean the field is covered or unseen, so
+   * the pulse driver swallows Runtime/audio pulses outright. Collaboration
+   * focus and live drag/resize keep their own suspension rules. */
   const documentHidden = useDocumentHidden();
   const ambientPaused = documentHidden || Boolean(activeWindowId) || launchpadOpen || overviewOpen;
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
