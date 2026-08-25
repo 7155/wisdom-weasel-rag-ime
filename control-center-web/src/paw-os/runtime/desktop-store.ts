@@ -4,6 +4,55 @@ import { pawApp, type PawAppId } from './app-registry';
 
 export type PawWindowBounds = { x: number; y: number; width: number; height: number };
 export type PawWindowPlacement = 'maximized' | 'left' | 'right';
+
+/* A window is an App container with a floor, not a free-floating page. Below
+   these sizes the titlebar can no longer hold its three verbs beside an App's
+   own chrome, so no gesture, layout or fit may produce a smaller frame. */
+export const PAW_WINDOW_MIN_WIDTH = 280;
+export const PAW_WINDOW_MIN_HEIGHT = 210;
+
+/* Window bounds are `.paw-window-layer` coordinates, and that layer is a real
+   chrome box: the menu bar sits above it and the Dock gutter below it
+   (`inset: 0 0 76px` inside `.paw-desktop-viewport`, whose own top is
+   `--paw-menu-h`). Every owner that fits, snaps, clamps or lays out a window
+   resolves this one box — when they disagree, a "fitted" window still lands
+   under the Dock where the pointer cannot reach its bottom edge. */
+const PAW_MENU_BAR_HEIGHT = 34;
+const PAW_DOCK_GUTTER_HEIGHT = 76;
+const PAW_WINDOW_AREA_INSET = 8;
+
+/** Usable size of the window layer itself, in layer coordinates. */
+export function pawWindowLayerSize(): { width: number; height: number } {
+  const width = typeof window === 'undefined' ? 1280 : window.innerWidth;
+  const height = typeof window === 'undefined' ? 800 : window.innerHeight;
+  return {
+    width: Math.max(PAW_WINDOW_MIN_WIDTH, width),
+    height: Math.max(PAW_WINDOW_MIN_HEIGHT, height - PAW_MENU_BAR_HEIGHT - PAW_DOCK_GUTTER_HEIGHT),
+  };
+}
+
+/** The inset rectangle an ordinary desktop window may occupy. */
+export function pawWindowArea(): PawWindowBounds {
+  const layer = pawWindowLayerSize();
+  return {
+    x: PAW_WINDOW_AREA_INSET,
+    y: PAW_WINDOW_AREA_INSET,
+    width: Math.max(PAW_WINDOW_MIN_WIDTH, layer.width - PAW_WINDOW_AREA_INSET * 2),
+    height: Math.max(PAW_WINDOW_MIN_HEIGHT, layer.height - PAW_WINDOW_AREA_INSET * 2),
+  };
+}
+
+/** Clamp one frame so the whole window — not just its titlebar — stays reachable. */
+export function fitPawWindowBounds(bounds: PawWindowBounds, area: PawWindowBounds = pawWindowArea()): PawWindowBounds {
+  const width = Math.min(area.width, Math.max(Math.min(PAW_WINDOW_MIN_WIDTH, area.width), bounds.width));
+  const height = Math.min(area.height, Math.max(Math.min(PAW_WINDOW_MIN_HEIGHT, area.height), bounds.height));
+  return {
+    x: Math.min(Math.max(area.x, bounds.x), area.x + area.width - width),
+    y: Math.min(Math.max(area.y, bounds.y), area.y + area.height - height),
+    width,
+    height,
+  };
+}
 export type PawWindowNode = {
   id: string;
   appId: PawAppId;
@@ -240,15 +289,15 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
       });
     },
     fitWindowsToViewport() {
-      const viewport = desktopViewportBounds();
+      const viewport = pawWindowArea();
       set((state) => {
         let changed = false;
         const windows = Object.fromEntries(Object.entries(state.windows).map(([windowId, node]) => {
           const bounds = node.placement
             ? placementBounds(node.placement)
-            : fitBoundsToViewport(node.bounds, viewport);
+            : fitPawWindowBounds(node.bounds, viewport);
           const restoreBounds = node.restoreBounds
-            ? fitBoundsToViewport(node.restoreBounds, viewport)
+            ? fitPawWindowBounds(node.restoreBounds, viewport)
             : undefined;
           if (sameBounds(bounds, node.bounds)
             && ((!restoreBounds && !node.restoreBounds) || (restoreBounds && node.restoreBounds && sameBounds(restoreBounds, node.restoreBounds)))) {
@@ -343,11 +392,11 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
 }
 
 function initialWindowBounds(offset: number): PawWindowBounds {
-  const viewport = desktopViewportBounds();
+  const viewport = pawWindowArea();
   const inset = Math.min(48, (offset % 5) * 16);
   const width = Math.min(viewport.width, 1280, Math.max(480, viewport.width * 0.82));
   const height = Math.min(viewport.height, 860, Math.max(360, viewport.height * 0.82));
-  return fitBoundsToViewport({
+  return fitPawWindowBounds({
     x: viewport.x + (viewport.width - width) / 2 + inset,
     y: viewport.y + (viewport.height - height) / 2 - 12 + inset,
     width,
@@ -432,9 +481,9 @@ function roomMainCandidateScore(window: PawWindowNode, roomId: string, activeWin
 }
 
 function roomParticipantWindowBounds(index: number): PawWindowBounds {
-  const viewport = desktopViewportBounds();
-  const width = Math.min(viewport.width, 300, Math.max(280, viewport.width * .22));
-  const height = Math.min(viewport.height, 240, Math.max(210, viewport.height * .27));
+  const viewport = pawWindowArea();
+  const width = Math.min(viewport.width, 300, Math.max(PAW_WINDOW_MIN_WIDTH, viewport.width * .22));
+  const height = Math.min(viewport.height, 240, Math.max(PAW_WINDOW_MIN_HEIGHT, viewport.height * .27));
   const right = viewport.x + viewport.width - width - 12;
   const bottom = viewport.y + viewport.height - height - 18;
   const positions = [
@@ -445,28 +494,11 @@ function roomParticipantWindowBounds(index: number): PawWindowBounds {
     { x: viewport.x + (viewport.width - width) / 2, y: bottom },
   ];
   const position = positions[index % positions.length]!;
-  return fitBoundsToViewport({ ...position, width, height }, viewport);
-}
-
-function desktopViewportBounds(): PawWindowBounds {
-  const width = typeof window === 'undefined' ? 1280 : window.innerWidth;
-  const height = typeof window === 'undefined' ? 800 : window.innerHeight;
-  return { x: 8, y: 8, width: Math.max(280, width - 16), height: Math.max(210, height - 56) };
-}
-
-function fitBoundsToViewport(bounds: PawWindowBounds, viewport = desktopViewportBounds()): PawWindowBounds {
-  const width = Math.min(viewport.width, Math.max(Math.min(280, viewport.width), bounds.width));
-  const height = Math.min(viewport.height, Math.max(Math.min(210, viewport.height), bounds.height));
-  return {
-    x: Math.min(Math.max(viewport.x, bounds.x), viewport.x + viewport.width - width),
-    y: Math.min(Math.max(viewport.y, bounds.y), viewport.y + viewport.height - height),
-    width,
-    height,
-  };
+  return fitPawWindowBounds({ ...position, width, height }, viewport);
 }
 
 function placementBounds(placement: PawWindowPlacement): PawWindowBounds {
-  const viewport = desktopViewportBounds();
+  const viewport = pawWindowArea();
   if (placement === 'maximized') return viewport;
   const gap = 6;
   const width = (viewport.width - gap) / 2;

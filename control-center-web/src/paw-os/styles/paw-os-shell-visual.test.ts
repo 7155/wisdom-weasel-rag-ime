@@ -61,6 +61,16 @@ function rule(css: string, selector: string): string {
   return css.slice(start, css.indexOf('}', start));
 }
 
+/** The body of one top-level `@container paw-window (max-width: …)` block. */
+function windowContainerStep(css: string, maxWidth: string): string {
+  const header = `@container paw-window (max-width: ${maxWidth})`;
+  const start = css.indexOf(header);
+  expect(start, `${header} step`).toBeGreaterThan(-1);
+  const end = css.indexOf('\n}', start);
+  expect(end, `${header} closing brace`).toBeGreaterThan(start);
+  return css.slice(start, end);
+}
+
 describe('PAWOS shell visual language', () => {
   it('derives menu bar, Dock and Launchpad from one chrome material recipe', () => {
     for (const token of ['paw-chrome-veil', 'paw-chrome-hairline', 'paw-chrome-highlight', 'paw-chrome-blur']) {
@@ -271,8 +281,11 @@ describe('PAWOS shell visual language', () => {
     // resolves to the traffic-light slot, at both the default and the narrow
     // breakpoint, so no App can push the lights out of their left position by
     // widening the title or chrome-slot tracks.
-    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*76px minmax\(0, 1fr\) minmax\(0, auto\);/s);
-    expect(pawOsCss).toMatch(/@media \(max-width: 820px\)[\s\S]*?\.paw-window-titlebar\s*\{\s*grid-template-columns:\s*70px minmax\(0, 1fr\) minmax\(0, auto\);/);
+    // Both widths resolve one shared token, so a window that docks App
+    // chrome widens the column through --paw-titlebar-lead instead of any
+    // owner re-declaring a competing pixel value.
+    expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*var\(--paw-titlebar-lead, 76px\) minmax\(0, 1fr\) minmax\(0, auto\);/s);
+    expect(pawOsCss).toMatch(/@media \(max-width: 820px\)[\s\S]*?\.paw-window-titlebar\s*\{\s*grid-template-columns:\s*var\(--paw-titlebar-lead, 70px\) minmax\(0, 1fr\) minmax\(0, auto\);/);
     // No shell owner may re-key that grid per App: the recipe is one shared
     // geometry, not a per-window rediscovery.
     for (const [name, css] of Object.entries({
@@ -314,6 +327,70 @@ describe('PAWOS shell visual language', () => {
       expect(css, `${name} must not give one named App its own window corner radius`)
         .not.toMatch(/\[data-app='[a-z-]+'\][^{]*\.paw-window\b[^-][^{]*\{[^}]*border-radius/s);
     }
+  });
+
+  it('makes the resized window frame the one App query container', () => {
+    // The container sits on the frame the pointer drags and resizes, so every
+    // App's `@container paw-window` rule answers the real window width — not
+    // the width of some inner surface that an App or a focus mode could
+    // restyle underneath it.
+    expect(rule(pawOsCss, '.paw-window-shell')).toContain('container: paw-window / inline-size');
+    // Exactly one owner. A second `paw-window` container anywhere would make
+    // two Apps in the same window resolve different widths for one query.
+    expect(pawOsCss.match(/container(-name)?:\s*[^;]*\bpaw-window\b/g)).toHaveLength(1);
+    for (const [name, css] of Object.entries({
+      'paw-os-shell-migrated-v1.css': shellCss,
+      'paw-os-motion.css': motionCss,
+      'paw-os-controls.css': controlsCss,
+      'paw-os-webmodel-v1.css': webmodelCss,
+    })) {
+      expect(css, `${name} must not declare a second paw-window container`)
+        .not.toMatch(/container(-name)?:\s*[^;]*\bpaw-window\b/);
+    }
+  });
+
+  it('gives the window body an App skeleton that clips at the window boundary', () => {
+    // A window is an App container, not a page: both tracks floor at 0, so a
+    // wide table or a long path reflows or scrolls inside the App instead of
+    // widening the window's own box.
+    const body = rule(pawOsCss, '.paw-window-body');
+    for (const declaration of [
+      'min-width: 0',
+      'min-height: 0',
+      'overflow: hidden',
+      'display: grid',
+      'grid-template-columns: minmax(0, 1fr)',
+      'grid-template-rows: minmax(0, 1fr)',
+    ]) expect(body, `.paw-window-body ${declaration}`).toContain(declaration);
+    const surface = rule(pawOsCss, '.paw-window-route-surface');
+    expect(surface).toContain('overflow: hidden');
+    expect(surface).toContain('grid-template-columns: minmax(0, 1fr)');
+    expect(surface).toContain('grid-template-rows: minmax(0, 1fr)');
+    // The clip chain continues up to the document, so resizing a window can
+    // never turn into page-level horizontal scroll.
+    expect(rule(pawOsCss, '.paw-desktop-root')).toContain('overflow: hidden');
+    expect(rule(pawOsCss, '.paw-desktop-viewport')).toContain('overflow: hidden');
+  });
+
+  it('yields window caption text before any window control down to 375px', () => {
+    // The acceptance widths are read from the window container, not the
+    // document: a 375px-wide window on a 1440px desktop has the 375px problem.
+    expect(windowContainerStep(pawOsCss, '760px')).toMatch(/\.paw-window-titlebar\s*\{[^}]*padding-inline:\s*12px;/s);
+    // Docked trailing chrome already takes the caption at 620; leading chrome
+    // shares the traffic-light column, so it takes it one step later.
+    expect(windowContainerStep(pawOsCss, '620px'))
+      .toMatch(/\.paw-window-titlebar:has\(\.paw-window-chrome-slot:not\(:empty\)\) \.paw-window-title\s*\{[^}]*visibility:\s*hidden;/s);
+    expect(windowContainerStep(pawOsCss, '560px'))
+      .toMatch(/\.paw-window-titlebar:has\(\.paw-window-leading-slot:not\(:empty\)\) \.paw-window-title\s*\{[^}]*visibility:\s*hidden;/s);
+    const narrowest = windowContainerStep(pawOsCss, '375px');
+    // Labels hide before icons, and the docked leading control is bounded so
+    // it can never grow its column across the title.
+    expect(narrowest).toMatch(/\.paw-window-title > strong\s*\{\s*display:\s*none;/);
+    expect(narrowest).toMatch(/\.paw-window-leading-slot\s*\{[^}]*max-width:\s*32px;/s);
+    // No step ever removes or shrinks a window verb.
+    expect(narrowest).not.toMatch(/\.paw-traffic-lights[^{]*\{[^}]*display:\s*none/s);
+    expect(narrowest).not.toContain('.paw-traffic-lights > button');
+    expect(narrowest).not.toContain('.paw-window-chrome-slot');
   });
 
   it('limits window titlebar background overrides to the one documented Terminal exception', () => {
