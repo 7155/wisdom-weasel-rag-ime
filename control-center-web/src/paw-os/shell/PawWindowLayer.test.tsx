@@ -386,8 +386,11 @@ describe('PAWOS compositor window frame', () => {
 
   it('coalesces live flow geometry into one React write per animation frame', () => {
     expect(windowLayerSource).toContain('function useLiveWindowFlowPoints');
+    // Leading edge applies synchronously (the publisher already paces one
+    // event per frame), the trailing rAF slot folds same-frame bursts, and
+    // unchanged points bail before creating a new record.
     expect(windowLayerSource).toMatch(/requestAnimationFrame\(flush\)/);
-    expect(windowLayerSource).toMatch(/prior\.x === detail\.point\.x && prior\.y === detail\.point\.y/);
+    expect(windowLayerSource).toMatch(/prior\.x === point\.x && prior\.y === point\.y/);
   });
 
   it('keeps an untracked window drag free of live flow geometry work', () => {
