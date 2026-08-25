@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import compositionSource from './PawCompositionField.tsx?raw';
+import desktopShellSource from './PawDesktop.tsx?raw';
 import desktopCss from '../styles/paw-os.css?raw';
 import shellCss from '../styles/paw-os-shell-migrated-v1.css?raw';
 
@@ -92,9 +93,9 @@ describe('PAWOS Wayfinder fog terrain', () => {
 
   it('moves on a stepped minutes-long clock and pauses whenever it cannot be watched', () => {
     // steps() turns sixty invisible sub-pixel updates per second into one
-    // visible update every couple of seconds — the picture moves the same,
-    // the idle desktop stops re-rasterizing and re-blurring chrome glass.
-    expect(shellCss).toMatch(/paw-field-mist-drift 2[0-9]{2}s steps\(1[0-9]{2}\)/);
+    // visible update every few seconds — the picture moves the same, the
+    // idle desktop stops re-rasterizing and re-blurring chrome glass.
+    expect(shellCss).toMatch(/paw-field-mist-drift 2[0-9]{2}s steps\([45][0-9]\)/);
     expect(shellCss).toMatch(/paw-field-cirrus-drift 3[0-9]{2}s steps\(/);
     expect(shellCss).toMatch(/paw-field-daylight 1[0-9]{2}s steps\(/);
     expect(shellCss).toMatch(/paw-field-breathe 26s steps\(/);
@@ -107,6 +108,33 @@ describe('PAWOS Wayfinder fog terrain', () => {
     expect(compositionSource).toContain('if (document.hidden) return true;');
     expect(compositionSource).toContain("field.closest('[data-collaboration-focus]')");
     expect(compositionSource).toContain('root?.dataset.windowInteraction');
+  });
+
+  it('steps every ambient weather clock no faster than once every few seconds', () => {
+    // Each visible step invalidates a full-bleed SVG raster (with the grain
+    // pass on top) and re-runs the chrome backdrop blurs above the field.
+    // Rare steps keep the watched idle desktop around one repaint per second
+    // in total across all six clocks; a sub-second clock here is a P0 jank
+    // regression (the warmth breathe once stepped every single second).
+    const clocks = [...shellCss.matchAll(/paw-field-(?:mist-drift|cirrus-drift|daylight|breathe) (\d+)s steps\((\d+)\)/g)];
+    expect(clocks.length).toBeGreaterThanOrEqual(6);
+    for (const [clock, duration, steps] of clocks) {
+      expect(Number(duration) / Number(steps), `at most one repaint every 4s: ${clock}`).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it('freezes entirely whenever the shell marks the wallpaper unwatched', () => {
+    // A focused App window, the Launchpad veil, the overview plane and a
+    // hidden document all mean nobody is watching the scenery. The desktop
+    // shell stamps one attribute from those store slices plus the platform
+    // visibility signal, and CSS freezes every weather clock in place.
+    expect(desktopCss).toMatch(/\.paw-desktop\[data-ambient-paused\] \.paw-composition-field \*\s*\{[^}]*animation-play-state:\s*paused/s);
+    expect(desktopShellSource).toContain('data-ambient-paused={ambientPaused || undefined}');
+    expect(desktopShellSource).toMatch(/ambientPaused = documentHidden \|\| Boolean\(activeWindowId\) \|\| launchpadOpen \|\| overviewOpen/);
+    expect(desktopShellSource).toContain("document.addEventListener('visibilitychange', update)");
+    // Pulses respect the same signal: playing audio or runtime events can
+    // never restart wallpaper choreography behind a focused window.
+    expect(compositionSource).toContain("field.closest('[data-ambient-paused]')");
   });
 
   it('rests still under both reduced-motion signals and keeps the pulse bloom invisible at rest', () => {
@@ -146,10 +174,12 @@ describe('PAWOS Wayfinder fog terrain', () => {
     expect(compositionSource).toContain('url(#paw-field-dof-midfar)');
     expect(compositionSource).not.toMatch(/paw-field-dof-mid\)/);
     expect(compositionSource).not.toMatch(/paw-field-dof-close\)/);
-    // The two always-on animated layers own compositor promotion, and both
-    // reduced-motion signals release it again since nothing moves.
-    expect(shellCss).toMatch(/\.paw-field__mist-drift\s*\{[^}]*will-change:\s*transform/s);
-    expect(shellCss).toMatch(/\.paw-field__warmth\s*\{[^}]*will-change:\s*opacity/s);
+    // No wallpaper layer holds a standing compositor promotion: will-change
+    // on the drift/warmth subtrees pinned several near-full-viewport GPU
+    // layers for scenery that steps once every few seconds at most, and the
+    // unwatched-freeze contract already removes all idle work. Reduced motion
+    // still releases any stray promotion defensively.
+    expect(shellCss.match(/paw-field[^{]*\{[^}]*will-change/g)).toBeNull();
     expect(desktopCss.match(/will-change:\s*auto\s*!important/g)?.length).toBeGreaterThanOrEqual(2);
     // Mode dims spend opacity, never a held full-viewport filter raster of
     // the wallpaper: no filter under overview or collaboration focus.

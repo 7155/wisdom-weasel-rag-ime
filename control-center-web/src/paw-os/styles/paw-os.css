@@ -190,6 +190,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-desktop-root[data-window-interaction] .paw-composition-field * {
   animation-play-state: paused;
 }
+/* The shell stamps data-ambient-paused whenever the wallpaper cannot be
+   watched — a focused App window, the Launchpad veil, the overview plane or
+   a hidden document. The weather freezes exactly like a live gesture, so
+   covered scenery never spends a frame and the chrome glass above it never
+   re-blurs while real work owns the desktop. */
+.paw-desktop[data-ambient-paused] .paw-composition-field * {
+  animation-play-state: paused;
+}
 .paw-desktop[data-collaboration-focus] .paw-wayfinder,
 .paw-desktop[data-collaboration-focus] .paw-dock {
   opacity: .14;
@@ -1018,8 +1026,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   }
 }
 /* The explicit reduce-motion setting quiets the wallpaper exactly like the
-   system preference: no ambient drift, no pulse choreography, and the drift
-   layers release their compositor promotion since nothing moves. */
+   system preference: no ambient drift, no pulse choreography, and any stray
+   compositor promotion inside the field is released since nothing moves. */
 :root[data-reduce-motion='true'] .paw-composition-field,
 :root[data-reduce-motion='true'] .paw-composition-field * {
   animation: none !important;

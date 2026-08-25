@@ -185,24 +185,27 @@
   opacity: calc(.66 + var(--paw-composition-energy, 0) * .3);
   transition: opacity 640ms var(--paw-ease-out);
 }
-.paw-desktop-root .paw-field__warmth { opacity: .64; animation: paw-field-breathe 26s steps(26) infinite alternate; will-change: opacity; }
+.paw-desktop-root .paw-field__warmth { opacity: .64; animation: paw-field-breathe 26s steps(6) infinite alternate; }
 /* Mist banks rest at their own densities; the drift cycle is minutes long,
    so the landscape moves like weather, never like an animation. The moving
-   layers carry no SVG filter and own their compositor layers, and every
-   weather animation runs on a steps() clock — one sub-pixel update every
-   couple of seconds instead of sixty invisible ones per second — so an idle
-   desktop stops re-rasterizing the field and re-blurring the chrome glass
-   above it while the picture keeps moving exactly as before. */
+   layers carry no SVG filter and hold no standing compositor promotion —
+   pinned near-full-viewport GPU layers cost memory and re-upload for scenery
+   that barely moves. Every weather animation runs on a coarse steps() clock:
+   at most one sub-pixel update every few seconds instead of sixty invisible
+   ones per second, so even the watched idle desktop re-rasterizes the field
+   (and re-blurs the chrome glass above it) about once a second in total.
+   Whenever the wallpaper is unwatched — a focused App window, Launchpad,
+   overview, a hidden document, collaboration focus or a live drag — the
+   shell freezes all of it via the pause rules in paw-os.css. */
 .paw-desktop-root .paw-field__mist { opacity: .85; }
 .paw-desktop-root .paw-field__mist--near { opacity: .7; }
-.paw-desktop-root .paw-field__mist-drift { will-change: transform; }
-.paw-desktop-root .paw-field__mist--far .paw-field__mist-drift { animation: paw-field-mist-drift 210s steps(105) infinite alternate; }
-.paw-desktop-root .paw-field__mist--mid .paw-field__mist-drift { animation: paw-field-mist-drift 240s steps(120) infinite alternate-reverse; }
-.paw-desktop-root .paw-field__mist--near .paw-field__mist-drift { animation: paw-field-mist-drift 260s steps(130) infinite alternate; }
+.paw-desktop-root .paw-field__mist--far .paw-field__mist-drift { animation: paw-field-mist-drift 210s steps(42) infinite alternate; }
+.paw-desktop-root .paw-field__mist--mid .paw-field__mist-drift { animation: paw-field-mist-drift 240s steps(48) infinite alternate-reverse; }
+.paw-desktop-root .paw-field__mist--near .paw-field__mist-drift { animation: paw-field-mist-drift 260s steps(52) infinite alternate; }
 /* Two more moving depths, same discipline: high cirrus crossing against the
    valley mist, and a daylight tide swelling over the light gap. */
-.paw-desktop-root .paw-field__cirrus-drift { animation: paw-field-cirrus-drift 320s steps(160) infinite alternate-reverse; }
-.paw-desktop-root .paw-field__daylight { opacity: .3; animation: paw-field-daylight 120s steps(120) infinite alternate; }
+.paw-desktop-root .paw-field__cirrus-drift { animation: paw-field-cirrus-drift 320s steps(40) infinite alternate-reverse; }
+.paw-desktop-root .paw-field__daylight { opacity: .3; animation: paw-field-daylight 120s steps(24) infinite alternate; }
 
 /* Optical depth over the field: the menu-bar aurora triad washes the top of
    the sky and a quiet vignette settles the horizon behind Dock and windows.

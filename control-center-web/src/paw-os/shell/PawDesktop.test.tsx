@@ -301,6 +301,52 @@ describe('PAWOS desktop', () => {
     });
   });
 
+  it('pauses the ambient wallpaper while an App window owns focus and resumes on an empty desktop', () => {
+    // Reduced motion lets minimize complete synchronously, as in the Dock test.
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    renderDesktop('agent');
+    const desktop = document.querySelector('.paw-desktop') as HTMLElement;
+    // A focused window covers the field: every weather clock freezes.
+    expect(desktop).toHaveAttribute('data-ambient-paused');
+
+    fireEvent.click(screen.getByRole('button', { name: '最小化窗口' }));
+    // The bare desktop is the only surface anyone can watch the scenery on.
+    expect(desktop).not.toHaveAttribute('data-ambient-paused');
+  });
+
+  it('pauses the ambient wallpaper under the Launchpad veil and while the document is hidden', () => {
+    renderDesktop();
+    const desktop = document.querySelector('.paw-desktop') as HTMLElement;
+    expect(desktop).not.toHaveAttribute('data-ambient-paused');
+
+    // The Launchpad's full-screen backdrop blur must never re-blur a stepping
+    // wallpaper underneath it.
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(desktop).toHaveAttribute('data-ambient-paused');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(desktop).not.toHaveAttribute('data-ambient-paused');
+
+    try {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      fireEvent(document, new Event('visibilitychange'));
+      expect(desktop).toHaveAttribute('data-ambient-paused');
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      fireEvent(document, new Event('visibilitychange'));
+      expect(desktop).not.toHaveAttribute('data-ambient-paused');
+    } finally {
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+  });
+
   it('never subscribes shell chrome to the whole windows record', () => {
     // Bounds commits after every drag/resize/viewport refit and runtime
     // title/target binds replace state.windows; menu bar, Wayfinder, Dock and

@@ -28,10 +28,13 @@ import { PAW_COMPOSITION_PULSE_EVENT, type PawCompositionPulseSource } from '../
  * banks are pre-blurred radial gradients, so drift is a pure transform
  * instead of a per-frame Gaussian re-raster. Depth-of-field blurs exist only
  * on the three far ranges where they read, and both grain speckle passes
- * share one feTurbulence evaluation. All ambient motion runs on stepped
- * minutes-long clocks (see the shell stylesheet), and pulses stay silent
- * while the document is hidden, while collaboration focus owns the stage,
- * and while a window drag/resize gesture owns the frame budget.
+ * share one feTurbulence evaluation. All ambient motion runs on coarse
+ * stepped minutes-long clocks (see the shell stylesheet) and freezes outright
+ * whenever the shell marks the wallpaper unwatched (data-ambient-paused: a
+ * focused App window, Launchpad, overview or a hidden document). Pulses obey
+ * the same signal and additionally stay silent while collaboration focus
+ * owns the stage and while a window drag/resize gesture owns the frame
+ * budget — playing audio can never restart choreography behind real work.
  */
 export function PawCompositionField({ effects = false }: { effects?: boolean } = {}) {
   const fieldRef = useRef<SVGSVGElement>(null);
@@ -52,10 +55,13 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
     // repeated pulses from forcing a style flush via getComputedStyle.
     const restOpacities = new Map<Element, number>();
     // The wallpaper never spends frames nobody can see: a hidden document, a
-    // collaboration-focused desktop and a live window drag/resize all swallow
-    // pulses entirely — no energy write, no bloom transition, no WAAPI.
+    // desktop whose shell reports the field unwatched (focused App window,
+    // Launchpad, overview), a collaboration-focused desktop and a live window
+    // drag/resize all swallow pulses entirely — no energy write, no bloom
+    // transition, no WAAPI.
     const pulsesSuspended = () => {
       if (document.hidden) return true;
+      if (field.closest('[data-ambient-paused]')) return true;
       if (field.closest('[data-collaboration-focus]')) return true;
       const root = field.closest<HTMLElement>('.paw-desktop-root');
       return Boolean(root?.dataset.windowInteraction);
