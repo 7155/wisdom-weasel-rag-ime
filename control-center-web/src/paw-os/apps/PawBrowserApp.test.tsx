@@ -94,7 +94,7 @@ describe('PAW Browser App', () => {
     expect(within(task).getByRole('status', { name: 'Agent 浏览器任务状态' })).toHaveTextContent('Agent 正在浏览');
     expect(within(task).getByText('点击')).toBeInTheDocument();
     expect(within(task).getByText('继续按钮')).toBeInTheDocument();
-    expect(screen.queryByRole('complementary', { name: 'Agent 浏览器轨迹' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('complementary', { name: 'Agent 浏览器轨迹' })).toBeInTheDocument();
 
     await user.click(within(task).getByRole('button', { name: '接管浏览器' }));
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'browser.stop')).toBe(true));
@@ -134,7 +134,7 @@ describe('PAW Browser App', () => {
       </ControlTransportProvider>,
     );
 
-    await user.click(await screen.findByRole('button', { name: '显示 Agent 浏览器轨迹' }));
+    await waitFor(() => expect(screen.getByRole('complementary', { name: 'Agent 浏览器轨迹' })).toBeInTheDocument());
     expect(await screen.findByText('最近 4 / 已加载 6 个步骤')).toBeInTheDocument();
     expect(screen.getByText('已记录 5 / 共 8 步')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: '浏览器执行进度' })).toHaveAttribute('value', '5');
@@ -388,9 +388,13 @@ describe('PAW Browser App', () => {
       clearBrowsingData,
       clearHistory,
       getHistory,
-      getSettings: async () => ({ cacheBytes: 4096, cookieCount: 2, downloadPath: '/Users/example/Downloads', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+      getSettings: async () => ({ cacheBytes: 4096, cookieCount: 2, downloadPath: '/Users/example/Downloads', extensionCount: 0, extensionsPath: '/Users/example/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+      listExtensions: async () => [],
+      loadUnpackedExtension: async () => null,
+      openExtensionsFolder: async () => ({ opened: true, path: '/Users/example/Extensions' }),
       openDownloads: async () => ({ opened: true, path: '/Users/example/Downloads' }),
       register: () => undefined,
+      removeExtension: async () => [],
       removeHistoryEntry,
       setStartPage: async (startPage) => ({ startPage }),
       takeScreenshot: async () => ({ path: '/Users/example/Downloads/page.png', saved: true }),
@@ -515,7 +519,7 @@ describe('PAW Browser App', () => {
     const user = userEvent.setup();
     window.pawBrowserHost = {
       ...electronBrowserHost(),
-      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'https://start.example/' }),
+      getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', extensionCount: 0, extensionsPath: '/tmp/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'https://start.example/' }),
     };
     render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
     const guest = document.querySelector('webview') as Element & Record<string, unknown>;
@@ -644,9 +648,13 @@ function electronBrowserHost(): NonNullable<typeof window.pawBrowserHost> {
     clearBrowsingData: async (action) => ({ action, after: 0, before: 0, completedAt: 3 }),
     clearHistory: async () => [],
     getHistory: async () => [],
-    getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+    getSettings: async () => ({ cacheBytes: 0, cookieCount: 0, downloadPath: '/tmp', extensionCount: 0, extensionsPath: '/tmp/Extensions', partition: 'persist:paw-browser', permissionMode: 'site-request', startPage: 'about:blank' }),
+    listExtensions: async () => [],
+    loadUnpackedExtension: async () => null,
+    openExtensionsFolder: async () => ({ opened: true, path: '/tmp/Extensions' }),
     openDownloads: async () => ({ opened: true, path: '/tmp' }),
     register: () => undefined,
+    removeExtension: async () => [],
     removeHistoryEntry: async () => [],
     setStartPage: async (startPage) => ({ startPage }),
     takeScreenshot: async () => ({ path: '/tmp/page.png', saved: true }),

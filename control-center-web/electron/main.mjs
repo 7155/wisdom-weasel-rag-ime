@@ -8,6 +8,7 @@ import {
   appendBrowserHistory,
   clearBrowserHistory,
   clearBrowserSessionData,
+  listBrowserExtensions,
   readBrowserHistory,
   readBrowserSessionSettings,
   removeBrowserHistoryEntry,
@@ -187,6 +188,7 @@ if (!primaryInstance) {
 async function startPrimaryInstance() {
   await app.whenReady();
   fs.mkdirSync(paths.profilePath, { recursive: true });
+  fs.mkdirSync(paths.browserExtensionsDir, { recursive: true });
   fs.writeFileSync(paths.hostPidFile, `${process.pid}\n`, { encoding: 'utf8', mode: 0o600 });
   fs.writeFileSync(paths.hostPidFile.replace(/\.pid$/, '.token'), `${hostToken}\n`, { encoding: 'utf8', mode: 0o600 });
   hostServer = await startPawHostServer({
@@ -207,8 +209,42 @@ async function startPrimaryInstance() {
     return readBrowserSessionSettings({
       downloadsPath: app.getPath('downloads'),
       electronSession: persistentBrowserSession,
+      extensionsPath: paths.browserExtensionsDir,
       startPage: browserStartPage,
     });
+  });
+  ipcMain.handle('paw-browser:list-extensions', (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser settings sender rejected');
+    return listBrowserExtensions(persistentBrowserSession);
+  });
+  ipcMain.handle('paw-browser:load-extension', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser settings sender rejected');
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: '选择扩展程序目录',
+      properties: ['openDirectory'],
+    });
+    const extensionPath = selection.filePaths[0];
+    if (selection.canceled || !extensionPath) return null;
+    const resolvedPath = path.resolve(extensionPath);
+    const extension = await persistentBrowserSession.extensions.loadExtension(resolvedPath);
+    return {
+      id: extension.id,
+      name: extension.name,
+      path: extension.path,
+      version: extension.version,
+    };
+  });
+  ipcMain.handle('paw-browser:remove-extension', (event, extensionId) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser settings sender rejected');
+    persistentBrowserSession.extensions.removeExtension(String(extensionId || ''));
+    return listBrowserExtensions(persistentBrowserSession);
+  });
+  ipcMain.handle('paw-browser:open-extensions-folder', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser settings sender rejected');
+    fs.mkdirSync(paths.browserExtensionsDir, { recursive: true });
+    const error = await shell.openPath(paths.browserExtensionsDir);
+    if (error) throw new Error(error);
+    return { opened: true, path: paths.browserExtensionsDir };
   });
   ipcMain.handle('paw-browser:get-history', (event) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Browser History sender rejected');

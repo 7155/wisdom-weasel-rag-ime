@@ -194,6 +194,7 @@ test('Browser settings report and clear the fixed persistent session', async () 
     clearCache: async () => { cacheBytes = 0; },
     clearStorageData: async () => { cookieCount = 0; },
     cookies: { get: async () => Array.from({ length: cookieCount }, () => ({})) },
+    extensions: { getAllExtensions: () => new Map() },
     flushStorageData: () => undefined,
     getCacheSize: async () => cacheBytes,
   };
@@ -201,11 +202,14 @@ test('Browser settings report and clear the fixed persistent session', async () 
   assert.deepEqual(await readBrowserSessionSettings({
     downloadsPath: '/Users/example/Downloads',
     electronSession,
+    extensionsPath: '/Users/example/Extensions',
     startPage: 'about:blank',
   }), {
     cacheBytes: 8192,
     cookieCount: 3,
     downloadPath: '/Users/example/Downloads',
+    extensionCount: 0,
+    extensionsPath: '/Users/example/Extensions',
     partition: 'persist:paw-browser',
     permissionMode: 'site-request',
     startPage: 'about:blank',

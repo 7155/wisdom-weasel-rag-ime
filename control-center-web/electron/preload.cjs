@@ -26,6 +26,15 @@ contextBridge.exposeInMainWorld('pawBrowserHost', Object.freeze({
   getSettings() {
     return ipcRenderer.invoke('paw-browser:get-settings');
   },
+  listExtensions() {
+    return ipcRenderer.invoke('paw-browser:list-extensions');
+  },
+  loadUnpackedExtension() {
+    return ipcRenderer.invoke('paw-browser:load-extension');
+  },
+  openExtensionsFolder() {
+    return ipcRenderer.invoke('paw-browser:open-extensions-folder');
+  },
   openDownloads() {
     return ipcRenderer.invoke('paw-browser:open-downloads');
   },
@@ -37,6 +46,9 @@ contextBridge.exposeInMainWorld('pawBrowserHost', Object.freeze({
   },
   removeHistoryEntry(entryId) {
     return ipcRenderer.invoke('paw-browser:remove-history-entry', entryId);
+  },
+  removeExtension(extensionId) {
+    return ipcRenderer.invoke('paw-browser:remove-extension', extensionId);
   },
   setStartPage(startPage) {
     return ipcRenderer.invoke('paw-browser:set-start-page', startPage);
