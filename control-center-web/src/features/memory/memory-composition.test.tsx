@@ -41,7 +41,7 @@ describe('MemoryFeature composition', () => {
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('检索索引')).toBeInTheDocument();
-    expect(screen.getByText('主题不会替代原始记录；每条结论都能沿这条链路回到来源。')).toBeInTheDocument();
+    expect(screen.getByText('主题不会替代原始记录；每条结论都能沿这条链路回到来源，也能在详情里看到它最近被哪些 Session 装配。')).toBeInTheDocument();
 
     await user.click(toggle);
     expect(screen.queryByText('检索索引')).not.toBeInTheDocument();

@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowLeft,
   BookOpen,
   ChevronRight,
@@ -7,6 +8,7 @@ import {
   GitBranch,
   RefreshCw,
   Search,
+  Tags,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
@@ -34,7 +36,11 @@ import {
 import { useControlTransport } from '@/app/control-transport';
 import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
 import { useProductIdentity } from '@/features/identity/product-identity';
-import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import {
+  openPawOsRoute,
+  usePawOsAppSurface,
+  usePawOsDesktop,
+} from '@/features/paw-os/surface-context';
 import {
   memoryBookArchivePathIds,
   memoryQueryKeys,
@@ -93,6 +99,7 @@ export function MemoryFeature() {
   const queryClient = useQueryClient();
   const identity = useProductIdentity();
   const appSurface = usePawOsAppSurface();
+  const desktop = usePawOsDesktop();
   const location = useLocation();
   const navigate = useNavigate();
   const routeSelection = useMemo(() => memoryRouteSelection(location.search), [location.search]);
@@ -147,6 +154,9 @@ export function MemoryFeature() {
   };
   const archiveAvailability = archiveBoundary.availability(archiveBlockedReason());
   const runtimeRevision = numberValue(summaryPayload.runtimeRevision);
+  // 空目录有两种事实：筛选没命中，或这一层还没有沉淀过内容。前者提示调整
+  // 筛选；后者不是错误，要讲清内容沿哪条链路沉淀进来。
+  const catalogFiltered = Boolean(query) || Boolean(ownerKey) || status !== defaultMemoryStatus(kind);
   // Only the catalog needs the shared summary and page data. The other views
   // own their queries, so a failed or slow summary must not block them.
   const error = view === 'catalog' ? ((pages.error ?? summary.error) as Error | null) : null;
@@ -300,11 +310,16 @@ export function MemoryFeature() {
                       })} />
                       <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} />
                     </>
-                  ) : (
+                  ) : catalogFiltered ? (
                     <EmptyState
                       description={`当前筛选没有 ${kindLabel(kind)} 记录；切换状态可查看保留的历史版本。`}
                       icon={Search}
                       title="没有匹配结果"
+                    />
+                  ) : (
+                    <MemoryColdLead
+                      kind={kind}
+                      onStartWork={desktop ? () => openPawOsRoute(desktop, '/agent') : undefined}
                     />
                   )}
                 </aside>
@@ -398,7 +413,7 @@ export function MemoryFeature() {
                       </div>
                     </>
                   ) : (
-                    <EmptyState description="从左侧选择一项，查看正文、状态和证据来源。" icon={BookOpen} title="选择一条记录" />
+                    <EmptyState description="从左侧选择一项，查看正文、状态、证据来源，以及它最近被哪些 Session 装配。" icon={BookOpen} title="选择一条记录" />
                   )}
                 </div>
               </div>
@@ -683,6 +698,58 @@ function safeCatalogStringList(value: unknown): string[] {
     const text = item.trim().slice(0, 64);
     return text ? [text] : [];
   }).slice(0, 64);
+}
+
+/**
+ * 目录冷启动引导：这一层还没有任何记录时，讲清内容沿哪条链路沉淀进来，
+ * 而不是把「空」说成筛选错误。文案只陈述本分支真实存在的链路——
+ * 来源记录（工作回执）→ 分批审核 → 已整理记忆 → 长期主题，以及详情页里
+ * 「最近被哪些 Session 装配」的回执区块。「交给 Agent 一件事」只在桌面
+ * 能真正打开 Agent App 时出现，脱离桌面不渲染打不开的入口。
+ */
+function MemoryColdLead({
+  kind,
+  onStartWork,
+}: {
+  kind: MemoryKind;
+  onStartWork?: () => void;
+}) {
+  const lead = ({
+    evidence: {
+      icon: Archive,
+      title: '还没有来源记录',
+      description: '来源记录是工作留下的回执：输入法、语音与伙伴主动记录先落在这里，经分批审核后才沉淀为记忆。',
+    },
+    atoms: {
+      icon: Tags,
+      title: '记忆从工作回执沉淀',
+      description: '交给 Agent 一件事，工作留下来源记录，分批审核后沉淀成这里的记忆；每条记忆之后被哪些 Session 装配，都能在它的详情里看到。',
+    },
+    books: {
+      icon: BookOpen,
+      title: '还没有长期主题',
+      description: '长期主题把相关记忆按主题组织，方便持续查找；先沉淀已整理记忆，再整理成主题。',
+    },
+  } as Partial<Record<MemoryKind, { icon: typeof Archive; title: string; description: string }>>)[kind];
+  if (!lead) {
+    return (
+      <EmptyState
+        description={`还没有 ${kindLabel(kind)} 记录。`}
+        icon={Search}
+        title="暂无记录"
+      />
+    );
+  }
+  return (
+    <EmptyState
+      action={onStartWork ? (
+        <Button onClick={onStartWork} size="small">交给 Agent 一件事</Button>
+      ) : undefined}
+      description={lead.description}
+      icon={lead.icon}
+      title={lead.title}
+    />
+  );
 }
 
 function memoryLayerDescription(kind: MemoryKind): string {
