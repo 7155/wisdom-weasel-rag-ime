@@ -24,17 +24,30 @@ export function webglAvailable(): boolean {
   }
 }
 
+/** System preference or the PAWOS-level `:root[data-reduce-motion]` switch. */
+function motionCurrentlyReduced(): boolean {
+  if (document.documentElement.getAttribute('data-reduce-motion') === 'true') return true;
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(() => (
-    typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  ));
+  const [reduced, setReduced] = useState(motionCurrentlyReduced);
   useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return undefined;
-    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onChange = () => setReduced(media.matches);
-    media.addEventListener('change', onChange);
-    return () => media.removeEventListener('change', onChange);
+    const update = () => setReduced(motionCurrentlyReduced());
+    const media = typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
+    media?.addEventListener('change', update);
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-reduce-motion'],
+    });
+    return () => {
+      media?.removeEventListener('change', update);
+      observer.disconnect();
+    };
   }, []);
   return reduced;
 }

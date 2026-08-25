@@ -58,7 +58,8 @@ import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWin
 import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-store';
 import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
-import { PawRoomStarfield } from './PawStarfield';
+/* 星空按钮按下之前，星空代码不进入 Room 默认对话的 bundle 路径。 */
+import { LazyPawRoomStarfield } from './PawStarfieldLazy';
 import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
 import {
   roomDispatchPlanFromActivity,
@@ -428,7 +429,7 @@ export function PawRoomWorkspace({
       <div className="paw-room-workspace__body">
         <main aria-label={`${title} 主 Room`} className="paw-room-workspace__main">
           {view === 'starfield' && focusProjection ? (
-            <PawRoomStarfield
+            <LazyPawRoomStarfield
               focus={focusProjection}
               roomId={recordId}
               onExit={() => setView('conversation')}
