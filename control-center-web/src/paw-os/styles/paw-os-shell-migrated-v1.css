@@ -169,73 +169,43 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Wayfinder daybreak field. The wallpaper is deterministic SVG weather in the
-   shell's own glacial palette: a cold-light sky, one warm signal beacon on a
-   meridian track, translucent ridge terrain and sparse survey marks. Colour
-   discipline: graphite hairlines, cobalt/teal waypoints, a single measured
-   gold — no raster, no glow soup, quiet enough to sit behind real chrome. */
+/* Wayfinder fog terrain. The wallpaper is one photographic landscape in the
+   shell's own glacial palette: six desaturated slate ridge lines dissolving
+   into valley fog under a diffuse horizon light that is never drawn as a
+   shape. Colour discipline: cool greys and slate blues, one pale warmth at
+   the light gap — no line work, no icons, nothing that asks to be read. */
 .paw-desktop-root .paw-wayfinder .paw-composition-field {
   opacity: 1;
   filter: none;
   animation: paw-field-arrive 640ms var(--paw-ease-out) both;
 }
-.paw-desktop-root .paw-field__daycore {
-  opacity: calc(.5 + var(--paw-composition-energy, 0) * .3);
+/* The horizon light answers Runtime energy and keeps a residual glow after
+   activity; the small warmth core breathes over half a minute. */
+.paw-desktop-root .paw-field__bloom {
+  opacity: calc(.66 + var(--paw-composition-energy, 0) * .3);
   transition: opacity 640ms var(--paw-ease-out);
 }
-.paw-desktop-root .paw-field__cloud--one { opacity: .5; animation: paw-field-drift 150s ease-in-out infinite alternate; }
-.paw-desktop-root .paw-field__cloud--two { opacity: .4; animation: paw-field-drift 180s ease-in-out infinite alternate-reverse; }
-.paw-desktop-root .paw-field__cloud--haze { opacity: .32; }
-.paw-desktop-root .paw-field__meridian { stroke: #171a21; }
-.paw-desktop-root .paw-field__meridian--track { stroke-width: 1.2; opacity: .1; }
-.paw-desktop-root .paw-field__meridian--high { stroke-width: 1; stroke-dasharray: 2 10; opacity: .07; }
-.paw-desktop-root .paw-field__orbit {
-  stroke: rgb(224 165 63 / .32);
-  stroke-width: 1.2;
-  stroke-dasharray: 2 10;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: paw-field-orbit 140s linear infinite;
-}
-.paw-desktop-root .paw-field__waypoint { stroke: none; }
-.paw-desktop-root .paw-field__waypoint--cobalt { fill: #2f6bff; opacity: .55; }
-.paw-desktop-root .paw-field__waypoint--teal { fill: #18a999; opacity: .5; }
-.paw-desktop-root .paw-field__beacon-ring { fill: none; stroke: rgb(23 26 33 / .12); stroke-width: 1.1; }
-.paw-desktop-root .paw-field__beacon-halo { animation: paw-field-breathe 14s ease-in-out infinite alternate; }
-.paw-desktop-root .paw-field__beacon-core { stroke: rgb(255 255 255 / .8); stroke-width: 1; }
-.paw-desktop-root .paw-field__signal { stroke: #eebd62; stroke-width: 2; }
-.paw-desktop-root .paw-field__mark { stroke: #171a21; }
-.paw-desktop-root .paw-field__mark--cross { stroke-width: 1.6; opacity: .2; }
-.paw-desktop-root .paw-field__mark--station { stroke-width: 1.4; opacity: .16; }
-.paw-desktop-root .paw-field__mark--ticks { stroke-width: 1.2; opacity: .14; }
-.paw-desktop-root .paw-field__ridge--far { opacity: .92; }
-.paw-desktop-root .paw-field__ridge--mid { opacity: .94; }
-.paw-desktop-root .paw-field__ridge--close { opacity: .96; }
-/* Daylight catches the ridge crests from the beacon side; pulses briefly lift
-   this whole group, so the terrain visibly answers real Runtime activity. */
-.paw-desktop-root .paw-field__crest-lights { opacity: .55; }
-.paw-desktop-root .paw-field__crest { stroke: url(#paw-field-crestlight); }
-.paw-desktop-root .paw-field__crest--far { stroke-width: 1.4; }
-.paw-desktop-root .paw-field__crest--mid { stroke-width: 1.2; }
-.paw-desktop-root .paw-field__crest--close { stroke-width: 1; }
-.paw-desktop-root .paw-field__contour { stroke: rgb(23 26 33 / .12); stroke-width: 1; stroke-dasharray: 1 7; }
-.paw-desktop-root .paw-field__contour--near { stroke: rgb(255 255 255 / .38); }
-.paw-desktop-root .paw-field__packet { offset-path: path('M -80 486 C 300 356 720 256 1520 318'); }
-.paw-desktop-root .paw-field__packet--cobalt { fill: #2f6bff; }
-.paw-desktop-root .paw-field__packet--teal { fill: #18a999; }
-.paw-desktop-root .paw-field__packet--gold { fill: #e0a53f; }
+.paw-desktop-root .paw-field__warmth { opacity: .64; animation: paw-field-breathe 26s ease-in-out infinite alternate; }
+/* Mist banks rest at their own densities; the drift cycle is minutes long,
+   so the landscape moves like weather, never like an animation. */
+.paw-desktop-root .paw-field__mist { opacity: .85; }
+.paw-desktop-root .paw-field__mist--near { opacity: .7; }
+.paw-desktop-root .paw-field__mist--far .paw-field__mist-drift { animation: paw-field-mist-drift 210s ease-in-out infinite alternate; }
+.paw-desktop-root .paw-field__mist--mid .paw-field__mist-drift { animation: paw-field-mist-drift 240s ease-in-out infinite alternate-reverse; }
+.paw-desktop-root .paw-field__mist--near .paw-field__mist-drift { animation: paw-field-mist-drift 260s ease-in-out infinite alternate; }
 
-/* Optical depth over the field: a static aurora wash high in the sky and a
-   quiet vignette that settles the horizon behind Dock and windows. One
-   composited layer — no filter, no animation, nothing to re-rasterize. */
+/* Optical depth over the field: the menu-bar aurora triad washes the top of
+   the sky and a quiet vignette settles the horizon behind Dock and windows.
+   One composited layer — no filter, no animation, nothing to re-rasterize. */
 .paw-desktop-root .paw-field-media::after {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(90rem 34rem at 16% -10%, rgb(122 162 247 / .17), transparent 62%),
-    radial-gradient(72rem 30rem at 86% -6%, rgb(167 139 250 / .12), transparent 58%),
-    radial-gradient(140% 96% at 50% 10%, transparent 64%, rgb(23 34 58 / .15) 100%);
+    radial-gradient(88rem 30rem at 14% -12%, rgb(47 107 255 / .09), transparent 60%),
+    radial-gradient(70rem 26rem at 50% -14%, rgb(112 72 232 / .06), transparent 58%),
+    radial-gradient(64rem 24rem at 88% -10%, rgb(15 139 128 / .06), transparent 56%),
+    radial-gradient(150% 108% at 50% 8%, transparent 66%, rgb(20 30 52 / .16) 100%);
   content: '';
 }
 
@@ -243,14 +213,13 @@
   from { opacity: .62; transform: scale(1.012); }
   to { opacity: 1; transform: scale(1); }
 }
-@keyframes paw-field-orbit { to { transform: rotate(1turn); } }
-@keyframes paw-field-drift {
-  from { transform: translate3d(-48px, 0, 0); }
-  to { transform: translate3d(48px, 0, 0); }
+@keyframes paw-field-mist-drift {
+  from { transform: translate3d(-26px, 0, 0); }
+  to { transform: translate3d(26px, 0, 0); }
 }
 @keyframes paw-field-breathe {
-  from { opacity: .78; }
-  to { opacity: 1; }
+  from { opacity: .5; }
+  to { opacity: .78; }
 }
 
 /* ---------------------------------------------------- Desktop shortcuts
@@ -630,9 +599,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-wayfinder .paw-composition-field,
-  .paw-desktop-root .paw-field__orbit,
-  .paw-desktop-root .paw-field__cloud,
-  .paw-desktop-root .paw-field__beacon-halo,
+  .paw-desktop-root .paw-field__warmth,
+  .paw-desktop-root .paw-field__mist-drift,
   .paw-desktop-root .paw-launchpad,
   .paw-desktop-root .paw-launchpad > section,
   .paw-desktop-root .paw-launchpad section > div > button,
@@ -644,7 +612,6 @@
     transition-duration: .01ms !important;
     transform: none !important;
   }
-  .paw-desktop-root .paw-field__packet { display: none; }
 }
 
 @media (forced-colors: active) {
