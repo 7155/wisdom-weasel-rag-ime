@@ -471,9 +471,12 @@ describe('Rooms experience', () => {
     await user.click(screen.getByText('配置子 Agent'));
 
     const parent = await screen.findByRole('combobox', { name: '子 Agent 父 Session' });
-    expect(parent).toHaveValue('room-a:s1');
-    expect(within(parent).getByRole('option', { name: /澄 · Root 主持/ })).toBeInTheDocument();
-    expect(within(parent).getByRole('option', { name: /澄·初/ })).toBeInTheDocument();
+    expect(parent).toHaveTextContent(/澄 · Root 主持/);
+    await user.click(parent);
+    const parents = await screen.findByRole('listbox');
+    expect(within(parents).getByRole('option', { name: /澄 · Root 主持/ })).toBeInTheDocument();
+    expect(within(parents).getByRole('option', { name: /澄·初/ })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
     expect(await screen.findByRole('radio', { name: /^审阅者/ })).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(true);
   });

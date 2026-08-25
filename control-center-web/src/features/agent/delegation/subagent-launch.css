@@ -54,21 +54,22 @@
 .subagent-launch legend small,
 .subagent-launch__field small { color: var(--color-text-muted); font-weight: 450; }
 
-.subagent-launch__field select,
+.subagent-launch__field .ui-select__trigger,
 .subagent-launch__brief input,
 .subagent-launch__brief textarea {
   width: 100%;
   border: 1px solid var(--color-border-strong);
   border-radius: 10px;
   background: var(--color-surface);
+  box-shadow: none;
   color: inherit;
   font: inherit;
   outline: none;
 }
-.subagent-launch__field select,
+.subagent-launch__field .ui-select__trigger,
 .subagent-launch__brief input { min-height: 38px; padding: 0 10px; }
 .subagent-launch__brief textarea { padding: 10px; resize: vertical; line-height: 1.5; }
-.subagent-launch__field select:focus-visible,
+.subagent-launch__field .ui-select__trigger:focus-visible,
 .subagent-launch__brief input:focus-visible,
 .subagent-launch__brief textarea:focus-visible { border-color: var(--launch-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--launch-accent) 12%, transparent); }
 

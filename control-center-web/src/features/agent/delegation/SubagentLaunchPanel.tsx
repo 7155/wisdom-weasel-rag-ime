@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, Disclosure, SegmentedControl } from '@/components/primitives';
+import { Button, Disclosure, SegmentedControl, Select } from '@/components/primitives';
 import type { AgentTemplateV1 } from '@/contracts/generated/agent-template.v1';
 import type { ToolManifest } from '@/features/agent/types';
 import { toolItems } from '@/features/agent/types';
@@ -211,16 +211,22 @@ function SubagentLaunchForm({
       <em><Braces size={13} />结构化交付</em>
     </header>
 
-    {parents.length > 1 ? <label className="subagent-launch__field">
+    {parents.length > 1 ? <div className="subagent-launch__field">
       <span>由谁启动 <small>决定父 Session 与权限上限</small></span>
-      <select aria-label="子 Agent 父 Session" value={parentSessionId} onChange={(event) => {
-        setParentSessionId(event.target.value);
-        setCustomTools(false);
-        setSelectedTools([]);
-      }}>
-        {parents.map((item) => <option key={item.sessionId} value={item.sessionId}>{item.label}{item.detail ? ` · ${item.detail}` : ''}</option>)}
-      </select>
-    </label> : null}
+      <Select
+        aria-label="子 Agent 父 Session"
+        onValueChange={(sessionId) => {
+          setParentSessionId(sessionId);
+          setCustomTools(false);
+          setSelectedTools([]);
+        }}
+        options={parents.map((item) => ({
+          value: item.sessionId,
+          label: `${item.label}${item.detail ? ` · ${item.detail}` : ''}`,
+        }))}
+        value={parentSessionId}
+      />
+    </div> : null}
 
     <fieldset className="subagent-launch__templates">
       <legend>责任模板 <small>模板决定默认边界，不是装饰标签</small></legend>
