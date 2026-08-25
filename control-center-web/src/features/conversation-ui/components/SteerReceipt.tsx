@@ -26,7 +26,9 @@ export function SteerReceipt({
   }
   return (
     <div aria-live="polite" className="ccui-steer-receipt" data-receipt={state} role="status">
-      <span>{state === 'read' ? '伙伴已读' : '待伙伴读取'}</span>
+      {/* Delivery is what a host can actually prove; claiming a partner has
+          read the message would put a promise on the transcript. */}
+      <span>{state === 'read' ? '已送达伙伴' : '尚未送达伙伴'}</span>
       {state === 'unread' && canInterrupt && onInterrupt ? (
         <button
           className="ccui-text-action"

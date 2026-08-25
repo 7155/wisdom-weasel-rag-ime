@@ -43,4 +43,3 @@ export type {
   TranscriptMessage,
   UserMessage,
 } from './model/types';
-export type { AgentEvent, ConversationTransport, SendPayload } from './transport';
