@@ -41,7 +41,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getAllByRole('tab')).toHaveLength(2);
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
-    expect(within(tools).getByRole('tree', { name: '任务树' })).toHaveTextContent('实现 Room 依赖数据投影');
+    expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
     const timeline = screen.getByRole('log', { name: '公开对话时间线' });
     const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
@@ -131,8 +131,8 @@ describe('PAWOS Room collaboration tools', () => {
     await screen.findByRole('textbox', { name: '协作消息' });
 
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
-    const partners = within(tools).getByRole('list', { name: '行星伙伴' });
-    await user.click(within(partners).getByRole('button', { name: /Mars/ }));
+    const mesh = within(tools).getByRole('group', { name: '协作网状图' });
+    await user.click(within(mesh).getByRole('button', { name: /^Mars，/ }));
     await user.click(within(tools).getByRole('button', { name: '打开 Mars 伙伴窗口' }));
 
     expect(screen.queryByRole('button', { name: /铺开 .* 位/ })).not.toBeInTheDocument();
