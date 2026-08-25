@@ -17,7 +17,6 @@ imports nothing from any host repository. Its stated host boundary is a single
 | --- | --- |
 | `model/types.ts` | `src/model/types.ts` |
 | `model/queue.ts` | `src/model/queue.ts` |
-| `transport.ts` | `src/transport.ts` |
 | `hooks/usePinnedTranscript.ts` | `src/hooks/usePinnedTranscript.ts` |
 | `hooks/useVirtualTranscript.ts` | `src/hooks/useVirtualTranscript.ts` |
 | `hooks/useSessionScrollMemory.ts` | `src/hooks/useSessionScrollMemory.ts` |
@@ -94,8 +93,12 @@ imports nothing from any host repository. Its stated host boundary is a single
 
 ## Deliberately not vendored
 
-- `context/ConversationProvider.tsx`, `model/reducer.ts` — superseded by the
-  PAWOS live stores, per the state-ownership note above.
+- `context/ConversationProvider.tsx`, `model/reducer.ts`, `transport.ts` — the
+  package's host boundary is a `ConversationTransport` that its own reducer
+  drives. PAWOS inverted that (see above), so `ConversationSurfaceController`
+  *is* the host boundary here and the transport interface had no implementation
+  and no caller. A vendored interface nobody satisfies invites someone to build
+  against a seam that does not exist, so it is not carried.
 - `model/sideChat.ts`, `components/SideChatPanel.tsx` — no Pi Runtime contract
   backs a per-conversation side chat today, and wiring the panel to anything
   else would put invented data on a real transcript.
