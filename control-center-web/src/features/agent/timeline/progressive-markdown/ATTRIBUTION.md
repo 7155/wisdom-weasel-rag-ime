@@ -29,8 +29,19 @@ under MIT (see the `LICENSE` file next to the reference).
 - Import specifiers only: the reference uses NodeNext-style `"./x.js"`
   specifiers and a `core/` / `react/` split; this vendored copy is flattened
   into one directory with extensionless specifiers to match this app's
-  `moduleResolution: "Bundler"` setup. No logic was changed.
+  `moduleResolution: "Bundler"` setup.
 - `index.ts` (the barrel) and this file are local additions.
+- `useSafeTextRelease.ts` diverges from the reference in two documented ways:
+  it starts fully flushed on mount (a Virtuoso item remount or a restored
+  mid-stream snapshot must never replay the reveal — only text appended after
+  mount animates), and it flushes instantly when the user asked for reduced
+  motion (`prefers-reduced-motion` or the app's `data-reduce-motion` switch)
+  or the document is hidden. Delivered text is never withheld from a reader
+  who opted out of the courtesy animation.
+- `safeInlineBoundary.ts` skips the trailing-word hold-back when the tail is
+  CJK text: ideographs and kana are complete display units with no space
+  delimiters, so the "do not show half a Latin word" space-seek would
+  otherwise pin the reveal to the last ASCII space far behind the tail.
 
 ## Deliberately not vendored
 
@@ -47,9 +58,13 @@ under MIT (see the `LICENSE` file next to the reference).
 
 ## Integration notes
 
-- `MarkdownBody` engages `ProgressiveMarkdown` only on the live streaming
-  path (`streamingTail`), with `holdBack` disabled: PAWOS already batches
-  live-store commits upstream, and the transcript must reflect delivered text
-  synchronously (deterministic tests, honest foreground behavior). The
-  rAF-paced `useSafeTextRelease` scheduler is vendored with the component but
-  inert until a caller opts in.
+- `MarkdownBody` engages `ProgressiveMarkdown` on the live streaming path and
+  keeps it mounted for one extra deferred render after the stream ends
+  (`useDeferredStreaming` latch in `../MarkdownRenderer.tsx`), so the final
+  whole-document parse never swaps render modes inside the urgent settle
+  commit.
+- `holdBack` is enabled: the safe-text release scheduler paces batched
+  live-store commits into a Markdown-safe token reveal — the visible typing
+  motion. The mount-flush and reduced-motion adaptations above keep the
+  transcript truthful for restores, remounts, hidden tabs, and readers who
+  disabled motion.

@@ -18,13 +18,7 @@ import {
   interleavedTurnEntries,
   visibleAgentTurnIds,
 } from './AgentTimeline';
-import {
-  AgentBlock,
-  AgentBlocks,
-  MarkdownBody,
-  partitionStreamingMarkdown,
-  partitionStreamingMarkdownFragments,
-} from './BlockRenderer';
+import { AgentBlock, AgentBlocks, MarkdownBody } from './BlockRenderer';
 import { agentRendererPolicy, TRUSTED_AGENT_RENDERERS } from './renderer-registry';
 import { resetAgentTurnDisclosureOverrides } from './AgentTurnWorkDisclosure';
 import { resetActivityDisclosureOverrides } from './ActivitySummary';
@@ -118,7 +112,7 @@ describe('Agent chat rendering', () => {
     expect(nextRead).toEqual(firstRead);
   });
 
-  it('keeps settled markdown fragments on their original DOM nodes while the stream tail grows', () => {
+  it('keeps settled markdown fragments on their original DOM nodes while the stream tail grows', async () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
@@ -152,7 +146,9 @@ describe('Agent chat rendering', () => {
       agentEventFixture(3, 'text_delta', { delta: '。\n\n第三段总结开始' }),
     ]));
     expect(screen.getByText('稳定的第一段结论。')).toBe(settledParagraph);
-    const promotedParagraph = screen.getByText('第二段正在生成，补充更多细节。');
+    // Appended deltas ride the safe-text release scheduler, so paragraph two
+    // finishes (and gets promoted to a frozen chunk) a few frames later.
+    const promotedParagraph = await screen.findByText('第二段正在生成，补充更多细节。');
 
     act(() => void useAgentLiveStore.getState().applyEvents(sessionId, [
       agentEventFixture(4, 'text_delta', { delta: '，仍在流式续写' }),
@@ -1183,66 +1179,6 @@ describe('Agent chat rendering', () => {
     expect(items[1]!.querySelector('.agent-streaming-cursor--inline')).toBeInTheDocument();
     expect(container.querySelector('.agent-blocks')).toHaveAttribute('data-has-stream-tail', 'true');
     expect(screen.getByLabelText('正在生成')).toBe(container.querySelector('.agent-blocks')?.nextElementSibling);
-  });
-
-  it('moves completed top-level sections out of the active Markdown window', () => {
-    const source = [
-      '开场说明已经稳定。',
-      '',
-      '## 已完成阶段',
-      '',
-      '这一阶段也已经稳定。',
-      '',
-      '## 正在生成',
-      '',
-      '当前尾部',
-    ].join('\n');
-
-    expect(partitionStreamingMarkdown(source)).toEqual({
-      stable: [
-        '开场说明已经稳定。',
-        '',
-        '## 已完成阶段',
-        '',
-        '这一阶段也已经稳定。',
-        '',
-        '## 正在生成',
-        '',
-        '',
-      ].join('\n'),
-      active: '当前尾部',
-    });
-  });
-
-  it('does not treat headings inside a fenced block as streaming section boundaries', () => {
-    const source = [
-      '稳定说明。',
-      '',
-      '```md',
-      '',
-      '# 这是代码，不是新章节',
-      '```',
-    ].join('\n');
-
-    expect(partitionStreamingMarkdown(source)).toEqual({
-      stable: '稳定说明。\n\n',
-      active: ['```md', '', '# 这是代码，不是新章节', '```'].join('\n'),
-    });
-  });
-
-  it('keeps earlier streaming Markdown fragments immutable as new paragraphs arrive', () => {
-    const first = partitionStreamingMarkdownFragments('第一段。\n\n第二段还在生成');
-    const second = partitionStreamingMarkdownFragments('第一段。\n\n第二段完成。\n\n第三段还在生成');
-
-    expect(first).toEqual({
-      stableFragments: ['第一段。\n\n'],
-      active: '第二段还在生成',
-    });
-    expect(second).toEqual({
-      stableFragments: ['第一段。\n\n', '第二段完成。\n\n'],
-      active: '第三段还在生成',
-    });
-    expect(second.stableFragments[0]).toBe(first.stableFragments[0]);
   });
 
   it('only renders explicitly trusted non-executable block policies', () => {

@@ -5,11 +5,7 @@ import { isHtmlReport } from '../file-preview/file-descriptor';
 import { UnknownBlockRenderer } from './MediaRenderers';
 import { agentRendererPolicy } from './renderer-registry';
 
-export {
-  MarkdownBody,
-  partitionStreamingMarkdown,
-  partitionStreamingMarkdownFragments,
-} from './MarkdownRenderer';
+export { MarkdownBody } from './MarkdownRenderer';
 export { SafeFieldList } from './StructuredRenderers';
 
 interface AgentBlocksProps {

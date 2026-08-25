@@ -88,6 +88,7 @@ export function CodeContentBlock({
     <figure
       aria-label={collapsed ? `${fileName || language}完整内容` : undefined}
       className="agent-code-block"
+      data-streaming={streamingTail || undefined}
       role={collapsed ? 'region' : undefined}
     >
       <figcaption>

@@ -46,9 +46,23 @@ export interface SafeTextReleaseOptions {
   readonly maximumHoldBackChars?: number | undefined;
 }
 
+/** The reveal is a courtesy animation; anyone who asked for reduced motion
+ * gets delivered text the moment the transport has it (PAW adaptation). */
+function revealMotionDisabled(): boolean {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return true;
+  if (document.documentElement.getAttribute('data-reduce-motion') === 'true') return true;
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 /**
  * Releases streaming text at Markdown-safe inline boundaries. The rAF loop is
  * a display scheduler, not a replacement for transport/event batching.
+ *
+ * PAW adaptation: mounting starts fully flushed rather than at zero, so a
+ * Virtuoso item remount or a restored mid-stream snapshot never replays the
+ * whole reveal; only text appended after mount animates. A hidden document
+ * and reduced motion both flush instantly.
  */
 export function useSafeTextRelease(
   text: string,
@@ -63,22 +77,20 @@ export function useSafeTextRelease(
     maximumHoldBackChars = 600,
   } = options;
 
-  const [visibleEnd, setVisibleEnd] = useState(enabled ? 0 : text.length);
+  const [visibleEnd, setVisibleEnd] = useState(text.length);
   const visibleEndRef = useRef(visibleEnd);
   const sourceRef = useRef(text);
-  const ceilingRef = useRef(
-    enabled ? computeReleaseCeiling(text, maximumHoldBackChars) : text.length,
-  );
+  const ceilingRef = useRef(text.length);
 
   useBrowserLayoutEffect(() => {
     const previousText = sourceRef.current;
     const previousVisibleEnd = visibleEndRef.current;
-    const ceiling = enabled
+    const ceiling = enabled && !revealMotionDisabled()
       ? computeReleaseCeiling(text, maximumHoldBackChars)
       : text.length;
 
     let nextVisibleEnd = previousVisibleEnd;
-    if (!enabled) {
+    if (!enabled || revealMotionDisabled()) {
       nextVisibleEnd = text.length;
     } else if (!text.startsWith(previousText.slice(0, previousVisibleEnd))) {
       nextVisibleEnd = commonPrefixLength(
@@ -89,19 +101,11 @@ export function useSafeTextRelease(
     }
 
     nextVisibleEnd = Math.min(nextVisibleEnd, ceiling, text.length);
-    if (enabled && nextVisibleEnd === 0 && ceiling > 0) {
-      nextVisibleEnd = advanceToSafeBoundary(
-        text,
-        0,
-        ceiling,
-        Math.min(120, Math.max(stepChars, ceiling)),
-      );
-    }
     sourceRef.current = text;
     ceilingRef.current = ceiling;
     visibleEndRef.current = nextVisibleEnd;
     if (nextVisibleEnd !== visibleEnd) setVisibleEnd(nextVisibleEnd);
-  }, [enabled, maximumHoldBackChars, stepChars, text, visibleEnd]);
+  }, [enabled, maximumHoldBackChars, text, visibleEnd]);
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return undefined;
@@ -117,6 +121,12 @@ export function useSafeTextRelease(
       const backlog = ceiling - current;
       if (backlog <= 0) {
         lastAdvanceAt = now;
+        return;
+      }
+
+      if (revealMotionDisabled()) {
+        visibleEndRef.current = ceiling;
+        setVisibleEnd(ceiling);
         return;
       }
 
@@ -140,8 +150,9 @@ export function useSafeTextRelease(
       }
     };
 
-    const flushWhenVisible = (): void => {
-      if (document.hidden) return;
+    const flushOnVisibilityChange = (): void => {
+      // A hidden document gets no animation frames; parking the full ceiling
+      // keeps the transcript truthful when the user returns.
       const ceiling = ceilingRef.current;
       if (ceiling > visibleEndRef.current) {
         visibleEndRef.current = ceiling;
@@ -150,10 +161,10 @@ export function useSafeTextRelease(
     };
 
     frame = window.requestAnimationFrame(tick);
-    document.addEventListener("visibilitychange", flushWhenVisible);
+    document.addEventListener("visibilitychange", flushOnVisibilityChange);
     return () => {
       window.cancelAnimationFrame(frame);
-      document.removeEventListener("visibilitychange", flushWhenVisible);
+      document.removeEventListener("visibilitychange", flushOnVisibilityChange);
     };
   }, [
     backlogBudgetMs,
