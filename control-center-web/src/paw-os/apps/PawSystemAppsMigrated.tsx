@@ -81,31 +81,33 @@ type SystemPage = {
   icon: LucideIcon;
   route: string;
   group?: string;
+  /** One line of purpose, carried by the stage chrome instead of a hero header. */
+  purpose: string;
 };
 
 const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
   'input-studio': [
-    { id: 'input', label: '输入法', icon: Keyboard, route: '/input' },
-    { id: 'lexicon', label: '词库', icon: BookOpen, route: '/input?view=lexicon' },
-    { id: 'voice', label: '语音', icon: Mic2, route: '/voice' },
-    { id: 'history', label: '输入记录', icon: History, route: '/history' },
+    { id: 'input', label: '输入法', icon: Keyboard, route: '/input', purpose: '本机输入法的连接、模式与候选行为' },
+    { id: 'lexicon', label: '词库', icon: BookOpen, route: '/input?view=lexicon', purpose: '自定义词条与来源，只影响本机候选' },
+    { id: 'voice', label: '语音', icon: Mic2, route: '/voice', purpose: '语音服务、识别结果与润色的处理方式' },
+    { id: 'history', label: '输入记录', icon: History, route: '/history', purpose: '本机保留的输入记录，随时可以清理' },
   ],
   'app-center': [
-    { id: 'installed', label: '已安装', icon: PackageOpen, route: '/plugins' },
-    { id: 'catalog', label: '目录', icon: LibraryBig, route: '/plugins?view=catalog' },
-    { id: 'proposals', label: '建议', icon: Sparkles, route: '/plugins?view=proposals' },
+    { id: 'installed', label: '已安装', icon: PackageOpen, route: '/plugins', purpose: '已安装 Package 的启用、更新与移除' },
+    { id: 'catalog', label: '目录', icon: LibraryBig, route: '/plugins?view=catalog', purpose: '安装之前先看清来源、权限与版本' },
+    { id: 'proposals', label: '建议', icon: Sparkles, route: '/plugins?view=proposals', purpose: 'Agent 提出的安装建议，逐项等你确认' },
   ],
   'system-monitor': [
-    { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时' },
-    { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查' },
-    { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics', group: '排查' },
+    { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时', purpose: 'Runtime 正在发生的事件与调用' },
+    { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查', purpose: '逐轮查看模型实际收到的上下文' },
+    { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics', group: '排查', purpose: '各组件自报的状态与可执行的检查' },
   ],
   'system-settings': [
-    { id: 'configuration', label: '配置', icon: Settings2, route: '/configuration', group: '通用' },
-    { id: 'appearance', label: '外观', icon: Palette, route: '/appearance', group: '通用' },
-    { id: 'agent', label: 'Agent', icon: Bot, route: '/configuration?view=agent', group: 'Agent' },
-    { id: 'governance', label: '治理', icon: ShieldCheck, route: '/governance', group: '安全与信任' },
-    { id: 'approvals', label: '审批', icon: Fingerprint, route: '/approvals', group: '安全与信任' },
+    { id: 'configuration', label: '配置', icon: Settings2, route: '/configuration', group: '通用', purpose: '本机服务、路径与运行参数' },
+    { id: 'appearance', label: '外观', icon: Palette, route: '/appearance', group: '通用', purpose: '桌面主题、界面动效与 App 身份色' },
+    { id: 'agent', label: 'Agent', icon: Bot, route: '/configuration?view=agent', group: 'Agent', purpose: '新对话默认用的模型、深度与执行权限' },
+    { id: 'governance', label: '治理', icon: ShieldCheck, route: '/governance', group: '安全与信任', purpose: '风险等级、审计留痕与保护规则' },
+    { id: 'approvals', label: '审批', icon: Fingerprint, route: '/approvals', group: '安全与信任', purpose: '等你决定的高风险操作队列' },
   ],
 };
 
@@ -123,6 +125,12 @@ export type PawSystemAppsMigratedProps = {
  *
  * The container owns navigation and presentation only. Every page below keeps
  * its existing transport, guarded mutation, native bridge, and persisted state.
+ *
+ * Shape is a window, not a document: `.paw-system-app` is the size container
+ * every band answers to, `__frame` carries the rail beside the stage, and the
+ * stage is one thin chrome band above a single scrolling workspace. Nothing
+ * below the chrome is pinned to a viewport dimension, so a drag on any window
+ * edge is absorbed by the workspace instead of reflowing the whole App.
  */
 export function PawSystemAppsMigrated({
   appId,
@@ -139,56 +147,88 @@ export function PawSystemAppsMigrated({
   const railSignal = useSystemRailSignal(appId);
 
   return (
-    <div className="paw-system-app" data-page-id={page.id} data-system-app={appId}>
-      <aside className="paw-system-app__nav">
-        <nav aria-label={`${app.label}页面`}>
-          {pages.map((candidate, index) => {
-            const Icon = candidate.icon;
-            const current = candidate.id === page.id;
-            const badge = railSignal && candidate.id === railSignal.pageId ? railSignal.count : 0;
-            const name = badge && railSignal
-              ? `${candidate.label}（${railSignal.describe(badge)}）`
-              : candidate.label;
-            return (
-              <Fragment key={candidate.id}>
-                {candidate.group && candidate.group !== pages[index - 1]?.group ? (
-                  <span aria-hidden="true" className="paw-system-app__nav-group">{candidate.group}</span>
-                ) : null}
-                <button
-                  aria-current={current ? 'page' : undefined}
-                  aria-label={name}
-                  onClick={() => openPawOsRoute(desktop, candidate.route)}
-                  title={name}
-                  type="button"
-                >
-                  <Icon aria-hidden="true" size={16} />
-                  <span>{candidate.label}</span>
-                  {badge && railSignal ? (
-                    <span aria-hidden="true" className="paw-system-app__nav-badge" data-tone={railSignal.tone}>
-                      {badge > 99 ? '99+' : badge}
-                    </span>
+    <div
+      className="paw-system-app"
+      data-page-id={page.id}
+      data-stage={systemStageKind[appId]}
+      data-system-app={appId}
+    >
+      <div className="paw-system-app__frame">
+        <aside className="paw-system-app__nav">
+          <nav aria-label={`${app.label}页面`}>
+            {pages.map((candidate, index) => {
+              const Icon = candidate.icon;
+              const current = candidate.id === page.id;
+              const badge = railSignal && candidate.id === railSignal.pageId ? railSignal.count : 0;
+              const name = badge && railSignal
+                ? `${candidate.label}（${railSignal.describe(badge)}）`
+                : candidate.label;
+              return (
+                <Fragment key={candidate.id}>
+                  {candidate.group && candidate.group !== pages[index - 1]?.group ? (
+                    <span aria-hidden="true" className="paw-system-app__nav-group">{candidate.group}</span>
                   ) : null}
-                </button>
-              </Fragment>
-            );
-          })}
-        </nav>
-      </aside>
+                  {/* The collapsed rail drops the visible label only; the
+                      accessible name and the tooltip stay whole. */}
+                  <button
+                    aria-current={current ? 'page' : undefined}
+                    aria-label={name}
+                    onClick={() => openPawOsRoute(desktop, candidate.route)}
+                    title={name}
+                    type="button"
+                  >
+                    <Icon aria-hidden="true" size={16} />
+                    <span className="paw-system-app__nav-label">{candidate.label}</span>
+                    {badge && railSignal ? (
+                      <span
+                        aria-hidden="true"
+                        className="paw-system-app__nav-badge"
+                        data-tone={railSignal.tone}
+                        key={badge}
+                      >
+                        {badge > 99 ? '99+' : badge}
+                      </span>
+                    ) : null}
+                  </button>
+                </Fragment>
+              );
+            })}
+          </nav>
+        </aside>
 
-      <section className="paw-system-app__stage">
-        <span aria-hidden="true" className="paw-system-app__page-title" key={page.id}>
-          {page.group ? `${page.group} · ${page.label}` : page.label}
-        </span>
-        <MemoryRouter initialEntries={[route]} key={route}>
-          <PawSystemRouteReporter expectedRoute={route} />
-          <div className="paw-system-app__page" key={`${appId}:${page.id}`}>
-            <PawSystemSurface appId={appId} pageId={page.id} />
+        <section className="paw-system-app__stage">
+          <header className="paw-system-app__chrome" key={page.id}>
+            <span aria-hidden="true" className="paw-system-app__page-title">
+              {page.group ? `${page.group} · ${page.label}` : page.label}
+            </span>
+            <span aria-hidden="true" className="paw-system-app__page-purpose">{page.purpose}</span>
+          </header>
+          <div className="paw-system-app__workspace">
+            <MemoryRouter initialEntries={[route]} key={route}>
+              <PawSystemRouteReporter expectedRoute={route} />
+              <div className="paw-system-app__page" key={`${appId}:${page.id}`}>
+                <PawSystemSurface appId={appId} pageId={page.id} />
+              </div>
+            </MemoryRouter>
           </div>
-        </MemoryRouter>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }
+
+/**
+ * Purpose, not palette. Every App keeps the one cobalt accent and the one
+ * control scale; what changes is how its workspace is paced — a settings sheet
+ * reads at a preference measure, a catalogue at gallery density, an instrument
+ * at monitoring density, a studio at form density.
+ */
+const systemStageKind: Record<PawSystemAppId, string> = {
+  'input-studio': 'studio',
+  'app-center': 'gallery',
+  'system-monitor': 'instrument',
+  'system-settings': 'sheet',
+};
 
 function PawSystemRouteReporter({ expectedRoute }: { expectedRoute: string }) {
   const desktop = usePawOsDesktop();

@@ -64,6 +64,66 @@ describe('PawSystemAppsMigrated', () => {
     expect(title?.textContent?.trim()).toBe('通用 · 外观');
   });
 
+  it('builds the App as a rail beside one chrome band and one workspace, not a page', () => {
+    renderSystemApp('system-monitor', '/observability');
+
+    const app = document.querySelector('.paw-system-app') as HTMLElement;
+    const frame = app.querySelector(':scope > .paw-system-app__frame') as HTMLElement;
+    expect(frame).toBeInTheDocument();
+    // The rail width answers a container query on the frame, so the frame —
+    // never the App itself — has to be the element carrying the two columns.
+    expect([...frame.children].map((node) => node.className)).toEqual([
+      'paw-system-app__nav',
+      'paw-system-app__stage',
+    ]);
+
+    const stage = frame.querySelector('.paw-system-app__stage') as HTMLElement;
+    expect([...stage.children].map((node) => node.className)).toEqual([
+      'paw-system-app__chrome',
+      'paw-system-app__workspace',
+    ]);
+    // One scrolling band absorbs resize; the page mounts inside it.
+    expect(stage.querySelector('.paw-system-app__workspace > .paw-system-app__page')).toBeInTheDocument();
+  });
+
+  it('carries page purpose in the chrome band instead of a hero header above the content', () => {
+    renderSystemApp('app-center', '/plugins?view=catalog');
+
+    const purpose = document.querySelector('.paw-system-app__page-purpose');
+    expect(purpose?.textContent).toBe('安装之前先看清来源、权限与版本');
+    // Decoration for the eye only: the page below owns the accessible copy.
+    expect(purpose).toHaveAttribute('aria-hidden', 'true');
+    expect(document.querySelector('.paw-system-app__chrome')?.children).toHaveLength(2);
+  });
+
+  it.each([
+    ['input-studio', 'studio'],
+    ['app-center', 'gallery'],
+    ['system-monitor', 'instrument'],
+    ['system-settings', 'sheet'],
+  ] as const)('gives %s a purpose-specific stage pace without a private accent', (appId, stage) => {
+    renderSystemApp(appId, '');
+
+    const app = document.querySelector('.paw-system-app') as HTMLElement;
+    expect(app).toHaveAttribute('data-stage', stage);
+    expect(app).toHaveAttribute('data-system-app', appId);
+    expect(app.style.getPropertyValue('--paw-system-accent')).toBe('');
+  });
+
+  it('keeps the whole accessible rail name when the collapsed rail hides the label', async () => {
+    const transport = baseTransport({
+      'agent.approvals.list': { ok: true, items: [previewApprovalStub('approval:one', 'pending')] },
+    });
+    renderSystemApp('system-settings', '/configuration', transport);
+
+    // The narrow container query hides only `.paw-system-app__nav-label`, so
+    // the button has to keep its name and tooltip somewhere else.
+    const approvals = await screen.findByRole('button', { name: '审批（1 项待处理）' });
+    expect(approvals).toHaveAttribute('title', '审批（1 项待处理）');
+    expect(approvals.querySelector('.paw-system-app__nav-label')?.textContent).toBe('审批');
+    expect(approvals.querySelector('.paw-system-app__nav-badge')?.textContent).toBe('1');
+  });
+
   it('carves the Settings and Monitor rails into labelled groups', () => {
     renderSystemApp('system-settings', '/configuration');
     expect(groupLabels()).toEqual(['通用', 'Agent', '安全与信任']);

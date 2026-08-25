@@ -1,10 +1,51 @@
-/* Terminal desktop-viewport rebuild: an obsidian instrument console. Opening
-   the App is opening the PTY — one dark work surface owns the viewport, the
-   tab strip is a compact 36px instrument row, and the App accent (terminal
-   green) marks the selected tab, the live-session signal, and every primary
-   action. Motion is short, purposeful, and fully silenced under reduced
-   motion. */
-.paw-terminal-app {
+/* ==========================================================================
+   Terminal App — one coherent stylesheet.
+
+   Terminal is PAWOS's embedded PTY instrument. Opening the App is opening the
+   shell: one obsidian work surface owns the window, and everything around it
+   is instrument chrome that reports what the PTY is actually doing.
+
+   Window skeleton (not a web page): the App is a column of fixed chrome bands
+   around exactly one flexible surface. The tab strip, the scrollback search
+   band, the ended-session notice and the status band all keep their intrinsic
+   height; only the xterm surface absorbs what the window gives it, and only
+   its own viewport scrolls. Nothing is sized against the document viewport,
+   so a continuous drag-resize re-runs this one distribution and the PTY is
+   refit exactly once per settled size.
+
+   Bands are grid rows of `.paw-terminal-console`, declared per combination so
+   the row template is always readable at a glance. Transient surfaces that
+   must never resize a live PTY — the error notice, the working-directory
+   form, the all-sessions switcher — are absolutely positioned instead, so
+   they take no row at all.
+
+   Cross-owner contracts pinned by tests (do not "clean up"):
+   - `--paw-terminal-bg: #101216` stays the literal console ground, and the
+     console keeps `minmax(0, 1fr)` / `minmax(0, 1fr) 30px` row templates.
+   - `.paw-terminal-statusbar` stays a single overflow-hidden flex band at
+     13px/1.4.
+   - Narrow behaviour lives in `@container` queries, never `@media`, because
+     the App reflows with its window. Two containers, each queried by the
+     surface that owns the width: `paw-terminal` (the App body) and
+     `paw-terminal-bar` (the tab strip, which the window chrome portals into
+     the titlebar where it is far narrower than the App).
+   - `paw-os.css` re-points the App palette per window and owns the whole-App
+     monospace stack; `paw-os-motion.css` owns the shared chrome transition
+     for `.paw-terminal-tab`, `.paw-terminal-state-tag`, `.paw-terminal-error`,
+     `.paw-terminal-exited-badge` and `.paw-terminal-console__empty`.
+
+   Motion is three deliberate signals — tab switch, search open, PTY focus —
+   each fully silenced by the OS media query and by the PAWOS appearance
+   preference. xterm's blinking cursor is JS-driven and is handled where the
+   terminal is created.
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Scoped tokens. They are declared on the tab strip as well, because window
+   chrome portals that strip out of the App subtree.
+   ------------------------------------------------------------------------- */
+.paw-terminal-app,
+.paw-terminal-app__toolbar {
   --paw-terminal-bg: #101216;
   --paw-terminal-elevated: #161a21;
   --paw-terminal-raised: #1d232d;
@@ -16,52 +57,105 @@
   --paw-terminal-faint: #6b7380;
   --paw-terminal-accent: var(--paw-app-accent, #79c56e);
   --paw-terminal-accent-strong: var(--paw-app-accent-strong, #39784b);
+  --paw-terminal-live: #30d158;
   --paw-terminal-focus: #58a6ff;
   --paw-terminal-danger: #ff7770;
   --paw-terminal-ease: var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
-  display: grid;
+  --paw-terminal-spring: cubic-bezier(.2, .92, .24, 1);
+}
+
+/* -------------------------------------------------------------------------
+   App skeleton. Chrome bands keep their intrinsic height whether or not the
+   tab strip sits in window chrome, so no row template has to be restated per
+   combination.
+   ------------------------------------------------------------------------- */
+.paw-terminal-app {
+  display: flex;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 36px minmax(0, 1fr);
+  flex-direction: column;
+  overflow: hidden;
   background: var(--paw-terminal-bg);
   color: var(--paw-terminal-text);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
   font-size: var(--paw-type-mono, 13px);
   line-height: 1.55;
-  overflow: hidden;
   container: paw-terminal / inline-size;
 }
-/* Errors float over the console (see .paw-terminal-error); they never earn a
-   grid row, so an arriving or dismissed notice cannot resize the live PTY. */
-.paw-terminal-app[data-tabs-in-window-chrome] { grid-template-rows: minmax(0, 1fr); }
 
+.paw-terminal-app > .paw-terminal-app__toolbar {
+  flex: 0 0 auto;
+}
+
+/* Exactly one band absorbs the window; `min-height: 0` is what lets the PTY
+   viewport scroll locally instead of pushing the status band off the frame. */
+.paw-terminal-app__workspace {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* The App title is the accessible name of the surface, never a visible band.
+   A standalone mount has no `.paw-desktop-root` to hide it. */
+.paw-terminal-app > .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.paw-terminal-app ::selection { background: color-mix(in srgb, var(--paw-terminal-accent) 26%, transparent); }
+
+/* -------------------------------------------------------------------------
+   Window-chrome projection. When the window frames Terminal, the tab strip
+   moves into the titlebar and the body keeps every pixel for the PTY. The
+   App adds no second Terminal name or glyph there: the window already
+   carries the App identity once.
+   ------------------------------------------------------------------------- */
 .paw-window-titlebar[data-window-chrome='terminal-tabs'] {
   grid-template-columns: 76px 96px minmax(0, 1fr);
   gap: 8px;
   padding-right: 8px;
-  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  border-bottom: 1px solid var(--paw-terminal-line);
   background: #161a21;
   box-shadow: 0 1px 0 rgb(255 255 255 / 3%) inset;
 }
 .paw-window-titlebar[data-window-chrome='terminal-tabs'] .paw-window-title { min-width: 0; color: #aeb4bf; }
 
+/* -------------------------------------------------------------------------
+   Tab strip band. The strip scrolls locally, so overflow never widens the
+   window; the new-terminal actions live outside that scroll box and stay
+   reachable at any tab count.
+   ------------------------------------------------------------------------- */
 .paw-terminal-app__toolbar {
   display: flex;
+  min-width: 0;
+  height: 36px;
   align-items: center;
   justify-content: space-between;
   gap: 7px;
   padding: 0 8px;
-  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  border-bottom: 1px solid var(--paw-terminal-line);
   background: var(--paw-terminal-elevated);
   user-select: none;
+  container: paw-terminal-bar / inline-size;
 }
-.paw-terminal-app__toolbar[data-window-chrome] { width: 100%; height: 100%; padding: 4px 0 0; border: 0; background: transparent; }
+.paw-terminal-app__toolbar[data-window-chrome] {
+  width: 100%;
+  height: 100%;
+  padding: 4px 0 0;
+  border: 0;
+  background: transparent;
+}
 
-/* The strip scrolls locally; overflow never widens the window. The selected
-   tab is kept in view from the component, and the new-terminal action lives
-   outside this scroll area so it stays reachable at any tab count. */
 .paw-terminal-tabs {
   min-width: 0;
   display: flex;
@@ -86,24 +180,17 @@
   mask-image: linear-gradient(90deg, transparent, #000 26px);
 }
 
-.paw-terminal-tab-state {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
+/* -------------------------------------------------------------------------
+   A tab. Reading order is the order the shell matters in: live state, then
+   identity, then where it runs. A session that is no longer running says so
+   in words and in weight, not in colour alone.
+   ------------------------------------------------------------------------- */
 .paw-terminal-tab {
   position: relative;
   display: flex;
-  min-width: 96px;
-  max-width: 184px;
-  flex: 0 1 144px;
+  min-width: 92px;
+  max-width: 190px;
+  flex: 0 1 148px;
   align-items: center;
   height: 28px;
   border-radius: 8px 8px 0 0;
@@ -111,11 +198,17 @@
   background: transparent;
   color: #8b929d;
   font-size: var(--paw-type-mono, 13px);
-  transition: color 140ms var(--paw-terminal-ease), background-color 140ms var(--paw-terminal-ease), box-shadow 160ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
+  transition:
+    color 140ms var(--paw-terminal-ease),
+    background-color 140ms var(--paw-terminal-ease),
+    box-shadow 160ms var(--paw-terminal-ease),
+    transform 120ms var(--paw-terminal-ease);
   animation: paw-terminal-tab-enter 180ms var(--paw-terminal-ease) both;
 }
-/* The selected tab merges into the console surface and carries one accent
-   beam: the App identity marks exactly where the live PTY is. */
+
+/* Motion 1 of 3 — tab switch. The accent beam grows from the middle of the
+   tab the PTY moved to, so the switch is legible even when the two tabs read
+   almost the same. */
 .paw-terminal-tab::before {
   position: absolute;
   top: 0;
@@ -126,63 +219,60 @@
   background: linear-gradient(90deg, transparent, var(--paw-terminal-accent), transparent);
   box-shadow: 0 0 10px color-mix(in srgb, var(--paw-terminal-accent) 55%, transparent);
   opacity: 0;
+  transform: scaleX(.3);
   content: '';
-  transition: opacity 180ms var(--paw-terminal-ease);
+  transition: opacity 150ms var(--paw-terminal-ease), transform 260ms var(--paw-terminal-spring);
 }
-.paw-terminal-tab-main {
-  min-width: 0;
-  height: 100%;
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) 7px;
-  align-items: center;
-  gap: 5px;
-  padding: 0 26px 0 10px;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-.paw-terminal-tab-main > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.paw-terminal-tab-main > i { grid-column: 3; }
+.paw-terminal-tab[data-selected]::before { opacity: 1; transform: scaleX(1); }
 
-/* Second identity signal: the tab's working-directory basename. It yields
-   space to the numbered label first and never joins the accessible name. */
-.paw-terminal-tab-cwd {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--paw-terminal-faint);
-  font-size: 11px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.paw-terminal-tab[data-selected] .paw-terminal-tab-cwd { color: var(--paw-terminal-muted); }
-.paw-terminal-tab-main:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; border-radius: 8px; }
-.paw-terminal-tab-main i {
-  position: relative;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  border: 1.5px solid #484f58;
-  background: transparent;
-}
 .paw-terminal-tab[data-selected] {
   background: var(--paw-terminal-bg);
   color: var(--paw-terminal-bright);
   box-shadow: 0 -1px 0 rgb(255 255 255 / 5%), -1px 0 0 rgb(255 255 255 / 4%), 1px 0 0 rgb(255 255 255 / 4%);
 }
-.paw-terminal-tab[data-selected]::before { opacity: 1; }
 .paw-terminal-tab:active { transform: scale(.97); }
+
+/* An ended tab keeps its place and its legibility but stops competing with
+   the session that is actually live. */
+.paw-terminal-tab:not([data-state='running']) .paw-terminal-tab-label { color: #78808d; font-weight: 400; }
+.paw-terminal-tab:not([data-state='running'])[data-selected] .paw-terminal-tab-label { color: #b4bbc6; }
+.paw-terminal-tab[data-exit-failure] .paw-terminal-tab-exit { color: color-mix(in srgb, var(--paw-terminal-danger) 78%, #fff); }
+
+.paw-terminal-tab-main {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 24px 0 9px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.paw-terminal-tab-main:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; border-radius: 8px; }
+
+/* Live state, first glance: a filled breathing dot while the PTY runs, a
+   hollow ring once it is over, danger only for a non-zero exit. */
+.paw-terminal-tab-main > i {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1.5px solid #484f58;
+  background: transparent;
+}
 .paw-terminal-tab-main i[data-state="running"] {
   border: 0;
-  background: #30d158;
+  background: var(--paw-terminal-live);
   box-shadow: 0 0 0 2px rgb(48 209 88 / 16%), 0 0 8px rgb(48 209 88 / 45%);
 }
 .paw-terminal-tab-main i[data-state="running"]::after {
   position: absolute;
   inset: -4px;
-  border: 1px solid rgba(63, 185, 80, .5);
+  border: 1px solid rgb(63 185 80 / 50%);
   border-radius: inherit;
   content: '';
   animation: paw-terminal-running 1.8s linear infinite;
@@ -192,6 +282,44 @@
   background: var(--paw-terminal-danger);
   box-shadow: 0 0 0 2px rgb(248 113 113 / 14%);
 }
+
+/* The tab ordinal is the identity that survives an icon-first strip, and it
+   is the same number the ⌘/Ctrl+Shift chord selects. It stays out of the
+   accessible name, which the button already owns in full. */
+.paw-terminal-tab-ordinal {
+  display: none;
+  flex: 0 0 auto;
+  color: var(--paw-terminal-faint);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.paw-terminal-tab[data-selected] .paw-terminal-tab-ordinal { color: var(--paw-terminal-bright); }
+
+.paw-terminal-tab-label {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Second identity signal: the working-directory basename while the session
+   runs, replaced by the exit state once it does not. Both yield space to the
+   label first and neither joins the accessible name. */
+.paw-terminal-tab-cwd,
+.paw-terminal-tab-exit {
+  min-width: 0;
+  flex: 0 3 auto;
+  overflow: hidden;
+  color: var(--paw-terminal-faint);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paw-terminal-tab[data-selected] :is(.paw-terminal-tab-cwd, .paw-terminal-tab-exit) { color: var(--paw-terminal-muted); }
+
 .paw-tab-close {
   position: absolute;
   right: 4px;
@@ -207,6 +335,7 @@
 }
 .paw-tab-close:active { transform: scale(.9); }
 .paw-tab-close:disabled { cursor: wait; opacity: .28; }
+.paw-tab-close:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 
 .paw-terminal-new-group {
   display: flex;
@@ -238,35 +367,72 @@
   color: var(--paw-terminal-bright);
 }
 
-/* The error notice is an opaque instrument panel floated over the console,
-   not a grid row: appearing and disappearing must never resize or reflow the
-   PTY. It stays until dismissed, retried, or truthfully cleared by the next
-   success. It shares the OS-wide "no glass on control surfaces" rule, so it
-   reads on a solid ground instead of a blurred one. */
-.paw-terminal-error {
-  position: absolute;
-  z-index: 8;
-  top: 10px;
-  right: 12px;
-  left: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid rgb(255 69 58 / 32%);
-  border-radius: 12px;
-  background: #2b161a;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 16px 40px rgb(0 0 0 / 46%);
-  color: var(--paw-terminal-danger);
-  font-size: 14px;
-  line-height: 1.45;
-  animation: paw-terminal-state-enter 180ms var(--paw-terminal-ease) both;
-}
-.paw-terminal-error > span {
+/* -------------------------------------------------------------------------
+   Console bands. One row template per real combination; the surface row is
+   the only flexible one and the only thing that scrolls.
+   ------------------------------------------------------------------------- */
+.paw-terminal-console {
+  position: relative;
   min-width: 0;
-  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--paw-terminal-bg);
+  outline: none;
 }
-.paw-terminal-error button {
+.paw-terminal-console[data-session] {
+  grid-template-rows: minmax(0, 1fr) 30px;
+}
+.paw-terminal-console[data-session][data-search] {
+  grid-template-rows: 32px minmax(0, 1fr) 30px;
+}
+/* An ended session keeps its backlog readable and adds one truthful notice
+   band between the output and the status band. */
+.paw-terminal-console[data-session][data-ended] {
+  grid-template-rows: minmax(0, 1fr) auto 30px;
+}
+.paw-terminal-console[data-session][data-search][data-ended] {
+  grid-template-rows: 32px minmax(0, 1fr) auto 30px;
+}
+
+/* -------------------------------------------------------------------------
+   Scrollback search band. It is a band and not a floating panel on purpose:
+   a find bar that covers the output hides the matches it is reporting.
+   ------------------------------------------------------------------------- */
+.paw-terminal-search {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--paw-terminal-line);
+  background: var(--paw-terminal-elevated);
+  color: var(--paw-terminal-muted);
+  /* Motion 2 of 3 — the band unfolds downward instead of appearing. */
+  animation: paw-terminal-band-open 190ms var(--paw-terminal-ease) both;
+}
+.paw-terminal-search__glyph { flex: 0 0 auto; }
+.paw-terminal-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--paw-terminal-text);
+  font: inherit;
+  outline: none;
+}
+.paw-terminal-search input::placeholder { color: #6b727e; }
+.paw-terminal-search__count {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  color: #aab1bc;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.paw-terminal-search button {
   display: grid;
   width: 24px;
   height: 24px;
@@ -275,47 +441,20 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: inherit;
+  color: #aab1bc;
   cursor: pointer;
-  transition: background-color 120ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
+  transition: background-color 120ms var(--paw-terminal-ease), color 120ms var(--paw-terminal-ease);
 }
-.paw-terminal-error button:active { transform: scale(.92); }
-.paw-terminal-error .paw-terminal-error__retry {
-  width: auto;
-  min-height: 24px;
-  padding: 0 9px;
-  border: 1px solid rgb(255 69 58 / 32%);
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 1.4;
-  font-weight: 600;
-}
+.paw-terminal-search button:disabled { cursor: default; opacity: .35; }
+.paw-terminal-search button:focus-visible,
+.paw-terminal-search input:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 
-.paw-terminal-app__workspace {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.paw-terminal-console {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  background: var(--paw-terminal-bg);
-  outline: none;
-}
-
-/* Scrollback search, the new-terminal-with-cwd form, and the all-sessions
-   switcher float over the console as opaque dark instrument panels; they
-   never displace the PTY grid rows or resize the live terminal. Like every
-   other OS control/menu surface, they stay opaque instead of glass so their
-   text can never sit on an unknown backdrop. */
-.paw-terminal-search,
+/* -------------------------------------------------------------------------
+   Transient surfaces. The working-directory form and the all-sessions
+   switcher are menus over the console, not bands: opening either must never
+   resize the live PTY. Like every other OS control surface they stay opaque
+   instead of glass, so their text never sits on an unknown backdrop.
+   ------------------------------------------------------------------------- */
 .paw-terminal-create,
 .paw-terminal-switcher {
   position: absolute;
@@ -364,9 +503,9 @@
 .paw-terminal-switcher li button {
   width: 100%;
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
+  grid-template-columns: 8px 12px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   padding: 6px 8px;
   border: 0;
   border-radius: 8px;
@@ -381,6 +520,14 @@
   background: color-mix(in srgb, var(--paw-terminal-accent) 13%, transparent);
 }
 .paw-terminal-switcher li button:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
+.paw-terminal-switcher__ordinal {
+  color: var(--paw-terminal-faint);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.paw-terminal-switcher li button[aria-current] .paw-terminal-switcher__ordinal { color: var(--paw-terminal-bright); }
 .paw-terminal-switcher li button > span { min-width: 0; display: grid; gap: 1px; }
 .paw-terminal-switcher li button :is(strong, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paw-terminal-switcher li button strong { font-size: 13px; font-weight: 600; }
@@ -401,7 +548,7 @@
 }
 .paw-terminal-switcher li i[data-state='running'] {
   border: 0;
-  background: #30d158;
+  background: var(--paw-terminal-live);
   box-shadow: 0 0 0 2px rgb(48 209 88 / 16%);
 }
 .paw-terminal-switcher li i[data-state='exited'][data-exit-failure] {
@@ -409,50 +556,6 @@
   background: var(--paw-terminal-danger);
   box-shadow: 0 0 0 2px rgb(248 113 113 / 14%);
 }
-
-.paw-terminal-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: calc(100% - 28px);
-  padding: 5px 6px 5px 10px;
-  color: var(--paw-terminal-muted);
-}
-.paw-terminal-search input {
-  width: clamp(120px, 32cqi, 220px);
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--paw-terminal-text);
-  font: inherit;
-  outline: none;
-}
-.paw-terminal-search input::placeholder { color: #6b727e; }
-.paw-terminal-search__count {
-  flex: 0 0 auto;
-  min-width: 3ch;
-  color: #aab1bc;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-}
-.paw-terminal-search button {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #aab1bc;
-  cursor: pointer;
-  transition: background-color 120ms var(--paw-terminal-ease), color 120ms var(--paw-terminal-ease);
-}
-.paw-terminal-search button:disabled { cursor: default; opacity: .35; }
-.paw-terminal-search button:focus-visible,
-.paw-terminal-search input:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: -2px; }
 
 .paw-terminal-create {
   display: grid;
@@ -517,19 +620,113 @@
 .paw-terminal-create__actions button:disabled { cursor: not-allowed; opacity: .45; }
 .paw-terminal-create__actions button:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: 1px; }
 
-/* The JSX console is the terminal surface plus its status footer. Keep that
-   contract in the feature stylesheet so a standalone mount does not depend
-   on the PAWOS shell override to reserve the footer row. */
-.paw-terminal-console[data-session] {
-  grid-template-rows: minmax(0, 1fr) 30px;
+/* The error notice is an opaque instrument panel floated over the console,
+   not a band: an arriving or dismissed notice must never resize the live
+   PTY. It stays until dismissed, retried, or truthfully cleared by the next
+   success. */
+.paw-terminal-error {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  right: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgb(255 69 58 / 32%);
+  border-radius: 12px;
+  background: #2b161a;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 16px 40px rgb(0 0 0 / 46%);
+  color: var(--paw-terminal-danger);
+  font-size: 14px;
+  line-height: 1.45;
+  animation: paw-terminal-state-enter 180ms var(--paw-terminal-ease) both;
+}
+.paw-terminal-error > span {
+  min-width: 0;
+  flex: 1;
+}
+.paw-terminal-error button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 120ms var(--paw-terminal-ease), transform 120ms var(--paw-terminal-ease);
+}
+.paw-terminal-error button:active { transform: scale(.92); }
+.paw-terminal-error .paw-terminal-error__retry {
+  width: auto;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgb(255 69 58 / 32%);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
 }
 
-/* An ended session keeps its backlog readable and adds one truthful notice
-   row between the output and the status footer. */
-.paw-terminal-console[data-session][data-ended] {
-  grid-template-rows: minmax(0, 1fr) auto 30px;
+/* -------------------------------------------------------------------------
+   The PTY surface — the one flexible band, and the one thing that scrolls.
+   ------------------------------------------------------------------------- */
+.paw-terminal-xterm {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 13px 17px 8px;
+  background: var(--paw-terminal-bg);
 }
 
+/* Motion 3 of 3 — focus. The console edge lights in the App accent exactly
+   while keystrokes reach the PTY, so a click that missed the surface is
+   visible before anything is typed into nothing. */
+.paw-terminal-xterm::before {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  border-top: 1px solid transparent;
+  content: '';
+  pointer-events: none;
+  transition: border-color 220ms var(--paw-terminal-ease), box-shadow 220ms var(--paw-terminal-ease);
+}
+.paw-terminal-xterm:focus-within::before {
+  border-top-color: color-mix(in srgb, var(--paw-terminal-accent) 48%, transparent);
+  box-shadow: inset 0 1px 16px color-mix(in srgb, var(--paw-terminal-accent) 11%, transparent);
+}
+
+/* One quiet ambient layer: a faint accent glow along the top edge and a
+   bottom vignette give the console optical depth without touching contrast.
+   It never intercepts the pointer and never animates. */
+.paw-terminal-xterm::after {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background:
+    radial-gradient(130% 46% at 50% -6%, color-mix(in srgb, var(--paw-terminal-accent) 5%, transparent), transparent 58%),
+    radial-gradient(150% 52% at 50% 116%, rgb(0 0 0 / 22%), transparent 55%);
+  content: '';
+  pointer-events: none;
+}
+/* An ended session is readable but visibly past tense. */
+.paw-terminal-console[data-ended] .paw-terminal-xterm { filter: saturate(.8) brightness(.93); }
+.paw-terminal-console[data-ended] .paw-terminal-xterm:focus-within::before { border-top-color: transparent; box-shadow: none; }
+.paw-terminal-xterm .xterm { height: 100%; }
+.paw-terminal-xterm .xterm-viewport {
+  background: var(--paw-terminal-bg) !important;
+  scrollbar-color: rgb(255 255 255 / 16%) transparent;
+}
+.paw-terminal-xterm .xterm-screen { cursor: text; }
+
+/* -------------------------------------------------------------------------
+   Ended-session band.
+   ------------------------------------------------------------------------- */
 .paw-terminal-ended {
   display: flex;
   flex-wrap: wrap;
@@ -538,11 +735,16 @@
   gap: 6px 14px;
   padding: 7px 13px;
   border-top: 1px solid var(--paw-terminal-line);
+  box-shadow: inset 2px 0 0 rgb(255 255 255 / 10%);
   background: linear-gradient(180deg, var(--paw-terminal-raised), var(--paw-terminal-elevated));
   color: #aab1bc;
   font-size: 13px;
   line-height: 1.5;
   animation: paw-terminal-state-enter 180ms var(--paw-terminal-ease) both;
+}
+.paw-terminal-ended[data-failure] {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--paw-terminal-danger) 72%, transparent);
+  color: #d2b3b3;
 }
 .paw-terminal-ended__text { min-width: 0; flex: 1 1 240px; }
 .paw-terminal-ended__actions {
@@ -568,35 +770,12 @@
 .paw-terminal-ended__actions button:disabled { cursor: wait; opacity: .45; }
 .paw-terminal-ended__actions button:focus-visible { outline: 2px solid var(--paw-terminal-focus); outline-offset: 1px; }
 
-.paw-terminal-xterm {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  padding: 13px 17px 8px;
-  background: var(--paw-terminal-bg);
-}
-/* One quiet ambient layer: a faint accent glow along the top edge and a
-   bottom vignette give the console optical depth without touching contrast.
-   It never intercepts the pointer and never animates. */
-.paw-terminal-xterm::after {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  background:
-    radial-gradient(130% 46% at 50% -6%, color-mix(in srgb, var(--paw-terminal-accent) 5%, transparent), transparent 58%),
-    radial-gradient(150% 52% at 50% 116%, rgb(0 0 0 / 22%), transparent 55%);
-  content: '';
-  pointer-events: none;
-}
-.paw-terminal-console[data-ended] .paw-terminal-xterm { filter: saturate(.82) brightness(.94); }
-.paw-terminal-xterm .xterm { height: 100%; }
-.paw-terminal-xterm .xterm-viewport {
-  background: var(--paw-terminal-bg) !important;
-  scrollbar-color: rgb(255 255 255 / 16%) transparent;
-}
-.paw-terminal-xterm .xterm-screen { cursor: text; }
-
+/* -------------------------------------------------------------------------
+   Status band. It reads left to right in order of how much the truth costs
+   to be wrong: live state, then where the shell runs, then the process facts
+   that only ever confirm it. Narrow windows retire the facts, never the
+   state and never the path.
+   ------------------------------------------------------------------------- */
 .paw-terminal-statusbar {
   min-width: 0;
   display: flex;
@@ -611,16 +790,26 @@
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
-.paw-terminal-statusbar > i {
+.paw-terminal-statusbar[data-failure] { border-top-color: color-mix(in srgb, var(--paw-terminal-danger) 34%, transparent); }
+.paw-terminal-statusbar__facts {
+  min-width: 0;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+}
+.paw-terminal-statusbar__facts > i {
   width: 2px;
   height: 2px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: currentColor;
 }
+.paw-terminal-statusbar__facts > span { flex: 0 0 auto; white-space: nowrap; }
 .paw-terminal-shell {
   min-width: 0;
-  max-width: min(22%, 180px);
+  max-width: min(30cqi, 180px);
   overflow: hidden;
   color: #aab1bc;
   font-weight: 560;
@@ -630,10 +819,10 @@
 .paw-terminal-cwd {
   min-width: 0;
   display: inline-flex;
-  flex: 1 1 320px;
+  flex: 1 1 auto;
   align-items: center;
   gap: 5px;
-  max-width: min(36%, 340px);
+  max-width: min(42cqi, 360px);
   height: 22px;
   padding: 0 6px;
   overflow: hidden;
@@ -702,7 +891,10 @@
   animation: paw-terminal-breathe 2.2s ease-in-out infinite;
 }
 .paw-terminal-exited-badge {
-  padding: 1px 8px;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
   border-radius: 999px;
   background: rgb(255 255 255 / 6%);
   box-shadow: 0 0 0 1px rgb(255 255 255 / 10%) inset;
@@ -711,7 +903,15 @@
   line-height: 1.4;
   animation: paw-terminal-state-enter 180ms var(--paw-terminal-ease) both;
 }
+.paw-terminal-statusbar[data-failure] .paw-terminal-exited-badge {
+  background: rgb(255 119 112 / 10%);
+  box-shadow: 0 0 0 1px rgb(255 119 112 / 26%) inset;
+  color: #ffa39c;
+}
 
+/* -------------------------------------------------------------------------
+   Empty and loading states.
+   ------------------------------------------------------------------------- */
 .paw-terminal-console__empty {
   height: 100%;
   display: flex;
@@ -723,8 +923,8 @@
   text-align: center;
   animation: paw-terminal-empty-enter 220ms var(--paw-terminal-ease) both;
 }
-/* A ghost prompt: the App's own glyph, not a repeated logo. The caret block
-   blinks like a waiting shell and holds still under reduced motion. */
+/* A ghost prompt: the App's own glyph, not a repeated logo. The caret blinks
+   like a waiting shell and holds still under reduced motion. */
 .paw-terminal-empty-glyph {
   display: inline-flex;
   align-items: baseline;
@@ -785,6 +985,7 @@
 
 @keyframes paw-terminal-state-enter { from { opacity: 0; transform: translate3d(0, -4px, 0); } }
 @keyframes paw-terminal-overlay-enter { from { opacity: 0; transform: translate3d(0, -6px, 0) scale(.98); } }
+@keyframes paw-terminal-band-open { from { opacity: 0; clip-path: inset(0 0 100% 0); } }
 @keyframes paw-terminal-empty-enter { from { opacity: 0; transform: translate3d(0, 8px, 0); } }
 @keyframes paw-terminal-running { from { opacity: .65; transform: scale(.55); } to { opacity: 0; transform: scale(1.75); } }
 @keyframes paw-terminal-tab-enter { from { opacity: .45; transform: translate3d(0, 4px, 0); } }
@@ -794,22 +995,57 @@
 }
 @keyframes paw-terminal-caret { 50% { opacity: 0; } }
 
+/* -------------------------------------------------------------------------
+   Narrow windows. The tab strip answers to its own width, because window
+   chrome hosts it beside the traffic lights and the window title where it is
+   far narrower than the App at the same window size. Text retires before hit
+   targets, and every retired label is already carried by the accessible name
+   and the tooltip.
+   ------------------------------------------------------------------------- */
+@container paw-terminal-bar (max-width: 420px) {
+  .paw-terminal-tab { min-width: 84px; flex-basis: 116px; max-width: 132px; }
+  .paw-terminal-tab-cwd { display: none; }
+}
+
+/* Icon-first tabs: the state dot plus the ordinal that the numbered chord
+   selects. The label and the path live on in the accessible name, the
+   tooltip, and the all-sessions switcher. */
+@container paw-terminal-bar (max-width: 300px) {
+  .paw-terminal-app__toolbar { gap: 5px; }
+  .paw-terminal-tab {
+    min-width: 54px;
+    max-width: 54px;
+    flex: 0 0 auto;
+  }
+  .paw-terminal-tab-main { gap: 5px; padding: 0 22px 0 8px; }
+  .paw-terminal-tab-label,
+  .paw-terminal-tab-cwd,
+  .paw-terminal-tab-exit { display: none; }
+  .paw-terminal-tab-ordinal { display: block; }
+}
+
+@container paw-terminal (max-width: 560px) {
+  .paw-terminal-statusbar__facts { display: none; }
+  .paw-terminal-cwd { max-width: none; }
+  .paw-terminal-xterm { padding: 9px 8px 6px; }
+  .paw-terminal-ended { padding: 6px 9px; }
+}
+
+/* The search band keeps its input and every hit target; only the decorative
+   glyph and the padding go. */
+@container paw-terminal (max-width: 380px) {
+  .paw-terminal-search { padding-left: 6px; }
+  .paw-terminal-search__glyph { display: none; }
+  .paw-terminal-search__count { min-width: 0; font-size: 11px; }
+  .paw-terminal-running-badge { padding-inline: 6px; }
+  .paw-terminal-state-tag { gap: 6px; }
+}
+
 @container paw-window (max-width: 480px) {
   .paw-window-titlebar[data-window-chrome='terminal-tabs'] { grid-template-columns: 76px 20px minmax(0, 1fr); gap: 6px; }
   .paw-window-titlebar[data-window-chrome='terminal-tabs'] .paw-window-title strong { display: none; }
   .paw-terminal-app__toolbar { padding-inline: 6px; }
   .paw-terminal-app__toolbar[data-window-chrome] { padding-inline: 0; }
-  .paw-terminal-tab { min-width: 88px; max-width: 118px; }
-  .paw-terminal-tab-cwd { display: none; }
-}
-
-@container paw-terminal (max-width: 560px) {
-  .paw-terminal-statusbar > i,
-  .paw-terminal-statusbar > span:not(.paw-terminal-cwd):not(.paw-terminal-state-tag),
-  .paw-terminal-statusbar > strong { display: none; }
-  .paw-terminal-cwd { max-width: calc(100% - 42px); }
-  .paw-terminal-running-badge { padding-inline: 6px; }
-  .paw-terminal-xterm { padding: 9px 8px 6px; }
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -829,6 +1065,11 @@
   .paw-terminal-console__empty button:hover { box-shadow: 0 9px 28px color-mix(in srgb, var(--paw-terminal-accent) 30%, transparent); }
 }
 
+/* -------------------------------------------------------------------------
+   Reduced motion. The three deliberate signals — tab switch, search open,
+   PTY focus — degrade to instant state changes; colour, ring and weight
+   still carry every meaning.
+   ------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   .paw-terminal-error,
   .paw-terminal-ended,
@@ -841,6 +1082,8 @@
   .paw-terminal-empty-glyph > i,
   .paw-terminal-running-badge > i,
   .paw-terminal-tab-main i[data-state="running"]::after { animation: none; transform: none; }
+  .paw-terminal-tab::before,
+  .paw-terminal-tab[data-selected]::before { transform: none; transition-property: opacity; }
   .paw-terminal-tab,
   .paw-tab-close,
   .paw-terminal-tab-new,
@@ -863,6 +1106,8 @@
 :root[data-reduce-motion='true'] .paw-terminal-empty-glyph > i,
 :root[data-reduce-motion='true'] .paw-terminal-running-badge > i,
 :root[data-reduce-motion='true'] .paw-terminal-tab-main i[data-state="running"]::after { animation: none; transform: none; }
+:root[data-reduce-motion='true'] .paw-terminal-tab::before,
+:root[data-reduce-motion='true'] .paw-terminal-tab[data-selected]::before { transform: none; transition-property: opacity; }
 :root[data-reduce-motion='true'] .paw-terminal-tab,
 :root[data-reduce-motion='true'] .paw-tab-close,
 :root[data-reduce-motion='true'] .paw-terminal-tab-new,
@@ -886,4 +1131,5 @@
   .paw-terminal-running-badge > i,
   .paw-terminal-empty-glyph > i { background: currentColor; forced-color-adjust: none; }
   .paw-terminal-tab[data-selected]::before { background: Highlight; }
+  .paw-terminal-xterm:focus-within::before { border-top-color: Highlight; }
 }

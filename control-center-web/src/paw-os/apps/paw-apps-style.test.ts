@@ -346,20 +346,28 @@ describe('PAWOS semantic type roles', () => {
     );
   });
 
-  it('collapses System App navigation from the owning PAW window width', () => {
-    expect(systemMigratedCss).not.toContain('@container paw-system-app');
+  it('collapses System App navigation from the App container, not the viewport', () => {
+    // A System App is a window App: it measures its own box, so the rail
+    // collapses the same way in a maximized window, a half-snapped one, and a
+    // satellite frame. The container therefore sits on `.paw-system-app`, and
+    // because a container can never restyle itself the reflowing rail width
+    // lives on the child frame.
+    expect(systemMigratedCss).toContain('container: paw-sysapp / size;');
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 720px\)[\s\S]*?\.paw-desktop-root \.paw-system-app\s*\{[^}]*grid-template-columns:\s*54px minmax\(0, 1fr\);/s,
+      /\.paw-desktop-root \.paw-system-app__frame\s*\{[^}]*grid-template-columns:\s*var\(--paw-system-rail-w\) minmax\(0, 1fr\);/s,
+    );
+    expect(systemMigratedCss).toMatch(
+      /@container paw-sysapp \(max-width: 560px\)[\s\S]*?\.paw-desktop-root \.paw-system-app__frame\s*\{\s*--paw-system-rail-w:\s*56px;/s,
     );
     // The rail may drop its labels, but never a live decision or health count.
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 720px\)[\s\S]*?button > span:not\(\.paw-system-app__nav-badge\)\s*\{\s*display:\s*none;/s,
+      /@container paw-sysapp \(max-width: 560px\)[\s\S]*?\.paw-system-app__nav-label\s*\{\s*display:\s*none;/s,
     );
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 720px\)[\s\S]*?\.paw-system-app__nav-badge\s*\{[^}]*position:\s*absolute;/s,
+      /@container paw-sysapp \(max-width: 560px\)[\s\S]*?\.paw-system-app__nav-badge\s*\{[^}]*position:\s*absolute;/s,
     );
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 520px\)[\s\S]*?\.paw-system-app \.(?:mgmt-metrics)\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
+      /@container paw-sysapp \(max-width: 420px\)[\s\S]*?\.paw-system-app \.(?:mgmt-metrics)\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
     );
     expect(systemMigratedCss).not.toContain('.paw-system-app *::before');
     expect(systemMigratedCss).not.toContain('animation-duration: .001ms !important');
