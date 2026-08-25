@@ -6,7 +6,11 @@ import {
   INITIAL_SCAN_STATE,
   scanIncrementalMarkdown,
 } from './progressive-markdown';
-import { findSafeInlineBoundary } from './progressive-markdown/safeInlineBoundary';
+import {
+  advanceToSafeBoundary,
+  findSafeInlineBoundary,
+  remapVisibleOffsetAfterEdit,
+} from './progressive-markdown/safeInlineBoundary';
 
 afterEach(() => {
   cleanup();
@@ -52,6 +56,46 @@ describe('progressive markdown streaming path', () => {
     // them immediately is correct, pinning to the ASCII space is not.
     const mixed = 'PAWOS 渲染优化已经生效';
     expect(findSafeInlineBoundary(mixed)).toBe(mixed.length);
+  });
+
+  it('catches up on a burst instead of stepping a fixed distance per frame', () => {
+    const text = `${'delivered text that already arrived. '.repeat(40)}tail`;
+    const ceiling = findSafeInlineBoundary(text);
+
+    // A 1400-character backlog cleared 40 characters at a time would trail the
+    // delivered answer by dozens of frames.
+    const catchUp = advanceToSafeBoundary(text, 0, ceiling);
+    expect(catchUp).toBeGreaterThan(ceiling / 5);
+
+    // Near the end the step falls back to the base, so the last few words
+    // still read as typing rather than snapping into place.
+    const nearEnd = advanceToSafeBoundary(text, ceiling - 30, ceiling);
+    expect(nearEnd).toBe(ceiling);
+    expect(advanceToSafeBoundary(text, ceiling, ceiling)).toBe(ceiling);
+  });
+
+  it('keeps the reveal position when a retry rewrites only the opening', () => {
+    const previous = '旧的开头。\n\n共同的主体内容，很长的一段。\n\n结尾。';
+    const next = '全新的开头，更长一些。\n\n共同的主体内容，很长的一段。\n\n结尾。';
+    // The reader had everything through the shared body visible.
+    const visible = previous.length - '结尾。'.length;
+
+    const mapped = remapVisibleOffsetAfterEdit(previous, next, visible);
+
+    // Measured from the end, so the same shared text stays visible instead of
+    // collapsing to the common prefix and replaying the whole reveal.
+    expect(next.slice(0, mapped)).toContain('共同的主体内容，很长的一段。');
+    expect(mapped).toBe(next.length - '结尾。'.length);
+  });
+
+  it('falls back to the common prefix when a rewrite genuinely diverges', () => {
+    const previous = '共享前缀。原来的后半段完全不同。';
+    const next = '共享前缀。换成了另一套完全不相干的说法。';
+
+    expect(remapVisibleOffsetAfterEdit(previous, next, previous.length))
+      .toBeLessThanOrEqual(next.length);
+    // An append is not an edit: the offset survives untouched.
+    expect(remapVisibleOffsetAfterEdit('前半段', '前半段加上新内容', 3)).toBe(3);
   });
 
   it('freezes completed chunk DOM identity while only the streaming tail updates', async () => {

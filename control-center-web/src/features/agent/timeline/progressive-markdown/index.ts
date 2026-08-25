@@ -11,6 +11,12 @@ export {
   splitSettledMarkdown,
 } from './blockScanner';
 export { detectOpenFenceTail, type OpenFenceTail } from './openFence';
+export {
+  advanceToSafeBoundary,
+  computeReleaseCeiling,
+  findSafeInlineBoundary,
+  remapVisibleOffsetAfterEdit,
+} from './safeInlineBoundary';
 export { normalizeStreamingMarkdown } from './normalizeStreamingMarkdown';
 export { useDeferredStreaming } from './useDeferredStreaming';
 export { useProgressiveChunks } from './useProgressiveChunks';

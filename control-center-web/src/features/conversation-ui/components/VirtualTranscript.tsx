@@ -29,7 +29,7 @@ export function VirtualTranscript({ empty, label, lead }: {
   const { conversationId, messages, phase } = surface;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sizerRef = useRef<HTMLDivElement | null>(null);
-  const pinned = usePinnedTranscript(scrollRef, sizerRef);
+  const pinned = usePinnedTranscript(scrollRef, sizerRef, conversationId);
 
   const getKey = useCallback((message: TranscriptMessage) => message.id, []);
   const estimate = useCallback((message: TranscriptMessage) => estimateMessage(message), []);
