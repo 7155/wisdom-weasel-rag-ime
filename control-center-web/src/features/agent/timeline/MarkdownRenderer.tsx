@@ -4,6 +4,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import { CodeContentBlock, StreamingCursor } from './CodeDiffRenderers';
+import {
+  ProgressiveMarkdown,
+  type ProgressiveChunkRenderContext,
+} from './progressive-markdown';
 import { text } from './renderer-values';
 import {
   HtmlOutputPlaceholder,
@@ -17,6 +21,7 @@ export function TextBlockRenderer({
 }: AgentBlockRenderProps) {
   return (
     <MarkdownBody
+      documentKey={block.id}
       streamingTail={streamingTail}
       text={text(block.data.text ?? block.data.markdown)}
     />
@@ -24,18 +29,14 @@ export function TextBlockRenderer({
 }
 
 export function MarkdownBody({
+  documentKey = '',
   streamingTail = false,
   text: source,
 }: {
+  documentKey?: string;
   streamingTail?: boolean;
   text: string;
 }) {
-  const partition = useMemo(
-    () => streamingTail
-      ? partitionStreamingMarkdownFragments(source)
-      : { stableFragments: [source], active: '' },
-    [source, streamingTail],
-  );
   const standaloneHtml = useMemo(() => standaloneHtmlSource(source), [source]);
   if (!source) return null;
   if (standaloneHtml) {
@@ -43,15 +44,82 @@ export function MarkdownBody({
       ? <HtmlOutputPlaceholder />
       : <InlineHtmlOutput content={standaloneHtml} />;
   }
+  if (!streamingTail) {
+    return (
+      <div className="agent-markdown">
+        <StableMarkdownFragment source={source} />
+      </div>
+    );
+  }
+  // Live path: the cleanroom scanner freezes the stable prefix chunk-by-chunk
+  // (React.memo keeps frozen DOM identical per token batch) while only the
+  // active tail re-parses. holdBack stays off: PAWOS batches live-store
+  // commits upstream and the transcript must show delivered text
+  // synchronously rather than re-pace it through a rAF scheduler.
   return (
-    <div className="agent-markdown">
-      {partition.stableFragments.map((fragment, index) => (
-        <StableMarkdownFragment deferRichHtml={streamingTail} key={`stable:${index}`} source={fragment} />
-      ))}
-      {partition.active ? (
-        <MarkdownFragment source={partition.active} streamingTail />
-      ) : null}
+    <ProgressiveMarkdown
+      className="agent-markdown"
+      documentKey={documentKey}
+      holdBack={false}
+      isStreaming
+      renderChunk={renderProgressiveChunk}
+      text={source}
+    />
+  );
+}
+
+function renderProgressiveChunk(context: ProgressiveChunkRenderContext) {
+  if (!context.active || context.settled) {
+    return (
+      <StableMarkdownFragment
+        deferRichHtml={!context.settled}
+        source={context.text}
+      />
+    );
+  }
+  return (
+    <div className="agent-markdown__active-tail" data-active-tail="">
+      {context.openFence ? (
+        <>
+          {context.openFence.prefix.trim() ? (
+            <StableMarkdownFragment
+              deferRichHtml
+              source={context.openFence.prefix}
+            />
+          ) : null}
+          <StreamingFenceIsland
+            language={context.openFence.language}
+            value={context.openFence.value}
+          />
+        </>
+      ) : (
+        <MarkdownFragment source={context.text} streamingTail />
+      )}
     </div>
+  );
+}
+
+/**
+ * Open-fence fast path: while a fenced block is still unclosed at the
+ * streaming tail, its growing body bypasses the Markdown parser entirely and
+ * streams into the same code island the parsed path would produce. HTML
+ * fences keep the inert placeholder policy they already have while streaming.
+ */
+function StreamingFenceIsland({
+  language,
+  value,
+}: {
+  language: string;
+  value: string;
+}) {
+  const kind = language.toLowerCase();
+  if (kind === 'html' || kind === 'htm') return <HtmlOutputPlaceholder />;
+  return (
+    <CodeContentBlock
+      code={value}
+      language={language || 'text'}
+      streamingTail
+    />
   );
 }
 
