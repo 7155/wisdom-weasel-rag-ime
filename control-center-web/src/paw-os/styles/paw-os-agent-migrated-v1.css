@@ -1297,25 +1297,35 @@
 
 .paw-agent-trace-v1__payloads {
   display: grid;
-  gap: 6px;
+  gap: 0;
 }
 
+/* 证据卡里再套一圈卡片：调用参数、过程记录、工具返回本来就是这张卡的三段，
+   给每段再画一遍边框和底色，等于把同一条边界画了两次，也把 pre 的可读宽度
+   又收窄了一圈。分段改用一条细线，原文自己仍是有界的阅读器。 */
 .paw-agent-trace-v1__payload {
   overflow: hidden;
-  border: 1px solid var(--paw-chat-border);
-  border-radius: 7px;
-  background: var(--paw-chat-surface-subtle);
+  border: 0;
+  border-top: 1px solid var(--paw-chat-border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .paw-agent-trace-v1__payload > summary {
   display: grid;
-  min-height: 36px;
+  min-height: 30px;
   grid-template-columns: minmax(0, 1fr) auto 15px;
   align-items: center;
   gap: 8px;
-  padding: 6px 9px;
+  padding: 4px 2px;
+  border-radius: 6px;
   cursor: pointer;
   list-style: none;
+  transition: background-color 140ms ease;
+}
+
+.paw-agent-trace-v1__payload > summary:hover {
+  background: var(--paw-chat-surface-subtle);
 }
 
 .paw-agent-trace-v1__payload > summary::-webkit-details-marker {
@@ -1339,13 +1349,14 @@
 
 .paw-agent-trace-v1__payload-body > pre {
   max-height: min(38vh, 420px);
-  margin: 0;
+  margin: 0 0 8px;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 11px 12px;
-  border-top: 1px solid var(--paw-chat-border);
-  background: #fff;
+  padding: 10px 11px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 7px;
+  background: var(--paw-chat-surface-subtle);
   color: var(--paw-chat-text);
   font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
