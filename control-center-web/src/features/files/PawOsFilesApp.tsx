@@ -563,7 +563,7 @@ export function PawOsFilesApp() {
   return (
     <>
       {windowChromeTarget ? <PawWindowChromePortal>{filesTools}</PawWindowChromePortal> : null}
-      <section className="paw-files-app" data-session-error={sessionError ? true : undefined} data-tools-in-window-chrome={windowChromeTarget ? true : undefined}>
+      <section className="paw-files-app">
         <h1 className="paw-files-app__title">Session 文件</h1>
         {windowChromeTarget ? null : filesTools}
         {sessionError ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionError}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}

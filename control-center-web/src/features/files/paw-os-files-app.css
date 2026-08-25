@@ -11,23 +11,51 @@
    window repaint recolours the whole App while the standalone fallbacks stay
    a readable light theme.
 
+   Window skeleton (not a web page): the App is a column of fixed chrome
+   bands around exactly one flexible band. The scope bar, the Session error
+   band and the status bar never shrink; the workspace band absorbs whatever
+   the window gives it and scrolls locally. Nothing here is sized against the
+   viewport, so a continuous drag-resize only re-runs this one distribution.
+
    Cross-owner contracts pinned by tests (do not "clean up"):
    - `--color-canvas: #f4f6f8` stays a literal light fallback.
    - `.paw-files-preview` keeps its true paper-white `background: #fff` even
      when the shell tints the surrounding chrome.
-   - Narrow behaviour lives in `@container paw-files (...)` queries, never
-     `@media`, because the App reflows with its window, not the viewport.
+   - Narrow behaviour lives in `@container` queries, never `@media`, because
+     the App reflows with its window, not the viewport. Three containers,
+     each queried by the surface that actually owns the width: `paw-files`
+     (the App body) decides the single-pane swap, `paw-files-tools` (the
+     scope bar, which may live in the titlebar) decides label-vs-icon, and
+     `paw-files-reader` decides the reader header density.
    - The shared code/diff/plain readers own the `--color-code-bg` /
      `--color-code-text` pair; no block here may repaint that code surface.
    - `paw-os.css` re-points the `--color-*` tokens per window
      (`.paw-window-shell[data-app='files'] …`) and repaints `.paw-files-tree`;
      `paw-os-motion.css` owns arrival motion for the reader/state surfaces.
+   - Controls follow the shared PAWOS control language owned by
+     `paw-os-controls.css`: 32 px tall, 8 px radius, opaque field, cobalt
+     focus ring. Files only re-points those tokens locally so the scope bar
+     keeps working when it is portalled outside `.paw-files-app`.
    ========================================================================== */
 
 /* -------------------------------------------------------------------------
    Scoped tokens. `--color-*` fallbacks keep the App legible outside a PAWOS
    window; `--paw-files-*` derivations give every surface one hue system.
+   The control aliases are declared on the scope bar as well, because window
+   chrome portals that bar out of the App subtree.
    ------------------------------------------------------------------------- */
+.paw-files-app,
+.paw-files-app__toolbar {
+  --paw-files-control-h: var(--paw-control-h, 32px);
+  --paw-files-control-radius: var(--paw-control-radius, 8px);
+  --paw-files-control-bg: var(--paw-control-bg, #fff);
+  --paw-files-control-line: var(--paw-control-line, rgb(23 26 33 / 16%));
+  --paw-files-control-ink: var(--paw-control-ink, #171a21);
+  --paw-files-control-muted: var(--paw-control-muted, #5d6675);
+  --paw-files-focus-line: var(--paw-focus-line, rgb(47 107 255 / 55%));
+  --paw-files-focus-halo: var(--paw-focus-halo, rgb(47 107 255 / 14%));
+}
+
 .paw-files-app {
   --color-canvas: #f4f6f8;
   --color-paper: #fff;
@@ -36,7 +64,7 @@
   --color-text: #1d1d1f;
   --color-text-secondary: #5d6470;
   --color-text-tertiary: #858c97;
-  --color-accent: var(--paw-app-accent, #2c6cb8);
+  --color-accent: var(--paw-app-accent, var(--paw-accent, #2563eb));
   --color-danger: #d70015;
   --color-warning: #a86408;
   --paw-files-support: var(--paw-app-support, #c79427);
@@ -55,17 +83,31 @@
   --paw-files-hue-plain: #697483;
   --paw-files-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   --paw-files-ease: var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
-  display: grid;
+  display: flex;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr) 28px;
+  flex-direction: column;
   overflow: hidden;
   background: var(--color-paper);
   color: var(--color-text);
   font-family: var(--font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
   container: paw-files / inline-size;
+}
+
+/* Chrome bands keep their intrinsic height whether or not the Session error
+   band is mounted and whether or not the scope bar sits in window chrome, so
+   no row template has to be restated per combination. */
+.paw-files-app > :is(.paw-files-app__toolbar, .paw-native-app__error, .paw-files-statusbar) {
+  flex: 0 0 auto;
+}
+
+/* Exactly one band absorbs the window; `min-height: 0` is what lets its
+   panes scroll locally instead of pushing the status bar off the frame. */
+.paw-files-app__workspace {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .paw-files-app ::selection { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
@@ -90,29 +132,22 @@
   white-space: nowrap;
 }
 
-.paw-files-app[data-session-error] {
-  grid-template-rows: auto auto minmax(0, 1fr) 28px;
-}
-
-.paw-files-app[data-tools-in-window-chrome] {
-  grid-template-rows: minmax(0, 1fr) 28px;
-}
-
-.paw-files-app[data-tools-in-window-chrome][data-session-error] {
-  grid-template-rows: auto minmax(0, 1fr) 28px;
-}
-
 /* -------------------------------------------------------------------------
    Window-chrome projection. When the window frames Files, the scope bar
    moves into the titlebar and the body keeps every pixel for content.
    ------------------------------------------------------------------------- */
 .paw-window-titlebar[data-window-chrome='files-tools'] {
+  --color-paper: #fff;
   --color-surface: #fff;
   --color-text: #1d1d1f;
   --color-text-secondary: #5d6470;
   --color-text-tertiary: #858c97;
   --color-border: rgb(29 29 31 / 10%);
-  --color-accent: var(--paw-app-accent, #2c6cb8);
+  --color-accent: var(--paw-app-accent, var(--paw-accent, #2563eb));
+  --paw-files-hairline: rgb(29 29 31 / 11%);
+  --paw-files-tint: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  --paw-files-tint-strong: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --paw-files-ease: var(--paw-ease-out, cubic-bezier(.23, 1, .32, 1));
   grid-template-columns: 76px minmax(44px, 74px) minmax(0, 1fr);
   gap: 8px;
   padding-right: 8px;
@@ -127,19 +162,23 @@
 
 /* -------------------------------------------------------------------------
    Scope bar: which Session's authority, one bounded filter, one refresh.
+
+   The bar is its own container because it has two homes — the App body and
+   the window titlebar — with very different widths at the same window size.
+   Flexible tracks with `min-width: 0` mean the two fields absorb a resize by
+   shrinking together; the refresh action never shrinks and never wraps.
    ------------------------------------------------------------------------- */
 .paw-files-app__toolbar {
-  display: grid;
+  display: flex;
   min-width: 0;
   min-height: 44px;
-  grid-template-columns: minmax(150px, 280px) minmax(120px, 280px) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--paw-files-hairline);
   background: color-mix(in srgb, var(--color-chrome) 78%, var(--color-paper));
   user-select: none;
+  container: paw-files-tools / inline-size;
 }
 
 .paw-files-app__toolbar[data-window-chrome] {
@@ -156,32 +195,40 @@
   position: relative;
   display: grid;
   min-width: 0;
-  height: 30px;
+  height: var(--paw-files-control-h);
   align-items: center;
-  border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
-  background: var(--color-paper);
+  border: 1px solid var(--paw-files-control-line);
+  border-radius: var(--paw-files-control-radius);
+  background: var(--paw-files-control-bg);
   color: var(--color-text-tertiary);
   transition: border-color 150ms var(--paw-files-ease), box-shadow 150ms var(--paw-files-ease);
 }
 
-.paw-files-scope { grid-template-columns: auto minmax(0, 1fr); }
+.paw-files-scope {
+  flex: 1 1 200px;
+  max-width: 300px;
+  grid-template-columns: auto minmax(0, 1fr);
+}
 
 .paw-files-scope > svg {
   position: absolute;
-  left: 9px;
+  left: 10px;
   color: var(--color-accent);
   pointer-events: none;
 }
 
-.paw-files-scope select {
+/* A conscious, scoped override of the shared select skin: this field carries
+   a leading scope glyph, so the wrapper paints the opaque control surface and
+   the caret while the native control keeps only its behaviour. */
+.paw-files-app__toolbar .paw-files-scope select {
   width: 100%;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   grid-column: 1 / -1;
   border: 0;
   border-radius: inherit;
-  padding: 0 24px 0 28px;
+  padding: 0 26px 0 30px;
   background: transparent;
   color: var(--color-text);
   font: inherit;
@@ -191,20 +238,33 @@
   outline: none;
 }
 
-.paw-files-scope select:disabled {
+.paw-files-scope::after {
+  position: absolute;
+  right: 11px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.6px solid var(--paw-files-control-muted);
+  border-bottom: 1.6px solid var(--paw-files-control-muted);
+  content: '';
+  pointer-events: none;
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.paw-files-app__toolbar .paw-files-scope select:disabled {
   color: var(--color-text-tertiary);
   cursor: not-allowed;
 }
 
 .paw-files-scope:focus-within,
 .paw-files-filter:focus-within {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+  border-color: var(--paw-files-focus-line);
+  box-shadow: 0 0 0 3px var(--paw-files-focus-halo);
 }
 
 /* The filter narrows what is already loaded from the authorized roots; it is
    a projection of local state, never a workspace-wide server search. */
 .paw-files-filter {
+  flex: 2 1 160px;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 6px;
   padding: 0 8px 0 9px;
@@ -253,20 +313,27 @@
 .paw-files-preview__state button,
 .paw-files-preview__more > button {
   display: inline-flex;
-  min-height: 30px;
+  min-height: var(--paw-files-control-h);
   align-items: center;
   justify-content: center;
   gap: 5px;
-  border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
+  border: 1px solid var(--paw-files-control-line);
+  border-radius: var(--paw-files-control-radius);
   padding: 0 10px;
-  background: var(--color-paper);
+  background: var(--paw-files-control-bg);
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
   line-height: 1.4;
+  white-space: nowrap;
   transition: transform 130ms var(--paw-files-ease), border-color 140ms var(--paw-files-ease), background-color 140ms var(--paw-files-ease), color 140ms var(--paw-files-ease);
+}
+
+/* The one action in the scope bar keeps its full hit target through every
+   resize: it never shrinks, never wraps, and only drops its label. */
+.paw-files-refresh {
+  flex: 0 0 auto;
 }
 
 .paw-files-refresh:disabled {
@@ -302,12 +369,19 @@
 
 /* -------------------------------------------------------------------------
    Workspace split: directory rail beside the reading pane.
+
+   One row, two columns, both able to reach zero: the rail is a clamped
+   proportion so a wide window does not turn it into a second reading pane,
+   and the reader owns every remaining pixel. No track carries a fixed
+   minimum, so dragging the window edge redistributes continuously instead of
+   overflowing the frame and clipping whichever pane lost the argument.
    ------------------------------------------------------------------------- */
 .paw-files-app__workspace {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: minmax(220px, 30%) minmax(0, 1fr);
+  grid-template-columns: clamp(180px, 26%, 300px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   background: var(--color-paper);
 }
@@ -366,11 +440,14 @@
   color: var(--color-accent);
 }
 
+/* The rail scrolls itself. `overscroll-behavior` keeps a flick at the end of
+   the list inside the pane instead of handing it to the desktop underneath. */
 .paw-files-tree__scroll {
   min-height: 0;
   flex: 1 1 auto;
   padding: 0 7px 18px;
   overflow: auto;
+  overscroll-behavior: contain;
   scrollbar-color: color-mix(in srgb, var(--paw-files-ink) 18%, transparent) transparent;
   scrollbar-width: thin;
 }
@@ -754,6 +831,8 @@ i.paw-files-tree__disclosure {
    Reading pane. The frozen cross-owner contract keeps this a true
    paper-white sheet regardless of the window tint around it.
    ------------------------------------------------------------------------- */
+/* The reader is its own container: in the split layout it is a good deal
+   narrower than the App, so its header density has to follow the pane. */
 .paw-files-preview {
   display: grid;
   min-width: 0;
@@ -761,15 +840,19 @@ i.paw-files-tree__disclosure {
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: #fff;
+  container: paw-files-reader / inline-size;
 }
 
+/* Header and the bounded-read receipt are fixed bands; the body between them
+   is the only row that gives ground, so shortening the window can never push
+   an action out of the frame. */
 .paw-files-preview > header {
   display: flex;
   min-width: 0;
-  min-height: 56px;
+  min-height: 48px;
   align-items: center;
   gap: 10px;
-  padding: 9px 16px 9px 14px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--paw-files-hairline);
   background: var(--color-paper);
   animation: paw-files-preview-enter 190ms var(--paw-files-ease) both;
@@ -779,14 +862,14 @@ i.paw-files-tree__disclosure {
    back to the tree is always legible on a phone-width window. */
 .paw-files-preview__back {
   display: none;
-  height: 30px;
+  height: var(--paw-files-control-h);
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
-  border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
+  border: 1px solid var(--paw-files-control-line);
+  border-radius: var(--paw-files-control-radius);
   padding: 0 10px 0 5px;
-  background: var(--color-paper);
+  background: var(--paw-files-control-bg);
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
@@ -799,8 +882,8 @@ i.paw-files-tree__disclosure {
 /* The identity badge answers "what am I reading" before the name does. */
 .paw-files-preview__badge {
   display: grid;
-  min-width: 36px;
-  height: 30px;
+  min-width: 34px;
+  height: var(--paw-files-control-h);
   flex: 0 0 auto;
   place-items: center;
   padding: 0 6px;
@@ -928,13 +1011,13 @@ i.paw-files-tree__disclosure {
 
 .paw-files-preview__action {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: var(--paw-files-control-h);
+  height: var(--paw-files-control-h);
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--paw-files-hairline);
-  border-radius: 8px;
-  background: var(--color-paper);
+  border: 1px solid var(--paw-files-control-line);
+  border-radius: var(--paw-files-control-radius);
+  background: var(--paw-files-control-bg);
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: transform 140ms var(--paw-files-ease), border-color 140ms var(--paw-files-ease), background-color 140ms var(--paw-files-ease), color 140ms var(--paw-files-ease);
@@ -963,6 +1046,7 @@ i.paw-files-tree__disclosure {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   background: #fff;
   scrollbar-color: color-mix(in srgb, var(--paw-files-ink) 18%, transparent) transparent;
 }
@@ -1089,13 +1173,18 @@ i.paw-files-tree__disclosure {
 /* -------------------------------------------------------------------------
    Reader states: empty desk, loading sketch, explicit binary/empty cards.
    ------------------------------------------------------------------------- */
+/* The empty desk keeps its own scroll: a very short window shows less of the
+   invitation rather than clipping it against the status bar. */
 .paw-files-preview__empty {
   display: grid;
+  min-height: 0;
   grid-row: 1 / -1;
   place-content: center;
   justify-items: center;
   gap: 8px;
   padding: 24px;
+  overflow: auto;
+  overscroll-behavior: contain;
   color: var(--color-text-tertiary);
   text-align: center;
 }
@@ -1418,6 +1507,7 @@ i.paw-files-tree__disclosure {
    ------------------------------------------------------------------------- */
 .paw-files-statusbar {
   min-width: 0;
+  min-height: 28px;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -1500,19 +1590,100 @@ i.paw-files-tree__disclosure {
 
 /* -------------------------------------------------------------------------
    Reflow. Files reflows with its window (container queries), never the
-   viewport: 860 stacks the rail above the reader, 560 swaps list for reader
-   with an explicit Back, and the titlebar variants compact in parallel.
+   viewport, and each surface answers to the container that actually owns its
+   width.
+
+   The App has exactly two layouts: rail beside reader, and one pane at a
+   time. There is no in-between mode that stacks the rail as a proportional
+   band, because that band both squeezed the reader on a short window and
+   leaked its height cap into the single-pane list.
    ------------------------------------------------------------------------- */
-@container paw-files (max-width: 860px) {
+@container paw-files (max-width: 620px) {
+  /* Single pane: the rail is the list until a file is open, then the reader
+     takes the whole band and the labelled Back pill returns to the list.
+     Both panes stay mounted, so the swap never costs the open file, the
+     expanded directories, or the filter query. */
   .paw-files-app__workspace {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(150px, 40%) minmax(0, 1fr);
+  }
+
+  .paw-files-app__workspace:not([data-file-open]) .paw-files-preview,
+  .paw-files-app__workspace[data-file-open] .paw-files-tree {
+    display: none;
   }
 
   .paw-files-tree {
-    max-height: 40%;
     border-right: 0;
-    border-bottom: 1px solid var(--paw-files-hairline);
+  }
+
+  .paw-files-preview__back {
+    display: inline-flex;
+  }
+
+  .paw-files-tree__root-id small {
+    display: none;
+  }
+}
+
+@container paw-files (max-width: 460px) {
+  .paw-files-preview__more {
+    padding-inline: 12px;
+  }
+
+  .paw-files-statusbar__root {
+    display: none;
+  }
+}
+
+/* Reader density follows the reading pane, which is much narrower than the
+   App whenever the rail is beside it. */
+@container paw-files-reader (max-width: 460px) {
+  .paw-files-preview__badge {
+    display: none;
+  }
+
+  .paw-files-crumbs__meta {
+    display: none;
+  }
+
+  .paw-files-preview__body .agent-file-markdown {
+    padding: 16px 16px 56px;
+  }
+}
+
+/* The scope bar answers to its own width because window chrome hosts it
+   beside the traffic lights and the window title, where it is far narrower
+   than the App at the same window size. Labels retire before hit targets. */
+@container paw-files-tools (max-width: 420px) {
+  .paw-files-refresh {
+    width: var(--paw-files-control-h);
+    padding: 0;
+  }
+
+  .paw-files-refresh > span {
+    display: none;
+  }
+}
+
+@container paw-files-tools (max-width: 300px) {
+  .paw-files-app__toolbar {
+    gap: 6px;
+  }
+
+  .paw-files-scope {
+    flex-basis: 120px;
+  }
+
+  .paw-files-scope > svg {
+    display: none;
+  }
+
+  .paw-files-app__toolbar .paw-files-scope select {
+    padding-left: 10px;
+  }
+
+  .paw-files-filter {
+    flex-basis: 110px;
   }
 }
 
@@ -1525,64 +1696,19 @@ i.paw-files-tree__disclosure {
   .paw-window-titlebar[data-window-chrome='files-tools'] .paw-window-title strong {
     display: none;
   }
-
-  .paw-files-app__toolbar {
-    grid-template-columns: minmax(0, 1fr) minmax(80px, 1fr) auto;
-  }
-
-  .paw-files-tree__root-id small {
-    display: none;
-  }
-
-  .paw-files-preview__body .agent-file-markdown {
-    padding: 16px;
-  }
 }
 
-@container paw-files (max-width: 560px) {
-  .paw-files-app__workspace {
-    grid-template-rows: minmax(0, 1fr);
-  }
-
-  .paw-files-app__workspace:not([data-file-open]) .paw-files-preview,
-  .paw-files-app__workspace[data-file-open] .paw-files-tree {
-    display: none;
-  }
-
-  .paw-files-preview__back {
-    display: inline-flex;
-  }
-
-  .paw-files-preview__badge {
-    display: none;
-  }
-
-  .paw-files-crumbs__meta {
-    display: none;
-  }
-
-  .paw-files-preview__more {
-    padding-inline: 12px;
-  }
-
-  .paw-files-statusbar__root {
-    display: none;
-  }
+/* -------------------------------------------------------------------------
+   Window drag and resize. The shell marks the interaction; Files answers by
+   freezing the affordances that would otherwise travel under a pointer that
+   is only moving a window edge.
+   ------------------------------------------------------------------------- */
+.paw-desktop-root[data-window-interaction] .paw-files-tree__row {
+  transition: none;
 }
 
-@container paw-window (max-width: 480px) {
-  .paw-files-app__toolbar {
-    padding-inline: 8px;
-  }
-
-  .paw-files-refresh {
-    width: 32px;
-    padding: 0;
-  }
-
-  .paw-files-refresh span {
-    display: none;
-  }
+.paw-desktop-root[data-window-interaction] .paw-files-tree__row:hover {
+  transform: none;
 }
 
 /* -------------------------------------------------------------------------

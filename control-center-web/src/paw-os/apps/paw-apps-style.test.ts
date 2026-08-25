@@ -328,8 +328,31 @@ describe('PAWOS semantic type roles', () => {
 
   it('keeps Files and Terminal layout contracts owned by their feature styles', () => {
     expect(filesSource).not.toContain("./paw-os-files-next.css");
-    expect(filesCss).toMatch(/@container paw-files \(max-width: 860px\)[\s\S]*?\.paw-files-app__workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[\s\S]*?\.paw-files-tree\s*\{[^}]*max-height:\s*40%;/s);
-    expect(filesCss).not.toMatch(/@media \(max-width: 860px\)[\s\S]*?\.paw-files-app__workspace/);
+    // Files is a window App, not a page: fixed chrome bands around one
+    // flexible band, and a workspace grid whose reader track can reach zero.
+    expect(filesCss).toMatch(/\.paw-files-app\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*overflow:\s*hidden;/s);
+    expect(filesCss).toMatch(/\.paw-files-app > :is\(\.paw-files-app__toolbar, \.paw-native-app__error, \.paw-files-statusbar\)\s*\{[^}]*flex:\s*0 0 auto;/s);
+    expect(filesCss).toMatch(/\.paw-files-app__workspace\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0;/s);
+    expect(filesCss).toMatch(/\.paw-files-app__workspace\s*\{[^}]*grid-template-columns:\s*clamp\(180px, 26%, 300px\) minmax\(0, 1fr\);[^}]*grid-template-rows:\s*minmax\(0, 1fr\);/s);
+    // One narrow layout, one owning container: the pane swap answers to the
+    // App body, never to the viewport, and no proportional height cap on the
+    // rail can leak into the single-pane list.
+    expect(filesCss).toMatch(/@container paw-files \(max-width: 620px\)[\s\S]*?\.paw-files-app__workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[\s\S]*?\.paw-files-app__workspace\[data-file-open\] \.paw-files-tree\s*\{\s*display:\s*none;/s);
+    expect(filesCss).not.toMatch(/@media \(max-width: (?:560|620|860)px\)[\s\S]*?\.paw-files-app__workspace/);
+    expect(filesCss).not.toContain('max-height: 40%');
+    expect(filesCss).not.toMatch(/\d+(?:\.\d+)?d?v(?:h|min|max)\b/);
+    // The scope bar and the reader each carry the width they are judged on,
+    // because window chrome hosts the bar and the rail narrows the reader.
+    expect(filesCss).toMatch(/\.paw-files-app__toolbar\s*\{[^}]*container:\s*paw-files-tools \/ inline-size;/s);
+    expect(filesCss).toMatch(/\.paw-files-preview\s*\{[^}]*container:\s*paw-files-reader \/ inline-size;/s);
+    expect(filesCss).toMatch(/@container paw-files-tools \(max-width: 420px\)[\s\S]*?\.paw-files-refresh > span\s*\{\s*display:\s*none;/s);
+    expect(filesCss).toMatch(/@container paw-files-reader \(max-width: 460px\)[\s\S]*?\.paw-files-preview__badge\s*\{\s*display:\s*none;/s);
+    // Files controls join the shared PAWOS control language instead of
+    // forking a private 30px scale on a translucent field.
+    expect(filesCss).toContain('--paw-files-control-h: var(--paw-control-h, 32px);');
+    expect(filesCss).toContain('--paw-files-control-bg: var(--paw-control-bg, #fff);');
+    expect(filesCss).toContain('--color-accent: var(--paw-app-accent, var(--paw-accent, #2563eb));');
+    expect(filesCss).not.toMatch(/(?:min-)?height:\s*30px/);
     expect(filesCss).toContain('--color-canvas: #f4f6f8');
     expect(filesCss).toMatch(/\.paw-files-preview\s*\{[^}]*background:\s*#fff;/s);
     expect(toolsMigratedCss).not.toContain('.paw-desktop-root .paw-files-app');
