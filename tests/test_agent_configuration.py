@@ -30,7 +30,7 @@ class AgentConfigurationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_product_default_starts_new_work_with_future_sol_max_profile(self) -> None:
+    def test_product_default_routes_visible_and_private_collaboration_models(self) -> None:
         configuration = default_agent_configuration()
         self.assertEqual(configuration["sessionDefaults"]["roleId"], "companion-future-v1")
         self.assertEqual(
@@ -44,16 +44,22 @@ class AgentConfigurationTests(unittest.TestCase):
         self.assertEqual(
             configuration["modelRouting"],
             {
-                route_id: {
+                "primary": {
                     "modelProfile": "inherit",
                     "thinkingLevel": "inherit",
-                }
-                for route_id in (
-                    "primary",
-                    "toolAgent",
-                    "subagent",
-                    "roomCoordinator",
-                )
+                },
+                "toolAgent": {
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "max",
+                },
+                "subagent": {
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "max",
+                },
+                "roomCoordinator": {
+                    "modelProfile": "openai-codex/gpt-5.6-sol",
+                    "thinkingLevel": "high",
+                },
             },
         )
 

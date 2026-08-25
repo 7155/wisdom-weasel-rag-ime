@@ -298,19 +298,13 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         }
         targets = [
             {
-                "id": "room-a:p2",
+                "id": f"room-a:p{index}",
                 "roomId": "room-a",
-                "sessionId": "room-a:s2",
-                "displayName": "澄·今",
+                "sessionId": f"room-a:s{index}",
+                "displayName": f"伙伴 {index}",
                 "status": "active",
-            },
-            {
-                "id": "room-a:p3",
-                "roomId": "room-a",
-                "sessionId": "room-a:s3",
-                "displayName": "澄·初",
-                "status": "active",
-            },
+            }
+            for index in range(2, 9)
         ]
         room = {
             "id": "room-a",
@@ -322,7 +316,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         by_session = {str(item["sessionId"]): item for item in targets}
         events = _RoomEvents()
         ledger = _RoomWorkLedger()
-        both_started = Event()
+        all_started = Event()
         start_lock = Lock()
         started: list[str] = []
         dispatched_work: list[dict[str, object]] = []
@@ -335,9 +329,9 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             dispatched_work.append(dict(work_item))
             with start_lock:
                 started.append(str(target["id"]))
-                if len(started) == 2:
-                    both_started.set()
-            if not both_started.wait(timeout=1):
+                if len(started) == len(targets):
+                    all_started.set()
+            if not all_started.wait(timeout=1):
                 raise AssertionError("Room batch dispatch ran serially")
             return {
                 "accepted": True,
@@ -401,32 +395,27 @@ class RoomPartnerApplicationTest(unittest.TestCase):
                 "phase": "并行调查",
                 "tasks": [
                     {
-                        "targetParticipantId": targets[0]["id"],
-                        "task": "核对运行时契约",
-                        "expectedOutput": "契约证据",
+                        "targetParticipantId": target["id"],
+                        "task": f"核对独立轨道 {index}",
+                        "expectedOutput": f"轨道 {index} 证据",
                         "acceptanceCriteria": ["给出调用链"],
-                    },
-                    {
-                        "targetParticipantId": targets[1]["id"],
-                        "task": "核对前端投影",
-                        "expectedOutput": "投影证据",
-                        "acceptanceCriteria": ["给出事件字段"],
-                    },
+                    }
+                    for index, target in enumerate(targets, start=1)
                 ],
             },
             tool_call_id="tool:delegate-batch",
         )
 
-        self.assertCountEqual(started, [targets[0]["id"], targets[1]["id"]])
+        self.assertCountEqual(started, [target["id"] for target in targets])
         self.assertEqual(result["operation"], "delegate_batch")
         self.assertEqual(result["phase"], "并行调查")
-        self.assertEqual(result["parallelism"], 2)
+        self.assertEqual(result["parallelism"], 7)
         self.assertEqual(result["status"], "accepted")
-        self.assertEqual(result["accepted"], 2)
+        self.assertEqual(result["accepted"], 7)
         self.assertTrue(str(result["waveId"]).startswith("room-wave:"))
         self.assertEqual(
             [item["participantId"] for item in result["results"]],
-            [targets[0]["id"], targets[1]["id"]],
+            [target["id"] for target in targets],
         )
         routes = [
             item["payload"]
@@ -439,15 +428,34 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         )
         self.assertEqual(
             sorted(int(route["parallelIndex"]) for route in routes),
-            [0, 1],
+            list(range(7)),
         )
-        self.assertTrue(all(route["parallelSize"] == 2 for route in routes))
-        self.assertEqual(len(ledger.items), 2)
-        self.assertEqual(len(dispatched_work), 2)
+        self.assertTrue(all(route["parallelSize"] == 7 for route in routes))
+        self.assertEqual(len(ledger.items), 7)
+        self.assertEqual(len(dispatched_work), 7)
         self.assertEqual(
             {str(item["currentOwnerParticipantId"]) for item in ledger.items.values()},
             {str(item["id"]) for item in targets},
         )
+
+        with self.assertRaisesRegex(ValueError, "between two and seven"):
+            service.execute(
+                str(source["sessionId"]),
+                {
+                    "op": "delegate_batch",
+                    "phase": "超过 Room 容量",
+                    "tasks": [
+                        {
+                            "targetParticipantId": f"room-a:overflow-{index}",
+                            "task": f"额外轨道 {index}",
+                            "expectedOutput": "不应派发",
+                            "acceptanceCriteria": ["不应派发"],
+                        }
+                        for index in range(8)
+                    ],
+                },
+                tool_call_id="tool:delegate-batch-overflow",
+            )
         self.assertTrue(all(item["rootTurnId"] == "root-a" for item in ledger.items.values()))
         self.assertTrue(all(route.get("workItemId") for route in routes))
 
@@ -626,6 +634,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             "sessionId": "room-a:s1",
             "displayName": "澄·远",
             "status": "active",
+            "collaborationRole": "coordinator",
         }
         target = {
             "id": "room-a:p2",
@@ -688,12 +697,27 @@ class RoomPartnerApplicationTest(unittest.TestCase):
 
         self.assertEqual(submitted["state"], "review")  # type: ignore[index]
         self.assertEqual(submitted["evidenceRefs"], ["room-child:1"])  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "every WorkItem"):
+            service.execute(
+                str(source["sessionId"]),
+                {"op": "post", "kind": "result", "content": "Root 已汇合"},
+                tool_call_id="tool:post-before-review",
+            )
+        self.assertEqual(ledger.items[str(work["id"])]["state"], "review")
+        ledger.accept(
+            str(source["sessionId"]),
+            {
+                "workId": work["id"],
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["test:verified"],
+            },
+        )
         receipt = service.execute(
             str(source["sessionId"]),
             {"op": "post", "kind": "result", "content": "Root 已汇合"},
-            tool_call_id="tool:post",
+            tool_call_id="tool:post-after-review",
         )
-        self.assertEqual(ledger.items[str(work["id"])]["state"], "review")
         self.assertEqual(receipt["settledWorkItems"], [])
         self.assertEqual(published_phases, ["assigned", "submitted"])
 
@@ -922,6 +946,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             "sessionId": "room-a:s1",
             "displayName": "澄·远",
             "status": "active",
+            "collaborationRole": "coordinator",
         }
         room = {
             "id": "room-a",
@@ -950,6 +975,18 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             room_topic_for_turn=lambda _root_id: "topic-a",
         )
 
+        participant["collaborationRole"] = "implementer"
+        with self.assertRaisesRegex(ValueError, "only the Room Facilitator"):
+            service.execute(
+                "room-a:s1",
+                {
+                    "op": "post",
+                    "kind": "result",
+                    "content": "伙伴不能发布 Root 终态。",
+                },
+                tool_call_id="tool:partner-final",
+            )
+        participant["collaborationRole"] = "coordinator"
         receipt = service.execute(
             "room-a:s1",
             {

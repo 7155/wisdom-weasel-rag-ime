@@ -584,9 +584,40 @@ class AgentRoomWorkTests(unittest.TestCase):
         )
         self.assertEqual(reviewed["state"], "review")
 
+        with self.assertRaisesRegex(ValueError, "direct child"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": fresh_review["id"]},
+                updated_at_ms=55,
+            )
+
+        linked_review = self.work.create(
+            room_id=str(self.room["id"]),
+            objective="对原失败提交进行新证据复核",
+            expected_output="双轴复核结论",
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            created_by_participant_id=str(self.coordinator_participant["id"]),
+            client_message_id="linked-review",
+            acceptance_criteria=["复核"],
+            parent_work_id=str(submitted["id"]),
+            created_at_ms=56,
+        )
+        linked_review = self.work.submit(
+            str(self.researcher["id"]),
+            {
+                "workId": linked_review["id"],
+                "resultSummary": "复跑原任务真实路径，两轴通过。",
+                "evidenceRefs": ["review:linked-rerun-passed"],
+                "proposedOperabilityVerdict": "passed",
+                "proposedRequirementVerdict": "satisfied",
+            },
+            updated_at_ms=57,
+        )
+        self.assertEqual(linked_review["parentWorkId"], submitted["id"])
+
         completed = self.work.accept(
             str(self.coordinator["id"]),
-            {**accept_payload, "supersededByWorkId": fresh_review["id"]},
+            {**accept_payload, "supersededByWorkId": linked_review["id"]},
             updated_at_ms=60,
         )
         self.assertEqual(completed["state"], "done")
@@ -596,7 +627,7 @@ class AgentRoomWorkTests(unittest.TestCase):
         self.assertEqual(events[-1]["eventType"], "completed")
         self.assertEqual(
             events[-1]["payload"]["supersededByWorkId"],
-            fresh_review["id"],
+            linked_review["id"],
         )
 
     def test_retry_resets_proposed_verdicts_with_result_fields(self) -> None:

@@ -655,11 +655,34 @@ class AgentRoomTests(unittest.TestCase):
                 routing_policy="manual_mentions",
                 participants=participants,
             )
-        with self.assertRaisesRegex(ValueError, "between 2 and 4"):
+        with self.assertRaisesRegex(ValueError, "between 2 and 8"):
             self.store.create(
                 title="人数过少",
                 routing_policy="manual_mentions",
                 participants=[self._participant("companion-future-v1", "VCP")],
+            )
+
+    def test_room_accepts_eight_participants_and_rejects_nine(self) -> None:
+        eight = [
+            self._participant(f"room-role-{index}", f"伙伴 {index}")
+            for index in range(8)
+        ]
+
+        room = self.store.create(
+            title="八位伙伴",
+            routing_policy="manual_mentions",
+            participants=eight,
+        )
+
+        self.assertEqual(len(room["participants"]), 8)
+        with self.assertRaisesRegex(ValueError, "between 2 and 8"):
+            self.store.create(
+                title="九位伙伴",
+                routing_policy="manual_mentions",
+                participants=[
+                    self._participant(f"overflow-role-{index}", f"额外伙伴 {index}")
+                    for index in range(9)
+                ],
             )
 
     def test_sequential_and_natural_routing_are_structured_and_deterministic(self) -> None:
@@ -1587,8 +1610,11 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(future_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(future_session["executionMode"], "workspace_managed")
         self.assertTrue(future_session["workspaceScopeGranted"])
-        self.assertEqual(future_session["modelProfile"], "pi/default")
-        self.assertEqual(future_session["thinkingLevel"], "")
+        self.assertEqual(
+            future_session["modelProfile"],
+            "openai-codex/gpt-5.6-sol",
+        )
+        self.assertEqual(future_session["thinkingLevel"], "high")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
 
         with patch.object(self.service, "prompt", return_value={"turnId": "turn:hermes"}) as prompt:

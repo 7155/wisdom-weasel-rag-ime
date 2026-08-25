@@ -273,6 +273,10 @@ def room_participant_prompt(
                         "先用 skill_load 加载 facilitate-room，再按该 Skill 判断是否调用 "
                         "room_partner list/delegate/delegate_batch；同一阶段多条独立轨道"
                         "必须用一次 delegate_batch 才能称为并行，不要为了凑伙伴数量机械委派。",
+                        "拆分完成并注册 Root WorkDocument 后，在委派或修改产品前先用一次 "
+                        "room_partner post(kind=progress) 向用户公开文档路径、目标、工作轨道和验收条件。"
+                        "这是可见计划回执，不新增审批门；没有会改变结果的用户选择时，公开后自动继续。"
+                        "计划发生实质变化时先更新绑定文档，再公开新的文档回执。",
                         "Room 内所有 participant 都是平等 peer。需要澄清、同步或求助时，"
                         "直接使用 room_partner peer_list/peer_send/peer_ask/peer_reply 与目标伙伴通信；"
                         "消息由 source Session 直接投递到 target Session。Facilitator 只负责最终 Root 汇合，"
@@ -287,13 +291,18 @@ def room_participant_prompt(
                         "文档修订都不能代替验收。审查报告 unverified、changes_required、failed 或未解决 "
                         "HIGH/MEDIUM 时必须 return，不得写成 passed/satisfied；Runtime 会机械拒绝"
                         "在 Partner 提交的 failed/unverified/not_satisfied 之上 accept。出现新证据时"
-                        "先委派复核 WorkItem，待复核提交 passed/satisfied 后用 supersededByWorkId "
-                        "显式引用，不得改写历史提交结论。return 后重新委派修订时，"
+                        "先创建原失败 WorkItem 的直接子复核项，待复核提交 passed/satisfied 后用 "
+                        "supersededByWorkId 显式引用，不得改写历史提交结论。return 后重新委派修订时，"
                         "必须用新的 Tool 调用并携带原 workItemId；不要新建一个 WorkItem 来冒充同一修订链。"
                         "不要把仍在进行的 Room Goal 暂停来等待用户或界面；受阻时发 blocked/partial，"
                         "保持 Goal active。网页验收只用 product browser（PAW Browser）；"
                         "禁止 desktop_semantic 去操作独立 Chrome/Edge。"
                         "bound write 使用当前文档索引上的 live authorityRevision，不要沿用更早记住的旧值。",
+                        "仅当用户要求 Grill/独立审查、任务复杂度或实现风险值得专门复核，或文档链需要"
+                        "独立一致性检查时，才在生产证据到齐后委派 Reviewer WorkItem 给未负责该实现的伙伴。"
+                        "Reviewer 检查用户原始需求、程序缺陷、各伙伴的有界上下文引用，以及 worker 文档、"
+                        "索引、交叉引用和完成标记；普通低风险任务由 Facilitator 直接双轴验收，不制造额外任务。"
+                        "存在 Reviewer 时，其未验证或问题结论必须修复/退回，不能直接形成 Room 成功终态。",
                         "room_partner 的 typed post 合同：op=post、kind=progress 只发布过程信息；"
                         "progress 是非终态，不会完成 WorkItem、Room Goal 或当前 Session 回合，"
                         "也不得根据 content 前缀或其他文本内容推断终态。主管完成全部 WorkItem 对账，"

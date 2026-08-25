@@ -92,7 +92,7 @@ _READ_ONLY_BUDGET = AgentTemplateBudget(
     max_turns=0,
     max_tool_calls=0,
     max_total_tokens=32_000,
-    max_duration_ms=300_000,
+    max_duration_ms=600_000,
     max_output_chars=12_000,
 )
 
@@ -101,7 +101,7 @@ _WORKER_BUDGET = AgentTemplateBudget(
     max_turns=0,
     max_tool_calls=0,
     max_total_tokens=48_000,
-    max_duration_ms=420_000,
+    max_duration_ms=900_000,
     max_output_chars=16_000,
 )
 

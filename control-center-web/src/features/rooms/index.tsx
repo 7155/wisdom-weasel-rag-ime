@@ -989,7 +989,7 @@ export function RoomsFeature() {
     setSelectedRoleIds((current) => {
       const next = current.includes(roleId)
         ? current.filter((item) => item !== roleId)
-        : current.length < 4 ? [...current, roleId] : current;
+        : current.length < 8 ? [...current, roleId] : current;
       if (!next.includes(coordinatorRoleId)) setCoordinatorRoleId(next[0] ?? '');
       return next;
     });
@@ -1014,7 +1014,7 @@ export function RoomsFeature() {
           : {}),
       }));
     if (participants.length < 2) {
-      setCreateError('请选择 2 至 4 位伙伴。');
+      setCreateError('请选择 2 至 8 位伙伴。');
       return;
     }
     if (createRoomKind === 'collaboration' && !workspaceRoots.length) {
@@ -1137,7 +1137,7 @@ export function RoomsFeature() {
     }
   }
   async function addRoomParticipant(persona: AgentPersonaV1): Promise<void> {
-    if (!room || room.status !== 'active' || memberSavingRoleId || activeParticipants.length >= 4) return;
+    if (!room || room.status !== 'active' || memberSavingRoleId || activeParticipants.length >= 8) return;
     setMemberSavingRoleId(persona.roleId);
     setSettingsError('');
     try {
@@ -1503,7 +1503,7 @@ export function RoomsFeature() {
             <label><input type="radio" name="room-kind" checked={createRoomKind === 'roleplay'} onChange={() => updateCreateRoomKind('roleplay')} /><span><Sparkles size={17} /><strong>一起聊聊</strong><small>只共享对话背景，不会访问项目文件</small></span></label>
           </div></fieldset>
           <label className="room-create-field"><span>取个名字 <small>必填</small></span><input maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder={createRoomKind === 'roleplay' ? '例如：深夜茶话会' : '例如：发布前检查'} aria-label="协作空间名称" /></label>
-          <fieldset><legend>邀请伙伴 <small>至少 2 位 · {selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{roomCreateParticipantLabel(createRoomKind, checked, persona.roleId, selectedRoleIds, coordinatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
+          <fieldset><legend>邀请伙伴 <small>至少 2 位 · {selectedRoleIds.length}/8</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 8} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{roomCreateParticipantLabel(createRoomKind, checked, persona.roleId, selectedRoleIds, coordinatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
           {createRoomKind === 'collaboration' ? <p className="room-create-role-flow">所有伙伴地位平等，可以直接互相 @、提问和回复；其中一位只在最后负责 Root 汇合与最终回复，不承担消息转发。</p> : null}
           {createRoomKind === 'collaboration' ? <section className="room-create-projects" aria-label="工作目录">
             <header><strong>在哪个目录工作</strong><small>必选</small></header>
@@ -1553,7 +1553,7 @@ export function RoomsFeature() {
             </label>
           ) : null}
           <fieldset className="room-member-manager">
-            <legend>伙伴 <small>至少 2 位 · {activeParticipants.length}/4</small></legend>
+            <legend>伙伴 <small>至少 2 位 · {activeParticipants.length}/8</small></legend>
             <p>这里的邀请、移出与分工调整会立即生效，但不会扩大工具权限。新伙伴从下一轮开始参与，不会补读此前的完整对话；任务中仍可随时点名或正式交接。</p>
             <div>{personas.filter((persona) => persona.selectableModes.includes(room?.roomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => {
               const participant = activeParticipants.find((item) => item.roleId === persona.roleId && item.roleVersion === persona.version);
@@ -1565,7 +1565,7 @@ export function RoomsFeature() {
                 <span><strong>{persona.displayName}</strong><small>{participant ? room?.roomKind === 'roleplay' ? '一起聊天 · 已加入' : `${roomCollaborationRoleLabel(participant.collaborationRole)} · ${roomCollaborationRoleDescription(participant.collaborationRole)}` : persona.tagline}</small></span>
                 <div className="room-member-actions">
                   {participant && room?.roomKind !== 'roleplay' ? <Select aria-label={`${persona.displayName} 负责什么`} disabled={room?.status !== 'active' || mutationPending} onValueChange={(value) => void updateRoomParticipantRole(participant, value as RoomCollaborationRole)} options={roomCollaborationRoleOptions(participant.collaborationRole)} value={participant.collaborationRole ?? 'implementer'} /> : null}
-                  {participant ? <IconButton label={`移出 ${persona.displayName}`} icon={memberRemovingId === participant.id ? <LoaderCircle className="ui-spin" size={15} /> : <UserMinus size={15} />} disabled={removeDisabled} onClick={() => void removeRoomParticipant(participant)} tooltip /> : <IconButton label={`邀请 ${persona.displayName}`} icon={memberSavingRoleId === persona.roleId ? <LoaderCircle className="ui-spin" size={15} /> : <UserPlus size={15} />} disabled={room?.status !== 'active' || activeParticipants.length >= 4 || mutationPending} onClick={() => void addRoomParticipant(persona)} tooltip />}
+                  {participant ? <IconButton label={`移出 ${persona.displayName}`} icon={memberRemovingId === participant.id ? <LoaderCircle className="ui-spin" size={15} /> : <UserMinus size={15} />} disabled={removeDisabled} onClick={() => void removeRoomParticipant(participant)} tooltip /> : <IconButton label={`邀请 ${persona.displayName}`} icon={memberSavingRoleId === persona.roleId ? <LoaderCircle className="ui-spin" size={15} /> : <UserPlus size={15} />} disabled={room?.status !== 'active' || activeParticipants.length >= 8 || mutationPending} onClick={() => void addRoomParticipant(persona)} tooltip />}
                 </div>
               </article>;
             })}</div>

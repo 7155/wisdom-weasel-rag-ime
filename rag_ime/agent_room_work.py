@@ -1512,6 +1512,11 @@ class AgentRoomWorkStore:
             raise ValueError(
                 "superseding review WorkItem must belong to the same Room"
             )
+        if str(review["parent_work_id"] or "") != str(row["id"]):
+            raise ValueError(
+                "superseding review WorkItem must be a direct child of the "
+                "failed or unverified WorkItem"
+            )
         if int(review["created_at_ms"]) <= int(row["updated_at_ms"]):
             raise ValueError(
                 "superseding review WorkItem must be created after the "

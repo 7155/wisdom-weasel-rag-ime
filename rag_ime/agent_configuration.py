@@ -795,11 +795,22 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
 
 def _default_model_routing() -> dict[str, dict[str, str]]:
     return {
-        route_id: {
+        "primary": {
             "modelProfile": "inherit",
             "thinkingLevel": "inherit",
-        }
-        for route_id in _MODEL_ROUTE_IDS
+        },
+        "toolAgent": {
+            "modelProfile": "openai-codex/gpt-5.6-luna",
+            "thinkingLevel": "max",
+        },
+        "subagent": {
+            "modelProfile": "openai-codex/gpt-5.6-luna",
+            "thinkingLevel": "max",
+        },
+        "roomCoordinator": {
+            "modelProfile": "openai-codex/gpt-5.6-sol",
+            "thinkingLevel": "high",
+        },
     }
 
 

@@ -46,12 +46,25 @@ export interface Room {
   lastEventSequence: number;
   /**
    * @minItems 2
-   * @maxItems 4
+   * @maxItems 8
    */
   participants:
     | [Participant, Participant]
     | [Participant, Participant, Participant]
-    | [Participant, Participant, Participant, Participant];
+    | [Participant, Participant, Participant, Participant]
+    | [Participant, Participant, Participant, Participant, Participant]
+    | [Participant, Participant, Participant, Participant, Participant, Participant]
+    | [Participant, Participant, Participant, Participant, Participant, Participant, Participant]
+    | [
+        Participant,
+        Participant,
+        Participant,
+        Participant,
+        Participant,
+        Participant,
+        Participant,
+        Participant,
+      ];
   /**
    * @maxItems 200
    */

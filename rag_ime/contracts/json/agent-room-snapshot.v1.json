@@ -71,7 +71,7 @@
           "type": "string",
           "enum": ["active", "muted", "removed"]
         },
-        "ordinal": {"type": "integer", "minimum": 0, "maximum": 3},
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 7},
         "createdAtMs": {"type": "integer", "minimum": 0},
         "lastSpokeAtMs": {"type": ["integer", "null"]}
       }
@@ -119,7 +119,7 @@
         },
         "routingConfig": {"type": "object"},
         "moderatorParticipantId": {"type": "string"},
-        "nextSpeakerOrdinal": {"type": "integer", "minimum": 0, "maximum": 3},
+        "nextSpeakerOrdinal": {"type": "integer", "minimum": 0, "maximum": 7},
         "activeTopicId": {"type": "string"},
         "configRevision": {"type": "integer", "minimum": 1},
         "workspaceRoots": {
@@ -134,7 +134,7 @@
         "participants": {
           "type": "array",
           "minItems": 2,
-          "maxItems": 4,
+          "maxItems": 8,
           "items": {"$ref": "#/$defs/participant"}
         },
         "topics": {

@@ -137,6 +137,19 @@ export interface AgentRoomWorkItemV1 {
    * @maxItems 24
    */
   evidenceRefs: string[];
+  proposedOperabilityVerdict: '' | 'passed' | 'failed' | 'unverified';
+  proposedRequirementVerdict: '' | 'satisfied' | 'not_satisfied' | 'unverified';
+  review: {
+    operabilityVerdict: '' | 'passed' | 'failed' | 'unverified';
+    requirementVerdict: '' | 'satisfied' | 'not_satisfied' | 'unverified';
+    /**
+     * @maxItems 24
+     */
+    evidenceRefs: string[];
+    reason: string;
+    reviewerParticipantId: string;
+    reviewedAtMs: number | null;
+  };
   blocker: {
     [k: string]: unknown;
   };

@@ -4439,7 +4439,7 @@ export const contractSchemas = {
       "ordinal": {
         "type": "integer",
         "minimum": 0,
-        "maximum": 3
+        "maximum": 7
       },
       "createdAtMs": {
         "type": "integer",
@@ -5553,7 +5553,7 @@ export const contractSchemas = {
           "ordinal": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 3
+            "maximum": 7
           },
           "createdAtMs": {
             "type": "integer",
@@ -5653,7 +5653,7 @@ export const contractSchemas = {
           "nextSpeakerOrdinal": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 3
+            "maximum": 7
           },
           "activeTopicId": {
             "type": "string"
@@ -5686,7 +5686,7 @@ export const contractSchemas = {
           "participants": {
             "type": "array",
             "minItems": 2,
-            "maxItems": 4,
+            "maxItems": 8,
             "items": {
               "$ref": "#/$defs/participant"
             }
@@ -5823,6 +5823,9 @@ export const contractSchemas = {
       "resultSummary",
       "artifactRefs",
       "evidenceRefs",
+      "proposedOperabilityVerdict",
+      "proposedRequirementVerdict",
+      "review",
       "blocker",
       "acceptedTurnId",
       "createdAtMs",
@@ -5942,6 +5945,79 @@ export const contractSchemas = {
           "type": "string",
           "minLength": 1,
           "maxLength": 1000
+        }
+      },
+      "proposedOperabilityVerdict": {
+        "type": "string",
+        "enum": [
+          "",
+          "passed",
+          "failed",
+          "unverified"
+        ]
+      },
+      "proposedRequirementVerdict": {
+        "type": "string",
+        "enum": [
+          "",
+          "satisfied",
+          "not_satisfied",
+          "unverified"
+        ]
+      },
+      "review": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operabilityVerdict",
+          "requirementVerdict",
+          "evidenceRefs",
+          "reason",
+          "reviewerParticipantId",
+          "reviewedAtMs"
+        ],
+        "properties": {
+          "operabilityVerdict": {
+            "type": "string",
+            "enum": [
+              "",
+              "passed",
+              "failed",
+              "unverified"
+            ]
+          },
+          "requirementVerdict": {
+            "type": "string",
+            "enum": [
+              "",
+              "satisfied",
+              "not_satisfied",
+              "unverified"
+            ]
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "maxItems": 24,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "reviewerParticipantId": {
+            "type": "string"
+          },
+          "reviewedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
         }
       },
       "blocker": {
@@ -6065,7 +6141,7 @@ export const contractSchemas = {
       "nextSpeakerOrdinal": {
         "type": "integer",
         "minimum": 0,
-        "maximum": 3
+        "maximum": 7
       },
       "activeTopicId": {
         "type": "string"
@@ -6107,7 +6183,7 @@ export const contractSchemas = {
       "participants": {
         "type": "array",
         "minItems": 2,
-        "maxItems": 4,
+        "maxItems": 8,
         "items": {
           "type": "object"
         }
@@ -17573,6 +17649,32 @@ export const contractSchemas = {
           }
         }
       },
+      "workResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "proposedOperabilityVerdict",
+          "proposedRequirementVerdict"
+        ],
+        "properties": {
+          "proposedOperabilityVerdict": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "unverified"
+            ]
+          },
+          "proposedRequirementVerdict": {
+            "type": "string",
+            "enum": [
+              "satisfied",
+              "not_satisfied",
+              "unverified"
+            ]
+          }
+        }
+      },
       "idempotencyKey": {
         "type": "string",
         "minLength": 1
@@ -17588,7 +17690,8 @@ export const contractSchemas = {
             "enum": [
               "user",
               "room_commit",
-              "room_post"
+              "room_post",
+              "runtime_projection"
             ]
           },
           "ref": {

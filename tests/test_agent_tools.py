@@ -1451,7 +1451,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         tasks_schema = read_only_room_partner["parameters"]["properties"]["tasks"]
         self.assertEqual(tasks_schema["minItems"], 2)
-        self.assertEqual(tasks_schema["maxItems"], 3)
+        self.assertEqual(tasks_schema["maxItems"], 7)
         self.assertEqual(
             tasks_schema["items"]["required"],
             [

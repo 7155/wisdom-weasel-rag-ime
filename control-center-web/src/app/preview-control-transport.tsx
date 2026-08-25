@@ -3233,8 +3233,8 @@ function previewCreatedRoomSnapshot(
   const requestedParticipants = Array.isArray(body.participants)
     ? body.participants.map(record)
     : [];
-  if (requestedParticipants.length < 2 || requestedParticipants.length > 4) {
-    throw new Error('请选择 2 至 4 位伙伴。');
+  if (requestedParticipants.length < 2 || requestedParticipants.length > 8) {
+    throw new Error('请选择 2 至 8 位伙伴。');
   }
   const participants = requestedParticipants.map((participant, ordinal) => ({
     schemaVersion: 'rag-ime.agent-participant.v1',

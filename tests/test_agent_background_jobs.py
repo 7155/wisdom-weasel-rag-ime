@@ -126,6 +126,77 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
         finally:
             observer.close()
 
+    def test_explicit_shell_exit_preserves_authoritative_exit_receipt(self) -> None:
+        prepared = self.harness.prepare_background_command(
+            self.session,
+            {
+                "command": (
+                    "printf '0\\n' > \"$HOME/exit.status\"; "
+                    "printf 'before-explicit-exit\\n'; exit 7"
+                ),
+                "cwd": str(self.root),
+                "timeoutSeconds": 10,
+            },
+        )
+
+        receipt = self.service.start(str(self.session["id"]), prepared)
+        job_id = str(receipt["job"]["jobId"])
+        job = self._wait_for_terminal(job_id)
+        logs = self.service.logs(str(self.session["id"]), job_id)
+
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["exitCode"], 7)
+        self.assertIn("before-explicit-exit", logs["text"])
+
+    def test_raw_output_preserves_redaction_across_chunks(self) -> None:
+        chunk_size = 1_048_576
+        secret = b"abcdefghijklmnop"
+        raw_path = Path(self.temporary.name) / "chunked.raw"
+        log_path = Path(self.temporary.name) / "chunked.log"
+        log_path.touch()
+        raw_path.write_bytes(
+            b"x" * (chunk_size - len(b" api_"))
+            + b" api_"
+            + b"key="
+            + secret
+            + b"\n"
+        )
+        live = _LiveJob(
+            launched=object(),
+            log_path=log_path,
+            max_run_seconds=60,
+            raw_output_path=raw_path,
+        )
+
+        with patch.object(self.service, "_persist_live_progress"):
+            self.service._drain_raw_output("bg_chunked", live, final=True)
+        durable = log_path.read_text(encoding="utf-8")
+
+        self.assertNotIn(secret.decode("ascii"), durable)
+        self.assertIn("api_key=[REDACTED]", durable)
+
+    def test_raw_output_preserves_utf8_across_chunks(self) -> None:
+        chunk_size = 1_048_576
+        raw_path = Path(self.temporary.name) / "utf8.raw"
+        log_path = Path(self.temporary.name) / "utf8.log"
+        log_path.touch()
+        raw_path.write_bytes(
+            b"A" * (chunk_size - 1) + "😀".encode("utf-8") + b"Z"
+        )
+        live = _LiveJob(
+            launched=object(),
+            log_path=log_path,
+            max_run_seconds=60,
+            raw_output_path=raw_path,
+        )
+
+        with patch.object(self.service, "_persist_live_progress"):
+            self.service._drain_raw_output("bg_utf8", live, final=True)
+        durable = log_path.read_text(encoding="utf-8")
+
+        self.assertIn("😀Z", durable)
+        self.assertNotIn("�", durable)
+
     def test_newline_free_threshold_flush_preserves_secret_redaction_context(self) -> None:
         log_path = Path(self.temporary.name) / "threshold.log"
         log_path.touch()
@@ -392,27 +463,24 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
         self.assertEqual(job["status"], "cancelled")
         self.assertEqual(job["error"], "room_owner_requested")
 
-    def test_only_execution_owner_orphans_unfinished_records_after_restart(self) -> None:
+    def test_execution_owner_reattaches_running_job_after_restart(self) -> None:
         prepared = self.harness.prepare_background_command(
             self.session,
             {
-                "command": "python3 -c \"print('finished-before-restart')\"",
+                "command": (
+                    "python3 -c \"import time; "
+                    "print('before-restart', flush=True); time.sleep(1.5); "
+                    "print('after-restart', flush=True)\""
+                ),
                 "cwd": str(self.root),
                 "timeoutSeconds": 10,
             },
         )
         started = self.service.start(str(self.session["id"]), prepared, label="重启语义")
         job_id = str(started["job"]["jobId"])
-        self.assertEqual(self._wait_for_terminal(job_id)["status"], "completed")
-        with sqlite_connection(self.db_path, foreign_keys=True) as conn:
-            conn.execute(
-                """
-                UPDATE agent_background_jobs
-                SET status = 'running', ended_at_ms = 0, error = ''
-                WHERE job_id = ?
-                """,
-                (job_id,),
-            )
+        original_pid = started["job"]["pid"]
+        self._wait_for_log(job_id, "before-restart")
+        self.service.close()
 
         observer = AgentBackgroundJobService(
             self.db_path,
@@ -436,16 +504,21 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
         )
         restarted_owner.initialize()
         try:
-            orphaned = restarted_owner.status(str(self.session["id"]), job_id)["job"]
-            self.assertEqual(orphaned["status"], "orphaned")
-            self.assertGreater(orphaned["endedAtMs"], 0)
-            self.assertIn("进程组已清理", orphaned["error"])
-            cancelled = restarted_owner.cancel(str(self.session["id"]), job_id)
-            self.assertTrue(cancelled["alreadyTerminal"])
-            self.assertEqual(cancelled["job"]["status"], "orphaned")
+            deadline = time.monotonic() + 8
+            recovered = restarted_owner.status(str(self.session["id"]), job_id)["job"]
+            while recovered["status"] in {"queued", "running", "cancelling"} and time.monotonic() < deadline:
+                time.sleep(0.05)
+                recovered = restarted_owner.status(str(self.session["id"]), job_id)["job"]
+            self.assertEqual(recovered["status"], "completed")
+            self.assertEqual(recovered["pid"], original_pid)
+            self.assertEqual(recovered["exitCode"], 0)
+            logs = restarted_owner.logs(str(self.session["id"]), job_id)["text"]
+            self.assertIn("before-restart", logs)
+            self.assertIn("after-restart", logs)
         finally:
             restarted_owner.close()
-    def test_owner_reaps_verified_persisted_process_group_on_recovery(self) -> None:
+
+    def test_owner_preserves_verified_legacy_process_group_on_recovery(self) -> None:
         job_id = "bg_" + "d" * 32
         process = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
@@ -509,15 +582,29 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
             )
             try:
                 recovered_owner.initialize()
-                waiter.join(timeout=3)
-                self.assertFalse(waiter.is_alive())
-                self.assertIsNotNone(process.poll())
                 recovered = recovered_owner.status(
                     str(self.session["id"]),
                     job_id,
                 )["job"]
-                self.assertEqual(recovered["status"], "orphaned")
-                self.assertGreater(recovered["endedAtMs"], 0)
+                self.assertEqual(recovered["status"], "running")
+                self.assertIsNone(process.poll())
+                recovered_owner.cancel(
+                    str(self.session["id"]),
+                    job_id,
+                    reason="test_cleanup",
+                )
+                waiter.join(timeout=3)
+                self.assertFalse(waiter.is_alive())
+                self.assertIsNotNone(process.poll())
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    recovered = recovered_owner.status(
+                        str(self.session["id"]), job_id
+                    )["job"]
+                    if recovered["status"] == "cancelled":
+                        break
+                    time.sleep(0.02)
+                self.assertEqual(recovered["status"], "cancelled")
             finally:
                 recovered_owner.close()
         finally:
@@ -526,7 +613,7 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
             process.wait(timeout=3)
             waiter.join(timeout=3)
 
-    def test_recovery_identity_mismatch_stays_active_without_signalling(self) -> None:
+    def test_recovery_identity_mismatch_orphans_without_signalling(self) -> None:
         job_id = "bg_" + "e" * 32
         process = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
@@ -578,12 +665,12 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
                     str(self.session["id"]),
                     job_id,
                 )["job"]
-                self.assertEqual(recovered["status"], "cancelling")
-                self.assertEqual(recovered["endedAtMs"], 0)
-                self.assertIn("background_job_recovery_failed", recovered["error"])
+                self.assertEqual(recovered["status"], "orphaned")
+                self.assertGreater(recovered["endedAtMs"], 0)
+                self.assertIn("未向可能复用的进程发送信号", recovered["error"])
                 self.assertEqual(
                     recovered_owner.list(str(self.session["id"]))["activeCount"],
-                    1,
+                    0,
                 )
             finally:
                 recovered_owner.close()
@@ -595,8 +682,8 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
         class CapturingHarness(WorkspaceHarness):
             launched = None
 
-            def spawn_background(self, prepared):
-                self.launched = super().spawn_background(prepared)
+            def spawn_background(self, prepared, **kwargs):
+                self.launched = super().spawn_background(prepared, **kwargs)
                 return self.launched
 
         harness = CapturingHarness()
@@ -620,7 +707,8 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
 
         self.assertIsNotNone(harness.launched)
         self.assertIsNotNone(harness.launched.process.poll())
-        self.assertFalse(Path(harness.launched.temporary_directory.name).exists())
+        self.assertIsNotNone(harness.launched.temporary_path)
+        self.assertFalse(harness.launched.temporary_path.exists())
         self.assertEqual(self.service._live, {})
         failed = self.service.list(str(self.session["id"]))["items"][0]
         self.assertEqual(failed["status"], "failed")
@@ -630,8 +718,8 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
         class CapturingHarness(WorkspaceHarness):
             launched = None
 
-            def spawn_background(self, prepared):
-                self.launched = super().spawn_background(prepared)
+            def spawn_background(self, prepared, **kwargs):
+                self.launched = super().spawn_background(prepared, **kwargs)
                 return self.launched
 
         class FailingMonitorService(AgentBackgroundJobService):
@@ -672,7 +760,8 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
             self.assertEqual(job["status"], "failed")
             self.assertIn("progress persistence unavailable", job["error"])
             self.assertIsNotNone(harness.launched.process.poll())
-            self.assertFalse(Path(harness.launched.temporary_directory.name).exists())
+            self.assertIsNotNone(harness.launched.temporary_path)
+            self.assertFalse(harness.launched.temporary_path.exists())
         finally:
             service.close()
 
@@ -762,7 +851,7 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
                 self.eight_reserved = threading.Event()
                 self.spawned = 0
 
-            def spawn_background(self, _prepared):
+            def spawn_background(self, _prepared, **_kwargs):
                 with self.lock:
                     self.spawned += 1
                     if self.spawned == 8:

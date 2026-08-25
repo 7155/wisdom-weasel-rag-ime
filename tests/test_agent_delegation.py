@@ -47,7 +47,7 @@ class _CompletingRuntime:
             session_id,
             "message_completed",
             {
-                "message": _assistant_message(session_id, turn_id, f"{template}: {message.splitlines()[1]}"),
+                "message": _assistant_message(session_id, turn_id, f"{template}: {message.splitlines()[-1]}"),
                 "usage": {"totalTokens": 321},
             },
             turn_id=turn_id,
@@ -65,6 +65,18 @@ class _CompletingRuntime:
 
     def stop(self):
         self.stopped = True
+
+
+class AgentTemplateDefaultTests(unittest.TestCase):
+    def test_complex_private_agents_have_async_friendly_duration_budgets(self) -> None:
+        self.assertEqual(
+            real_agent_template("researcher").budget.max_duration_ms,
+            600_000,
+        )
+        self.assertEqual(
+            real_agent_template("worker").budget.max_duration_ms,
+            900_000,
+        )
 
 
 class _CapturingRuntimeDriverFactory:
@@ -2470,7 +2482,7 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertNotEqual(retained["status"], "archived")
         coordinator.close()
 
-    def test_restart_relaunches_queued_work_but_fails_uncheckpointed_running_work(self) -> None:
+    def test_restart_relaunches_queued_work_and_can_resume_interrupted_running_work(self) -> None:
         artifacts = AgentArtifactStore(self.db_path)
         store = AgentDelegationStore(self.db_path, artifacts=artifacts)
         store.initialize()
@@ -2501,6 +2513,22 @@ class AgentDelegationTests(unittest.TestCase):
         failed = coordinator.store.get_batch(str(running["id"]))
         self.assertEqual(failed["state"], "failed")
         self.assertIn("durable terminal checkpoint", failed["runs"][0]["error"])
+        interrupted = failed["runs"][0]
+        coordinator.control(
+            str(self.parent["id"]),
+            str(interrupted["id"]),
+            {
+                "action": "resume",
+                "clientActionId": "action:restart-resume",
+                "message": "恢复上下文\n从保留的子 Agent 会话继续，不要重做已有步骤。",
+            },
+        )
+        _wait_until(
+            lambda: coordinator.store.get_batch(str(running["id"]))["state"]
+            == "completed"
+        )
+        resumed = coordinator.store.get_batch(str(running["id"]))["runs"][0]
+        self.assertEqual(resumed["childSessionId"], interrupted["childSessionId"])
         coordinator.close()
 
     def test_console_uses_live_runtime_and_controls_are_idempotent(self) -> None:

@@ -998,33 +998,13 @@ class RoomPartnerApplicationService:
         source_participant_id = str(record.get("sourceParticipantId") or "")
         if not room_id or not root_id or not source_participant_id:
             return False
-        root_work = self.room_work.list_for_root(
+        root_work = self._accepted_root_work(
             room_id=room_id,
             root_turn_id=root_id,
+            facilitator_participant_id=source_participant_id,
         )
         if not root_work:
             return False
-        if self.dispatch_store.has_unsettled_root_dispatches(
-            room_id=room_id,
-            root_id=root_id,
-        ):
-            return False
-        for item in root_work:
-            review = item.get("review")
-            review = review if isinstance(review, Mapping) else {}
-            evidence_refs = review.get("evidenceRefs")
-            if (
-                str(item.get("state") or "") != "done"
-                or not str(item.get("resultSummary") or "").strip()
-                or str(review.get("operabilityVerdict") or "") != "passed"
-                or str(review.get("requirementVerdict") or "") != "satisfied"
-                or not isinstance(evidence_refs, list)
-                or not any(str(value or "").strip() for value in evidence_refs)
-                or str(review.get("reviewerParticipantId") or "")
-                != source_participant_id
-                or int(review.get("reviewedAtMs") or 0) <= 0
-            ):
-                return False
         latest_run = schedule.get("latestRun")
         latest_run = latest_run if isinstance(latest_run, Mapping) else {}
         wake = record.get("wake")
@@ -1083,6 +1063,45 @@ class RoomPartnerApplicationService:
             created_at_ms=finished_at_ms,
         )
         return True
+
+    def _accepted_root_work(
+        self,
+        *,
+        room_id: str,
+        root_turn_id: str,
+        facilitator_participant_id: str,
+    ) -> list[Mapping[str, object]] | None:
+        if self.room_work is None:
+            return []
+        root_work = self.room_work.list_for_root(
+            room_id=room_id,
+            root_turn_id=root_turn_id,
+        )
+        if (
+            self.dispatch_store is not None
+            and self.dispatch_store.has_unsettled_root_dispatches(
+                room_id=room_id,
+                root_id=root_turn_id,
+            )
+        ):
+            return None
+        for item in root_work:
+            review = item.get("review")
+            review = review if isinstance(review, Mapping) else {}
+            evidence_refs = review.get("evidenceRefs")
+            if (
+                str(item.get("state") or "") != "done"
+                or not str(item.get("resultSummary") or "").strip()
+                or str(review.get("operabilityVerdict") or "") != "passed"
+                or str(review.get("requirementVerdict") or "") != "satisfied"
+                or not isinstance(evidence_refs, list)
+                or not any(str(value or "").strip() for value in evidence_refs)
+                or str(review.get("reviewerParticipantId") or "")
+                != facilitator_participant_id
+                or int(review.get("reviewedAtMs") or 0) <= 0
+            ):
+                return None
+        return sorted(root_work, key=lambda item: str(item.get("id") or ""))
 
     def _root_has_typed_result(self, record: Mapping[str, object]) -> bool:
         room_id = str(record.get("roomId") or "")
@@ -1537,8 +1556,8 @@ class RoomPartnerApplicationService:
         tool_call_id: str,
     ) -> dict[str, object]:
         raw_tasks = args.get("tasks")
-        if not isinstance(raw_tasks, list) or not 2 <= len(raw_tasks) <= 3:
-            raise ValueError("tasks must contain between two and three Partner tasks")
+        if not isinstance(raw_tasks, list) or not 2 <= len(raw_tasks) <= 7:
+            raise ValueError("tasks must contain between two and seven Partner tasks")
         tasks: list[dict[str, object]] = []
         target_ids: list[str] = []
         for index, value in enumerate(raw_tasks):
@@ -2590,6 +2609,19 @@ class RoomPartnerApplicationService:
             }
         root_id, dispatch_id = self._active_root(source)
         room = self.rooms.get(str(source["roomId"]))
+        if kind == "result":
+            if str(source.get("collaborationRole") or "") != "coordinator":
+                raise ValueError("only the Room Facilitator can publish kind=result")
+            accepted_work = self._accepted_root_work(
+                room_id=str(room["id"]),
+                root_turn_id=root_id,
+                facilitator_participant_id=str(source["id"]),
+            )
+            if accepted_work is None:
+                raise ValueError(
+                    "Room result requires every WorkItem to be explicitly "
+                    "accepted with passed/satisfied evidence"
+                )
         post_id = f"room-post:{tool_call_id}"
         created_at_ms = int(time.time() * 1_000)
         post = {

@@ -47,6 +47,7 @@ ROOM_EVENT_TYPES = frozenset(
 
 ROOM_SNAPSHOT_EVENT_LIMIT = 200
 ROOM_HISTORY_PAGE_LIMIT = 200
+MAX_ACTIVE_ROOM_PARTICIPANTS = 8
 ROOM_COLLABORATION_ROLES = frozenset(
     {
         "coordinator",
@@ -109,8 +110,10 @@ class AgentRoomStore:
         normalized_description = " ".join(str(description or "").split())[:500]
         normalized_scenario = str(scenario_prompt or "").strip()[:8_000]
         values = [dict(item) for item in participants]
-        if not 2 <= len(values) <= 4:
-            raise ValueError("agent room requires between 2 and 4 participants")
+        if not 2 <= len(values) <= MAX_ACTIVE_ROOM_PARTICIPANTS:
+            raise ValueError(
+                "agent room requires between 2 and 8 participants"
+            )
         if not 0 <= moderator_ordinal < len(values):
             raise ValueError("agent room moderator ordinal is out of range")
         roots = _workspace_roots(workspace_roots)
@@ -334,8 +337,8 @@ class AgentRoomStore:
             for value in room.get("participants", [])
             if isinstance(value, Mapping) and value.get("status") == "active"
         ]
-        if len(active) >= 4:
-            raise ValueError("agent room accepts at most four active participants")
+        if len(active) >= MAX_ACTIVE_ROOM_PARTICIPANTS:
+            raise ValueError("agent room accepts at most eight active participants")
         normalized_role_id = canonical_agent_role_id(
             _required_text_value(role_id, "role_id", 63)
         )
@@ -372,8 +375,13 @@ class AgentRoomStore:
                 """,
                 (room_id,),
             ).fetchone()
-            if int(active_count[0] if active_count is not None else 0) >= 4:
-                raise ValueError("agent room accepts at most four active participants")
+            if (
+                int(active_count[0] if active_count is not None else 0)
+                >= MAX_ACTIVE_ROOM_PARTICIPANTS
+            ):
+                raise ValueError(
+                    "agent room accepts at most eight active participants"
+                )
             duplicate = conn.execute(
                 """
                 SELECT 1 FROM agent_room_participants

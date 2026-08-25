@@ -2700,8 +2700,14 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "pi/default")
-        self.assertEqual(target_session["modelProfile"], "pi/default")
+        self.assertEqual(
+            source_session["modelProfile"],
+            "openai-codex/gpt-5.6-sol",
+        )
+        self.assertEqual(
+            target_session["modelProfile"],
+            "openai-codex/gpt-5.6-sol",
+        )
         item = {
             "id": "room-message:test",
             "kind": "ask",

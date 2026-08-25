@@ -264,10 +264,14 @@ WorkspaceExecutor = Callable[[PreparedWorkspaceCommand], dict[str, object]]
 @dataclass
 class SpawnedWorkspaceCommand:
     process: subprocess.Popen[bytes]
-    temporary_directory: tempfile.TemporaryDirectory
+    temporary_directory: tempfile.TemporaryDirectory | None = None
+    temporary_path: Path | None = None
 
     def cleanup(self) -> None:
-        self.temporary_directory.cleanup()
+        if self.temporary_directory is not None:
+            self.temporary_directory.cleanup()
+        if self.temporary_path is not None:
+            shutil.rmtree(self.temporary_path, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -3761,8 +3765,17 @@ class WorkspaceHarness:
     def spawn_background(
         self,
         prepared: PreparedWorkspaceCommand,
+        *,
+        output_path: str | Path | None = None,
+        exit_status_path: str | Path | None = None,
+        temporary_path: str | Path | None = None,
     ) -> SpawnedWorkspaceCommand:
-        return self._spawn_sandboxed(prepared)
+        return self._spawn_sandboxed(
+            prepared,
+            output_path=output_path,
+            exit_status_path=exit_status_path,
+            temporary_path=temporary_path,
+        )
 
     @staticmethod
     def terminate_background(launched: SpawnedWorkspaceCommand) -> None:
@@ -3830,15 +3843,35 @@ class WorkspaceHarness:
     def _spawn_sandboxed(
         self,
         prepared: PreparedWorkspaceCommand,
+        *,
+        output_path: str | Path | None = None,
+        exit_status_path: str | Path | None = None,
+        temporary_path: str | Path | None = None,
     ) -> SpawnedWorkspaceCommand:
         sandbox = self.sandbox_executable
         if not sandbox.is_file() or not os.access(sandbox, os.X_OK):
             raise WorkspaceHarnessError("macOS command harness is unavailable; refusing unsandboxed execution")
-        temporary_directory = tempfile.TemporaryDirectory(
-            prefix="rag-ime-agent-command-",
+        durable_output = Path(output_path) if output_path is not None else None
+        durable_exit = Path(exit_status_path) if exit_status_path is not None else None
+        durable_temporary = (
+            Path(temporary_path) if temporary_path is not None else None
         )
-        try:
+        if (durable_output is None) != (durable_exit is None):
+            raise WorkspaceHarnessError(
+                "resumable background commands require output and exit-status paths"
+            )
+        temporary_directory = None
+        if durable_temporary is None:
+            temporary_directory = tempfile.TemporaryDirectory(
+                prefix="rag-ime-agent-command-",
+            )
             temporary = Path(temporary_directory.name).resolve(strict=True)
+        else:
+            durable_temporary.mkdir(parents=False, mode=0o700, exist_ok=False)
+            temporary = durable_temporary.resolve(strict=True)
+        output_handle = None
+        exit_handle = None
+        try:
             profile = _sandbox_profile(
                 roots=prepared.sandbox_roots,
                 temporary=temporary,
@@ -3862,21 +3895,77 @@ class WorkspaceHarness:
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_OPTIONAL_LOCKS": "0",
             }
+            command = [
+                str(sandbox),
+                "-p",
+                profile,
+                "/bin/zsh",
+                "-f",
+                "-c",
+                prepared.command,
+            ]
+            stdout: int | object = subprocess.PIPE
+            pass_fds: tuple[int, ...] = ()
+            if durable_output is not None and durable_exit is not None:
+                durable_output.touch(mode=0o600, exist_ok=False)
+                os.chmod(durable_output, 0o600)
+                output_handle = durable_output.open("ab", buffering=0)
+                exit_handle = durable_exit.open("xb", buffering=0)
+                os.chmod(durable_exit, 0o600)
+                exit_fd = exit_handle.fileno()
+                wrapper = (
+                    'receipt_fd="$2"\n'
+                    '(\n'
+                    '  eval "exec ${receipt_fd}>&-"\n'
+                    '  /bin/zsh -f -c "$1"\n'
+                    ')\n'
+                    'exit_code=$?\n'
+                    'eval "printf \'%s\\\\n\' \'$exit_code\' >&${receipt_fd}"\n'
+                    'exit "$exit_code"'
+                )
+                command = [
+                    str(sandbox),
+                    "-p",
+                    profile,
+                    "/bin/zsh",
+                    "-f",
+                    "-c",
+                    wrapper,
+                    "rag-ime-background",
+                    prepared.command,
+                    str(exit_fd),
+                ]
+                stdout = output_handle
+                pass_fds = (exit_fd,)
             process = subprocess.Popen(
-                [str(sandbox), "-p", profile, "/bin/zsh", "-f", "-c", prepared.command],
+                command,
                 cwd=prepared.cwd,
                 env=environment,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
+                stdout=stdout,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                pass_fds=pass_fds,
             )
         except Exception:
-            temporary_directory.cleanup()
+            if temporary_directory is not None:
+                temporary_directory.cleanup()
+            if durable_temporary is not None:
+                shutil.rmtree(durable_temporary, ignore_errors=True)
+            if durable_output is not None:
+                durable_output.unlink(missing_ok=True)
+            if durable_exit is not None:
+                durable_exit.unlink(missing_ok=True)
             raise
+        finally:
+            if output_handle is not None:
+                output_handle.close()
+            if exit_handle is not None:
+                exit_handle.close()
         return SpawnedWorkspaceCommand(
             process=process,
             temporary_directory=temporary_directory,
+            temporary_path=durable_temporary,
         )
 
     def _bounded_output(

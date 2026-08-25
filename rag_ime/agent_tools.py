@@ -921,7 +921,8 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "maxLength": 240,
                 "description": (
                     "当 Partner 已提出 failed/unverified/not_satisfied 时，"
-                    "accept 必须指向之后提交且提出 passed/satisfied 的复核 WorkItem。"
+                    "accept 必须指向该 WorkItem 的直接子复核项；复核项还必须在之后"
+                    "提交并提出 passed/satisfied。"
                 ),
             },
             "proposedOperabilityVerdict": {
@@ -947,8 +948,11 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             "tasks": {
                 "type": "array",
                 "minItems": 2,
-                "maxItems": 3,
-                "description": "必须互不依赖且目标伙伴不重复的同阶段任务。",
+                "maxItems": 7,
+                "description": (
+                    "必须互不依赖且目标伙伴不重复的同阶段任务；只按实际可并行工作"
+                    "数量派发，不为凑满 Room 人数创建任务。"
+                ),
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
