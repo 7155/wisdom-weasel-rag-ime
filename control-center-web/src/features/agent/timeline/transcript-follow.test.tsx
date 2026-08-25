@@ -10,6 +10,7 @@ import { SettledTurnAnnouncer, settledTurnAnnouncement } from './SettledTurnAnno
 import {
   FOLLOWING_TRANSCRIPT,
   reduceTranscriptFollow,
+  transcriptHasLiveSelection,
   unseenUpdatesLabel,
 } from './transcript-follow';
 
@@ -55,6 +56,53 @@ describe('transcript follow ownership', () => {
 
     expect(jumped.unseenUpdates).toBe(5);
     expect(jumped.detachedReason).toBe('jump-to-message');
+  });
+
+  it('records selection as a detach reason so submit can yield to a live highlight', () => {
+    const selected = reduceTranscriptFollow(FOLLOWING_TRANSCRIPT, {
+      type: 'user-detached',
+      reason: 'selection',
+    });
+    expect(selected).toEqual({
+      mode: 'detached',
+      unseenUpdates: 0,
+      detachedReason: 'selection',
+    });
+
+    const withBacklog = reduceTranscriptFollow(selected, {
+      type: 'content-appended',
+      count: 2,
+    });
+    expect(withBacklog.unseenUpdates).toBe(2);
+    expect(withBacklog.detachedReason).toBe('selection');
+  });
+
+  it('detects a live selection only when it intersects the transcript root', () => {
+    const root = document.createElement('div');
+    const outside = document.createElement('div');
+    root.append('inside text');
+    outside.append('outside text');
+    document.body.append(root, outside);
+
+    const selection = window.getSelection();
+    expect(selection).toBeTruthy();
+    selection!.removeAllRanges();
+    expect(transcriptHasLiveSelection(root)).toBe(false);
+
+    const insideRange = document.createRange();
+    insideRange.selectNodeContents(root);
+    selection!.addRange(insideRange);
+    expect(transcriptHasLiveSelection(root)).toBe(true);
+
+    selection!.removeAllRanges();
+    const outsideRange = document.createRange();
+    outsideRange.selectNodeContents(outside);
+    selection!.addRange(outsideRange);
+    expect(transcriptHasLiveSelection(root)).toBe(false);
+
+    selection!.removeAllRanges();
+    root.remove();
+    outside.remove();
   });
 
   it('returns to the end and clears the count on jump, submit and conversation switch', () => {

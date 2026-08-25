@@ -27,6 +27,7 @@ import { SettledTurnAnnouncer } from './SettledTurnAnnouncer';
 import {
   FOLLOWING_TRANSCRIPT,
   reduceTranscriptFollow,
+  transcriptHasLiveSelection,
   type TranscriptFollowEvent,
   type TranscriptFollowState,
 } from './transcript-follow';
@@ -586,13 +587,21 @@ export function AgentTimeline({
   }, [dispatchFollow]);
   useEffect(() => {
     if (scrollToLatestRequest <= 0 || turnOrder.length === 0) return;
+    /* A live selection in the transcript is a claim on the current viewport.
+       Submitting must not yank the reader off highlighted text — stay detached
+       with an unseen count instead of jumping to the end. */
+    const timelineRoot = timelineScroller?.closest('.agent-timeline') ?? timelineScroller;
+    if (transcriptHasLiveSelection(timelineRoot)) {
+      dispatchFollow({ type: 'user-detached', reason: 'selection' });
+      return;
+    }
     dispatchFollow({ type: 'jump-to-latest' });
     virtuosoRef.current?.scrollToIndex({
       index: turnOrder.length - 1,
       align: 'end',
       behavior: 'smooth',
     });
-  }, [dispatchFollow, scrollToLatestRequest, turnOrder.length]);
+  }, [dispatchFollow, scrollToLatestRequest, timelineScroller, turnOrder.length]);
   useEffect(() => {
     if (!jumpRequest?.messageId) return;
     const projection = useAgentLiveStore.getState().projections[sessionId];

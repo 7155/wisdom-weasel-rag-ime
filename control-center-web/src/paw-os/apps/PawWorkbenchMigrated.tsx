@@ -680,6 +680,7 @@ function TaskOrchestration({
                     data-lane={lane.lane}
                     key={lane.lane}
                     style={{ '--paw-wb-lane-x': `${lane.x}px` } as CSSProperties}
+                    title={`${GRAPH_LANE_LABELS[lane.lane]}：${lane.count} 项`}
                   >
                     <StatusMark lane={lane.lane} />
                     <b>{GRAPH_LANE_LABELS[lane.lane]}</b>

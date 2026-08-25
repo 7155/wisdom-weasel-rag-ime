@@ -218,7 +218,7 @@ describe('PawWorkbenchMigrated', () => {
 
     // Each populated lane also owns a drawn column, and the selected task's
     // lane is the one the field marks as current.
-    const bands = [...container.querySelectorAll('.paw-wb-graph__band')];
+    const bands = [...container.querySelectorAll<HTMLElement>('.paw-wb-graph__band')];
     expect(bands.map((band) => band.getAttribute('data-lane'))).toEqual(['done', 'active']);
     expect(bands.map((band) => band.style.getPropertyValue('--paw-wb-lane-x')))
       .toEqual(lanes.map((lane) => (lane as HTMLElement).style.getPropertyValue('--paw-wb-lane-x')));

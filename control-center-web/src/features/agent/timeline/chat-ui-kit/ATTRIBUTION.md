@@ -1,13 +1,18 @@
-# Chat UI Kit — Vendored Row Anchor Core
+# Chat UI Kit — Vendored Cores
 
-`message-anchor.ts` is vendored from `paw-agent-chat-ui-kit`
+Modules here are vendored from `paw-agent-chat-ui-kit`
 (`paw-agent-chat-ui-kit-source.zip` at the repository root, MIT, see the
-`LICENSE` inside the archive), covering the row-anchor half of the kit's
-**P0-C row anchor scroll memory** item in `docs/spec/03-GAP-ANALYSIS.md`.
+`LICENSE` inside the archive). Ops judgment: borrow pure core only; never
+replace AgentTimeline, ConversationSurface, or PAWOS chrome with kit React/CSS.
 
-| File here | Kit source |
-| --- | --- |
-| `message-anchor.ts` | `src/core/interaction/messageAnchor.ts` |
+| File here | Kit source | Kit gap item |
+| --- | --- | --- |
+| `message-anchor.ts` | `src/core/interaction/messageAnchor.ts` | P0-C row anchor scroll memory |
+| `telemetry.ts` | `src/core/performance/telemetry.ts` | P0-A content-free telemetry seam |
+
+Related (outside this folder): `../../composer/composer-action-model.ts`
+adapts `projectComposerActionModel` only — never `buildComposerCommand`.
+
 
 ## Local adaptations
 
