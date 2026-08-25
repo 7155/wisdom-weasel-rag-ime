@@ -52,7 +52,8 @@ adapts `projectComposerActionModel` only — never `buildComposerCommand`.
   the gap analysis rules out rewriting the queue engine. Each of these questions
   already has a PAW owner: `features/conversation-ui/model/queue.ts` plus
   `QueueTray` for the held-draft queue and its one-line next-item preview,
-  `SteerReceipt` for delivery state, `contracts/batching.ts` for transport
+  the Session's own Runtime-driven steer receipt for `operation.ts`'s delivery
+  state (Room uses the vendored `SteerReceipt`), `contracts/batching.ts` for transport
   delta coalescing (`performance/rafBuffer.ts`), `state/use-session-composer-inputs.ts`
   for per-Session drafts, and `AgentTurn`'s per-turn store selectors for the
   stable-history memo boundary `timeline.ts` reaches with a revision string.
@@ -73,3 +74,11 @@ adapts `projectComposerActionModel` only — never `buildComposerCommand`.
   does not own.
 - `src/core/markdown/*` — the transcript already runs the clean-room
   progressive renderer; see `../progressive-markdown/ATTRIBUTION.md`.
+  `scanner.ts`, `openFence.ts`, `normalization.ts` and `reveal.ts` all have a
+  counterpart there that is at least as complete, and the two the renderer does
+  not have are the same two it already declined from its own reference:
+  `tokenizer.ts` (streaming code stays a plain-text reader; Shiki highlighting
+  is a settled-read affordance) and `partition.ts` (the settled whole-document
+  parse re-renders the body rather than backfilling AST nodes into the
+  streaming chunk containers). Re-opening either needs a measured cost, not a
+  second reference recommending it.
