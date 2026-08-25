@@ -329,7 +329,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   position: absolute; z-index: 3;
   left: 34px;
   right: calc(var(--paw-work-w) + 24px + 44px);
-  top: 50%;
+  top: 45%;
   max-width: 548px;
   display: flex; flex-direction: column; align-items: flex-start; gap: 22px;
   translate: 0 -52%;
@@ -366,7 +366,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-field-lede__title em { font-style: normal; }
 .paw-field-lede__copy {
-  max-width: 30em;
+  max-width: 32em;
   margin: 0 0 18px;
   font-size: 13.5px; font-weight: 450; line-height: 1.66;
 }
@@ -1175,17 +1175,23 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-window-titlebar { grid-template-columns: var(--paw-titlebar-lead, 70px) minmax(0, 1fr) minmax(0, auto); }
   .paw-wayfinder { overflow: auto; padding-bottom: 92px; }
   /* The narrow desktop stacks in reading order: the lede column joins the
-     flow first, then the work instrument, each still bounded. The column
-     keeps its veil — a tighter one — because the ink's contrast is proven
-     against that ground, never against the bare fog. */
+     flow first, then the work instrument, each still bounded. A stacked
+     column has no room left for a feathered opening, so its ground closes
+     into a bounded panel — the same answer the work instrument already
+     gives at this width. The ink is proven against that panel, never
+     against the bare fog. */
   .paw-field-stage {
-    position: relative; z-index: auto;
+    /* Still a stacking context, so the ground stays behind the column
+       instead of falling through to the wallpaper plane. */
+    position: relative; z-index: 1;
     left: auto; right: auto; top: auto;
-    max-width: none; margin: 18px 18px 0; gap: 18px;
+    max-width: none; margin: 24px 36px 0; gap: 18px;
     translate: none;
   }
-  .paw-field-stage::before { inset: -18px -22px -22px -22px; }
-  .paw-wayfinder-work { position: relative; z-index: auto; top: auto; right: auto; width: auto; max-height: 330px; margin: 18px 16px 108px; }
+  /* The panel's own edge lands on the same 20px gutter the work instrument
+     below it uses, so the stack reads as one column. */
+  .paw-field-stage::before { inset: -16px; border-radius: 16px; }
+  .paw-wayfinder-work { position: relative; z-index: auto; top: auto; right: auto; width: auto; max-height: 330px; margin: 18px 20px 108px; }
   .paw-dock { max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none; }
   .paw-dock button { flex: 0 0 42px; }
   /* The narrow Dock scrolls internally; a hover label would be clipped. */
