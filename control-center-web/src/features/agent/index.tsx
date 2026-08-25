@@ -124,7 +124,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   const [forkDialogNodes, setForkDialogNodes] = useState<ConversationNode[]>([]);
   const [forkDialogInitialEntryId, setForkDialogInitialEntryId] = useState('');
   const [timelineJumpRequest, setTimelineJumpRequest] = useState<{ messageId: string; requestId: number }>();
-  const [timelineAtBottom, setTimelineAtBottom] = useState(true);
+  const [timelineFollow, setTimelineFollow] = useState({ following: true, unseenUpdates: 0 });
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [snapshotReadySessionId, setSnapshotReadySessionId] = useState('');
   const [railOpen, setRailOpen] = useState(() => !mobileViewport);
@@ -318,7 +318,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   }, [statusOverlayViewport]);
 
   useEffect(() => {
-    setTimelineAtBottom(true);
+    setTimelineFollow({ following: true, unseenUpdates: 0 });
   }, [selectedId]);
 
   useModalPanel({
@@ -1046,6 +1046,10 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
     setSessionDraft(session.id, '');
     setSessionAttachments(session.id, []);
     setSessionError(session.id, '');
+    /* Submitting is a claim on the end of the transcript. Without this a reader
+       who had scrolled up to check an earlier turn watched their own message
+       land off-screen with no sign it was accepted. */
+    setScrollToLatestRequest((current) => current + 1);
     promptSession(
       session.id,
       message,
@@ -1964,7 +1968,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && isUserConversation} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onRetryTurn={retryTurn} onContinueTurn={continueTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && isUserConversation} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onFollowStateChange={setTimelineFollow} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onRetryTurn={retryTurn} onContinueTurn={continueTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
           <div className="agent-composer-dock">
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
@@ -1992,7 +1996,8 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
             persona={persona}
             sending={sending || rewriteResolving}
             session={session}
-            showJumpLatest={!timelineAtBottom}
+            showJumpLatest={!timelineFollow.following}
+            unseenUpdates={timelineFollow.unseenUpdates}
             stopping={stopping}
             toolCatalogStatus={toolCatalogStatus}
             toolPickerRequest={toolPickerRequest}
