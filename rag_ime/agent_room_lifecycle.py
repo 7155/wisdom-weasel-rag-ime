@@ -20,6 +20,7 @@ from .agent_room_participants import (
 from .agent_rooms import (
     AgentRoomEventHub,
     AgentRoomStore,
+    MAX_ACTIVE_ROOM_PARTICIPANTS,
     normalize_collaboration_role,
 )
 from .agent_sessions import (
@@ -513,9 +514,9 @@ class RoomLifecycleService:
             raise ValueError(
                 "room participants must be an array"
             )
-        if not 2 <= len(raw_participants) <= 4:
+        if not 2 <= len(raw_participants) <= MAX_ACTIVE_ROOM_PARTICIPANTS:
             raise ValueError(
-                "agent room requires between 2 and 4 "
+                "agent room requires between 2 and 8 "
                 "participants"
             )
         workspace_roots = _workspace_roots(
@@ -704,6 +705,7 @@ def _participant_session_payload(
             if plan.room_kind == "collaboration"
             else "assistant"
         ),
+        "_modelRoute": "roomCoordinator",
         "roleId": role.role_id,
         "roleVersion": role.version,
         # Room identity describes responsibility, not capability. Every member

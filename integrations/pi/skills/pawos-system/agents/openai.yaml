@@ -1,0 +1,4 @@
+interface:
+  display_name: "理解与改造 PAWOS"
+  short_description: "介绍、使用或按自然语言修改 Personal Agent Workbench"
+  default_prompt: "使用 $pawos-system 读取最小真实上下文，优先复用现有 PAWOS 能力，并把说明或改造需求路由到正确的产品 owner。"

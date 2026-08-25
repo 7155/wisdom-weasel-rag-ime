@@ -183,7 +183,7 @@ def _preflight(args: argparse.Namespace) -> dict[str, object]:
         ).expanduser()
         installation = snapshot_managed_pi_runtime(
             support,
-            expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "0.80.7") or "0.80.7",
+            expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "").strip(),
         )
     except Exception as exc:
         checks["managedPi"] = False
@@ -506,8 +506,7 @@ def _isolated_runtime_config(run_root: Path, *, agent_config: Path) -> PiRuntime
     ).expanduser()
     installation = snapshot_managed_pi_runtime(
         source_app_support,
-        expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "0.80.7").strip()
-        or "0.80.7",
+        expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "").strip(),
     )
     overrides = {
         "RAG_IME_APP_SUPPORT_DIR": str(run_root / "runtime-support"),

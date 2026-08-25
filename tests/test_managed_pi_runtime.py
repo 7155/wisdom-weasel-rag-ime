@@ -12,7 +12,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime import agent_tools, managed_pi_runtime as managed_runtime
-from rag_ime.agent_tool_ids import ASSISTANT_CONTROL_TOOL_IDS, CONTROL_TOOL_IDS
+from rag_ime.agent_tool_ids import (
+    ASSISTANT_CONTROL_TOOL_IDS,
+    CONTROL_TOOL_IDS,
+    PI_PACKAGE_OWNED_CONTROL_TOOL_IDS,
+)
 from rag_ime.managed_pi_runtime import (
     ACCEPTANCE_SCHEMA_VERSION,
     LIFECYCLE_SCHEMA_VERSION,
@@ -774,8 +778,29 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         ):
             write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
 
+    def test_protocol_v2_manifest_accepts_current_runtime_method_surface_with_a_bound(self) -> None:
+        payload, manifest = self._payload("runtime-v2-current-methods", protocol_version="2")
+        current_methods = (
+            *managed_runtime.REQUIRED_SESSION_RUNTIME_METHODS,
+            *(f"runtime.capability_{index}" for index in range(31)),
+        )
+        self.assertEqual(len(current_methods), 37)
+        manifest["runtimeMethods"] = list(current_methods)
+
+        write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
+
+        manifest["runtimeMethods"] = [
+            *managed_runtime.REQUIRED_SESSION_RUNTIME_METHODS,
+            *(f"runtime.excess_{index}" for index in range(59)),
+        ]
+        with self.assertRaisesRegex(
+            ManagedPiRuntimeError,
+            "method list is invalid",
+        ):
+            write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
+
     def test_pi_runtime_config_discovers_managed_install_without_path_fallback(self) -> None:
-        payload, _ = self._payload("runtime-1")
+        payload, manifest = self._payload("runtime-1", pi_version="0.84.2")
         installed = install_managed_pi_runtime(payload, self.app_support)
         with patch.dict(
             os.environ,
@@ -790,12 +815,17 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(config.executable, installed.executable)
         self.assertEqual(config.node_executable, installed.node_executable)
         self.assertEqual(config.extension_path, installed.extension_path)
+        self.assertEqual(config.pi_version, manifest["piVersion"])
         self.assertEqual(config.installation_error, "")
         command = config.launch_command(session={"title": "managed"})
         self.assertEqual(command[:2], [installed.node_executable, str(installed.executable)])
         self.assertEqual(
             command[command.index("--tools") + 1],
-            ",".join(ASSISTANT_CONTROL_TOOL_IDS),
+            ",".join(
+                tool
+                for tool in ASSISTANT_CONTROL_TOOL_IDS
+                if tool not in PI_PACKAGE_OWNED_CONTROL_TOOL_IDS
+            ),
         )
 
     def test_explicit_development_executable_overrides_managed_install(self) -> None:
@@ -916,6 +946,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         runtime_version: str,
         *,
         protocol_version: str = "1",
+        pi_version: str = "0.80.7",
     ) -> tuple[Path, dict[str, object]]:
         payload = self.root / f"payload-{runtime_version}"
         node = payload / "bin" / "node"
@@ -947,7 +978,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         manifest = build_managed_pi_runtime_manifest(
             payload,
             runtime_version=runtime_version,
-            pi_version="0.80.7",
+            pi_version=pi_version,
             launch_kind="node",
             pi_entrypoint="lib/pi/dist/cli.js",
             node_entrypoint="bin/node",

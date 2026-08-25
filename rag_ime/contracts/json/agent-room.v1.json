@@ -41,7 +41,7 @@
       }
     },
     "moderatorParticipantId": {"type": "string"},
-    "nextSpeakerOrdinal": {"type": "integer", "minimum": 0, "maximum": 3},
+    "nextSpeakerOrdinal": {"type": "integer", "minimum": 0, "maximum": 7},
     "activeTopicId": {"type": "string"},
     "configRevision": {"type": "integer", "minimum": 1},
     "workspaceRoots": {
@@ -57,7 +57,7 @@
     "participants": {
       "type": "array",
       "minItems": 2,
-      "maxItems": 4,
+      "maxItems": 8,
       "items": {"type": "object"}
     },
     "topics": {

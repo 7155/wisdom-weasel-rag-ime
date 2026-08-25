@@ -28,8 +28,8 @@ class SettingsSchemaTests(unittest.TestCase):
     def test_defaults_include_user_customization_controls(self) -> None:
         defaults = default_settings()
 
-        self.assertEqual(defaults["identity"]["productName"], "澄")
-        self.assertEqual(defaults["identity"]["assistantName"], "澄")
+        self.assertEqual(defaults["identity"]["productName"], "PAW")
+        self.assertEqual(defaults["identity"]["assistantName"], "Agent")
         self.assertEqual(defaults["identity"]["tagline"], "记得你，也陪你做事")
         self.assertFalse(defaults["interaction"]["composition"]["showPrediction"])
         self.assertTrue(defaults["interaction"]["composition"]["showOnlyRime"])
@@ -80,6 +80,9 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
         self.assertTrue(defaults["agent"]["pi"]["systemProxy"])
         self.assertEqual(defaults["agent"]["pi"]["defaultRoleId"], "companion-future-v1")
+        self.assertEqual(defaults["agent"]["defaults"]["modelReference"], "inherit")
+        self.assertEqual(defaults["agent"]["defaults"]["thinkingLevel"], "high")
+        self.assertEqual(defaults["agent"]["defaults"]["executionMode"], "per_action")
         self.assertTrue(defaults["lexiconOrganization"]["enabled"])
         self.assertEqual(defaults["lexiconOrganization"]["runsPerDay"], 2)
         self.assertTrue(defaults["memory"]["automaticOrganization"]["enabled"])
@@ -171,6 +174,14 @@ class SettingsSchemaTests(unittest.TestCase):
             65536,
         )
         self.assertNotIn("agent.pi.startup", fields)
+        self.assertEqual(fields["agent.defaults.modelReference"]["type"], "pi-model-or-inherit")
+        self.assertEqual(fields["agent.defaults.thinkingLevel"]["type"], "pi-thinking")
+        self.assertEqual(fields["agent.defaults.thinkingLevel"]["modelKey"], "agent.defaults.modelReference")
+        self.assertEqual(
+            fields["agent.defaults.executionMode"]["options"],
+            ["read_only", "per_action", "workspace_managed", "full_trust"],
+        )
+        self.assertEqual(fields["agent.defaults.executionMode"]["applyMode"], "next_session")
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
         self.assertEqual(fields["activeRag.latencyBudgetMs"]["label"], "生成框最长等待")
         self.assertEqual(fields["activeRag.latencyBudgetMs"]["default"], 8000)

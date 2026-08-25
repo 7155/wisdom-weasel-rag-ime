@@ -482,19 +482,16 @@ class AgentPromptApplicationService:
                 return session, False
         configuration = self.configuration_store.snapshot()["configuration"]
         defaults = configuration["sessionDefaults"]
-        model_routing = configuration["modelRouting"]
         created = self.create_session(
             {
                 "title": daily_title,
                 "mode": "assistant",
                 "roleId": str(defaults["roleId"]),
                 "roleVersion": str(defaults["roleVersion"]),
-                "modelProfile": str(model_routing["sessionModelProfile"]),
-                "thinkingLevel": str(model_routing["sessionThinkingLevel"]),
                 "toolProfileVersion": str(
                     defaults["toolProfileVersion"]
                 ),
-                "_internalModelOverride": True,
+                "_modelRoute": "primary",
             }
         )
         return dict(created["session"]), True
@@ -516,9 +513,7 @@ class AgentPromptApplicationService:
             Callable[[Mapping[str, object]], None] | None
         ) = None,
     ) -> dict[str, object]:
-        session = self.memory_context.ensure_role_book(
-            session_id
-        )
+        session = self.sessions.get(session_id)
         self._require_prompt_admission_active(
             session_id,
             client_message_id=client_message_id,

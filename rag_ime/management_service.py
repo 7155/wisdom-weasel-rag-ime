@@ -5456,7 +5456,7 @@ def _assistant_candidate_delivery_component(
             "detail": (
                 "当前输入法已选中，Sidecar 已响应"
                 if connected
-                else "Sidecar 未响应" if not sidecar_ok else "Sidecar 已响应，但当前未选中澄输入法"
+                else "Sidecar 未响应" if not sidecar_ok else "Sidecar 已响应，但当前未选中 PAW 输入法"
             ),
             "sidecarHealthy": bool(sidecar_ok),
             "inputSourceSelected": bool(input_source_selected),

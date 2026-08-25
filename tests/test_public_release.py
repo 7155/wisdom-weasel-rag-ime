@@ -290,7 +290,9 @@ class PublicReleaseAuditTests(unittest.TestCase):
             "THIRD_PARTY_NOTICES.md",
             "pyproject.toml",
         ):
-            (root / name).write_text("public metadata\n", encoding="utf-8")
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("public metadata\n", encoding="utf-8")
         if include_license:
             (root / "LICENSE").write_text("test license\n", encoding="utf-8")
         release = root / "release"

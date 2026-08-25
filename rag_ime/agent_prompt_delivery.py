@@ -12,6 +12,7 @@ from .agent_context_runtime import (
 from .agent_execution_policy import execution_policy_prompt
 from .pi_runtime_values import (
     PiRuntimeCommandRejected,
+    PiRuntimeError,
     PiRuntimeTurnConflict,
 )
 from .text_utils import compact_whitespace
@@ -367,13 +368,15 @@ class AgentPromptDeliveryService:
             )
         except Exception as exc:
             duration_ms = _duration_ms(started)
+            pre_accept_rejection = _pre_accept_runtime_rejection(exc)
             known_rejection = isinstance(
                 exc,
                 (
                     PiRuntimeCommandRejected,
                     PiRuntimeTurnConflict,
                 ),
-            )
+            ) or pre_accept_rejection is not None
+            reported_error = pre_accept_rejection or exc
             try:
                 self.context_runtime.add_trace_node(
                     trace_id,
@@ -395,7 +398,7 @@ class AgentPromptDeliveryService:
                         )
                     ),
                     duration_ms=duration_ms,
-                    reason=_public_error(exc),
+                    reason=_public_error(reported_error),
                 )
                 self.context_runtime.finalize_trace(
                     trace_id,
@@ -405,12 +408,28 @@ class AgentPromptDeliveryService:
             except Exception:
                 pass
             if known_rejection:
+                if pre_accept_rejection is not None:
+                    raise pre_accept_rejection from exc
                 raise
             raise AgentPromptAcceptanceUnknown(
                 "Pi acceptance is unknown because the runtime call did not "
                 "return a source-proven result"
             ) from exc
         return accepted, _duration_ms(started)
+
+
+def _pre_accept_runtime_rejection(
+    error: BaseException,
+) -> PiRuntimeCommandRejected | None:
+    if (
+        isinstance(error, PiRuntimeError)
+        and str(error) == "Pi runtime is disabled"
+    ):
+        return PiRuntimeCommandRejected(
+            str(error),
+            host_error_code="PI_RUNTIME_DISABLED",
+        )
+    return None
 
 
 def _partition_items(

@@ -30,7 +30,7 @@
       "enum": ["coordinator", "researcher", "implementer", "reviewer", "specialist"]
     },
     "status": {"type": "string", "enum": ["active", "muted", "removed"]},
-    "ordinal": {"type": "integer", "minimum": 0, "maximum": 3},
+    "ordinal": {"type": "integer", "minimum": 0, "maximum": 7},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "lastSpokeAtMs": {"type": ["integer", "null"]}
   }

@@ -1,0 +1,7 @@
+interface:
+  display_name: "PAW Browser"
+  short_description: "Control PAW's built-in Chromium"
+  icon_small: "./assets/composer-icon.png"
+  icon_large: "./assets/logo.png"
+  brand_color: "#1E90FF"
+  default_prompt: "Use $ego-browser through PAW's browser tool to complete this web task."

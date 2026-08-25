@@ -15,7 +15,7 @@ final class ControlCenterAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         "worker-src 'self' blob:",
         "connect-src 'self'",
         "object-src 'none'",
-        "frame-src blob:",
+        "frame-src 'self' blob:",
         "base-uri 'none'",
         "form-action 'none'",
     ].joined(separator: "; ")
@@ -28,8 +28,17 @@ final class ControlCenterAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         guard let requestURL = urlSchemeTask.request.url,
               requestURL.scheme == Self.scheme,
-              requestURL.host == "app",
-              let fileURL = resolvedFileURL(for: requestURL) else {
+              requestURL.host == "app" else {
+            fail(urlSchemeTask, code: 400, message: "Invalid control-center asset path")
+            return
+        }
+
+        if requestURL.path == "/__paw_html_preview", requestURL.query == nil {
+            serveIsolatedHTMLPreview(urlSchemeTask, requestURL: requestURL)
+            return
+        }
+
+        guard let fileURL = resolvedFileURL(for: requestURL) else {
             fail(urlSchemeTask, code: 400, message: "Invalid control-center asset path")
             return
         }
@@ -62,6 +71,68 @@ final class ControlCenterAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+
+    private func serveIsolatedHTMLPreview(
+        _ task: WKURLSchemeTask,
+        requestURL: URL
+    ) {
+        let document = """
+        <!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>PAW HTML Preview</title></head><body>
+        <noscript>This preview requires JavaScript.</noscript><script>
+        (() => {
+          try {
+            const encoded = location.hash.slice(1).replace(/-/g, '+').replace(/_/g, '/');
+            if (!encoded) throw new Error('preview source is missing');
+            const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
+            const binary = atob(padded);
+            const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+            const source = new TextDecoder().decode(bytes);
+            document.open(); document.write(source); document.close();
+          } catch (error) {
+            document.body.textContent = `HTML preview failed: ${String(error)}`;
+          }
+        })();
+        </script></body></html>
+        """
+        let data = Data(document.utf8)
+        let previewCSP = [
+            "default-src 'none'",
+            "script-src 'unsafe-inline' https: http: blob: data:",
+            "style-src 'unsafe-inline' https: http:",
+            "img-src data: blob: https: http:",
+            "font-src data: blob: https: http:",
+            "media-src data: blob: https: http:",
+            "connect-src https: http: ws: wss:",
+            "worker-src blob: data:",
+            "child-src blob: data: https: http:",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action https: http:",
+            "sandbox allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-scripts",
+        ].joined(separator: "; ")
+        let headers = [
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Length": String(data.count),
+            "Content-Security-Policy": previewCSP,
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        ]
+        guard let response = HTTPURLResponse(
+            url: requestURL,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: headers
+        ) else {
+            fail(task, code: 500, message: "Unable to create preview response")
+            return
+        }
+        task.didReceive(response)
+        task.didReceive(data)
+        task.didFinish()
+    }
 
     private func resolvedFileURL(for requestURL: URL) -> URL? {
         var relativePath = requestURL.path

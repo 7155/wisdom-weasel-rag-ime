@@ -18,7 +18,7 @@
     "revisionToken": {"type": "string", "minLength": 1},
     "configuration": {
       "type": "object",
-      "required": ["runtime", "sessionDefaults", "modelRouting", "coordination", "capabilityDisclosure"],
+      "required": ["runtime", "sessionDefaults", "coordination", "modelRouting"],
       "properties": {
         "runtime": {
           "type": "object",
@@ -35,6 +35,7 @@
             "resumeLastSession",
             "roleId",
             "roleVersion",
+            "modelProfile",
             "toolProfileVersion",
             "capabilityDisclosurePreferences"
           ],
@@ -42,6 +43,7 @@
             "resumeLastSession": {"type": "boolean"},
             "roleId": {"type": "string", "minLength": 1},
             "roleVersion": {"type": "string", "minLength": 1},
+            "modelProfile": {"type": "string", "minLength": 1},
             "toolProfileVersion": {"type": "string", "minLength": 1},
             "capabilityDisclosurePreferences": {
               "type": "object",
@@ -52,25 +54,6 @@
             }
           }
         },
-        "modelRouting": {
-          "type": "object",
-          "required": [
-            "sessionModelProfile",
-            "sessionThinkingLevel",
-            "roomPartnerModelProfile",
-            "roomPartnerThinkingLevel",
-            "toolAgentModelProfile",
-            "toolAgentThinkingLevel"
-          ],
-          "properties": {
-            "sessionModelProfile": {"type": "string", "minLength": 1},
-            "sessionThinkingLevel": {"type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]},
-            "roomPartnerModelProfile": {"type": "string", "minLength": 1},
-            "roomPartnerThinkingLevel": {"type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]},
-            "toolAgentModelProfile": {"type": "string", "minLength": 1},
-            "toolAgentThinkingLevel": {"type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
-          }
-        },
         "coordination": {
           "type": "object",
           "required": ["enabled"],
@@ -78,12 +61,16 @@
             "enabled": {"type": "boolean"}
           }
         },
-        "capabilityDisclosure": {
+        "modelRouting": {
           "type": "object",
-          "required": ["projectPreferences"],
+          "required": ["primary", "toolAgent", "subagent", "roomCoordinator"],
           "properties": {
-            "projectPreferences": {"type": "object"}
-          }
+            "primary": {"$ref": "#/$defs/modelRoute"},
+            "toolAgent": {"$ref": "#/$defs/modelRoute"},
+            "subagent": {"$ref": "#/$defs/modelRoute"},
+            "roomCoordinator": {"$ref": "#/$defs/modelRoute"}
+          },
+          "additionalProperties": false
         }
       }
     },
@@ -99,5 +86,19 @@
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "updatedBy": {"type": "string", "minLength": 1},
     "lastEventId": {"type": "string"}
+  },
+  "$defs": {
+    "modelRoute": {
+      "type": "object",
+      "required": ["modelProfile", "thinkingLevel"],
+      "properties": {
+        "modelProfile": {"type": "string", "minLength": 1},
+        "thinkingLevel": {
+          "type": "string",
+          "enum": ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        }
+      },
+      "additionalProperties": false
+    }
   }
 }

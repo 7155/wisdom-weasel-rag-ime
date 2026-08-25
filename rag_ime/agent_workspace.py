@@ -264,10 +264,14 @@ WorkspaceExecutor = Callable[[PreparedWorkspaceCommand], dict[str, object]]
 @dataclass
 class SpawnedWorkspaceCommand:
     process: subprocess.Popen[bytes]
-    temporary_directory: tempfile.TemporaryDirectory
+    temporary_directory: tempfile.TemporaryDirectory | None = None
+    temporary_path: Path | None = None
 
     def cleanup(self) -> None:
-        self.temporary_directory.cleanup()
+        if self.temporary_directory is not None:
+            self.temporary_directory.cleanup()
+        if self.temporary_path is not None:
+            shutil.rmtree(self.temporary_path, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -330,6 +334,8 @@ class PreparedWorkspaceWrite:
     root: Path
     content: str
     existed_before: bool
+    preimage: bytes
+    preimage_mode: int
     preimage_sha256: str
     preimage_size: int
     postimage_sha256: str
@@ -703,7 +709,7 @@ class WorkspaceHarness:
         atexit.register(self.close_lsp)
 
     def list(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         raw_path = str(args.get("path") or "").strip()
         if not raw_path:
             return {
@@ -734,7 +740,7 @@ class WorkspaceHarness:
         }
 
     def read(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         raw_path = str(args.get("path") or "").strip()
         if not raw_path:
             raise WorkspaceHarnessError("path is required for workspace_read")
@@ -808,7 +814,7 @@ class WorkspaceHarness:
         )
 
     def search(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         query = str(args.get("query") or "")
         if not query or len(query) > 200 or "\x00" in query or "\n" in query or "\r" in query:
             raise WorkspaceHarnessError("workspace_search query must be 1-200 single-line characters")
@@ -1518,7 +1524,7 @@ class WorkspaceHarness:
         session: Mapping[str, object],
         args: Mapping[str, object],
     ) -> tuple[Path, ...]:
-        roots = self._session_roots(session)
+        roots = self._read_session_roots(session)
         raw_root = str(args.get("root") or "").strip()
         if not raw_root:
             return roots
@@ -1563,7 +1569,7 @@ class WorkspaceHarness:
             raise WorkspaceLspError("invalid_request", "path is required for workspace_lsp")
         try:
             target, root = self._resolve_existing_path(
-                self._session_roots(session),
+                self._read_session_roots(session),
                 raw_path,
                 allow_directory=False,
             )
@@ -3172,6 +3178,8 @@ class WorkspaceHarness:
             root=root,
             content=content,
             existed_before=existed_before,
+            preimage=before_raw,
+            preimage_mode=(target.stat().st_mode & 0o777) if existed_before else 0o644,
             preimage_sha256=preimage_sha256,
             preimage_size=len(before_raw),
             postimage_sha256=hashlib.sha256(postimage).hexdigest(),
@@ -3183,6 +3191,33 @@ class WorkspaceHarness:
                 else None
             ),
         )
+
+    def rollback_write(self, prepared: PreparedWorkspaceWrite) -> None:
+        """Restore an applied write when its coupled lifecycle commit fails.
+
+        The rollback is hash-guarded so a concurrent writer is never
+        overwritten.  This is intentionally narrower than a general undo
+        surface: it is only for a write whose postimage has not yet been
+        reported as successfully committed.
+        """
+
+        if not prepared.path.exists() or not prepared.path.is_file():
+            raise WorkspaceHarnessError(
+                "workspace write rollback target is no longer available"
+            )
+        current = prepared.path.read_bytes()
+        if hashlib.sha256(current).hexdigest() != prepared.postimage_sha256:
+            raise WorkspaceHarnessError(
+                "workspace file changed before work document rollback"
+            )
+        if prepared.existed_before:
+            self._atomic_write(
+                prepared.path,
+                prepared.preimage,
+                prepared.preimage_mode,
+            )
+            return
+        prepared.path.unlink()
 
     def write_preview(self, prepared: PreparedWorkspaceWrite) -> dict[str, object]:
         action = "覆盖" if prepared.existed_before else "创建"
@@ -3426,6 +3461,22 @@ class WorkspaceHarness:
     def _session_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
         if str(session.get("mode") or "") != "coordinator":
             raise WorkspaceHarnessError("工作区工具需要协调模式的对话")
+        return self._authorized_roots(session)
+
+    def _read_session_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
+        if str(session.get("mode") or "") == "coordinator":
+            return self._authorized_roots(session)
+        if not (
+            str(session.get("sessionKind") or "") == "subagent_runtime"
+            and str(session.get("mode") or "") == "assistant"
+            and str(session.get("toolProfileVersion") or "")
+            == "subagent-readonly-v1"
+            and str(session.get("executionMode") or "") == "read_only"
+        ):
+            raise WorkspaceHarnessError("工作区工具需要协调模式的对话")
+        return self._authorized_roots(session)
+
+    def _authorized_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
         values = session.get("workspaceRoots")
         if not isinstance(values, list) or not values:
             raise WorkspaceHarnessError(_NO_AUTHORIZED_WORKSPACE)
@@ -3454,10 +3505,33 @@ class WorkspaceHarness:
         allow_directory: bool,
     ) -> tuple[Path, Path]:
         requested = Path(raw_path).expanduser()
-        candidates = [requested] if requested.is_absolute() else [root / requested for root in roots]
-        for candidate in candidates:
+        candidates: list[Path] = []
+        if requested.is_absolute():
+            candidates.append(requested)
+        else:
+            for root in roots:
+                # Models often repeat the visible repository name even though
+                # relative paths are already resolved from that repository.
+                # Normalize that unambiguous form without widening the grant.
+                if requested.parts and requested.parts[0] == root.name:
+                    candidates.append(root.parent / requested)
+                candidates.append(root / requested)
+
+        unique_candidates = list(dict.fromkeys(candidates))
+        missing_inside_workspace: list[tuple[Path, Path]] = []
+        for candidate in unique_candidates:
             try:
                 resolved = candidate.resolve(strict=True)
+            except (FileNotFoundError, NotADirectoryError):
+                try:
+                    unresolved = candidate.resolve(strict=False)
+                except (OSError, RuntimeError):
+                    continue
+                for root in roots:
+                    if _is_within(unresolved, root):
+                        missing_inside_workspace.append((unresolved, root))
+                        break
+                continue
             except (OSError, RuntimeError):
                 continue
             for root in roots:
@@ -3465,7 +3539,50 @@ class WorkspaceHarness:
                     if resolved.is_dir() and not allow_directory:
                         raise WorkspaceHarnessError("workspace_read path must be a file")
                     return resolved, root
-        raise WorkspaceHarnessError("path is outside the authorized workspace or does not exist")
+        if missing_inside_workspace:
+            target, root = missing_inside_workspace[0]
+            raise WorkspaceHarnessError(self._missing_path_message(target, root))
+        raise WorkspaceHarnessError("path is outside the authorized workspace")
+
+    def _missing_path_message(self, target: Path, root: Path) -> str:
+        message = "path does not exist in the authorized workspace"
+        ancestor = target.parent
+        while _is_within(ancestor, root) and not ancestor.exists():
+            ancestor = ancestor.parent
+        try:
+            resolved_ancestor = ancestor.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return message
+        if (
+            not _is_within(resolved_ancestor, root)
+            or resolved_ancestor.is_symlink()
+            or not resolved_ancestor.is_dir()
+        ):
+            return message
+        try:
+            children = [
+                child
+                for child in resolved_ancestor.iterdir()
+                if not child.is_symlink() and not self._is_sensitive(child, root)
+            ]
+        except OSError:
+            return message
+        ranked = sorted(
+            children,
+            key=lambda child: (
+                child.suffix.casefold() != target.suffix.casefold(),
+                -difflib.SequenceMatcher(
+                    None,
+                    target.name.casefold(),
+                    child.name.casefold(),
+                ).ratio(),
+                child.name.casefold(),
+            ),
+        )
+        nearby = [str(child.relative_to(root)) for child in ranked[:8]]
+        if nearby:
+            return f"{message}; nearby entries: {', '.join(nearby)}"
+        return message
 
     def _resolve_write_path(
         self,
@@ -3648,8 +3765,17 @@ class WorkspaceHarness:
     def spawn_background(
         self,
         prepared: PreparedWorkspaceCommand,
+        *,
+        output_path: str | Path | None = None,
+        exit_status_path: str | Path | None = None,
+        temporary_path: str | Path | None = None,
     ) -> SpawnedWorkspaceCommand:
-        return self._spawn_sandboxed(prepared)
+        return self._spawn_sandboxed(
+            prepared,
+            output_path=output_path,
+            exit_status_path=exit_status_path,
+            temporary_path=temporary_path,
+        )
 
     @staticmethod
     def terminate_background(launched: SpawnedWorkspaceCommand) -> None:
@@ -3717,15 +3843,35 @@ class WorkspaceHarness:
     def _spawn_sandboxed(
         self,
         prepared: PreparedWorkspaceCommand,
+        *,
+        output_path: str | Path | None = None,
+        exit_status_path: str | Path | None = None,
+        temporary_path: str | Path | None = None,
     ) -> SpawnedWorkspaceCommand:
         sandbox = self.sandbox_executable
         if not sandbox.is_file() or not os.access(sandbox, os.X_OK):
             raise WorkspaceHarnessError("macOS command harness is unavailable; refusing unsandboxed execution")
-        temporary_directory = tempfile.TemporaryDirectory(
-            prefix="rag-ime-agent-command-",
+        durable_output = Path(output_path) if output_path is not None else None
+        durable_exit = Path(exit_status_path) if exit_status_path is not None else None
+        durable_temporary = (
+            Path(temporary_path) if temporary_path is not None else None
         )
-        try:
+        if (durable_output is None) != (durable_exit is None):
+            raise WorkspaceHarnessError(
+                "resumable background commands require output and exit-status paths"
+            )
+        temporary_directory = None
+        if durable_temporary is None:
+            temporary_directory = tempfile.TemporaryDirectory(
+                prefix="rag-ime-agent-command-",
+            )
             temporary = Path(temporary_directory.name).resolve(strict=True)
+        else:
+            durable_temporary.mkdir(parents=False, mode=0o700, exist_ok=False)
+            temporary = durable_temporary.resolve(strict=True)
+        output_handle = None
+        exit_handle = None
+        try:
             profile = _sandbox_profile(
                 roots=prepared.sandbox_roots,
                 temporary=temporary,
@@ -3749,21 +3895,77 @@ class WorkspaceHarness:
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_OPTIONAL_LOCKS": "0",
             }
+            command = [
+                str(sandbox),
+                "-p",
+                profile,
+                "/bin/zsh",
+                "-f",
+                "-c",
+                prepared.command,
+            ]
+            stdout: int | object = subprocess.PIPE
+            pass_fds: tuple[int, ...] = ()
+            if durable_output is not None and durable_exit is not None:
+                durable_output.touch(mode=0o600, exist_ok=False)
+                os.chmod(durable_output, 0o600)
+                output_handle = durable_output.open("ab", buffering=0)
+                exit_handle = durable_exit.open("xb", buffering=0)
+                os.chmod(durable_exit, 0o600)
+                exit_fd = exit_handle.fileno()
+                wrapper = (
+                    'receipt_fd="$2"\n'
+                    '(\n'
+                    '  eval "exec ${receipt_fd}>&-"\n'
+                    '  /bin/zsh -f -c "$1"\n'
+                    ')\n'
+                    'exit_code=$?\n'
+                    'eval "printf \'%s\\\\n\' \'$exit_code\' >&${receipt_fd}"\n'
+                    'exit "$exit_code"'
+                )
+                command = [
+                    str(sandbox),
+                    "-p",
+                    profile,
+                    "/bin/zsh",
+                    "-f",
+                    "-c",
+                    wrapper,
+                    "rag-ime-background",
+                    prepared.command,
+                    str(exit_fd),
+                ]
+                stdout = output_handle
+                pass_fds = (exit_fd,)
             process = subprocess.Popen(
-                [str(sandbox), "-p", profile, "/bin/zsh", "-f", "-c", prepared.command],
+                command,
                 cwd=prepared.cwd,
                 env=environment,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
+                stdout=stdout,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                pass_fds=pass_fds,
             )
         except Exception:
-            temporary_directory.cleanup()
+            if temporary_directory is not None:
+                temporary_directory.cleanup()
+            if durable_temporary is not None:
+                shutil.rmtree(durable_temporary, ignore_errors=True)
+            if durable_output is not None:
+                durable_output.unlink(missing_ok=True)
+            if durable_exit is not None:
+                durable_exit.unlink(missing_ok=True)
             raise
+        finally:
+            if output_handle is not None:
+                output_handle.close()
+            if exit_handle is not None:
+                exit_handle.close()
         return SpawnedWorkspaceCommand(
             process=process,
             temporary_directory=temporary_directory,
+            temporary_path=durable_temporary,
         )
 
     def _bounded_output(
@@ -4036,6 +4238,11 @@ def _sandbox_profile(
     for pattern in sensitive_patterns:
         lines.append(f'(deny file-read* (regex #"{pattern}"))')
         lines.append(f'(deny file-write* (regex #"{pattern}"))')
+    # A managed preview server is still local product validation, not external
+    # network access. Let it bind a socket while accepting only loopback input;
+    # outbound access remains behind the explicit allowNetwork contract below.
+    lines.append('(allow network-bind (local ip "*:*"))')
+    lines.append('(allow network-inbound (local ip "localhost:*"))')
     if allow_network:
         lines.append("(allow network-outbound)")
         lines.append('(allow file-read* (literal "/private/etc/hosts"))')

@@ -8,10 +8,50 @@ from typing import Any, Callable
 
 from .agent_room_prompt_context import agent_message_text
 from .agent_room_turn_registry import RoomSessionBusyError
-from .agent_room_work import (
-    AgentRoomWorkAssignmentChanged,
-    AgentRoomWorkAttemptChanged,
+from .contracts.json_schema import validate_contract
+
+
+_MAX_AUTONOMOUS_COMPLETION_WAKE_GENERATION = 2
+_MAX_LEGACY_PREACCEPTANCE_WAKE_GENERATION = 3
+_MAX_LEGACY_STALE_WAKE_GENERATION = 3
+_MAX_MISSING_TYPED_RESULT_WAKE_GENERATION = 4
+_LEGACY_STALE_WAKE_ERROR = "Stale Room Partner completion wake"
+_MISSING_TYPED_RESULT_ERROR = (
+    "Facilitator turn completed without room_partner post(kind=result)"
 )
+_RECOVERABLE_RUNTIME_HOST_FAILURE_MARKERS = (
+    "invalid pi runtime host jsonl",
+    "pi runtime host stdout ended",
+    "pi runtime host exited",
+    "runtime_host_exit",
+    "partial protocol record",
+)
+_ROOM_CELESTIAL_NAMES = (
+    "Earth",
+    "Mars",
+    "Venus",
+    "Jupiter",
+    "Saturn",
+    "Mercury",
+    "Neptune",
+    "Uranus",
+)
+
+
+def _room_celestial_name(
+    participant: Mapping[str, object],
+    *,
+    fallback_ordinal: int,
+) -> str:
+    raw_ordinal = participant.get("ordinal")
+    ordinal = (
+        raw_ordinal
+        if isinstance(raw_ordinal, int) and not isinstance(raw_ordinal, bool)
+        else fallback_ordinal
+    )
+    if 0 <= ordinal < len(_ROOM_CELESTIAL_NAMES):
+        return _ROOM_CELESTIAL_NAMES[ordinal]
+    return f"Planet {ordinal + 1}"
 
 
 class RoomPartnerApplicationService:
@@ -35,10 +75,35 @@ class RoomPartnerApplicationService:
         cancel_room_turn: Callable[[str, str], None],
         abort_session: Callable[[str], Mapping[str, object]],
         room_topic_for_turn: Callable[[str], str],
-        room_work: Any,
-        publish_room_work_activity: Callable[..., None],
-        monotonic: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
+        send_room_intercom: Callable[[str, Mapping[str, object]], Mapping[str, object]] | None = None,
+        list_room_intercom: Callable[[str], list[Mapping[str, object]]] | None = None,
+        room_work: Any | None = None,
+        publish_room_work_activity: Callable[..., None] | None = None,
+        work_document_for_authority: Callable[[str, str], Mapping[str, object] | None] | None = None,
+        dispatch_store: Any | None = None,
+        wake_schedules: Any | None = None,
+        notify_wake_scheduler: Callable[[], None] | None = None,
+        dispatch_facilitator_wake: Callable[
+            [Mapping[str, object], Mapping[str, object]], bool
+        ]
+        | None = None,
+        command_acceptance_evidence: Callable[
+            [str, str], Mapping[str, object] | None
+        ]
+        | None = None,
+        command_failure_evidence: Callable[
+            [str, str], Mapping[str, object] | None
+        ]
+        | None = None,
+        accept_room_work: Callable[
+            [str, Mapping[str, object]], Mapping[str, object]
+        ]
+        | None = None,
+        return_room_work: Callable[
+            [str, Mapping[str, object]], Mapping[str, object]
+        ]
+        | None = None,
+        recover_faulted_session: Callable[[str], None] | None = None,
     ) -> None:
         self.rooms = rooms
         self.room_turns = room_turns
@@ -51,10 +116,20 @@ class RoomPartnerApplicationService:
         self.cancel_room_turn = cancel_room_turn
         self.abort_session = abort_session
         self.room_topic_for_turn = room_topic_for_turn
+        self.send_room_intercom = send_room_intercom
+        self.list_room_intercom = list_room_intercom
         self.room_work = room_work
         self.publish_room_work_activity = publish_room_work_activity
-        self.monotonic = monotonic
-        self.sleep = sleep
+        self.work_document_for_authority = work_document_for_authority
+        self.dispatch_store = dispatch_store
+        self.wake_schedules = wake_schedules
+        self.notify_wake_scheduler = notify_wake_scheduler
+        self.dispatch_facilitator_wake = dispatch_facilitator_wake
+        self.command_acceptance_evidence = command_acceptance_evidence
+        self.command_failure_evidence = command_failure_evidence
+        self.accept_room_work = accept_room_work
+        self.return_room_work = return_room_work
+        self.recover_faulted_session = recover_faulted_session
 
     def execute(
         self,
@@ -62,6 +137,7 @@ class RoomPartnerApplicationService:
         args: Mapping[str, object],
         *,
         tool_call_id: str,
+        source_loop_id: str = "",
     ) -> dict[str, object]:
         source = self._participant(session_id)
         operation = str(args.get("op") or "list").strip()
@@ -79,28 +155,1448 @@ class RoomPartnerApplicationService:
                 args,
                 tool_call_id=tool_call_id,
             )
+        if operation == "retry":
+            return self._retry(
+                source,
+                args,
+                tool_call_id=tool_call_id,
+            )
         if operation == "post":
             return self._post(
                 source,
                 args,
                 tool_call_id=tool_call_id,
+                source_loop_id=source_loop_id,
             )
+        if operation == "collect":
+            return self._collect(source, args, wait=False)
+        if operation == "wait":
+            return self._collect(source, args, wait=True)
         if operation == "accept":
             return self._review(source, args, accept=True)
         if operation == "return":
             return self._review(source, args, accept=False)
-        if operation == "resume":
-            return self._resume(source, args, tool_call_id=tool_call_id)
-        if operation == "reassign":
-            return self._reassign(source, args, tool_call_id=tool_call_id)
-        if operation == "fail":
-            return self._terminate(source, args, abandon=False)
-        if operation == "abandon":
-            return self._terminate(source, args, abandon=True)
+        if operation == "peer_list":
+            return self._peer_list(source)
+        if operation in {"peer_send", "peer_ask", "peer_reply"}:
+            return self._peer_message(
+                source,
+                args,
+                operation=operation,
+                tool_call_id=tool_call_id,
+            )
         raise ValueError(
-            "room_partner op must be list, delegate, delegate_batch, accept, "
-            "return, resume, reassign, fail, abandon, or post"
+            "room_partner op must be list, delegate, delegate_batch, retry, post, "
+            "collect, wait, accept, return, peer_list, peer_send, peer_ask, "
+            "or peer_reply"
         )
+
+    def _collect(
+        self,
+        source: Mapping[str, object],
+        args: Mapping[str, object],
+        *,
+        wait: bool,
+    ) -> dict[str, object]:
+        if self.dispatch_store is None:
+            raise ValueError("Room Partner dispatch ledger is unavailable")
+        record = self._dispatch_record(args)
+        self._require_dispatch_owner(source, record)
+        timed_out = False
+        if wait:
+            timeout_seconds = _integer(
+                args.get("timeoutSeconds"),
+                default=30,
+                minimum=1,
+                maximum=300,
+            )
+            record = self.dispatch_store.wait(
+                str(record["childDispatchId"]),
+                timeout_seconds=timeout_seconds,
+            )
+            timed_out = str(record.get("status") or "") in {
+                "prepared",
+                "dispatched",
+            }
+        work_item: Mapping[str, object] | None = None
+        if self.room_work is not None and record.get("workItemId"):
+            work_item = self.room_work.get(
+                str(record["workItemId"]),
+                room_id=str(record["roomId"]),
+            )
+        return {
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": "wait" if wait else "collect",
+            "roomId": str(record["roomId"]),
+            "rootId": str(record["rootId"]),
+            "childDispatchId": str(record["childDispatchId"]),
+            "workItemId": str(record["workItemId"]),
+            "status": str(record["status"]),
+            "timedOut": timed_out,
+            "dispatch": dict(record),
+            **({"workItem": dict(work_item)} if work_item is not None else {}),
+        }
+
+    def _review(
+        self,
+        source: Mapping[str, object],
+        args: Mapping[str, object],
+        *,
+        accept: bool,
+    ) -> dict[str, object]:
+        if self.dispatch_store is None:
+            raise ValueError("Room Partner dispatch ledger is unavailable")
+        work_item_id = _required_text(args, "workItemId", maximum=320)
+        record = self.dispatch_store.get_by_work(work_item_id)
+        self._require_dispatch_owner(source, record)
+        # Review runs inside a current Facilitator turn, but the durable
+        # WorkItem may have been delegated by an earlier Root in the same
+        # long-lived Room Goal.  The dispatch-owner and Work ledger reviewer
+        # fences below own authorization; keep event/dispatch attribution on
+        # the original record instead of rebinding it to the current Root.
+        self._active_root(source)
+        payload = {
+            "workId": work_item_id,
+            "expectedRevision": args.get("expectedRevision"),
+            "operabilityVerdict": args.get("operabilityVerdict"),
+            "requirementVerdict": args.get("requirementVerdict"),
+            "evidenceRefs": args.get("evidenceRefs"),
+            "reason": args.get("reason"),
+        }
+        superseded_by = args.get("supersededByWorkId")
+        if superseded_by is not None and str(superseded_by).strip():
+            payload["supersededByWorkId"] = superseded_by
+        callback = self.accept_room_work if accept else self.return_room_work
+        wake = record.get("wake")
+        prior_wake = dict(wake) if isinstance(wake, Mapping) else {}
+        if callback is not None:
+            outcome = callback(str(source["sessionId"]), payload)
+            projected = outcome.get("work")
+            work = projected if isinstance(projected, Mapping) else outcome
+        elif self.room_work is not None:
+            operation = self.room_work.accept if accept else self.room_work.return_for_revision
+            work = operation(str(source["sessionId"]), payload)
+        else:
+            raise ValueError("Room WorkItem review is unavailable")
+        reviewed_dispatch = self.dispatch_store.record_review(
+            str(record["childDispatchId"]),
+            accepted=accept,
+        )
+        if (
+            self.wake_schedules is not None
+            and str(prior_wake.get("state") or "") in {"pending", "scheduled"}
+            and str(prior_wake.get("scheduleId") or "")
+        ):
+            try:
+                self.wake_schedules.cancel_for_root(
+                    str(prior_wake["scheduleId"]),
+                    reason=(
+                        "Room Partner WorkItem was explicitly accepted"
+                        if accept
+                        else "Room Partner WorkItem was returned for revision"
+                    ),
+                )
+            except (KeyError, ValueError):
+                pass
+        return {
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": "accept" if accept else "return",
+            "roomId": str(record["roomId"]),
+            "rootId": str(record["rootId"]),
+            "childDispatchId": str(record["childDispatchId"]),
+            "workItemId": work_item_id,
+            "status": str(reviewed_dispatch["status"]),
+            "workItem": dict(work),
+        }
+
+    def _dispatch_record(
+        self,
+        args: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        child_dispatch_id = _text(args.get("childDispatchId"), maximum=320)
+        work_item_id = _text(args.get("workItemId"), maximum=320)
+        if bool(child_dispatch_id) == bool(work_item_id):
+            raise ValueError(
+                "collect/wait requires exactly one childDispatchId or workItemId"
+            )
+        if child_dispatch_id:
+            return self.dispatch_store.get(child_dispatch_id)
+        return self.dispatch_store.get_by_work(work_item_id)
+
+    @staticmethod
+    def _require_dispatch_owner(
+        source: Mapping[str, object],
+        record: Mapping[str, object],
+    ) -> None:
+        if (
+            str(source.get("roomId") or "") != str(record.get("roomId") or "")
+            or str(source.get("id") or "")
+            != str(record.get("sourceParticipantId") or "")
+        ):
+            raise ValueError(
+                "only the accountable Facilitator can collect or review this dispatch"
+            )
+
+    def observe_room_event(self, event: Mapping[str, object]) -> None:
+        """Settle a delegated receipt from append-only Room events."""
+
+        if self.dispatch_store is None:
+            return
+        event_type = str(event.get("eventType") or "")
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            return
+        if event_type == "room_post":
+            post = payload.get("post")
+            if not isinstance(post, Mapping) or str(post.get("kind") or "") != "work_result":
+                return
+            child_dispatch_id = str(post.get("dispatchId") or "")
+            if not child_dispatch_id:
+                return
+            record = self.dispatch_store.get(child_dispatch_id)
+            if str(record.get("targetParticipantId") or "") != str(
+                post.get("authorActorRef") or ""
+            ):
+                return
+            result = str(post.get("content") or "")
+            self.dispatch_store.record_result(child_dispatch_id, result)
+            work_result = post.get("workResult")
+            work_result = (
+                work_result if isinstance(work_result, Mapping) else {}
+            )
+            self._settle_dispatch(
+                record,
+                phase="completed",
+                result=result,
+                completion_source="room_post",
+                post_id=str(post.get("postId") or ""),
+                proposed_operability=str(
+                    work_result.get("proposedOperabilityVerdict") or ""
+                ),
+                proposed_requirement=str(
+                    work_result.get("proposedRequirementVerdict") or ""
+                ),
+            )
+            return
+        data = payload.get("data")
+        if not isinstance(data, Mapping):
+            data = payload
+        child_dispatch_id = str(
+            data.get("dispatchId") or data.get("childDispatchId") or ""
+        )
+        if not child_dispatch_id:
+            return
+        if event_type == "participant_message":
+            message = data.get("message")
+            if isinstance(message, Mapping):
+                self.dispatch_store.record_result(
+                    child_dispatch_id,
+                    agent_message_text(message),
+                )
+            return
+        if (
+            event_type != "participant_activity"
+            or str(data.get("activityKind") or "") != "child"
+            or str(data.get("phase") or "")
+            not in {"completed", "failed", "aborted"}
+        ):
+            return
+        record = self.dispatch_store.get(child_dispatch_id)
+        if str(record.get("status") or "") not in {"prepared", "dispatched"}:
+            return
+        result = str(record.get("result") or data.get("summary") or "")
+        self._settle_dispatch(
+            record,
+            phase=str(data.get("phase") or "failed"),
+            result=result,
+            completion_source="session_terminal",
+        )
+
+    def _settle_dispatch(
+        self,
+        record: Mapping[str, object],
+        *,
+        phase: str,
+        result: str,
+        completion_source: str,
+        post_id: str = "",
+        proposed_operability: str = "",
+        proposed_requirement: str = "",
+    ) -> Mapping[str, object]:
+        source = self.rooms.participant(str(record["sourceParticipantId"]))
+        target = self.rooms.participant(str(record["targetParticipantId"]))
+        work_item = (
+            self.room_work.get(
+                str(record["workItemId"]),
+                room_id=str(record["roomId"]),
+            )
+            if self.room_work is not None
+            else None
+        )
+        settled_work = self._settle_delegated_work(
+            work_item,
+            phase=phase,
+            result=result,
+            child_dispatch_id=str(record["childDispatchId"]),
+            source=source,
+            target=target,
+            proposed_operability=proposed_operability,
+            proposed_requirement=proposed_requirement,
+        )
+        if phase == "completed":
+            work_state = str((settled_work or {}).get("state") or "review")
+            status = "blocked" if work_state == "blocked" else "review"
+        else:
+            status = "aborted" if phase == "aborted" else "failed"
+        settled = self.dispatch_store.settle(
+            str(record["childDispatchId"]),
+            status=status,
+            result=result,
+            completion_source=completion_source,
+            post_id=post_id,
+            error="" if status in {"review", "blocked"} else result,
+        )
+        self._schedule_completion_wake(settled)
+        return settled
+
+    def _schedule_completion_wake(
+        self,
+        record: Mapping[str, object],
+    ) -> None:
+        if self.wake_schedules is None:
+            return
+        wake = record.get("wake")
+        wake = wake if isinstance(wake, Mapping) else {}
+        if str(wake.get("state") or "") != "pending":
+            return
+        generation = int(wake.get("generation") or 0)
+        child_dispatch_id = str(record["childDispatchId"])
+        schedule_id = f"room-wake:{child_dispatch_id}:{generation}"
+        if (
+            str(record.get("status") or "") == "accepted"
+            and generation >= _MAX_MISSING_TYPED_RESULT_WAKE_GENERATION
+        ):
+            instruction = (
+                "上一主管回合已正常结束，但同一 Room Root 仍缺少结构化终态。"
+                "不要输出普通回复，不要重复 collect 或 accept；立即且只调用一次 "
+                "room_partner，参数 op=post、kind=result，并在 content 中如实汇总"
+                "已验收结果与未验证边界。工具返回后直接结束回合。"
+            )
+        elif str(record.get("status") or "") == "accepted":
+            instruction = (
+                f"Room Partner {record['targetParticipantId']} 的 WorkItem "
+                f"{record['workItemId']} 已完成双轴验收，但上一主管回合未形成终态。"
+                f"先用 room_partner collect 查看 {child_dispatch_id} 并对账同一 Root 的"
+                "全部 WorkItem、子 Agent 与后台任务；不要重复 accept。若均已结清，"
+                "恰好一次 post(kind=result)，然后正常结束回合。"
+            )
+        elif str(record.get("status") or "") in {"failed", "aborted"}:
+            instruction = (
+                f"Room Partner {record['targetParticipantId']} 的工作已进入 "
+                f"{record['status']}。先用 room_partner collect 查看 "
+                f"{child_dispatch_id} 与 WorkItem {record['workItemId']}；"
+                "若仍有可行修复，选择空闲伙伴并对同一 WorkItem 调用 retry，携带"
+                "最新 expectedRevision 与具体 reason。不要对 failed/aborted WorkItem "
+                "调用只适用于 review 的 accept 或 return。若重试预算已用尽或没有"
+                "可行路径，则发布一条如实列出未解决边界的最终 result。"
+            )
+        elif str(record.get("status") or "") == "blocked":
+            instruction = (
+                f"Room Partner {record['targetParticipantId']} 的 WorkItem "
+                f"{record['workItemId']} 因 WorkDocument 或证据不足而 blocked。"
+                f"先用 room_partner collect 查看 {child_dispatch_id}；补齐可修复前提后，"
+                "选择空闲伙伴并对同一 WorkItem 调用 retry，携带最新 expectedRevision "
+                "与具体 reason。不可修复时发布诚实的未解决终态。"
+            )
+        else:
+            instruction = (
+                f"Room Partner {record['targetParticipantId']} 的工作已进入 "
+                f"{record['status']}。先用 room_partner collect 查看 "
+                f"{child_dispatch_id} 与 WorkItem {record['workItemId']}；"
+                "检查 WorkDocument 和证据后，用非空 reason 显式 accept，或 return。"
+                "审查报告 unverified、changes_required、failed 或未解决 HIGH/MEDIUM "
+                "时必须 return，不得写成 passed/satisfied；Runtime 会机械拒绝"
+                "在这种提交之上 accept。"
+            )
+        try:
+            self.wake_schedules.create_room_wake(
+                schedule_id=schedule_id,
+                target_session_id=str(record["sourceSessionId"]),
+                created_by_session_id=str(record["targetSessionId"]),
+                title="伙伴交付待验收",
+                instruction=instruction,
+                metadata={
+                    "kind": "room_partner_completion",
+                    "childDispatchId": child_dispatch_id,
+                    "generation": generation,
+                    "roomId": str(record["roomId"]),
+                    "rootId": str(record["rootId"]),
+                    "workItemId": str(record["workItemId"]),
+                },
+            )
+        except Exception as exc:
+            self.dispatch_store.mark_wake(
+                child_dispatch_id,
+                generation=generation,
+                state="failed",
+                error=_public_error(exc),
+            )
+            raise
+        self.dispatch_store.mark_wake(
+            child_dispatch_id,
+            generation=generation,
+            state="scheduled",
+            schedule_id=schedule_id,
+        )
+        if self.notify_wake_scheduler is not None:
+            self.notify_wake_scheduler()
+
+    def dispatch_wake(self, claim: Mapping[str, object]) -> None:
+        if self.dispatch_store is None:
+            raise ValueError("Room completion wake adapter is unavailable")
+        metadata = claim.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        child_dispatch_id = _required_text(
+            metadata,
+            "childDispatchId",
+            maximum=320,
+        )
+        record = self.dispatch_store.get(child_dispatch_id)
+        wake = record.get("wake")
+        wake = wake if isinstance(wake, Mapping) else {}
+        claim_schedule_id = str(claim.get("id") or "")
+        try:
+            claim_generation = int(metadata.get("generation"))
+        except (TypeError, ValueError):
+            claim_generation = -1
+        if self._root_has_typed_result(record):
+            if self.wake_schedules is not None and claim_schedule_id:
+                try:
+                    self.wake_schedules.cancel_for_root(
+                        claim_schedule_id,
+                        reason="Room Root already has its terminal result",
+                    )
+                except (KeyError, ValueError):
+                    pass
+            self.dispatch_store.mark_wake(
+                child_dispatch_id,
+                generation=claim_generation,
+                state="cancelled",
+                schedule_id=claim_schedule_id,
+            )
+            return
+        if (
+            str(record.get("status") or "")
+            not in {"review", "blocked", "failed", "aborted", "accepted"}
+            or str(wake.get("state") or "") != "scheduled"
+            or claim_generation != int(wake.get("generation") or 0)
+            or claim_schedule_id != str(wake.get("scheduleId") or "")
+        ):
+            if self.wake_schedules is not None and claim_schedule_id:
+                try:
+                    self.wake_schedules.cancel_for_root(
+                        claim_schedule_id,
+                        reason="Stale Room Partner completion wake",
+                    )
+                except (KeyError, ValueError):
+                    pass
+            return
+        if self.dispatch_facilitator_wake is None:
+            raise ValueError("Room completion wake adapter is unavailable")
+        delivered = self.dispatch_facilitator_wake(claim, record)
+        if delivered:
+            self.dispatch_store.mark_wake(
+                child_dispatch_id,
+                generation=int(wake.get("generation") or 0),
+                state="delivered",
+                schedule_id=str(claim.get("id") or ""),
+            )
+
+    def record_wake_failure(
+        self,
+        claim: Mapping[str, object],
+        error: BaseException,
+    ) -> None:
+        """Keep the Room dispatch projection aligned with a failed wake run."""
+
+        if self.dispatch_store is None:
+            return
+        metadata = claim.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        child_dispatch_id = str(metadata.get("childDispatchId") or "").strip()
+        if not child_dispatch_id:
+            return
+        try:
+            generation = int(metadata.get("generation"))
+        except (TypeError, ValueError):
+            return
+        self.dispatch_store.mark_wake(
+            child_dispatch_id,
+            generation=generation,
+            state="failed",
+            schedule_id=str(claim.get("id") or ""),
+            error=_public_error(error),
+        )
+
+    def observe_wake_terminal_event(
+        self,
+        event: Any,
+        schedule: Mapping[str, object],
+    ) -> None:
+        """Allocate one new Room wake after a recoverable Host terminal."""
+
+        if self.dispatch_store is None or self.wake_schedules is None:
+            return
+        metadata = schedule.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if str(metadata.get("kind") or "") != "room_partner_completion":
+            return
+        event_type = str(getattr(event, "event_type", "") or "")
+        if event_type not in {"turn_completed", "turn_failed"}:
+            return
+        child_dispatch_id = str(metadata.get("childDispatchId") or "")
+        if not child_dispatch_id:
+            return
+        record = self.dispatch_store.get(child_dispatch_id)
+        payload = getattr(event, "payload", {})
+        payload = payload if isinstance(payload, Mapping) else {}
+        if event_type == "turn_completed":
+            self._requeue_missing_typed_result_wake(
+                record,
+                schedule,
+                session_id=str(getattr(event, "session_id", "") or ""),
+                turn_id=str(getattr(event, "turn_id", "") or ""),
+            )
+            return
+        failure = " ".join(
+            (
+                str(payload.get("failureKind") or ""),
+                str(payload.get("error") or ""),
+            )
+        )
+        self._requeue_failed_facilitator_wake(
+            record,
+            schedule,
+            session_id=str(getattr(event, "session_id", "") or ""),
+            turn_id=str(getattr(event, "turn_id", "") or ""),
+            failure=failure,
+        )
+
+    def reconcile(self) -> None:
+        """Recover missed terminal events and unscheduled wakes after restart."""
+
+        if self.dispatch_store is None:
+            return
+        grouped: dict[tuple[str, str], list[Mapping[str, object]]] = {}
+        for record in self.dispatch_store.inflight():
+            grouped.setdefault(
+                (str(record["roomId"]), str(record["rootId"])),
+                [],
+            ).append(record)
+        for (room_id, root_id), records in grouped.items():
+            expected = {str(record["childDispatchId"]) for record in records}
+            for event in self.rooms.list_events(
+                room_id,
+                after_sequence=0,
+                limit=2_000,
+            ):
+                if str(event.get("turnId") or "") != root_id:
+                    continue
+                payload = event.get("payload")
+                payload = payload if isinstance(payload, Mapping) else {}
+                data = payload.get("data")
+                data = data if isinstance(data, Mapping) else payload
+                post = payload.get("post")
+                dispatch_id = (
+                    str(post.get("dispatchId") or "")
+                    if isinstance(post, Mapping)
+                    else str(data.get("dispatchId") or data.get("childDispatchId") or "")
+                )
+                if dispatch_id in expected:
+                    self.observe_room_event(event)
+        acceptance_lookup = getattr(
+            self.sessions,
+            "prompt_acceptance_evidence",
+            None,
+        )
+        terminal_lookup = getattr(
+            self.sessions,
+            "runtime_turn_terminal_event",
+            None,
+        )
+        command_acceptance_lookup = self.command_acceptance_evidence
+        if callable(terminal_lookup) and (
+            callable(command_acceptance_lookup)
+            or callable(acceptance_lookup)
+        ):
+            for record in self.dispatch_store.inflight():
+                self._recover_dispatch_from_session_ledger(
+                    record,
+                    acceptance_lookup=acceptance_lookup,
+                    command_acceptance_lookup=(
+                        command_acceptance_lookup
+                    ),
+                    terminal_lookup=terminal_lookup,
+                )
+        for record in self.dispatch_store.pending_wakes():
+            self._schedule_completion_wake(record)
+        if self.wake_schedules is not None:
+            self._requeue_legacy_preacceptance_conflict_wakes()
+            self._requeue_completed_wakes_missing_typed_result()
+            self._requeue_legacy_stale_facilitator_wakes()
+            self._requeue_recoverable_facilitator_wakes(terminal_lookup)
+            for record in self.dispatch_store.scheduled_wakes():
+                wake = record.get("wake")
+                wake = wake if isinstance(wake, Mapping) else {}
+                schedule_id = str(wake.get("scheduleId") or "")
+                if not schedule_id:
+                    continue
+                try:
+                    schedule = self.wake_schedules.get(schedule_id)
+                except KeyError:
+                    self.dispatch_store.mark_wake(
+                        str(record["childDispatchId"]),
+                        generation=int(wake.get("generation") or 0),
+                        state="failed",
+                        schedule_id=schedule_id,
+                        error="Room Partner wake schedule is missing",
+                    )
+                    continue
+                schedule_status = str(schedule.get("status") or "")
+                if schedule_status not in {"failed", "cancelled"}:
+                    continue
+                self.dispatch_store.mark_wake(
+                    str(record["childDispatchId"]),
+                    generation=int(wake.get("generation") or 0),
+                    state=schedule_status,
+                    schedule_id=schedule_id,
+                    error=str(schedule.get("lastError") or ""),
+                )
+
+    def _requeue_legacy_preacceptance_conflict_wakes(self) -> None:
+        """Repair a bounded legacy wake whose typed conflict was lost."""
+
+        if (
+            self.dispatch_store is None
+            or self.wake_schedules is None
+            or not callable(self.command_failure_evidence)
+        ):
+            return
+        for record in self.dispatch_store.failed_wakes():
+            wake = record.get("wake")
+            wake = wake if isinstance(wake, Mapping) else {}
+            generation = int(wake.get("generation") or 0)
+            schedule_id = str(wake.get("scheduleId") or "")
+            if (
+                generation < 1
+                or generation >= _MAX_LEGACY_PREACCEPTANCE_WAKE_GENERATION
+                or not schedule_id
+            ):
+                continue
+            try:
+                schedule = self.wake_schedules.get(schedule_id)
+            except KeyError:
+                continue
+            metadata = schedule.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            latest_run = schedule.get("latestRun")
+            latest_run = (
+                latest_run if isinstance(latest_run, Mapping) else {}
+            )
+            run_id = str(latest_run.get("runId") or "")
+            source_session_id = str(record.get("sourceSessionId") or "")
+            target_session_id = str(record.get("targetSessionId") or "")
+            if (
+                str(record.get("status") or "")
+                not in {"review", "blocked", "failed", "aborted", "accepted"}
+                or str(wake.get("state") or "") != "failed"
+                or str(schedule.get("status") or "") != "failed"
+                or str(latest_run.get("state") or "") != "failed"
+                or str(latest_run.get("turnId") or "")
+                or not run_id
+                or not source_session_id
+                or str(schedule.get("id") or "") != schedule_id
+                or str(schedule.get("targetSessionId") or "")
+                != source_session_id
+                or str(schedule.get("createdBySessionId") or "")
+                != target_session_id
+                or str(metadata.get("kind") or "")
+                != "room_partner_completion"
+                or str(metadata.get("childDispatchId") or "")
+                != str(record.get("childDispatchId") or "")
+                or int(metadata.get("generation") or 0) != generation
+                or str(metadata.get("roomId") or "")
+                != str(record.get("roomId") or "")
+                or str(metadata.get("rootId") or "")
+                != str(record.get("rootId") or "")
+                or str(metadata.get("workItemId") or "")
+                != str(record.get("workItemId") or "")
+            ):
+                continue
+            evidence = self.command_failure_evidence(
+                source_session_id,
+                run_id,
+            )
+            evidence = evidence if isinstance(evidence, Mapping) else {}
+            cause_code = str(evidence.get("causeCode") or "").strip().upper()
+            if cause_code not in {
+                "SESSION_BUSY",
+                "AGENT_TURN_CONFLICT",
+            }:
+                continue
+            projected_result = latest_run.get("result")
+            projected_result = (
+                projected_result
+                if isinstance(projected_result, Mapping)
+                else {}
+            )
+            projected_cause = str(
+                projected_result.get("causeCode") or ""
+            ).strip().upper()
+            if projected_cause and projected_cause != cause_code:
+                continue
+            requeued = self.dispatch_store.requeue_failed_wake(
+                str(record["childDispatchId"]),
+                generation=generation,
+                expected_schedule_id=schedule_id,
+                expected_error=str(record.get("error") or ""),
+                max_generation=_MAX_LEGACY_PREACCEPTANCE_WAKE_GENERATION,
+            )
+            requeued_wake = requeued.get("wake")
+            requeued_wake = (
+                requeued_wake if isinstance(requeued_wake, Mapping) else {}
+            )
+            if (
+                int(requeued_wake.get("generation") or 0) == generation + 1
+                and str(requeued_wake.get("state") or "") == "pending"
+            ):
+                self._schedule_completion_wake(requeued)
+
+    def _requeue_completed_wakes_missing_typed_result(self) -> None:
+        if self.dispatch_store is None or self.wake_schedules is None:
+            return
+        for record in self.dispatch_store.terminal_result_candidates():
+            wake = record.get("wake")
+            wake = wake if isinstance(wake, Mapping) else {}
+            schedule_id = str(wake.get("scheduleId") or "")
+            if not schedule_id:
+                continue
+            try:
+                schedule = self.wake_schedules.get(schedule_id)
+            except KeyError:
+                continue
+            latest_run = schedule.get("latestRun")
+            latest_run = latest_run if isinstance(latest_run, Mapping) else {}
+            if (
+                str(schedule.get("status") or "") == "completed"
+                and str(latest_run.get("state") or "") == "completed"
+            ):
+                self._requeue_missing_typed_result_wake(
+                    record,
+                    schedule,
+                    session_id=str(latest_run.get("sessionId") or ""),
+                    turn_id=str(latest_run.get("turnId") or ""),
+                )
+
+    def _requeue_missing_typed_result_wake(
+        self,
+        record: Mapping[str, object],
+        schedule: Mapping[str, object],
+        *,
+        session_id: str,
+        turn_id: str,
+    ) -> bool:
+        """Give the Facilitator one bounded chance to publish the typed result."""
+
+        wake = record.get("wake")
+        wake = wake if isinstance(wake, Mapping) else {}
+        metadata = schedule.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        latest_run = schedule.get("latestRun")
+        latest_run = latest_run if isinstance(latest_run, Mapping) else {}
+        generation = int(wake.get("generation") or 0)
+        wake_state = str(wake.get("state") or "")
+        eligible_wake_state = wake_state in {"scheduled", "delivered"} or (
+            wake_state == "failed"
+            and str(record.get("error") or "") == _MISSING_TYPED_RESULT_ERROR
+        )
+        if (
+            self.dispatch_store is None
+            or str(record.get("status") or "") != "accepted"
+            or not eligible_wake_state
+            or str(schedule.get("status") or "") != "completed"
+            or str(latest_run.get("state") or "") != "completed"
+            or str(latest_run.get("sessionId") or "") != session_id
+            or str(latest_run.get("turnId") or "") != turn_id
+            or not session_id
+            or not turn_id
+            or str(record.get("sourceSessionId") or "") != session_id
+            or str(wake.get("scheduleId") or "")
+            != str(schedule.get("id") or "")
+            or str(metadata.get("kind") or "")
+            != "room_partner_completion"
+            or str(metadata.get("childDispatchId") or "")
+            != str(record.get("childDispatchId") or "")
+            or int(metadata.get("generation") or 0) != generation
+            or str(metadata.get("roomId") or "")
+            != str(record.get("roomId") or "")
+            or str(metadata.get("rootId") or "")
+            != str(record.get("rootId") or "")
+            or self._root_has_typed_result(record)
+        ):
+            return False
+        if generation >= _MAX_MISSING_TYPED_RESULT_WAKE_GENERATION:
+            if self._project_terminal_result_from_accepted_work(
+                record,
+                schedule,
+                session_id=session_id,
+                turn_id=turn_id,
+            ):
+                settled = self.dispatch_store.settle_terminal_projection(
+                    str(record["childDispatchId"]),
+                    generation=generation,
+                    expected_schedule_id=str(schedule["id"]),
+                    expected_error=_MISSING_TYPED_RESULT_ERROR,
+                )
+                settled_wake = settled.get("wake")
+                settled_wake = (
+                    settled_wake
+                    if isinstance(settled_wake, Mapping)
+                    else {}
+                )
+                return (
+                    str(settled_wake.get("state") or "") == "delivered"
+                    and not str(settled.get("error") or "")
+                )
+            self.dispatch_store.mark_wake(
+                str(record["childDispatchId"]),
+                generation=generation,
+                state="failed",
+                schedule_id=str(schedule["id"]),
+                error=_MISSING_TYPED_RESULT_ERROR,
+            )
+            return False
+        requeued = self.dispatch_store.requeue_delivered_wake(
+            str(record["childDispatchId"]),
+            generation=generation,
+            expected_schedule_id=str(schedule["id"]),
+            max_generation=_MAX_MISSING_TYPED_RESULT_WAKE_GENERATION,
+        )
+        requeued_wake = requeued.get("wake")
+        requeued_wake = (
+            requeued_wake if isinstance(requeued_wake, Mapping) else {}
+        )
+        if (
+            int(requeued_wake.get("generation") or 0) != generation + 1
+            or str(requeued_wake.get("state") or "") != "pending"
+        ):
+            return False
+        self._schedule_completion_wake(requeued)
+        return True
+
+    def _project_terminal_result_from_accepted_work(
+        self,
+        record: Mapping[str, object],
+        schedule: Mapping[str, object],
+        *,
+        session_id: str,
+        turn_id: str,
+    ) -> bool:
+        """Project one final receipt from explicit persisted reviews.
+
+        The fallback never parses assistant prose and never changes WorkItem
+        review state.  It runs only after the bounded finalization wake itself
+        completed and every WorkItem under the Root already carries the
+        Facilitator's two-axis acceptance evidence.
+        """
+
+        publish_projection = getattr(
+            self.room_events,
+            "publish_projection",
+            None,
+        )
+        if self.room_work is None or not callable(publish_projection):
+            return False
+        if self._root_has_typed_result(record):
+            return False
+        room_id = str(record.get("roomId") or "")
+        root_id = str(record.get("rootId") or "")
+        source_participant_id = str(record.get("sourceParticipantId") or "")
+        if not room_id or not root_id or not source_participant_id:
+            return False
+        root_work = self._accepted_root_work(
+            room_id=room_id,
+            root_turn_id=root_id,
+            facilitator_participant_id=source_participant_id,
+        )
+        if not root_work:
+            return False
+        latest_run = schedule.get("latestRun")
+        latest_run = latest_run if isinstance(latest_run, Mapping) else {}
+        wake = record.get("wake")
+        wake = wake if isinstance(wake, Mapping) else {}
+        generation = int(wake.get("generation") or 0)
+        schedule_id = str(schedule.get("id") or "")
+        finished_at_ms = int(
+            latest_run.get("finishedAtMs")
+            or schedule.get("updatedAtMs")
+            or 0
+        )
+        if not schedule_id or finished_at_ms <= 0:
+            return False
+        ordered_work = sorted(
+            root_work,
+            key=lambda item: str(item.get("id") or ""),
+        )
+        post = {
+            "schemaVersion": "wisdom-weasel.room-post.v2",
+            "postId": f"room-post:runtime-terminal:{root_id}",
+            "roomId": room_id,
+            "rootId": root_id,
+            "generation": generation,
+            "dispatchId": str(record.get("parentDispatchId") or ""),
+            "authorActorRef": source_participant_id,
+            "kind": "result",
+            "visibility": "room",
+            "content": _terminal_result_content(ordered_work),
+            "idempotencyKey": f"runtime-terminal:{root_id}",
+            "publicationSource": {
+                "kind": "runtime_projection",
+                "ref": schedule_id,
+            },
+            "createdAtMs": finished_at_ms,
+        }
+        validate_contract(post, "room-post.v2.json")
+        room = self.rooms.get(room_id)
+        publish_projection(
+            projection_key=f"room-terminal-result:{room_id}:{root_id}",
+            room_id=room_id,
+            event_type="room_post",
+            payload={
+                "post": post,
+                "sourceTurnId": turn_id,
+                "terminalProjection": {
+                    "kind": "runtime_terminal_receipt",
+                    "basis": "explicit_dual_axis_work_reviews",
+                    "sourceScheduleId": schedule_id,
+                    "sourceRunId": str(latest_run.get("runId") or ""),
+                },
+            },
+            turn_id=root_id,
+            participant_id=source_participant_id,
+            source_session_id=session_id,
+            topic_id=self.room_topic_for_turn(root_id),
+            created_at_ms=finished_at_ms,
+        )
+        return True
+
+    def _accepted_root_work(
+        self,
+        *,
+        room_id: str,
+        root_turn_id: str,
+        facilitator_participant_id: str,
+    ) -> list[Mapping[str, object]] | None:
+        if self.room_work is None:
+            return []
+        root_work = self.room_work.list_for_root(
+            room_id=room_id,
+            root_turn_id=root_turn_id,
+        )
+        if (
+            self.dispatch_store is not None
+            and self.dispatch_store.has_unsettled_root_dispatches(
+                room_id=room_id,
+                root_id=root_turn_id,
+            )
+        ):
+            return None
+        for item in root_work:
+            review = item.get("review")
+            review = review if isinstance(review, Mapping) else {}
+            evidence_refs = review.get("evidenceRefs")
+            if (
+                str(item.get("state") or "") != "done"
+                or not str(item.get("resultSummary") or "").strip()
+                or str(review.get("operabilityVerdict") or "") != "passed"
+                or str(review.get("requirementVerdict") or "") != "satisfied"
+                or not isinstance(evidence_refs, list)
+                or not any(str(value or "").strip() for value in evidence_refs)
+                or str(review.get("reviewerParticipantId") or "")
+                != facilitator_participant_id
+                or int(review.get("reviewedAtMs") or 0) <= 0
+            ):
+                return None
+        return sorted(root_work, key=lambda item: str(item.get("id") or ""))
+
+    def _root_has_typed_result(self, record: Mapping[str, object]) -> bool:
+        room_id = str(record.get("roomId") or "")
+        root_id = str(record.get("rootId") or "")
+        if not room_id or not root_id:
+            return False
+        has_projection = getattr(self.room_events, "has_projection", None)
+        if callable(has_projection) and has_projection(
+            f"room-terminal-result:{room_id}:{root_id}"
+        ):
+            return True
+        room = self.rooms.get(room_id)
+        last_sequence = int(room.get("lastEventSequence") or 0)
+        for event in self.rooms.list_events(
+            room_id,
+            after_sequence=max(0, last_sequence - 2_000),
+            limit=2_000,
+        ):
+            if (
+                str(event.get("turnId") or "") != root_id
+                or str(event.get("eventType") or "") != "room_post"
+            ):
+                continue
+            payload = event.get("payload")
+            payload = payload if isinstance(payload, Mapping) else {}
+            post = payload.get("post")
+            if isinstance(post, Mapping) and str(post.get("kind") or "") == "result":
+                return True
+        return False
+
+    def _requeue_legacy_stale_facilitator_wakes(self) -> None:
+        """Repair one wake cancelled by an older Gateway during an upgrade.
+
+        Older Gateway code rejected an already-accepted dispatch as stale even
+        though the Facilitator still owed the Root one typed terminal result.
+        The exact cancellation reason and a separate generation ceiling keep
+        this compatibility repair bounded; ordinary Host failures retain their
+        existing single-retry budget.
+        """
+
+        if self.dispatch_store is None or self.wake_schedules is None:
+            return
+        for record in self.dispatch_store.scheduled_wakes():
+            wake = record.get("wake")
+            wake = wake if isinstance(wake, Mapping) else {}
+            schedule_id = str(wake.get("scheduleId") or "")
+            if not schedule_id:
+                continue
+            try:
+                schedule = self.wake_schedules.get(schedule_id)
+            except KeyError:
+                continue
+            metadata = schedule.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            generation = int(wake.get("generation") or 0)
+            if (
+                str(record.get("status") or "") != "accepted"
+                or str(schedule.get("status") or "") != "cancelled"
+                or str(schedule.get("lastError") or "")
+                != _LEGACY_STALE_WAKE_ERROR
+                or str(metadata.get("kind") or "")
+                != "room_partner_completion"
+                or str(metadata.get("childDispatchId") or "")
+                != str(record.get("childDispatchId") or "")
+                or int(metadata.get("generation") or 0) != generation
+                or str(metadata.get("roomId") or "")
+                != str(record.get("roomId") or "")
+                or str(metadata.get("rootId") or "")
+                != str(record.get("rootId") or "")
+                or str(wake.get("scheduleId") or "")
+                != str(schedule.get("id") or "")
+            ):
+                continue
+            requeued = self.dispatch_store.requeue_delivered_wake(
+                str(record["childDispatchId"]),
+                generation=generation,
+                expected_schedule_id=schedule_id,
+                max_generation=_MAX_LEGACY_STALE_WAKE_GENERATION,
+            )
+            requeued_wake = requeued.get("wake")
+            requeued_wake = (
+                requeued_wake if isinstance(requeued_wake, Mapping) else {}
+            )
+            if (
+                int(requeued_wake.get("generation") or 0) == generation + 1
+                and str(requeued_wake.get("state") or "") == "pending"
+            ):
+                self._schedule_completion_wake(requeued)
+
+    def _requeue_recoverable_facilitator_wakes(
+        self,
+        terminal_lookup: Callable[[str, str], Mapping[str, object] | None]
+        | object,
+    ) -> None:
+        """Resume one accepted Root after a recoverable Host-owned wake failure."""
+
+        if (
+            self.dispatch_store is None
+            or self.wake_schedules is None
+            or not callable(terminal_lookup)
+        ):
+            return
+        for record in self.dispatch_store.delivered_wakes():
+            wake = record.get("wake")
+            wake = wake if isinstance(wake, Mapping) else {}
+            schedule_id = str(wake.get("scheduleId") or "")
+            if not schedule_id:
+                continue
+            try:
+                schedule = self.wake_schedules.get(schedule_id)
+            except KeyError:
+                continue
+            latest_run = schedule.get("latestRun")
+            latest_run = latest_run if isinstance(latest_run, Mapping) else {}
+            source_session_id = str(record["sourceSessionId"])
+            turn_id = str(latest_run.get("turnId") or "")
+            if (
+                str(schedule.get("status") or "") != "failed"
+                or str(latest_run.get("state") or "") != "failed"
+                or not turn_id
+            ):
+                continue
+            terminal = terminal_lookup(source_session_id, turn_id)
+            if not isinstance(terminal, Mapping) or str(
+                terminal.get("eventType") or ""
+            ) != "turn_failed":
+                continue
+            self._requeue_failed_facilitator_wake(
+                record,
+                schedule,
+                session_id=source_session_id,
+                turn_id=turn_id,
+                failure=str(terminal.get("status") or ""),
+            )
+
+    def _requeue_failed_facilitator_wake(
+        self,
+        record: Mapping[str, object],
+        schedule: Mapping[str, object],
+        *,
+        session_id: str,
+        turn_id: str,
+        failure: str,
+    ) -> bool:
+        wake = record.get("wake")
+        wake = wake if isinstance(wake, Mapping) else {}
+        metadata = schedule.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        latest_run = schedule.get("latestRun")
+        latest_run = latest_run if isinstance(latest_run, Mapping) else {}
+        generation = int(wake.get("generation") or 0)
+        if (
+            self.dispatch_store is None
+            or str(record.get("status") or "")
+            not in {"review", "blocked", "failed", "aborted", "accepted"}
+            or str(wake.get("state") or "") not in {"scheduled", "delivered"}
+            or str(schedule.get("status") or "") != "failed"
+            or str(latest_run.get("state") or "") != "failed"
+            or str(latest_run.get("sessionId") or "") != session_id
+            or str(latest_run.get("turnId") or "") != turn_id
+            or not session_id
+            or not turn_id
+            or str(record.get("sourceSessionId") or "") != session_id
+            or str(wake.get("scheduleId") or "")
+            != str(schedule.get("id") or "")
+            or str(metadata.get("kind") or "")
+            != "room_partner_completion"
+            or str(metadata.get("childDispatchId") or "")
+            != str(record.get("childDispatchId") or "")
+            or int(metadata.get("generation") or 0) != generation
+            or str(metadata.get("roomId") or "")
+            != str(record.get("roomId") or "")
+            or str(metadata.get("rootId") or "")
+            != str(record.get("rootId") or "")
+        ):
+            return False
+        if (
+            generation >= _MAX_AUTONOMOUS_COMPLETION_WAKE_GENERATION
+            or not _recoverable_runtime_host_failure(failure)
+        ):
+            self.dispatch_store.mark_wake(
+                str(record["childDispatchId"]),
+                generation=generation,
+                state="failed",
+                schedule_id=str(schedule["id"]),
+                error=failure,
+            )
+            return False
+        requeued = self.dispatch_store.requeue_delivered_wake(
+            str(record["childDispatchId"]),
+            generation=generation,
+            expected_schedule_id=str(schedule["id"]),
+            max_generation=_MAX_AUTONOMOUS_COMPLETION_WAKE_GENERATION,
+        )
+        requeued_wake = requeued.get("wake")
+        requeued_wake = (
+            requeued_wake if isinstance(requeued_wake, Mapping) else {}
+        )
+        if (
+            int(requeued_wake.get("generation") or 0) != generation + 1
+            or str(requeued_wake.get("state") or "") != "pending"
+        ):
+            return False
+        self._schedule_completion_wake(requeued)
+        return True
+
+    def _recover_dispatch_from_session_ledger(
+        self,
+        record: Mapping[str, object],
+        *,
+        acceptance_lookup: Callable[
+            [str, str], Mapping[str, object] | None
+        ]
+        | None,
+        command_acceptance_lookup: Callable[
+            [str, str], Mapping[str, object] | None
+        ]
+        | None,
+        terminal_lookup: Callable[[str, str], Mapping[str, object] | None],
+    ) -> None:
+        """Repair the Room projection from Pi's durable prompt/turn ledger."""
+
+        child_dispatch_id = str(record["childDispatchId"])
+        target_session_id = str(record["targetSessionId"])
+        target_turn_id = str(record.get("targetSessionTurnId") or "")
+        if not target_turn_id:
+            acceptance = (
+                command_acceptance_lookup(
+                    target_session_id,
+                    child_dispatch_id,
+                )
+                if callable(command_acceptance_lookup)
+                else None
+            )
+            if acceptance is None and callable(acceptance_lookup):
+                acceptance = acceptance_lookup(
+                    target_session_id,
+                    child_dispatch_id,
+                )
+            if acceptance is None:
+                result = (
+                    "Partner dispatch was not durably accepted before Runtime restart."
+                )
+                self._publish_recovered_terminal(
+                    record,
+                    phase="failed",
+                    status="recovery_missing_prompt_acceptance",
+                    result=result,
+                )
+                self._settle_dispatch(
+                    record,
+                    phase="failed",
+                    result=result,
+                    completion_source="restart_recovery",
+                )
+                return
+            target_turn_id = str(acceptance.get("turnId") or "")
+            if not target_turn_id:
+                result = (
+                    "Partner prompt acceptance evidence did not retain a Runtime turn."
+                )
+                self._publish_recovered_terminal(
+                    record,
+                    phase="failed",
+                    status="recovery_missing_target_turn",
+                    result=result,
+                )
+                self._settle_dispatch(
+                    record,
+                    phase="failed",
+                    result=result,
+                    completion_source="restart_recovery",
+                )
+                return
+            record = self.dispatch_store.mark_dispatched(
+                child_dispatch_id,
+                target_session_turn_id=target_turn_id,
+            )
+
+        terminal = terminal_lookup(target_session_id, target_turn_id)
+        if terminal is None:
+            return
+        if str(terminal.get("eventType") or "") == "turn_failed":
+            phase = "failed"
+        elif str(terminal.get("status") or "") == "aborted":
+            phase = "aborted"
+        else:
+            phase = "completed"
+        disposition = {
+            "completed": "completed",
+            "failed": "failed",
+            "aborted": "was aborted",
+        }[phase]
+        result = (
+            f"Partner Session {disposition}; recovered from durable Runtime "
+            f"terminal event {terminal.get('eventId') or target_turn_id}."
+        )
+        self._publish_recovered_terminal(
+            record,
+            phase=phase,
+            status="recovered_after_restart",
+            result=result,
+            terminal=terminal,
+        )
+        current = self.dispatch_store.get(child_dispatch_id)
+        if str(current.get("status") or "") in {"prepared", "dispatched"}:
+            self._settle_dispatch(
+                current,
+                phase=phase,
+                result=result,
+                completion_source="restart_recovery",
+            )
+
+    def _publish_recovered_terminal(
+        self,
+        record: Mapping[str, object],
+        *,
+        phase: str,
+        status: str,
+        result: str,
+        terminal: Mapping[str, object] | None = None,
+    ) -> None:
+        terminal = terminal or {}
+        self.room_events.publish(
+            room_id=str(record["roomId"]),
+            event_type="participant_activity",
+            payload={
+                "activityKind": "child",
+                "phase": phase,
+                "status": status,
+                "rootId": str(record["rootId"]),
+                "childDispatchId": str(record["childDispatchId"]),
+                "dispatchId": str(record["childDispatchId"]),
+                "targetParticipantId": str(record["targetParticipantId"]),
+                "targetSessionId": str(record["targetSessionId"]),
+                "targetSessionTurnId": str(
+                    record.get("targetSessionTurnId")
+                    or terminal.get("turnId")
+                    or ""
+                ),
+                "summary": result[:2_000],
+                **(
+                    {"sourceRuntimeEventId": str(terminal.get("eventId") or "")}
+                    if terminal
+                    else {}
+                ),
+            },
+            turn_id=str(record["rootId"]),
+            participant_id=str(record["targetParticipantId"]),
+            source_session_id=str(record["targetSessionId"]),
+            topic_id=self.room_topic_for_turn(str(record["rootId"])),
+        )
+
+    def cancel_root(
+        self,
+        *,
+        room_id: str,
+        root_id: str,
+        reason: str,
+    ) -> list[dict[str, object]]:
+        if self.dispatch_store is None:
+            return []
+        records = self.dispatch_store.cancel_root(
+            room_id=room_id,
+            root_id=root_id,
+            reason=reason,
+        )
+        if self.wake_schedules is not None:
+            for record in records:
+                wake = record.get("wake")
+                wake = wake if isinstance(wake, Mapping) else {}
+                schedule_id = str(wake.get("scheduleId") or "")
+                if not schedule_id:
+                    continue
+                try:
+                    self.wake_schedules.cancel_for_root(
+                        schedule_id,
+                        reason=reason,
+                    )
+                except (KeyError, ValueError):
+                    pass
+        return records
+
+    def _peer_list(self, source: Mapping[str, object]) -> dict[str, object]:
+        root_id, dispatch_id = self.room_turns.active_turn(
+            str(source["sessionId"])
+        )
+        room = self.rooms.get(str(source["roomId"]))
+        peers = []
+        for ordinal, participant in enumerate(room.get("participants", [])):
+            if (
+                not isinstance(participant, Mapping)
+                or str(participant.get("status") or "") != "active"
+                or str(participant.get("id") or "") == str(source["id"])
+            ):
+                continue
+            peers.append(
+                {
+                    "participantId": str(participant.get("id") or ""),
+                    "displayName": str(participant.get("displayName") or ""),
+                    "celestialName": _room_celestial_name(
+                        participant,
+                        fallback_ordinal=ordinal,
+                    ),
+                    "collaborationRole": str(
+                        participant.get("collaborationRole") or "implementer"
+                    ),
+                    "sessionId": str(participant.get("sessionId") or ""),
+                }
+            )
+        items = (
+            self.list_room_intercom(str(source["sessionId"]))
+            if self.list_room_intercom is not None
+            else []
+        )
+        return {
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": "peer_list",
+            "roomId": str(source["roomId"]),
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "peers": peers,
+            "messages": [dict(item) for item in items],
+        }
+
+    def _peer_message(
+        self,
+        source: Mapping[str, object],
+        args: Mapping[str, object],
+        *,
+        operation: str,
+        tool_call_id: str,
+    ) -> dict[str, object]:
+        if self.send_room_intercom is None:
+            raise ValueError("Room peer messaging is unavailable")
+        # Peer communication is Room-member authority, not Facilitator or
+        # parent-turn authority. In particular, an intercom-delivered Pi turn
+        # may answer its sender even though it is not a dispatched Room root.
+        root_id, dispatch_id = self.room_turns.active_turn(
+            str(source["sessionId"])
+        )
+        kind = {
+            "peer_send": "send",
+            "peer_ask": "ask",
+            "peer_reply": "reply",
+        }[operation]
+        payload: dict[str, object] = {
+            "kind": kind,
+            "content": _required_text(args, "content", maximum=4_000),
+            "clientMessageId": _text(args.get("clientMessageId"), maximum=200)
+            or tool_call_id,
+        }
+        if kind != "reply":
+            payload["targetParticipantId"] = _required_text(
+                args,
+                "targetParticipantId",
+                maximum=240,
+            )
+        else:
+            payload["replyTo"] = _required_text(args, "replyTo", maximum=240)
+        item = self.send_room_intercom(str(source["sessionId"]), payload)
+        return {
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": operation,
+            "roomId": str(source["roomId"]),
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "message": dict(item),
+        }
 
     def _delegate_batch(
         self,
@@ -110,8 +1606,8 @@ class RoomPartnerApplicationService:
         tool_call_id: str,
     ) -> dict[str, object]:
         raw_tasks = args.get("tasks")
-        if not isinstance(raw_tasks, list) or not 2 <= len(raw_tasks) <= 3:
-            raise ValueError("tasks must contain between two and three Partner tasks")
+        if not isinstance(raw_tasks, list) or not 2 <= len(raw_tasks) <= 7:
+            raise ValueError("tasks must contain between two and seven Partner tasks")
         tasks: list[dict[str, object]] = []
         target_ids: list[str] = []
         for index, value in enumerate(raw_tasks):
@@ -233,12 +1729,6 @@ class RoomPartnerApplicationService:
             raise ValueError(f"target Partners are currently busy: {names}")
 
         phase = _required_text(args, "phase", maximum=120)
-        timeout_seconds = _integer(
-            args.get("timeoutSeconds"),
-            default=300,
-            minimum=5,
-            maximum=300,
-        )
         wave_uuid = uuid.uuid5(
             uuid.NAMESPACE_URL,
             f"rag-ime:{room_id}:{root_id}:{tool_call_id}",
@@ -254,10 +1744,7 @@ class RoomPartnerApplicationService:
                     executor.submit(
                         self._delegate,
                         source,
-                        {
-                            **task,
-                            "timeoutSeconds": timeout_seconds,
-                        },
+                        task,
                         tool_call_id=f"{tool_call_id}:{index}",
                         priority_reserved=not existing_dispatch_ids[index],
                         wave_id=wave_id,
@@ -272,7 +1759,7 @@ class RoomPartnerApplicationService:
                     try:
                         indexed_results[index] = future.result()
                     except Exception as exc:
-                        failed_result: dict[str, object] = {
+                        indexed_results[index] = {
                             "schemaVersion": "rag-ime.room-partner-result.v1",
                             "operation": "delegate",
                             "roomId": room_id,
@@ -286,17 +1773,6 @@ class RoomPartnerApplicationService:
                             "parallelIndex": index,
                             "parallelSize": len(tasks),
                         }
-                        work = self._work_for_tool_call(
-                            room_id=room_id,
-                            root_id=root_id,
-                            tool_call_id=f"{tool_call_id}:{index}",
-                        )
-                        if work is not None:
-                            failed_result = self._attach_contract(
-                                failed_result,
-                                work,
-                            )
-                        indexed_results[index] = failed_result
         finally:
             # dispatch_target releases successful reservations. This final pass
             # also clears reservations for tasks that failed before Pi accepted
@@ -305,19 +1781,10 @@ class RoomPartnerApplicationService:
                 self.room_turns.release_priority_session(session_id)
 
         results = [indexed_results[index] for index in range(len(tasks))]
-        completed = sum(
-            str(item.get("status") or "") == "completed" for item in results
+        accepted = sum(
+            str(item.get("status") or "") == "accepted" for item in results
         )
-        failed = len(results) - completed
-        pending_review = sum(
-            str(item.get("contractStatus") or "") == "pending_review"
-            for item in results
-        )
-        invalid = sum(
-            str(item.get("contractStatus") or "")
-            in {"invalid", "failed", "abandoned", "blocked", "stale_attempt"}
-            for item in results
-        )
+        failed = len(results) - accepted
         return {
             "schemaVersion": "rag-ime.room-partner-result.v1",
             "operation": "delegate_batch",
@@ -327,30 +1794,15 @@ class RoomPartnerApplicationService:
             "phase": phase,
             "parallelism": len(tasks),
             "status": (
-                "completed"
+                "accepted"
                 if failed == 0
                 else "failed"
-                if completed == 0
+                if accepted == 0
                 else "partial"
             ),
-            "completed": completed,
+            "accepted": accepted,
             "failed": failed,
             "results": results,
-            "acceptance": {
-                "pending": pending_review,
-                "invalid": invalid,
-                "accepted": sum(
-                    str(item.get("contractStatus") or "") == "accepted"
-                    for item in results
-                ),
-            },
-            "workflowStatus": (
-                "invalid"
-                if invalid
-                else "awaiting_review"
-                if pending_review
-                else "completed"
-            ),
         }
 
     def _participant(self, session_id: str) -> dict[str, object]:
@@ -388,7 +1840,7 @@ class RoomPartnerApplicationService:
             if str(value or "").strip()
         }
         partners = []
-        for value in room.get("participants", []):
+        for ordinal, value in enumerate(room.get("participants", [])):
             if (
                 not isinstance(value, Mapping)
                 or str(value.get("status") or "") != "active"
@@ -401,6 +1853,10 @@ class RoomPartnerApplicationService:
                 {
                     "participantId": str(value.get("id") or ""),
                     "displayName": str(value.get("displayName") or ""),
+                    "celestialName": _room_celestial_name(
+                        value,
+                        fallback_ordinal=ordinal,
+                    ),
                     "collaborationRole": str(
                         value.get("collaborationRole") or "implementer"
                     ),
@@ -414,14 +1870,42 @@ class RoomPartnerApplicationService:
                     ),
                 }
             )
-        work_items = [
-            dict(item)
-            for item in self.room_work.list(
-                room_id=str(source["roomId"]),
+        recoverable_work_items: list[dict[str, object]] = []
+        if self.room_work is not None:
+            for work_item in self.room_work.list(
+                room_id=str(room["id"]),
+                states=("active",),
                 limit=200,
-            )
-            if str(item.get("rootTurnId") or "") == root_id
-        ]
+            ):
+                if (
+                    not isinstance(work_item, Mapping)
+                    or str(work_item.get("accountableParticipantId") or "")
+                    != str(source["id"])
+                ):
+                    continue
+                blocker = work_item.get("blocker")
+                feedback = (
+                    str(blocker.get("reviewFeedback") or "").strip()
+                    if isinstance(blocker, Mapping)
+                    else ""
+                )
+                review = work_item.get("review")
+                if not feedback and isinstance(review, Mapping):
+                    feedback = str(review.get("reason") or "").strip()
+                if not feedback:
+                    continue
+                recoverable_work_items.append(
+                    {
+                        "workItemId": str(work_item.get("id") or ""),
+                        "state": "active",
+                        "expectedRevision": int(work_item.get("revision") or 0),
+                        "currentOwnerParticipantId": str(
+                            work_item.get("currentOwnerParticipantId") or ""
+                        ),
+                        "recommendedOperation": "retry",
+                        "reason": feedback,
+                    }
+                )
         return {
             "schemaVersion": "rag-ime.room-partner-result.v1",
             "operation": "list",
@@ -429,16 +1913,7 @@ class RoomPartnerApplicationService:
             "rootId": root_id,
             "dispatchId": dispatch_id,
             "partners": partners,
-            "workItems": work_items,
-            "pendingReviewCount": sum(
-                str(item.get("state") or "") == "review"
-                for item in work_items
-            ),
-            "openWorkCount": sum(
-                str(item.get("state") or "")
-                in {"queued", "active", "review", "blocked"}
-                for item in work_items
-            ),
+            "recoverableWorkItems": recoverable_work_items,
         }
 
     def _delegate(
@@ -452,7 +1927,9 @@ class RoomPartnerApplicationService:
         phase: str = "",
         parallel_index: int = 0,
         parallel_size: int = 1,
-        existing_work_item: Mapping[str, object] | None = None,
+        retry_terminal: bool = False,
+        expected_revision: int = 0,
+        retry_reason: str = "",
     ) -> dict[str, object]:
         target_id = _required_text(args, "targetParticipantId", maximum=240)
         task = _required_text(args, "task", maximum=8_000)
@@ -464,26 +1941,13 @@ class RoomPartnerApplicationService:
         )
         if not criteria:
             raise ValueError("acceptanceCriteria must not be empty")
-        normalized_phase = _text(phase or args.get("phase"), maximum=120)
-        if not normalized_phase:
-            raise ValueError("phase must not be empty")
-        dependencies = tuple(
-            _string_list(
-                args.get("dependsOnWorkItemIds"),
-                limit=8,
-                maximum=240,
-            )
-        )
-        timeout_seconds = _integer(
-            args.get("timeoutSeconds"),
-            default=300,
-            minimum=5,
-            maximum=300,
+        requested_work_item_id = _text(
+            args.get("workItemId"),
+            maximum=240,
         )
         room_id = str(source["roomId"])
         room = self.rooms.get(room_id)
         root_id, parent_dispatch_id = self._active_root(source)
-        self.room_work.require_dependencies_done(room_id, dependencies)
         target = self.rooms.participant(target_id)
         if (
             str(target.get("roomId") or "") != room_id
@@ -493,87 +1957,66 @@ class RoomPartnerApplicationService:
         if target_id == str(source["id"]):
             raise ValueError("a Partner cannot delegate Room work to itself")
         target_session_id = str(target.get("sessionId") or "")
-        if not target_session_id:
-            raise ValueError("target Partner has no Session")
-
-        if existing_work_item is None:
-            assignment_id = _assignment_client_message_id(
-                room_id,
-                root_id,
-                tool_call_id,
+        existing_record = (
+            self.dispatch_store.get_by_tool(
+                room_id=room_id,
+                root_id=root_id,
+                tool_call_id=tool_call_id,
             )
-            work, created = self.room_work.assign(
-                str(source["sessionId"]),
-                {
-                    "targetParticipantId": target_id,
-                    "clientMessageId": assignment_id,
-                    "objective": task,
-                    "expectedOutput": expected_output,
-                    "acceptanceCriteria": criteria,
-                    **(
-                        {
-                            "parentWorkId": _required_text(
-                                args,
-                                "parentWorkItemId",
-                                maximum=240,
-                            )
-                        }
-                        if str(args.get("parentWorkItemId") or "").strip()
-                        else {}
-                    ),
-                },
-                root_turn_id=root_id,
-                topic_id=str(room.get("activeTopicId") or ""),
-            )
-            work = dict(work)
-            if created:
-                self.publish_room_work_activity(
-                    work,
-                    phase="assigned",
-                    actor=source,
-                )
-        else:
-            work = dict(existing_work_item)
-            if str(work.get("roomId") or "") != room_id:
-                raise ValueError("workItemId does not belong to this Room")
-            if str(work.get("currentOwnerParticipantId") or "") != target_id:
-                raise ValueError("workItemId is not owned by the selected Partner")
-            if str(work.get("state") or "") != "active":
-                raise ValueError("only active Room work may be dispatched again")
-
-        existing_dispatch_id = self._existing_child_dispatch(
-            room_id,
-            root_id,
-            tool_call_id,
+            if self.dispatch_store is not None
+            else None
         )
-        if existing_dispatch_id:
-            result = self._wait_for_child(
+        existing_dispatch_id = (
+            str(existing_record.get("childDispatchId") or "")
+            if existing_record is not None
+            else self._existing_child_dispatch(room_id, root_id, tool_call_id)
+        )
+        if existing_dispatch_id and (
+            existing_record is None
+            or str(existing_record.get("status") or "") != "prepared"
+        ):
+            work_item = self._create_delegated_work(
+                room_id=room_id,
+                root_id=root_id,
+                topic_id=str(room.get("activeTopicId") or ""),
+                tool_call_id=tool_call_id,
+                source=source,
+                target=target,
+                task=task,
+                expected_output=expected_output,
+                acceptance_criteria=criteria,
+                requested_work_item_id=requested_work_item_id,
+                retry_terminal=retry_terminal,
+                expected_revision=expected_revision,
+                retry_reason=retry_reason,
+            )
+            if (
+                existing_record is not None
+                and str(existing_record.get("workItemId") or "")
+                != str(work_item.get("id") or "")
+            ):
+                raise ValueError(
+                    "Room delegate idempotency key was reused for a different WorkItem"
+                )
+            result = self._delegate_receipt(
                 room_id=room_id,
                 root_id=root_id,
                 child_dispatch_id=existing_dispatch_id,
                 target=target,
-                source=source,
-                timeout_seconds=timeout_seconds,
+                work_item=work_item,
+                record=existing_record,
                 idempotent_replay=True,
-                work=work,
             )
             if wave_id:
                 result.update(
                     {
                         "waveId": wave_id,
-                        "phase": normalized_phase,
+                        "phase": phase,
                         "parallelIndex": parallel_index,
                         "parallelSize": parallel_size,
                     }
                 )
-            return self._settle_work_item(
-                result,
-                work=work,
-                target=target,
-                source=source,
-                attempt_id=existing_dispatch_id,
-                expected_revision=int(work.get("revision") or 0),
-            )
+            return result
 
         if any(
             session_id == target_session_id
@@ -616,7 +2059,43 @@ class RoomPartnerApplicationService:
             requested_participant_ids=[target_id],
             conversation_only=False,
         )[0]
-        child_dispatch_id = f"room-child:{uuid.uuid4()}"
+        child_dispatch_id = existing_dispatch_id or (
+            "room-child:"
+            + str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"rag-ime:{room_id}:{root_id}:{tool_call_id}",
+                )
+            )
+        )
+        work_item = self._create_delegated_work(
+            room_id=room_id,
+            root_id=root_id,
+            topic_id=str(room.get("activeTopicId") or ""),
+            tool_call_id=tool_call_id,
+            source=source,
+            target=target,
+            task=task,
+            expected_output=expected_output,
+            acceptance_criteria=criteria,
+            requested_work_item_id=requested_work_item_id,
+            retry_terminal=retry_terminal,
+            expected_revision=expected_revision,
+            retry_reason=retry_reason,
+        )
+        if self.dispatch_store is not None:
+            existing_record = self.dispatch_store.register(
+                child_dispatch_id=child_dispatch_id,
+                room_id=room_id,
+                root_id=root_id,
+                parent_dispatch_id=parent_dispatch_id,
+                tool_call_id=tool_call_id,
+                source_participant_id=str(source["id"]),
+                source_session_id=str(source["sessionId"]),
+                target_participant_id=target_id,
+                target_session_id=target_session_id,
+                work_item_id=str(work_item["id"]),
+            )
         decision.update(
             {
                 # A Partner Tool dispatch is an explicit coordinator
@@ -630,18 +2109,18 @@ class RoomPartnerApplicationService:
                 "parentDispatchId": parent_dispatch_id,
                 "child": True,
                 "toolCallId": tool_call_id,
-                "workItemId": str(work["id"]),
-                "workItemRevision": int(work.get("revision") or 0),
-                "attemptId": child_dispatch_id,
-                **(
-                    {"dependsOnWorkItemIds": list(dependencies)}
-                    if dependencies
-                    else {}
-                ),
                 **({"waveId": wave_id} if wave_id else {}),
-                "phaseName": normalized_phase,
+                **({"phaseName": phase} if phase else {}),
                 "parallelIndex": parallel_index,
                 "parallelSize": parallel_size,
+                **(
+                    {
+                        "workItemId": str(work_item["id"]),
+                        "workItemState": str(work_item.get("state") or ""),
+                    }
+                    if work_item
+                    else {}
+                ),
             }
         )
         topic_id = str(room.get("activeTopicId") or "")
@@ -668,16 +2147,9 @@ class RoomPartnerApplicationService:
                 "task": task[:1_200],
                 "expectedOutput": expected_output,
                 "acceptanceCriteria": criteria,
-                "workItemId": str(work["id"]),
-                "workItemRevision": int(work.get("revision") or 0),
-                "attemptId": child_dispatch_id,
-                **(
-                    {"dependsOnWorkItemIds": list(dependencies)}
-                    if dependencies
-                    else {}
-                ),
+                **({"workItem": dict(work_item)} if work_item else {}),
                 **({"waveId": wave_id} if wave_id else {}),
-                "phaseName": normalized_phase,
+                **({"phaseName": phase} if phase else {}),
                 "parallelIndex": parallel_index,
                 "parallelSize": parallel_size,
             },
@@ -692,10 +2164,19 @@ class RoomPartnerApplicationService:
             topic_id,
             dispatch_id=child_dispatch_id,
             child=True,
-            work_item_id=str(work["id"]),
-            work_item_revision=int(work.get("revision") or 0),
-            attempt_id=child_dispatch_id,
         )
+        previous_accepted_turn_id = str(work_item.get("acceptedTurnId") or "")
+        work_claimed = False
+        if self.room_work is not None and previous_accepted_turn_id != root_id:
+            work_item = self.room_work.claim_dispatch(
+                str(work_item["id"]),
+                room_id=room_id,
+                owner_participant_id=target_id,
+                assignment_key=str(work_item["assignmentKey"]),
+                previous_accepted_turn_id=previous_accepted_turn_id,
+                room_turn_id=root_id,
+            )
+            work_claimed = True
         unread = self.rooms.unread_public_messages(
             room_id,
             target_id,
@@ -708,76 +2189,170 @@ class RoomPartnerApplicationService:
             task=task,
             expected_output=expected_output,
             acceptance_criteria=criteria,
-            work_item=work,
         )
-        try:
-            dispatched = self.room_dispatch.dispatch_target(
-                room=room,
-                target=target,
-                decision=decision,
-                message=task_message,
-                room_turn_id=root_id,
-                topic_id=topic_id,
-                unread=unread,
-                work_item=work,
-                attachment_ids=(),
-            )
-        except Exception as exc:
-            self._record_dispatch_failure(
-                work,
-                source=source,
-                reason=_public_error(exc),
-            )
-            self.cancel_room_turn(target_session_id, root_id)
-            raise
+        dispatched = self.room_dispatch.dispatch_target(
+            room=room,
+            target=target,
+            decision=decision,
+            message=task_message,
+            room_turn_id=root_id,
+            topic_id=topic_id,
+            unread=unread,
+            work_item=work_item or None,
+            attachment_ids=(),
+        )
         if dispatched.get("accepted") is not True:
-            reason = str(dispatched.get("error") or "Partner rejected task")
-            self._record_dispatch_failure(work, source=source, reason=reason)
-            self.cancel_room_turn(target_session_id, root_id)
-            raise RuntimeError(reason)
-        try:
-            work = self._claim_work_attempt(
-                work,
-                target=target,
-                room_id=room_id,
-                root_id=root_id,
-                child_dispatch_id=child_dispatch_id,
+            cancelled = (
+                dispatched.get("cancelled") is True
+                or str(dispatched.get("status") or "") == "cancelled"
             )
-        except AgentRoomWorkAssignmentChanged:
-            self.cancel_room_turn(target_session_id, root_id)
-            try:
-                self.abort_session(target_session_id)
-            except Exception:
-                pass
-            raise
-        self.publish_room_work_activity(work, phase="accepted", actor=target)
-        result = self._wait_for_child(
+            self._fail_delegated_work(
+                work_item,
+                source=source,
+                target=target,
+                root_id=root_id,
+                previous_accepted_turn_id=previous_accepted_turn_id,
+                work_claimed=work_claimed,
+                reason=str(dispatched.get("error") or "Partner rejected task"),
+                cancelled=cancelled,
+            )
+            if self.dispatch_store is not None:
+                self.dispatch_store.settle(
+                    child_dispatch_id,
+                    status="cancelled" if cancelled else "failed",
+                    result="",
+                    completion_source=(
+                        "dispatch_cancelled"
+                        if cancelled
+                        else "dispatch_rejected"
+                    ),
+                    error=str(dispatched.get("error") or "Partner rejected task"),
+                )
+            raise RuntimeError(str(dispatched.get("error") or "Partner rejected task"))
+        record = (
+            self.dispatch_store.mark_dispatched(
+                child_dispatch_id,
+                target_session_turn_id=str(
+                    dispatched.get("sessionTurnId") or ""
+                ),
+            )
+            if self.dispatch_store is not None
+            else None
+        )
+        result = self._delegate_receipt(
             room_id=room_id,
             root_id=root_id,
             child_dispatch_id=child_dispatch_id,
             target=target,
-            source=source,
-            timeout_seconds=timeout_seconds,
+            work_item=work_item,
+            record=record,
             idempotent_replay=False,
-            work=work,
         )
         if wave_id:
             result.update(
                 {
                     "waveId": wave_id,
-                    "phase": normalized_phase,
+                    "phase": phase,
                     "parallelIndex": parallel_index,
                     "parallelSize": parallel_size,
                 }
             )
-        return self._settle_work_item(
-            result,
-            work=work,
-            target=target,
-            source=source,
-            attempt_id=child_dispatch_id,
-            expected_revision=int(work.get("revision") or 0),
+        return result
+
+    def _retry(
+        self,
+        source: Mapping[str, object],
+        args: Mapping[str, object],
+        *,
+        tool_call_id: str,
+    ) -> dict[str, object]:
+        if self.room_work is None:
+            raise ValueError("Room WorkItem retry is unavailable")
+        work_item_id = _required_text(args, "workItemId", maximum=240)
+        reason = _required_text(args, "reason", maximum=2_000)
+        expected_revision = _expected_revision(args.get("expectedRevision"))
+        existing = self.room_work.get(
+            work_item_id,
+            room_id=str(source["roomId"]),
         )
+        target_id = _text(args.get("targetParticipantId"), maximum=240) or str(
+            existing.get("currentOwnerParticipantId") or ""
+        )
+        if not target_id:
+            raise ValueError(
+                "retry requires targetParticipantId when the WorkItem has no current owner"
+            )
+        if str(existing.get("currentOwnerParticipantId") or "") == target_id:
+            target = self.rooms.participant(target_id)
+            target_session_id = str(target.get("sessionId") or "")
+            if (
+                target_session_id
+                and str(self.sessions.get(target_session_id).get("status") or "")
+                == "faulted"
+            ):
+                if self.recover_faulted_session is None:
+                    raise RuntimeError(
+                        "faulted Room Partner Session recovery is unavailable"
+                    )
+                self.recover_faulted_session(target_session_id)
+        prior_dispatch = (
+            self.dispatch_store.get_by_work(work_item_id)
+            if self.dispatch_store is not None
+            else {}
+        )
+        returned_revision = (
+            str(existing.get("state") or "") == "active"
+            and str(prior_dispatch.get("status") or "") == "returned"
+        )
+        return self._delegate(
+            source,
+            {
+                "targetParticipantId": target_id,
+                "task": str(existing.get("objective") or ""),
+                "expectedOutput": str(existing.get("expectedOutput") or ""),
+                "acceptanceCriteria": list(
+                    existing.get("acceptanceCriteria") or []
+                ),
+                "workItemId": work_item_id,
+            },
+            tool_call_id=tool_call_id,
+            retry_terminal=not returned_revision,
+            expected_revision=expected_revision,
+            retry_reason=reason,
+        )
+
+    @staticmethod
+    def _delegate_receipt(
+        *,
+        room_id: str,
+        root_id: str,
+        child_dispatch_id: str,
+        target: Mapping[str, object],
+        work_item: Mapping[str, object],
+        record: Mapping[str, object] | None,
+        idempotent_replay: bool,
+    ) -> dict[str, object]:
+        dispatch_status = str((record or {}).get("status") or "dispatched")
+        return {
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": "delegate",
+            "roomId": room_id,
+            "rootId": root_id,
+            "childDispatchId": child_dispatch_id,
+            "workItemId": str(work_item.get("id") or ""),
+            "participantId": str(target["id"]),
+            "displayName": str(target.get("displayName") or ""),
+            "status": (
+                "accepted"
+                if dispatch_status in {"prepared", "dispatched"}
+                else dispatch_status
+            ),
+            "dispatchStatus": dispatch_status,
+            "result": str((record or {}).get("result") or "")[:16_000],
+            "idempotentReplay": idempotent_replay,
+            "workItem": dict(work_item),
+            **({"dispatch": dict(record)} if record is not None else {}),
+        }
 
     def _wait_for_child(
         self,
@@ -789,557 +2364,282 @@ class RoomPartnerApplicationService:
         source: Mapping[str, object],
         timeout_seconds: int,
         idempotent_replay: bool,
-        work: Mapping[str, object],
+        work_item: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
-        idle_deadline = self.monotonic() + timeout_seconds
-        latest_message: Mapping[str, object] | None = None
-        last_progress_sequence = 0
-        last_progress_at_ms = 0
-        last_progress_summary = "Partner 已接收任务"
-        while True:
-            events = self.rooms.list_events(
-                room_id,
-                after_sequence=0,
-                limit=2_000,
+        if self.dispatch_store is None:
+            raise ValueError("Room Partner dispatch ledger is unavailable")
+        record = self.dispatch_store.wait(
+            child_dispatch_id,
+            timeout_seconds=timeout_seconds,
+        )
+        current_work = (
+            self.room_work.get(
+                str(record["workItemId"]),
+                room_id=room_id,
             )
-            terminal: Mapping[str, object] | None = None
-            newest_progress_sequence = last_progress_sequence
-            for event in events:
-                payload = event.get("payload")
-                if not isinstance(payload, Mapping):
-                    continue
-                data = payload.get("data")
-                if not isinstance(data, Mapping):
-                    data = payload
-                event_dispatch_id = str(
-                    data.get("dispatchId") or data.get("childDispatchId") or ""
-                )
-                if event_dispatch_id != child_dispatch_id:
-                    continue
-                sequence = int(event.get("sequence") or 0)
-                if sequence > newest_progress_sequence:
-                    newest_progress_sequence = sequence
-                    last_progress_at_ms = int(event.get("createdAtMs") or 0)
-                    last_progress_summary = _room_progress_summary(event, data)
-                if str(event.get("eventType") or "") == "participant_message":
-                    message = data.get("message")
-                    if isinstance(message, Mapping):
-                        latest_message = message
-                if (
-                    str(event.get("eventType") or "") == "participant_activity"
-                    and str(data.get("activityKind") or "") == "child"
-                    and str(data.get("phase") or "") in {"completed", "failed", "aborted"}
-                ):
-                    terminal = data
-            if newest_progress_sequence > last_progress_sequence:
-                last_progress_sequence = newest_progress_sequence
-                idle_deadline = self.monotonic() + timeout_seconds
-            if terminal is not None:
-                phase = str(terminal.get("phase") or "failed")
-                text = (
-                    agent_message_text(latest_message)
-                    if latest_message is not None
-                    else ""
-                )
-                return {
-                    "schemaVersion": "rag-ime.room-partner-result.v1",
-                    "operation": "delegate",
-                    "roomId": room_id,
-                    "rootId": root_id,
-                    "childDispatchId": child_dispatch_id,
-                    "participantId": str(target["id"]),
-                    "displayName": str(target.get("displayName") or ""),
-                    "status": phase,
-                    "result": text[:16_000],
-                    "idempotentReplay": idempotent_replay,
-                    "lastProgressSequence": last_progress_sequence,
-                    "lastProgressAtMs": last_progress_at_ms,
-                    "lastProgressSummary": last_progress_summary,
-                    **_work_identity(work, attempt_id=child_dispatch_id),
-                }
-            if self.room_turns.is_cancelled(
-                str(source["sessionId"]),
-                root_id,
-            ):
-                return {
-                    "schemaVersion": "rag-ime.room-partner-result.v1",
-                    "operation": "delegate",
-                    "roomId": room_id,
-                    "rootId": root_id,
-                    "childDispatchId": child_dispatch_id,
-                    "participantId": str(target["id"]),
-                    "status": "aborted",
-                    "result": "",
-                    "idempotentReplay": idempotent_replay,
-                    **_work_identity(work, attempt_id=child_dispatch_id),
-                }
-            if self.monotonic() >= idle_deadline:
-                break
-            self.sleep(0.05)
-        target_session_id = str(target.get("sessionId") or "")
-        # The Tool wait is bounded. Do not leave a Partner Session or its Room
-        # activity card running after the caller has already received a timeout.
-        # Drop the child mapping before abort so the late Pi terminal cannot be
-        # projected as a second child terminal, then publish one explicit end.
-        self.cancel_room_turn(target_session_id, root_id)
-        abort_error = ""
-        try:
-            self.abort_session(target_session_id)
-        except Exception as exc:
-            abort_error = str(exc).strip()[:240]
-        self.room_events.publish(
-            room_id=room_id,
-            event_type="participant_activity",
-            payload={
-                "activityKind": "child",
-                "phase": "aborted",
-                "status": "timed_out",
-                "rootId": root_id,
-                "childDispatchId": child_dispatch_id,
-                "dispatchId": child_dispatch_id,
-                "reason": "idle_lease_expired",
-                "idleSeconds": timeout_seconds,
-                "lastProgressSequence": last_progress_sequence,
-                "lastProgressAtMs": last_progress_at_ms,
-                "lastProgressSummary": last_progress_summary,
-                **_work_identity(work, attempt_id=child_dispatch_id),
-                **({"abortError": abort_error} if abort_error else {}),
-            },
-            turn_id=root_id,
-            participant_id=str(target["id"]),
-            source_session_id=target_session_id,
-            topic_id=self.room_topic_for_turn(root_id),
+            if self.room_work is not None
+            else work_item or {}
         )
         return {
             "schemaVersion": "rag-ime.room-partner-result.v1",
-            "operation": "delegate",
+            "operation": "wait",
             "roomId": room_id,
             "rootId": root_id,
             "childDispatchId": child_dispatch_id,
+            "workItemId": str(record["workItemId"]),
             "participantId": str(target["id"]),
             "displayName": str(target.get("displayName") or ""),
-            "status": "timed_out",
-            "result": "",
-            "error": (
-                f"Partner 在 {timeout_seconds} 秒内没有新的公开运行进度；"
-                "当前 WorkItem 已暂停，Root 可恢复同一任务或改派。"
-            ),
-            "nextStep": (
-                "resume the same WorkItem, reassign it, or make an explicit "
-                "fail/abandon decision"
-            ),
-            "lastProgressSequence": last_progress_sequence,
-            "lastProgressAtMs": last_progress_at_ms,
-            "lastProgressSummary": last_progress_summary,
+            "status": str(record["status"]),
+            "result": str(record.get("result") or "")[:16_000],
+            "timedOut": str(record["status"]) in {"prepared", "dispatched"},
             "idempotentReplay": idempotent_replay,
-            **_work_identity(work, attempt_id=child_dispatch_id),
+            "dispatch": dict(record),
+            "workItem": dict(current_work),
         }
 
-    def _claim_work_attempt(
+    def _create_delegated_work(
         self,
-        work: Mapping[str, object],
         *,
-        target: Mapping[str, object],
         room_id: str,
         root_id: str,
-        child_dispatch_id: str,
-    ) -> dict[str, object]:
-        current = dict(self.room_work.get(str(work["id"]), room_id=room_id))
-        state = str(current.get("state") or "")
-        if state == "queued":
-            return dict(
-                self.room_work.accept_assignment(
-                    str(current["id"]),
-                    target_participant_id=str(target["id"]),
-                    accepted_turn_id=child_dispatch_id,
-                )
-            )
-        if state == "active":
-            return dict(
-                self.room_work.claim_dispatch(
-                    str(current["id"]),
-                    room_id=room_id,
-                    owner_participant_id=str(target["id"]),
-                    assignment_key=str(current["assignmentKey"]),
-                    previous_accepted_turn_id=str(
-                        current.get("acceptedTurnId") or ""
-                    ),
-                    room_turn_id=child_dispatch_id,
-                    root_turn_id=root_id,
-                )
-            )
-        raise AgentRoomWorkAssignmentChanged(
-            "Room WorkItem changed before the Partner Session accepted its turn"
-        )
-
-    def _record_dispatch_failure(
-        self,
-        work: Mapping[str, object],
-        *,
+        topic_id: str,
+        tool_call_id: str,
         source: Mapping[str, object],
-        reason: str,
-    ) -> None:
-        current = dict(
-            self.room_work.get(
-                str(work["id"]),
-                room_id=str(work["roomId"]),
-            )
-        )
-        if str(current.get("state") or "") == "queued":
-            current = dict(
-                self.room_work.fail_assignment(
-                    str(current["id"]),
-                    actor_participant_id=str(source["id"]),
-                    reason=reason,
-                )
-            )
-        self.publish_room_work_activity(
-            current,
-            phase="assignment_failed",
-            actor=source,
-        )
-
-    def _settle_work_item(
-        self,
-        result: dict[str, object],
-        *,
-        work: Mapping[str, object],
         target: Mapping[str, object],
-        source: Mapping[str, object],
-        attempt_id: str,
-        expected_revision: int,
+        task: str,
+        expected_output: str,
+        acceptance_criteria: list[str],
+        requested_work_item_id: str = "",
+        retry_terminal: bool = False,
+        expected_revision: int = 0,
+        retry_reason: str = "",
     ) -> dict[str, object]:
-        current = dict(
-            self.room_work.get(
-                str(work["id"]),
-                room_id=str(work["roomId"]),
+        if self.room_work is None:
+            # Compatibility for isolated adapters. The installed AgentService
+            # always supplies the durable Room responsibility ledger.
+            return {}
+        if requested_work_item_id:
+            existing = self.room_work.get(
+                requested_work_item_id,
+                room_id=room_id,
             )
-        )
-        if (
-            int(current.get("revision") or 0) != int(expected_revision)
-            or str(current.get("acceptedTurnId") or "") != attempt_id
-        ):
-            return self._attach_contract(
-                result,
-                current,
-                contract_status="stale_attempt",
-                contract_error=(
-                    "WorkItem owner, revision, or attempt changed before this "
-                    "Partner result arrived"
-                ),
-            )
-        state = str(current.get("state") or "")
-        if state in {"review", "done", "failed", "cancelled", "blocked"}:
-            return self._attach_contract(result, current)
-
-        status = str(result.get("status") or "failed")
-        text = str(result.get("result") or "").strip()
-        try:
-            if status == "completed" and text:
-                settled = dict(
-                    self.room_work.submit_attempt(
-                        str(target["sessionId"]),
-                        {
-                            "workId": str(current["id"]),
-                            "resultSummary": text[:4_000],
-                            "evidenceRefs": [
-                                f"room-dispatch:{attempt_id}",
-                                f"room-session:{target['sessionId']}",
-                            ],
-                        },
-                        attempt_id=attempt_id,
-                        expected_revision=expected_revision,
-                    )
+            if retry_terminal:
+                existing = self.room_work.retry(
+                    requested_work_item_id,
+                    actor_participant_id=str(source["id"]),
+                    current_owner_participant_id=str(target["id"]),
+                    expected_revision=expected_revision,
+                    reason=retry_reason,
                 )
-                self.publish_room_work_activity(
-                    settled,
+                self._publish_work_activity(
+                    existing,
+                    phase="retried",
+                    actor=source,
+                )
+            if (
+                str(existing.get("state") or "") not in {"active", "blocked"}
+                or str(existing.get("currentOwnerParticipantId") or "")
+                != str(target["id"])
+                or str(existing.get("accountableParticipantId") or "")
+                != str(source["id"])
+                or str(existing.get("objective") or "") != task
+                or str(existing.get("expectedOutput") or "") != expected_output
+                or list(existing.get("acceptanceCriteria") or [])
+                != acceptance_criteria
+            ):
+                raise ValueError(
+                    "Room revision delegate does not match the returned WorkItem"
+                )
+            return dict(existing)
+        client_message_id = f"room-partner:{root_id}:{tool_call_id}"
+        for existing in self.room_work.list(
+            room_id=room_id,
+            states=(),
+            limit=200,
+        ):
+            if (
+                str(existing.get("createdByParticipantId") or "")
+                == str(source["id"])
+                and str(existing.get("clientMessageId") or "")
+                == client_message_id
+            ):
+                if (
+                    str(existing.get("currentOwnerParticipantId") or "")
+                    != str(target["id"])
+                    or str(existing.get("accountableParticipantId") or "")
+                    != str(source["id"])
+                    or str(existing.get("objective") or "") != task
+                    or str(existing.get("expectedOutput") or "")
+                    != expected_output
+                    or list(existing.get("acceptanceCriteria") or [])
+                    != acceptance_criteria
+                ):
+                    raise ValueError(
+                        "Room delegate idempotency key was reused for a different WorkItem"
+                    )
+                return dict(existing)
+        work = self.room_work.create(
+            room_id=room_id,
+            objective=task,
+            expected_output=expected_output,
+            current_owner_participant_id=str(target["id"]),
+            created_by_participant_id=str(source["id"]),
+            accountable_participant_id=str(source["id"]),
+            client_message_id=client_message_id,
+            topic_id=topic_id,
+            root_turn_id=root_id,
+            acceptance_criteria=acceptance_criteria,
+            state="active",
+            depth=1,
+        )
+        self._publish_work_activity(work, phase="assigned", actor=source)
+        return dict(work)
+
+    def _settle_delegated_work(
+        self,
+        work_item: Mapping[str, object] | None,
+        *,
+        phase: str,
+        result: str,
+        child_dispatch_id: str,
+        source: Mapping[str, object],
+        target: Mapping[str, object],
+        proposed_operability: str = "",
+        proposed_requirement: str = "",
+    ) -> Mapping[str, object] | None:
+        if self.room_work is None or not work_item or not work_item.get("id"):
+            return work_item
+        current = self.room_work.get(
+            str(work_item["id"]),
+            room_id=str(work_item["roomId"]),
+        )
+        state = str(current.get("state") or "")
+        if phase == "completed":
+            document: Mapping[str, object] | None = None
+            if self.work_document_for_authority is not None:
+                document = self.work_document_for_authority(
+                    "room_work_item",
+                    str(current["id"]),
+                )
+                document_revision = int(
+                    (document or {}).get("documentRevision") or 0
+                )
+                if document is None or document_revision < 2:
+                    if state == "active":
+                        current = self.room_work.block(
+                            str(target["sessionId"]),
+                            {
+                                "workId": current["id"],
+                                "reason": (
+                                    "伙伴回合已结束，但负责的 WorkDocument 尚未完成开工与交付同步。"
+                                ),
+                                "nextStep": (
+                                    "先登记 room_work_item 活动文档，写入目标/范围；完成后再次更新结果、"
+                                    "证据、改动文件、验证与剩余风险，使 documentRevision 至少为 2。"
+                                ),
+                            },
+                        )
+                        self._publish_work_activity(
+                            current,
+                            phase="blocked",
+                            actor=target,
+                        )
+                    return current
+            if state in {"active", "blocked"}:
+                evidence_refs = [child_dispatch_id]
+                if document is not None:
+                    evidence_refs.append(
+                        "workdoc:"
+                        f"{document.get('documentId')}@"
+                        f"{document.get('documentRevision')}"
+                    )
+                summary = (
+                    result[:4_000]
+                    or "Partner Session completed the delegated WorkItem."
+                )
+                # The typed work_result post carries the Partner's structured
+                # proposals; the Work ledger infers from FAILED/UNVERIFIED
+                # prose markers only when both axes are absent.
+                current = self.room_work.submit(
+                    str(target["sessionId"]),
+                    {
+                        "workId": current["id"],
+                        "resultSummary": summary,
+                        "evidenceRefs": evidence_refs,
+                        "proposedOperabilityVerdict": proposed_operability,
+                        "proposedRequirementVerdict": proposed_requirement,
+                    },
+                )
+                self._publish_work_activity(
+                    current,
                     phase="submitted",
                     actor=target,
                 )
-                return self._attach_contract(result, settled)
+            return current
+        if state in {"active", "blocked"}:
+            current = self.room_work.escalate(
+                str(target["sessionId"]),
+                {
+                    "workId": current["id"],
+                    "reason": result[:2_000] or f"Partner dispatch ended as {phase}",
+                    "nextStep": "由 Room 伙伴缩小范围后重新分派，或明确保留为未解决项。",
+                },
+            )
+            self._publish_work_activity(current, phase="failed", actor=target)
+        return current
 
-            root_cancelled = status == "aborted" and self.room_turns.is_cancelled(
-                str(source["sessionId"]),
-                str(current.get("rootTurnId") or result.get("rootId") or ""),
-            )
-            if root_cancelled:
-                settled = dict(
-                    self.room_work.abandon(
-                        str(source["sessionId"]),
-                        {
-                            "workId": str(current["id"]),
-                            "reason": "Root turn was stopped before Partner completion",
-                            "nextStep": "start a new Root turn if this work is still needed",
-                        },
-                    )
-                )
-                phase = "abandoned"
-                actor = source
-            else:
-                reason = str(result.get("error") or "").strip() or (
-                    "Partner Session returned without a public result"
-                    if status == "completed"
-                    else f"Partner Session ended with status {status}"
-                )
-                settled = dict(
-                    self.room_work.block_attempt(
-                        str(target["sessionId"]),
-                        {
-                            "workId": str(current["id"]),
-                            "reason": reason,
-                            "nextStep": str(result.get("nextStep") or "").strip() or (
-                                "resume the same WorkItem, reassign it, or make an "
-                                "explicit fail/abandon decision"
-                            ),
-                        },
-                        attempt_id=attempt_id,
-                        expected_revision=expected_revision,
-                    )
-                )
-                phase = "blocked"
-                actor = target
-            self.publish_room_work_activity(settled, phase=phase, actor=actor)
-            return self._attach_contract(result, settled)
-        except AgentRoomWorkAttemptChanged as exc:
-            latest = dict(
-                self.room_work.get(
-                    str(current["id"]),
-                    room_id=str(current["roomId"]),
-                )
-            )
-            return self._attach_contract(
-                result,
-                latest,
-                contract_status="stale_attempt",
-                contract_error=_public_error(exc),
-            )
-        except Exception as exc:
-            latest = dict(
-                self.room_work.get(
-                    str(current["id"]),
-                    room_id=str(current["roomId"]),
-                )
-            )
-            return self._attach_contract(
-                result,
-                latest,
-                contract_status="invalid",
-                contract_error=_public_error(exc),
-            )
-
-    def _review(
+    def _fail_delegated_work(
         self,
-        source: Mapping[str, object],
-        args: Mapping[str, object],
+        work_item: Mapping[str, object],
         *,
-        accept: bool,
-    ) -> dict[str, object]:
-        work_id = _required_text(args, "workItemId", maximum=240)
-        room_id = str(source["roomId"])
-        current = dict(self.room_work.get(work_id, room_id=room_id))
-        root_id, _dispatch_id = self._active_root(source)
-        if str(current.get("rootTurnId") or "") != root_id:
-            raise ValueError("workItemId does not belong to the active Room turn")
-        if accept:
-            work = dict(
-                self.room_work.accept(
-                    str(source["sessionId"]),
-                    {"workId": work_id},
-                )
-            )
-            operation = "accept"
-            phase = "completed"
-            contract_status = "accepted"
-        else:
-            reason = _required_text(args, "reason", maximum=2_000)
-            work = dict(
-                self.room_work.return_for_revision(
-                    str(source["sessionId"]),
-                    {"workId": work_id, "reason": reason},
-                )
-            )
-            operation = "return"
-            phase = "returned"
-            contract_status = "revision_required"
-        self.publish_room_work_activity(work, phase=phase, actor=source)
-        return {
-            "schemaVersion": "rag-ime.room-partner-result.v1",
-            "operation": operation,
-            "roomId": room_id,
-            "rootId": root_id,
-            "workItem": work,
-            "contractStatus": contract_status,
-            **_work_identity(work),
-        }
-
-    def _resume(
-        self,
         source: Mapping[str, object],
-        args: Mapping[str, object],
-        *,
-        tool_call_id: str,
-    ) -> dict[str, object]:
-        work_id = _required_text(args, "workItemId", maximum=240)
-        room_id = str(source["roomId"])
-        work = dict(self.room_work.get(work_id, room_id=room_id))
-        root_id, _dispatch_id = self._active_root(source)
-        if str(work.get("rootTurnId") or "") != root_id:
-            raise ValueError("workItemId does not belong to the active Room turn")
-        if str(self.room_work.reviewer_participant_id(work_id)) != str(source["id"]):
-            raise ValueError("only the accountable reviewer may resume Room work")
-        if str(work.get("state") or "") == "blocked":
-            work = dict(
-                self.room_work.resume(
-                    str(source["sessionId"]),
-                    {"workId": work_id},
-                )
-            )
-            self.publish_room_work_activity(work, phase="resumed", actor=source)
-        elif str(work.get("state") or "") != "active":
-            raise ValueError("only returned or blocked Room work may be resumed")
-        return self._dispatch_existing_work(
-            source,
-            args,
-            work=work,
-            tool_call_id=tool_call_id,
-        )
-
-    def _reassign(
-        self,
-        source: Mapping[str, object],
-        args: Mapping[str, object],
-        *,
-        tool_call_id: str,
-    ) -> dict[str, object]:
-        work_id = _required_text(args, "workItemId", maximum=240)
-        target_id = _required_text(args, "targetParticipantId", maximum=240)
-        reason = _required_text(args, "reason", maximum=2_000)
-        room_id = str(source["roomId"])
-        current = dict(self.room_work.get(work_id, room_id=room_id))
-        root_id, _dispatch_id = self._active_root(source)
-        if str(current.get("rootTurnId") or "") != root_id:
-            raise ValueError("workItemId does not belong to the active Room turn")
-        target = self.rooms.participant(target_id)
-        if (
-            str(target.get("roomId") or "") != room_id
-            or str(target.get("status") or "") != "active"
-        ):
-            raise ValueError("target Partner is not active in this Room")
-        work = dict(
-            self.room_work.reassign(
-                work_id,
+        target: Mapping[str, object],
+        root_id: str,
+        previous_accepted_turn_id: str,
+        work_claimed: bool,
+        reason: str,
+        cancelled: bool = False,
+    ) -> None:
+        if self.room_work is None or not work_item.get("id"):
+            return
+        current = dict(work_item)
+        if work_claimed:
+            current = self.room_work.fail_dispatch(
+                str(current["id"]),
+                room_id=str(current["roomId"]),
                 actor_participant_id=str(source["id"]),
-                current_owner_participant_id=target_id,
+                room_turn_id=root_id,
+                previous_accepted_turn_id=previous_accepted_turn_id,
                 reason=reason,
             )
-        )
-        self.publish_room_work_activity(work, phase="reassigned", actor=source)
-        return self._dispatch_existing_work(
-            source,
-            args,
-            work=work,
-            tool_call_id=tool_call_id,
+        if (
+            not cancelled
+            and str(current.get("state") or "") in {"active", "blocked"}
+        ):
+            current = self.room_work.escalate(
+                str(target["sessionId"]),
+                {
+                    "workId": current["id"],
+                    "reason": reason,
+                    "nextStep": "检查目标 Session 后重新分派。",
+                },
+            )
+        self._publish_work_activity(
+            current,
+            phase="aborted" if cancelled else "failed",
+            actor=source,
         )
 
-    def _dispatch_existing_work(
+    def _publish_work_activity(
         self,
-        source: Mapping[str, object],
-        args: Mapping[str, object],
-        *,
-        work: Mapping[str, object],
-        tool_call_id: str,
-    ) -> dict[str, object]:
-        blocker = work.get("blocker")
-        feedback = (
-            str(blocker.get("reviewFeedback") or blocker.get("reason") or "").strip()
-            if isinstance(blocker, Mapping)
-            else ""
-        )
-        objective = str(work.get("objective") or "").strip()
-        task = objective if not feedback else f"{objective}\n\n返修或恢复要求：{feedback}"
-        return self._delegate(
-            source,
-            {
-                "targetParticipantId": str(work["currentOwnerParticipantId"]),
-                "task": task,
-                "expectedOutput": str(work.get("expectedOutput") or ""),
-                "acceptanceCriteria": list(work.get("acceptanceCriteria") or []),
-                "phase": _required_text(args, "phase", maximum=120),
-                "timeoutSeconds": _integer(
-                    args.get("timeoutSeconds"),
-                    default=300,
-                    minimum=5,
-                    maximum=300,
-                ),
-            },
-            tool_call_id=tool_call_id,
-            existing_work_item=work,
-        )
-
-    def _terminate(
-        self,
-        source: Mapping[str, object],
-        args: Mapping[str, object],
-        *,
-        abandon: bool,
-    ) -> dict[str, object]:
-        work_id = _required_text(args, "workItemId", maximum=240)
-        room_id = str(source["roomId"])
-        current = dict(self.room_work.get(work_id, room_id=room_id))
-        root_id, _dispatch_id = self._active_root(source)
-        if str(current.get("rootTurnId") or "") != root_id:
-            raise ValueError("workItemId does not belong to the active Room turn")
-        payload = {
-            "workId": work_id,
-            "reason": _required_text(args, "reason", maximum=2_000),
-            "nextStep": _text(args.get("nextStep"), maximum=2_000),
-        }
-        operation = "abandon" if abandon else "fail"
-        transition = self.room_work.abandon if abandon else self.room_work.fail
-        work = dict(transition(str(source["sessionId"]), payload))
-        self.publish_room_work_activity(work, phase=operation, actor=source)
-        return {
-            "schemaVersion": "rag-ime.room-partner-result.v1",
-            "operation": operation,
-            "roomId": room_id,
-            "rootId": root_id,
-            "workItem": work,
-            "contractStatus": "abandoned" if abandon else "failed",
-            "requiresAcceptance": False,
-            **_work_identity(work),
-        }
-
-    @staticmethod
-    def _attach_contract(
-        result: dict[str, object],
         work: Mapping[str, object],
         *,
-        contract_status: str = "",
-        contract_error: str = "",
-    ) -> dict[str, object]:
-        state = str(work.get("state") or "")
-        result["workItem"] = dict(work)
-        result.update(_work_identity(work))
-        if contract_status:
-            result["contractStatus"] = contract_status
-        elif state == "review":
-            result["contractStatus"] = "pending_review"
-        elif state == "done":
-            result["contractStatus"] = "accepted"
-        elif state == "active":
-            result["contractStatus"] = "revision_required"
-        elif state == "blocked":
-            result["contractStatus"] = "blocked"
-        elif state == "failed":
-            result["contractStatus"] = "failed"
-        elif state == "cancelled":
-            result["contractStatus"] = "abandoned"
-        else:
-            result["contractStatus"] = "pending"
-        result["requiresAcceptance"] = state == "review"
-        if contract_error:
-            result["contractError"] = contract_error
-        return result
+        phase: str,
+        actor: Mapping[str, object],
+    ) -> None:
+        if self.publish_room_work_activity is None or not work:
+            return
+        self.publish_room_work_activity(work, phase=phase, actor=actor)
 
     def _existing_child_dispatch(
         self,
@@ -1368,34 +2668,13 @@ class RoomPartnerApplicationService:
                 return str(payload.get("childDispatchId") or "")
         return ""
 
-    def _work_for_tool_call(
-        self,
-        *,
-        room_id: str,
-        root_id: str,
-        tool_call_id: str,
-    ) -> dict[str, object] | None:
-        client_message_id = _assignment_client_message_id(
-            room_id,
-            root_id,
-            tool_call_id,
-        )
-        return next(
-            (
-                dict(item)
-                for item in self.room_work.list(room_id=room_id, limit=200)
-                if str(item.get("rootTurnId") or "") == root_id
-                and str(item.get("clientMessageId") or "") == client_message_id
-            ),
-            None,
-        )
-
     def _post(
         self,
         source: Mapping[str, object],
         args: Mapping[str, object],
         *,
         tool_call_id: str,
+        source_loop_id: str = "",
     ) -> dict[str, object]:
         content = _required_text(args, "content", maximum=8_000)
         kind = _text(args.get("kind"), maximum=40) or "progress"
@@ -1409,22 +2688,45 @@ class RoomPartnerApplicationService:
             "blocked",
         }:
             raise ValueError("room_partner post kind is invalid")
+        work_result_proposal: dict[str, str] = {}
+        if kind == "work_result":
+            proposed_operability = _text(
+                args.get("proposedOperabilityVerdict"),
+                maximum=40,
+            )
+            proposed_requirement = _text(
+                args.get("proposedRequirementVerdict"),
+                maximum=40,
+            )
+            if (
+                proposed_operability not in {"passed", "failed", "unverified"}
+                or proposed_requirement
+                not in {"satisfied", "not_satisfied", "unverified"}
+            ):
+                raise ValueError(
+                    "post kind=work_result requires proposedOperabilityVerdict "
+                    "(passed/failed/unverified) and proposedRequirementVerdict "
+                    "(satisfied/not_satisfied/unverified) stating the Partner's "
+                    "honest submission verdicts"
+                )
+            work_result_proposal = {
+                "proposedOperabilityVerdict": proposed_operability,
+                "proposedRequirementVerdict": proposed_requirement,
+            }
         root_id, dispatch_id = self._active_root(source)
         room = self.rooms.get(str(source["roomId"]))
         if kind == "result":
-            if str(room.get("moderatorParticipantId") or "") != str(source["id"]):
-                raise ValueError("only the Room Root may publish the final result")
-            open_work = self.room_work.open_for_root(
+            if str(source.get("collaborationRole") or "") != "coordinator":
+                raise ValueError("only the Room Facilitator can publish kind=result")
+            accepted_work = self._accepted_root_work(
                 room_id=str(room["id"]),
                 root_turn_id=root_id,
+                facilitator_participant_id=str(source["id"]),
             )
-            if open_work:
-                states = ", ".join(
-                    f"{item['id']}={item['state']}" for item in open_work[:8]
-                )
+            if accepted_work is None:
                 raise ValueError(
-                    "Root final result is blocked until all formal WorkItems are "
-                    f"accepted or explicitly terminated: {states}"
+                    "Room result requires every WorkItem to be explicitly "
+                    "accepted with passed/satisfied evidence"
                 )
         post_id = f"room-post:{tool_call_id}"
         created_at_ms = int(time.time() * 1_000)
@@ -1445,16 +2747,69 @@ class RoomPartnerApplicationService:
                 "ref": tool_call_id,
             },
             "createdAtMs": created_at_ms,
+            **(
+                {
+                    "taskId": _text(
+                        args.get("workItemId"),
+                        maximum=320,
+                    )
+                }
+                if _text(args.get("workItemId"), maximum=320)
+                else {}
+            ),
+            **(
+                {"workResult": work_result_proposal}
+                if work_result_proposal
+                else {}
+            ),
         }
-        self.room_events.publish(
-            room_id=str(room["id"]),
-            event_type="room_post",
-            payload={"post": post},
-            turn_id=root_id,
-            participant_id=str(source["id"]),
-            source_session_id=str(source["sessionId"]),
-            topic_id=str(room.get("activeTopicId") or ""),
+        validate_contract(post, "room-post.v2.json")
+        latest_runtime_turn_id = getattr(
+            self.sessions,
+            "latest_runtime_turn_id",
+            None,
         )
+        source_turn_id = (
+            str(latest_runtime_turn_id(str(source["sessionId"])) or "")
+            if callable(latest_runtime_turn_id)
+            else ""
+        )
+        publish_values = {
+            "room_id": str(room["id"]),
+            "event_type": "room_post",
+            "payload": {
+                "post": post,
+                **(
+                    {"sourceTurnId": source_turn_id}
+                    if source_turn_id
+                    else {}
+                ),
+                **(
+                    {"sourceLoopId": source_loop_id[:240]}
+                    if source_loop_id
+                    else {}
+                ),
+            },
+            "turn_id": root_id,
+            "participant_id": str(source["id"]),
+            "source_session_id": str(source["sessionId"]),
+            "topic_id": self.room_topic_for_turn(root_id),
+        }
+        published = True
+        if kind == "result":
+            projection_key = (
+                f"room-terminal-result:{room['id']}:{root_id}"
+            )
+            has_projection = getattr(self.room_events, "has_projection", None)
+            if callable(has_projection) and has_projection(projection_key):
+                published = False
+            else:
+                self.room_events.publish_projection(
+                    projection_key=projection_key,
+                    **publish_values,
+                )
+        else:
+            self.room_events.publish(**publish_values)
         return {
             "schemaVersion": "rag-ime.room-partner-result.v1",
             "operation": "post",
@@ -1462,8 +2817,55 @@ class RoomPartnerApplicationService:
             "rootId": root_id,
             "postId": post_id,
             "kind": kind,
-            "published": True,
+            "published": published,
+            "settledWorkItems": [],
         }
+
+
+def _terminal_result_content(
+    work_items: list[Mapping[str, object]],
+) -> str:
+    lines = [
+        "终态收据",
+        (
+            "主管 Agent 已完成显式双轴验收；Runtime 根据持久化验收账本投影"
+            "这一终态，未解析普通回复，也未代替主管接受 WorkItem。"
+        ),
+        "",
+    ]
+    for item in work_items:
+        review = item.get("review")
+        review = review if isinstance(review, Mapping) else {}
+        evidence = review.get("evidenceRefs")
+        evidence = evidence if isinstance(evidence, list) else []
+        evidence_text = "；".join(
+            _text(value, maximum=240)
+            for value in evidence[:6]
+            if _text(value, maximum=240)
+        )
+        lines.extend(
+            [
+                f"- {_text(item.get('objective'), maximum=320)}",
+                (
+                    "  运行可操作性 "
+                    f"{_text(review.get('operabilityVerdict'), maximum=40)}；"
+                    "需求满足 "
+                    f"{_text(review.get('requirementVerdict'), maximum=40)}"
+                ),
+                f"  {_text(item.get('resultSummary'), maximum=700)}",
+                f"  证据：{evidence_text}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            (
+                "实现、测试、构建、浏览器运行与未验证边界仍以各 WorkItem 的"
+                "结果摘要和证据引用为准。"
+            ),
+        ]
+    )
+    return "\n".join(lines)[:8_000]
 
 
 def _partner_task_message(
@@ -1472,16 +2874,10 @@ def _partner_task_message(
     task: str,
     expected_output: str,
     acceptance_criteria: list[str],
-    work_item: Mapping[str, object],
 ) -> str:
     lines = [
-        f"来自 Room 主伙伴 {source.get('displayName') or 'Facilitator'} 的子任务：",
+        f"来自 Room 伙伴 {source.get('displayName') or 'Partner'} 的 WorkItem：",
         task,
-        "",
-        (
-            f"权威 WorkItem：{work_item.get('id')}，"
-            f"revision={work_item.get('revision', 0)}。"
-        ),
     ]
     if expected_output:
         lines.extend(["", f"预期输出：{expected_output}"])
@@ -1492,57 +2888,13 @@ def _partner_task_message(
     lines.extend(
         [
             "",
-            "直接完成当前子任务并返回有界结果；不要重新拆分整个 Room，也不要代替主伙伴给用户最终答复。",
+            "在编辑前判断是否存在至少两个独立、非重叠的支持或验证面。若实际工具目录提供 agents 且有真实并发收益，加载 orchestrate-session，一次批量委派有界子任务，父 Agent 保留自己的工作线；否则当前 Session 直接完成。不要把整个 WorkItem 再转交给子 Agent。",
+            "依赖本 WorkItem 尚未生成文件、构建或运行产物的私有审核任务，必须等产物真实存在后再派发；不要让审核者和生产者在同一波并发后再把‘文件尚不存在’误报为缺陷。",
+            "",
+            "直接完成当前 WorkItem 并返回有界结果；需要其他伙伴信息时直接使用 peer @ 通道，不要让发送者代为转发。Root 伙伴负责最终汇合。",
         ]
     )
     return "\n".join(lines)[:12_000]
-
-
-def _work_identity(
-    work: Mapping[str, object],
-    *,
-    attempt_id: str = "",
-) -> dict[str, object]:
-    accepted_turn_id = attempt_id or str(work.get("acceptedTurnId") or "")
-    return {
-        "workItemId": str(work.get("id") or ""),
-        "workItemRevision": int(work.get("revision") or 0),
-        "attemptId": accepted_turn_id,
-    }
-
-
-def _room_progress_summary(
-    event: Mapping[str, object],
-    data: Mapping[str, object],
-) -> str:
-    event_type = str(event.get("eventType") or "运行进度")
-    phase = str(data.get("phase") or data.get("status") or "").strip()
-    label = str(
-        data.get("summary")
-        or data.get("toolName")
-        or data.get("activityKind")
-        or ""
-    ).strip()
-    if event_type == "participant_message":
-        return "Partner 发布了新的公开消息"
-    parts = [event_type]
-    if label:
-        parts.append(label[:120])
-    if phase:
-        parts.append(phase[:80])
-    return " · ".join(parts)[:240]
-
-
-def _assignment_client_message_id(
-    room_id: str,
-    root_id: str,
-    tool_call_id: str,
-) -> str:
-    value = uuid.uuid5(
-        uuid.NAMESPACE_URL,
-        f"{room_id}:{root_id}:{tool_call_id}",
-    )
-    return f"room-partner:{value}"
 
 
 def _required_text(
@@ -1586,5 +2938,19 @@ def _integer(
     return max(minimum, min(maximum, parsed))
 
 
+def _expected_revision(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 2:
+        raise ValueError("expectedRevision must be an integer between 0 and 2")
+    return value
+
+
 def _public_error(error: BaseException) -> str:
     return " ".join(str(error).split())[:240] or error.__class__.__name__
+
+
+def _recoverable_runtime_host_failure(error: str) -> bool:
+    normalized = " ".join(str(error or "").lower().split())
+    return any(
+        marker in normalized
+        for marker in _RECOVERABLE_RUNTIME_HOST_FAILURE_MARKERS
+    )

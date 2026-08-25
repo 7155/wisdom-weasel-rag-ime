@@ -864,6 +864,10 @@ export interface RoomPostV2 {
           createdAtMs: number;
         },
       ];
+  workResult?: {
+    proposedOperabilityVerdict: 'passed' | 'failed' | 'unverified';
+    proposedRequirementVerdict: 'satisfied' | 'not_satisfied' | 'unverified';
+  };
   idempotencyKey: string;
   publicationSource: {
     kind: 'user' | 'room_commit' | 'room_post' | 'runtime_projection';

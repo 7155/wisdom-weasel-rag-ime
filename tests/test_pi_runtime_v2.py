@@ -136,6 +136,21 @@ for line in sys.stdin:
     elif method == "session.commands":
         result(request, {"commands": [{"name": "skill:plugin-creator",
                                         "description": "Create and propose a managed plugin", "source": "skill"}]})
+    elif method == "session.command.invoke":
+        command = params["command"]
+        result(request, {
+            "schemaVersion": "rag-ime.pi-package-command-invocation.v1",
+            "command": command,
+            "name": command.split()[0].removeprefix("/"),
+            "handled": True,
+            "result": {
+                "schemaVersion": "rag-ime.pi-package-command-result.v1",
+                "packageId": "@paw/pi-session-workflow",
+                "command": command.split()[0].removeprefix("/"),
+                "message": "Goal [active]: Ship the TUI",
+            },
+            "leafId": "entry-command-result",
+        })
     elif method == "models.list":
         result(request, {"models": [model]})
     elif method == "session.thinking.set":
@@ -766,6 +781,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
             tool_manifest_provider=lambda _session: [],
         )
 
+        self.runtime.plugin_preview_install(
+            {
+                "sourcePath": "/tmp/plugin",
+                "expectedDigest": "d" * 64,
+                "enable": False,
+            }
+        )
         self.runtime.plugin_install({"sourcePath": "/tmp/plugin"})
         self.runtime.plugin_enable(
             "plugin:test",
@@ -778,6 +800,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
             expected_active_digest="b" * 64,
             target_digest="c" * 64,
         )
+        self.runtime.plugin_uninstall(
+            "plugin:test",
+            expected_active_digest="b" * 64,
+            expected_enabled=True,
+        )
 
         requests = [
             json.loads(line)
@@ -789,9 +816,14 @@ class PiRuntimeV2Tests(unittest.TestCase):
             request
             for request in requests
             if request["method"]
-            in {"plugins.install", "plugins.enable", "plugins.rollback"}
+            in {
+                "plugins.install",
+                "plugins.enable",
+                "plugins.rollback",
+                "plugins.uninstall",
+            }
         ]
-        self.assertEqual(len(mutations), 3)
+        self.assertEqual(len(mutations), 4)
         self.assertTrue(
             all(
                 request["params"]["approvalToken"] == "plugin-approval-only"
@@ -799,6 +831,18 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
         )
         self.assertNotIn("tool-gateway-only", json.dumps(mutations))
+
+    def test_plugin_catalog_uses_the_native_runtime_method(self) -> None:
+        catalog = self.runtime.plugin_catalog()
+
+        self.assertEqual(catalog, [])
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(requests[-1]["method"], "plugins.catalog")
 
     def test_pi_package_draft_and_prepare_use_native_host_methods_without_approval(self) -> None:
         self.runtime.plugin_create_package(
@@ -859,6 +903,166 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["noContextFiles"])
         self.assertTrue(opened["params"]["piSkillsEnabled"])
         self.assertTrue(opened["params"]["codexSkillsEnabled"])
+
+    def test_retire_recovered_turn_uses_exact_idle_turn_and_confirms_clear(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        recovered_turn_id = "turn-recovered-resident"
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        methods: list[str] = []
+        stale = True
+
+        def recovered_send(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            nonlocal stale
+            methods.append(method)
+            if method == "session.control_state":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                    "sessionId": session_id,
+                    "isIdle": True,
+                    "isCompacting": False,
+                    "activeTurn": (
+                        {"turnId": recovered_turn_id} if stale else None
+                    ),
+                    "sequence": 1,
+                }
+            if method == "session.abort":
+                self.assertEqual(params, {"sessionId": session_id})
+                stale = False
+                return {
+                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                    "sessionId": session_id,
+                    "turnId": recovered_turn_id,
+                    "cancelledDecisionIds": [],
+                    "cancelledUIRequestIds": [],
+                    "lifecycle": {
+                        "schemaVersion": "pi.agent-abort-receipt.v1",
+                        "scopeId": session_id,
+                        "generation": 1,
+                        "reason": "user_abort",
+                        "cancelledContinuationIds": [],
+                        "cancelledOperationIds": [],
+                        "failedOperationIds": [],
+                        "operations": [],
+                        "pendingOperations": [],
+                        "drained": True,
+                        "idle": True,
+                    },
+                }
+            raise AssertionError(f"unexpected Host method: {method}")
+
+        with patch.object(client, "send", side_effect=recovered_send):
+            receipt = self.runtime.retire_recovered_turn(
+                session_id,
+                recovered_turn_id,
+            )
+
+        self.assertEqual(
+            methods,
+            ["session.control_state", "session.abort", "session.control_state"],
+        )
+        self.assertEqual(receipt["turnId"], recovered_turn_id)
+        self.assertTrue(receipt["retired"])
+        self.assertIsNone(receipt["state"]["activeTurn"])
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+
+    def test_retire_recovered_turn_rejects_a_different_active_turn(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        methods: list[str] = []
+
+        def different_turn(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            methods.append(method)
+            if method == "session.control_state":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                    "sessionId": session_id,
+                    "isIdle": True,
+                    "isCompacting": False,
+                    "activeTurn": {"turnId": "turn-newer"},
+                    "sequence": 1,
+                }
+            raise AssertionError(f"unexpected Host method: {method}")
+
+        with patch.object(client, "send", side_effect=different_turn):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "does not match the expected recovered turn",
+            ):
+                self.runtime.retire_recovered_turn(
+                    session_id,
+                    "turn-original-fault",
+                )
+
+        self.assertEqual(methods, ["session.control_state"])
+
+    def test_retire_recovered_turn_rejects_unsettled_abort_receipt(self) -> None:
+        session_id = str(self.first["id"])
+        recovered_turn_id = "turn-recovered-unsettled"
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+
+        def unsettled_abort(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            if method == "session.control_state":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-control-state.v1",
+                    "sessionId": session_id,
+                    "isIdle": True,
+                    "isCompacting": False,
+                    "activeTurn": {"turnId": recovered_turn_id},
+                    "sequence": 1,
+                }
+            if method == "session.abort":
+                return {
+                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                    "sessionId": session_id,
+                    "turnId": recovered_turn_id,
+                    "lifecycle": {
+                        "schemaVersion": "pi.agent-abort-receipt.v1",
+                        "scopeId": session_id,
+                        "generation": 1,
+                        "reason": "user_abort",
+                        "cancelledContinuationIds": [],
+                        "cancelledOperationIds": [],
+                        "failedOperationIds": [],
+                        "operations": [],
+                        "pendingOperations": ["provider"],
+                        "drained": False,
+                        "idle": False,
+                    },
+                }
+            raise AssertionError(f"unexpected Host method: {method}")
+
+        with patch.object(client, "send", side_effect=unsettled_abort):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "invalid recovered Session abort receipt",
+            ):
+                self.runtime.retire_recovered_turn(
+                    session_id,
+                    recovered_turn_id,
+                )
 
     def test_coding_tool_projection_keeps_useful_request_and_bounded_output(self) -> None:
         result = public_code_tool_activity(
@@ -1495,6 +1699,125 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(messages[0]["id"], "entry-user")
         self.assertEqual(messages[0]["timestamp"], 100)
 
+    def test_snapshot_keeps_transient_steer_in_the_active_history_turn(self) -> None:
+        session_id = str(self.first["id"])
+        transient = (
+            "RAG_IME_TRANSIENT_CONTEXT_V1\n"
+            + json.dumps(
+                {
+                    "schemaVersion": "rag-ime.runtime-prompt.v1",
+                    "message": "查看详细",
+                    "sessionContext": "private-session-context",
+                    "transientContext": "private-steer-context",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        messages = [
+            {
+                "id": "user-continue",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "继续"}],
+            },
+            {
+                "id": "assistant-browser",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "browser-call",
+                    "name": "browser",
+                    "arguments": {"action": "snapshot"},
+                }],
+            },
+            {
+                "id": "browser-result",
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "browser-call",
+                "toolName": "browser",
+                "content": [{"type": "text", "text": "page ready"}],
+            },
+            {
+                "id": "user-steer",
+                "role": "user",
+                "timestamp": 103,
+                "content": [{"type": "text", "text": transient}],
+            },
+            {
+                "id": "assistant-final",
+                "role": "assistant",
+                "timestamp": 104,
+                "content": [{"type": "text", "text": "这是详细结果"}],
+            },
+            {
+                "id": "user-next",
+                "role": "user",
+                "timestamp": 105,
+                "content": [{"type": "text", "text": "开始下一轮"}],
+            },
+            {
+                "id": "assistant-next",
+                "role": "assistant",
+                "timestamp": 106,
+                "content": [{"type": "text", "text": "下一轮结果"}],
+            },
+        ]
+        entries = [
+            {
+                "type": "message",
+                "id": str(message["id"]),
+                "parentId": str(messages[index - 1]["id"]) if index else "root",
+                "message": message,
+            }
+            for index, message in enumerate(messages)
+        ]
+
+        with patch.object(
+            self.runtime,
+            "_inspection_snapshot",
+            return_value={
+                "messages": messages,
+                "entries": entries,
+                "leafId": "assistant-next",
+                "messageQueue": {},
+            },
+        ):
+            snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(
+            [message["turnId"] for message in snapshot["messages"]],
+            [
+                "history:user-continue",
+                "history:user-continue",
+                "history:user-continue",
+                "history:user-next",
+                "history:user-next",
+            ],
+        )
+        self.assertEqual(
+            [
+                block["data"]["text"]
+                for message in snapshot["messages"]
+                for block in message["blocks"]
+                if block["type"] == "text"
+            ],
+            ["继续", "查看详细", "这是详细结果", "开始下一轮", "下一轮结果"],
+        )
+        self.assertEqual(
+            {
+                event["turnId"]
+                for event in snapshot["toolHistoryEvents"]
+            },
+            {"history:user-continue"},
+        )
+        serialized = json.dumps(snapshot, ensure_ascii=False)
+        self.assertNotIn("RAG_IME_TRANSIENT_CONTEXT_V1", serialized)
+        self.assertNotIn("private-session-context", serialized)
+        self.assertNotIn("private-steer-context", serialized)
+
     def test_mixed_text_and_tool_message_keeps_text_but_not_tool_protocol(self) -> None:
         mixed = {
             "role": "assistant",
@@ -1770,6 +2093,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
 
         send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 101, "content": []},
+        })
+        send({
             "type": "tool_execution_end",
             "toolCallId": "call-patch",
             "toolName": "workspace_patch",
@@ -1788,6 +2115,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
             },
         })
         send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 102, "content": []},
+        })
+        send({
             "type": "message_end",
             "message": {
                 "role": "assistant",
@@ -1802,8 +2133,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
         completed = [event.payload["message"] for event in events if event.event_type == "message_completed"]
         progress = [event.payload for event in events if event.event_type == "text_delta"]
         self.assertEqual(
-            [(item["delta"], item.get("replaceContent")) for item in progress],
-            [("我已经找到主要结构，继续核对最后一项。", True)],
+            [
+                (item["delta"], item.get("replaceContent"), item.get("sourceLoopId"))
+                for item in progress
+            ],
+            [("我已经找到主要结构，继续核对最后一项。", True, "pi:message:assistant:101")],
         )
         self.assertEqual(len(completed), 1)
         completed_event = next(
@@ -1813,8 +2147,63 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertIs(completed_event.payload["usageReported"], True)
         self.assertIs(completed_event.payload["cacheUsageReported"], False)
+        self.assertEqual(
+            completed_event.payload.get("sourceLoopId"),
+            "pi:message:assistant:102",
+        )
         self.assertEqual([block["type"] for block in completed[-1]["blocks"]], ["file", "text"])
         self.assertEqual(completed[-1]["blocks"][0]["data"]["mimeType"], "text/x-diff")
+
+    def test_host_projects_one_source_loop_id_per_assistant_tool_loop(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-two-assistant-loops"
+
+        def send(payload: dict[str, object]) -> None:
+            self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "payload": payload,
+                }
+            )
+
+        send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 101, "content": []},
+        })
+        send({
+            "type": "tool_execution_start",
+            "toolCallId": "call-open",
+            "toolName": "room_partner",
+            "args": {"op": "delegate_batch"},
+        })
+        send({
+            "type": "message_start",
+            "message": {"role": "assistant", "timestamp": 202, "content": []},
+        })
+        send({
+            "type": "tool_execution_start",
+            "toolCallId": "call-final",
+            "toolName": "room_partner",
+            "args": {"op": "post", "kind": "result"},
+        })
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        tool_events = [
+            event for event in events
+            if event.event_type == "tool_started"
+        ]
+        self.assertEqual(
+            [event.payload.get("sourceLoopId") for event in tool_events],
+            [
+                "pi:message:assistant:101",
+                "pi:message:assistant:202",
+            ],
+        )
 
     def test_manual_and_automatic_compaction_notify_memory_checkpoint_observer(self) -> None:
         session_id = str(self.first["id"])
@@ -2228,6 +2617,61 @@ class PiRuntimeV2Tests(unittest.TestCase):
             json.dumps(statuses[-1].payload, ensure_ascii=False),
         )
 
+    def test_exhausted_provider_retries_are_reported_on_terminal_failure(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-provider-retry-exhausted"
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = turn_id
+
+        def host_event(payload: dict[str, object]) -> None:
+            self.runtime._handle_host_event({
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "payload": payload,
+            })
+
+        host_event({
+            "type": "auto_retry_start",
+            "attempt": 6,
+            "maxAttempts": 6,
+            "delayMs": 64_000,
+            "errorMessage": "private upstream diagnostic",
+        })
+        host_event({
+            "type": "agent_end",
+            "willRetry": False,
+            "messages": [{
+                "role": "assistant",
+                "stopReason": "error",
+                "errorMessage": "fetch failed",
+                "content": [],
+            }],
+        })
+        host_event({
+            "type": "auto_retry_end",
+            "attempt": 6,
+            "success": False,
+            "finalError": "private upstream diagnostic",
+        })
+        host_event({"type": "agent_settled"})
+
+        failed = [
+            event for event in self.events.replay(session_id)[0]
+            if event.event_type == "turn_failed" and event.turn_id == turn_id
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertTrue(failed[0].payload["retryExhausted"])
+        self.assertEqual(failed[0].payload["providerRetryAttempts"], 6)
+        self.assertEqual(failed[0].payload["providerRetryMaxAttempts"], 6)
+        self.assertIn("自动重试", failed[0].payload["nextStep"])
+        self.assertNotIn(
+            "private upstream diagnostic",
+            json.dumps(failed[0].payload, ensure_ascii=False),
+        )
+
     def test_nonfatal_extension_error_does_not_terminalize_active_turn(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.ensure(session_id)
@@ -2422,6 +2866,27 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "source": "skill",
                 }
             ],
+        )
+
+    def test_v2_invokes_pi_package_command_without_starting_model_turn(self) -> None:
+        session_id = str(self.first["id"])
+        receipt = self.runtime.invoke_command(session_id, "/workflow")
+        self.assertEqual(receipt["name"], "workflow")
+        self.assertTrue(receipt["handled"])
+        self.assertEqual(
+            receipt["result"]["message"],
+            "Goal [active]: Ship the TUI",
+        )
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(requests[-1]["method"], "session.command.invoke")
+        self.assertNotIn(
+            "session.prompt",
+            [item["method"] for item in requests[-2:]],
         )
 
     def test_v2_fork_uses_host_owned_anchor_and_binds_a_distinct_target(self) -> None:
@@ -3194,6 +3659,87 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout_kill")
         kill_gate = self.runtime.runtime_status()["runtimeHostKillGate"]
         self.assertEqual(kill_gate["lastKillReceipt"]["requestKind"], "cancel_timeout")
+
+    def test_abort_timeout_never_kills_a_shared_host_with_an_active_peer(self) -> None:
+        session_id = str(self.first["id"])
+        peer_session_id = str(self.second["id"])
+        accepted = self.runtime.prompt(session_id, "hang-without-settled")
+        turn_id = str(accepted["turnId"])
+        peer = self.runtime.prompt(peer_session_id, "hang-without-settled")
+        peer_turn_id = str(peer["turnId"])
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def fail_health(method, params=None, *, timeout=None, before_write=None):
+            if method == "health":
+                raise PiRuntimeError("Pi Runtime Host command timed out: health")
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=fail_health):
+            self.runtime.abort(session_id)
+            _wait_until(
+                lambda: any(
+                    item.event_type == "turn_completed"
+                    and item.turn_id == turn_id
+                    and item.payload.get("status") == "aborted"
+                    for item in self.events.replay(session_id)[0]
+                ),
+                timeout=2.5,
+            )
+
+        _wait_until(
+            lambda: any(
+                item.event_type == "status_changed"
+                and (
+                    item.payload.get("cancellationPending") is True
+                    or item.payload.get("escalated") is True
+                )
+                for item in self.events.replay(session_id)[0]
+            )
+            or self.store.get(peer_session_id)["status"] == "faulted",
+            timeout=2.5,
+        )
+
+        self.assertIsNone(
+            self.runtime.runtime_status()["runtimeHostKillGate"][
+                "lastKillReceipt"
+            ]
+        )
+        self.assertTrue(client.running)
+        self.assertEqual(self.runtime.runtime_status()["status"], "busy")
+        self.assertEqual(self.store.get(peer_session_id)["status"], "busy")
+        target_events = self.events.replay(session_id)[0]
+        completed = [
+            item
+            for item in target_events
+            if item.event_type == "turn_completed" and item.turn_id == turn_id
+        ]
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "abort_timeout_isolated",
+        )
+        isolated = [
+            item
+            for item in target_events
+            if item.event_type == "status_changed"
+            and item.payload.get("cancellationPending") is True
+        ]
+        self.assertFalse(isolated[-1].payload["hostHealthConfirmed"])
+        self.assertTrue(isolated[-1].payload["sharedHostProtected"])
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": peer_session_id,
+            "turnId": peer_turn_id,
+            "payload": {"type": "agent_settled"},
+        })
+        self.assertEqual(self.store.get(peer_session_id)["status"], "idle")
 
     def test_abort_accepts_host_idle_receipt_after_turn_already_settled(self) -> None:
         session_id = str(self.first["id"])

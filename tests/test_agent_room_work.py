@@ -5,10 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_room_work import (
-    AgentRoomWorkAttemptChanged,
-    AgentRoomWorkStore,
-)
+from rag_ime.agent_room_work import AgentRoomWorkStore
 from rag_ime.agent_rooms import AgentRoomStore
 from rag_ime.agent_sessions import AgentSessionStore
 
@@ -107,11 +104,29 @@ class AgentRoomWorkTests(unittest.TestCase):
 
         completed = self.work.accept(
             str(self.coordinator["id"]),
-            {"workId": active["id"]},
+            {
+                "workId": active["id"],
+                "expectedRevision": submitted["revision"],
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["test:test_room", "artifact:src/room.py"],
+                "reason": "窄测试与产物核对通过。",
+            },
             updated_at_ms=40,
         )
         self.assertEqual(completed["state"], "done")
         self.assertEqual(completed["completedAtMs"], 40)
+        self.assertEqual(
+            completed["review"],
+            {
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["test:test_room", "artifact:src/room.py"],
+                "reason": "窄测试与产物核对通过。",
+                "reviewerParticipantId": self.coordinator_participant["id"],
+                "reviewedAtMs": 40,
+            },
+        )
         self.assertEqual(
             self.rooms.get(str(self.room["id"]))["workItems"][0]["state"],
             "done",
@@ -189,10 +204,22 @@ class AgentRoomWorkTests(unittest.TestCase):
                 str(self.coordinator["id"]),
                 {
                     "workId": active["id"],
+                    "expectedRevision": active["revision"],
+                    "operabilityVerdict": "passed",
+                    "requirementVerdict": "not_satisfied",
+                    "evidenceRefs": [f"review:revision-{revision}"],
                     "reason": f"第 {revision} 次反馈",
                 },
             )
             self.assertEqual(active["revision"], revision)
+            self.assertEqual(
+                active["review"]["requirementVerdict"],
+                "not_satisfied",
+            )
+            self.assertEqual(
+                active["review"]["evidenceRefs"],
+                [f"review:revision-{revision}"],
+            )
 
         self.work.submit(
             str(self.worker["id"]),
@@ -205,8 +232,183 @@ class AgentRoomWorkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "revision limit"):
             self.work.return_for_revision(
                 str(self.coordinator["id"]),
-                {"workId": active["id"], "reason": "仍不通过"},
+                {
+                    "workId": active["id"],
+                    "expectedRevision": active["revision"],
+                    "operabilityVerdict": "failed",
+                    "requirementVerdict": "not_satisfied",
+                    "evidenceRefs": ["review:revision-3"],
+                    "reason": "仍不通过",
+                },
             )
+
+    def test_review_requires_explicit_axes_evidence_and_fresh_revision(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment(
+                "root-review-contract",
+                self.worker_participant["id"],
+            ),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:worker-review-contract",
+        )
+        submitted = self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "等待显式双轴验收。",
+                "evidenceRefs": ["test:review-contract"],
+            },
+        )
+
+        required = {
+            "expectedRevision": submitted["revision"],
+            "operabilityVerdict": "passed",
+            "requirementVerdict": "satisfied",
+            "evidenceRefs": ["review:test-review-contract"],
+            "reason": "双轴验收通过。",
+        }
+        for missing in required:
+            with self.subTest(missing=missing), self.assertRaises(ValueError):
+                self.work.accept(
+                    str(self.coordinator["id"]),
+                    {
+                        "workId": submitted["id"],
+                        **{
+                            key: value
+                            for key, value in required.items()
+                            if key != missing
+                        },
+                    },
+                )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "operability.*passed.*requirement.*satisfied",
+        ):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    **required,
+                    "requirementVerdict": "not_satisfied",
+                },
+            )
+        with self.assertRaisesRegex(ValueError, "revision changed"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    **required,
+                    "expectedRevision": submitted["revision"] + 1,
+                },
+            )
+        with self.assertRaisesRegex(ValueError, "accept requires a concrete reason"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    **{key: value for key, value in required.items() if key != "reason"},
+                },
+            )
+        with self.assertRaisesRegex(ValueError, "concrete reason"):
+            self.work.return_for_revision(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    **{
+                        key: value
+                        for key, value in required.items()
+                        if key != "reason"
+                    },
+                    "requirementVerdict": "not_satisfied",
+                },
+            )
+        with self.assertRaisesRegex(ValueError, "must be accepted"):
+            self.work.return_for_revision(
+                str(self.coordinator["id"]),
+                {
+                    "workId": submitted["id"],
+                    **required,
+                    "reason": "不应返修全通过结论",
+                },
+            )
+
+        unchanged = self.work.get(
+            str(submitted["id"]),
+            room_id=str(self.room["id"]),
+        )
+        self.assertEqual(unchanged["state"], "review")
+        self.assertEqual(
+            unchanged["review"],
+            {
+                "operabilityVerdict": "",
+                "requirementVerdict": "",
+                "evidenceRefs": [],
+                "reason": "",
+                "reviewerParticipantId": "",
+                "reviewedAtMs": None,
+            },
+        )
+
+    def test_failed_work_retries_same_contract_with_revision_fence(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("failed-retry", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:failed-worker",
+        )
+        failed = self.work.escalate(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "reason": "原 Partner Tool loop 失败",
+                "nextStep": "由空闲伙伴继续同一合同",
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "revision changed"):
+            self.work.retry(
+                str(failed["id"]),
+                actor_participant_id=str(self.coordinator_participant["id"]),
+                current_owner_participant_id=str(
+                    self.researcher_participant["id"]
+                ),
+                expected_revision=1,
+                reason="陈旧 revision 不得重试",
+            )
+
+        retried = self.work.retry(
+            str(failed["id"]),
+            actor_participant_id=str(self.coordinator_participant["id"]),
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            expected_revision=0,
+            reason="保留合同并改派空闲伙伴",
+            updated_at_ms=50,
+        )
+
+        self.assertEqual(retried["id"], failed["id"])
+        self.assertEqual(retried["state"], "active")
+        self.assertEqual(retried["revision"], 1)
+        self.assertEqual(
+            retried["currentOwnerParticipantId"],
+            self.researcher_participant["id"],
+        )
+        for key in ("objective", "expectedOutput", "acceptanceCriteria"):
+            self.assertEqual(retried[key], active[key])
+        self.assertEqual(retried["resultSummary"], "")
+        self.assertEqual(retried["evidenceRefs"], [])
+        self.assertEqual(retried["blocker"]["retryReason"], "保留合同并改派空闲伙伴")
+        self.assertEqual(
+            [event["eventType"] for event in self.work.list_events(str(active["id"]))],
+            ["assigned", "accepted", "escalated", "resumed"],
+        )
 
     def test_submit_requires_evidence_and_closed_children(self) -> None:
         assigned, _ = self.work.assign(
@@ -252,124 +454,303 @@ class AgentRoomWorkTests(unittest.TestCase):
                 },
             )
 
-    def test_attempt_fence_rejects_late_results_after_resume_and_reassign(self) -> None:
+    def test_accept_cannot_upgrade_proposed_failed_or_unverified_submission(
+        self,
+    ) -> None:
         assigned, _ = self.work.assign(
             str(self.coordinator["id"]),
-            self._assignment("root-fence", self.worker_participant["id"]),
-            root_turn_id="room-turn:fence",
+            self._assignment("root-proposed-gate", self.worker_participant["id"]),
         )
         active = self.work.accept_assignment(
             str(assigned["id"]),
             target_participant_id=str(self.worker_participant["id"]),
-            accepted_turn_id="attempt:worker:0",
+            accepted_turn_id="turn:proposed-gate",
         )
-        blocked = self.work.block_attempt(
+        submitted = self.work.submit(
             str(self.worker["id"]),
             {
                 "workId": active["id"],
-                "reason": "provider unavailable",
-                "nextStep": "resume after recovery",
+                "resultSummary": "浏览器执行失败，两轴均未验证。",
+                "evidenceRefs": ["review:browser-run-failed"],
+                "proposedOperabilityVerdict": "failed",
+                "proposedRequirementVerdict": "unverified",
             },
-            attempt_id="attempt:worker:0",
-            expected_revision=0,
+            updated_at_ms=30,
         )
-        self.assertEqual(blocked["state"], "blocked")
-        resumed = self.work.resume(
-            str(self.coordinator["id"]),
-            {"workId": active["id"]},
-        )
-        claimed = self.work.claim_dispatch(
-            str(resumed["id"]),
-            room_id=str(self.room["id"]),
-            owner_participant_id=str(self.worker_participant["id"]),
-            assignment_key=str(resumed["assignmentKey"]),
-            previous_accepted_turn_id="",
-            room_turn_id="attempt:worker:1",
-            root_turn_id="room-turn:fence",
-        )
-        with self.assertRaises(AgentRoomWorkAttemptChanged):
-            self.work.submit_attempt(
-                str(self.worker["id"]),
+        self.assertEqual(submitted["proposedOperabilityVerdict"], "failed")
+        self.assertEqual(submitted["proposedRequirementVerdict"], "unverified")
+
+        with self.assertRaisesRegex(ValueError, "supersed"):
+            self.work.accept(
+                str(self.coordinator["id"]),
                 {
-                    "workId": claimed["id"],
-                    "resultSummary": "late result",
-                    "evidenceRefs": ["attempt:worker:0"],
+                    "workId": submitted["id"],
+                    "expectedRevision": submitted["revision"],
+                    "operabilityVerdict": "passed",
+                    "requirementVerdict": "satisfied",
+                    "evidenceRefs": ["review:facilitator-claim"],
+                    "reason": "试图无视 Partner 的失败结论直接验收。",
                 },
-                attempt_id="attempt:worker:0",
-                expected_revision=0,
             )
 
-        reassigned = self.work.reassign(
-            str(claimed["id"]),
+        unchanged = self.work.get(
+            str(submitted["id"]),
+            room_id=str(self.room["id"]),
+        )
+        self.assertEqual(unchanged["state"], "review")
+        self.assertEqual(unchanged["proposedOperabilityVerdict"], "failed")
+        self.assertEqual(unchanged["proposedRequirementVerdict"], "unverified")
+
+    def test_accept_over_failed_proposal_requires_valid_superseding_review(
+        self,
+    ) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-supersede", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:supersede-worker",
+        )
+        submitted = self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "两轴 UNVERIFIED，遗留 HIGH 风险。",
+                "evidenceRefs": ["review:integration-unverified"],
+                "proposedOperabilityVerdict": "unverified",
+                "proposedRequirementVerdict": "unverified",
+            },
+            updated_at_ms=30,
+        )
+
+        accept_payload = {
+            "workId": submitted["id"],
+            "expectedRevision": submitted["revision"],
+            "operabilityVerdict": "passed",
+            "requirementVerdict": "satisfied",
+            "evidenceRefs": ["review:superseding-review"],
+            "reason": "复核 WorkItem 已通过双轴验证。",
+        }
+        with self.assertRaisesRegex(ValueError, "superseding review WorkItem"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": "room-work:missing"},
+            )
+
+        stale_review = self.work.create(
+            room_id=str(self.room["id"]),
+            objective="早于失败提交的复核不算数",
+            expected_output="记录",
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            created_by_participant_id=str(self.coordinator_participant["id"]),
+            client_message_id="stale-review",
+            acceptance_criteria=["复核"],
+            created_at_ms=10,
+        )
+        with self.assertRaisesRegex(ValueError, "superseding review WorkItem"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": stale_review["id"]},
+            )
+
+        fresh_review = self.work.create(
+            room_id=str(self.room["id"]),
+            objective="对失败提交的新证据复核",
+            expected_output="双轴复核结论",
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            created_by_participant_id=str(self.coordinator_participant["id"]),
+            client_message_id="fresh-review",
+            acceptance_criteria=["复核"],
+            created_at_ms=40,
+        )
+        with self.assertRaisesRegex(ValueError, "superseding review WorkItem"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": fresh_review["id"]},
+            )
+
+        reviewed = self.work.submit(
+            str(self.researcher["id"]),
+            {
+                "workId": fresh_review["id"],
+                "resultSummary": "复跑真实路径，两轴通过。",
+                "evidenceRefs": ["review:rerun-passed"],
+                "proposedOperabilityVerdict": "passed",
+                "proposedRequirementVerdict": "satisfied",
+            },
+            updated_at_ms=50,
+        )
+        self.assertEqual(reviewed["state"], "review")
+
+        with self.assertRaisesRegex(ValueError, "direct child"):
+            self.work.accept(
+                str(self.coordinator["id"]),
+                {**accept_payload, "supersededByWorkId": fresh_review["id"]},
+                updated_at_ms=55,
+            )
+
+        linked_review = self.work.create(
+            room_id=str(self.room["id"]),
+            objective="对原失败提交进行新证据复核",
+            expected_output="双轴复核结论",
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            created_by_participant_id=str(self.coordinator_participant["id"]),
+            client_message_id="linked-review",
+            acceptance_criteria=["复核"],
+            parent_work_id=str(submitted["id"]),
+            created_at_ms=56,
+        )
+        linked_review = self.work.submit(
+            str(self.researcher["id"]),
+            {
+                "workId": linked_review["id"],
+                "resultSummary": "复跑原任务真实路径，两轴通过。",
+                "evidenceRefs": ["review:linked-rerun-passed"],
+                "proposedOperabilityVerdict": "passed",
+                "proposedRequirementVerdict": "satisfied",
+            },
+            updated_at_ms=57,
+        )
+        self.assertEqual(linked_review["parentWorkId"], submitted["id"])
+
+        completed = self.work.accept(
+            str(self.coordinator["id"]),
+            {**accept_payload, "supersededByWorkId": linked_review["id"]},
+            updated_at_ms=60,
+        )
+        self.assertEqual(completed["state"], "done")
+        self.assertEqual(completed["proposedOperabilityVerdict"], "unverified")
+        self.assertEqual(completed["proposedRequirementVerdict"], "unverified")
+        events = self.work.list_events(str(submitted["id"]))
+        self.assertEqual(events[-1]["eventType"], "completed")
+        self.assertEqual(
+            events[-1]["payload"]["supersededByWorkId"],
+            linked_review["id"],
+        )
+
+    def test_retry_resets_proposed_verdicts_with_result_fields(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-proposed-retry", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:proposed-retry",
+        )
+        self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "失败提交",
+                "evidenceRefs": ["review:failed"],
+                "proposedOperabilityVerdict": "failed",
+                "proposedRequirementVerdict": "not_satisfied",
+            },
+        )
+        returned = self.work.return_for_revision(
+            str(self.coordinator["id"]),
+            {
+                "workId": active["id"],
+                "expectedRevision": 0,
+                "operabilityVerdict": "failed",
+                "requirementVerdict": "not_satisfied",
+                "evidenceRefs": ["review:returned"],
+                "reason": "按提交结论退回修订。",
+            },
+        )
+        self.assertEqual(returned["state"], "active")
+        failed = self.work.escalate(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "reason": "修订失败",
+                "nextStep": "改派空闲伙伴",
+            },
+        )
+        retried = self.work.retry(
+            str(failed["id"]),
             actor_participant_id=str(self.coordinator_participant["id"]),
             current_owner_participant_id=str(self.researcher_participant["id"]),
-            reason="owner recovery",
+            expected_revision=1,
+            reason="改派后重跑同一合同",
         )
-        self.assertEqual(reassigned["state"], "active")
-        self.assertEqual(reassigned["acceptedTurnId"], "")
-        with self.assertRaises(AgentRoomWorkAttemptChanged):
-            self.work.submit_attempt(
-                str(self.worker["id"]),
+        self.assertEqual(retried["proposedOperabilityVerdict"], "")
+        self.assertEqual(retried["proposedRequirementVerdict"], "")
+
+    def test_submit_infers_proposed_verdicts_from_failed_summary(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-infer-failed", self.worker_participant["id"]),
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:infer-failed",
+        )
+        submitted = self.work.submit(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "resultSummary": "status: FAILED\n真实路径未跑通。",
+                "evidenceRefs": ["review:status-failed"],
+            },
+        )
+        self.assertEqual(submitted["proposedOperabilityVerdict"], "failed")
+        self.assertEqual(submitted["proposedRequirementVerdict"], "not_satisfied")
+        with self.assertRaisesRegex(ValueError, "supersed"):
+            self.work.accept(
+                str(self.coordinator["id"]),
                 {
-                    "workId": claimed["id"],
-                    "resultSummary": "stale owner result",
-                    "evidenceRefs": ["attempt:worker:1"],
+                    "workId": submitted["id"],
+                    "expectedRevision": submitted["revision"],
+                    "operabilityVerdict": "passed",
+                    "requirementVerdict": "satisfied",
+                    "evidenceRefs": ["review:dishonest"],
+                    "reason": "试图把 FAILED 提交写成通过。",
                 },
-                attempt_id="attempt:worker:1",
-                expected_revision=0,
             )
-        owner, owner_id = self.work.authoritative_owner(
-            str(reassigned["id"]),
-            room_id=str(self.room["id"]),
-        )
-        self.assertEqual(owner_id, self.researcher_participant["id"])
-        self.assertEqual(owner["id"], reassigned["id"])
 
-    def test_explicit_fail_and_abandon_are_terminal_and_rebuildable(self) -> None:
-        failed_item, _ = self.work.assign(
-            str(self.coordinator["id"]),
-            self._assignment("root-fail", self.worker_participant["id"]),
-            root_turn_id="room-turn:terminal",
+    def test_list_for_root_is_not_truncated_by_room_recent_limit(self) -> None:
+        room_id = str(self.room["id"])
+        owner_id = str(self.coordinator_participant["id"])
+        oldest = self.work.create(
+            room_id=room_id,
+            objective="最早 Root 的未完成验收项",
+            expected_output="必须仍可被终态检查读取",
+            current_owner_participant_id=owner_id,
+            created_by_participant_id=owner_id,
+            client_message_id="oldest-root-item",
+            root_turn_id="room-turn:oldest",
+            acceptance_criteria=["精确读取"],
+            created_at_ms=1,
         )
-        failed = self.work.fail(
-            str(self.coordinator["id"]),
-            {
-                "workId": failed_item["id"],
-                "reason": "cannot satisfy the delivery contract",
-                "nextStep": "publish the bounded failure",
-            },
-        )
-        self.assertEqual(failed["state"], "failed")
+        for index in range(200):
+            self.work.create(
+                room_id=room_id,
+                objective=f"后续 Room 工作 {index}",
+                expected_output="占据普通最近列表",
+                current_owner_participant_id=owner_id,
+                created_by_participant_id=owner_id,
+                client_message_id=f"recent-room-item:{index}",
+                root_turn_id=f"room-turn:recent:{index}",
+                acceptance_criteria=["保留历史 Root 可寻址性"],
+                created_at_ms=10 + index,
+            )
 
-        abandoned_item, _ = self.work.assign(
-            str(self.coordinator["id"]),
-            self._assignment("root-abandon", self.researcher_participant["id"]),
-            root_turn_id="room-turn:terminal",
+        recent_ids = {
+            str(item["id"])
+            for item in self.work.list(room_id=room_id, limit=200)
+        }
+        exact = self.work.list_for_root(
+            room_id=room_id,
+            root_turn_id="room-turn:oldest",
         )
-        abandoned = self.work.abandon(
-            str(self.coordinator["id"]),
-            {
-                "workId": abandoned_item["id"],
-                "reason": "optional investigation no longer needed",
-            },
-        )
-        self.assertEqual(abandoned["state"], "cancelled")
-        restarted = AgentRoomWorkStore(self.db_path)
-        self.assertEqual(
-            restarted.open_for_root(
-                room_id=str(self.room["id"]),
-                root_turn_id="room-turn:terminal",
-            ),
-            [],
-        )
-        self.assertEqual(
-            [event["eventType"] for event in restarted.list_events(failed["id"])][-1],
-            "failed",
-        )
-        self.assertEqual(
-            [event["eventType"] for event in restarted.list_events(abandoned["id"])][-1],
-            "abandoned",
-        )
+
+        self.assertNotIn(str(oldest["id"]), recent_ids)
+        self.assertEqual([item["id"] for item in exact], [oldest["id"]])
 
     def _assignment(
         self,

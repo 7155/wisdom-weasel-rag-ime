@@ -35,7 +35,7 @@ export interface AgentRoomV1 {
   lastEventSequence: number;
   /**
    * @minItems 2
-   * @maxItems 4
+   * @maxItems 8
    */
   participants:
     | [
@@ -58,6 +58,92 @@ export interface AgentRoomV1 {
         },
       ]
     | [
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+      ]
+    | [
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+      ]
+    | [
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+      ]
+    | [
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+      ]
+    | [
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
+        {
+          [k: string]: unknown;
+        },
         {
           [k: string]: unknown;
         },

@@ -27,15 +27,20 @@ from .agent_execution_policy import (
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_role_book import AgentRoleBookStore
-from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     CONTROL_TOOL_IDS,
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    PI_PACKAGE_OWNED_CONTROL_TOOL_IDS,
     READONLY_TOOL_PROFILE,
 )
 from .agent_sessions import AgentSessionStore
-from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
+from .agent_tool_artifacts import AgentToolArtifactProjector
+from .agent_workspace import (
+    PreparedWorkspaceCommand,
+    WorkspaceHarness,
+    WorkspaceHarnessError,
+)
 from .browser_control import BrowserControlService
 from .contracts.json_schema import validate_contract
 from .desktop_bridge import DesktopBridgeClient
@@ -361,43 +366,39 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "room_partner",
         "domain": "agents",
-        "displayName": "Room 伙伴工作流",
+        "displayName": "Room 伙伴协作",
         "description": (
-            "查看伙伴与正式 WorkItem；委派单任务或并行波次；"
-            "显式验收、返修、恢复、改派或终止；发布公开进展与最终结果"
+            "在 Room 中查看伙伴、异步委派有界工作、显式收集或等待结果、验收或退回 WorkItem、"
+            "直接通信，或发布公开回执。恢复规则：Facilitator 看到 active 且带 reviewFeedback 的退回项时，"
+            "list 会在 recoverableWorkItems 给出原 workItemId、expectedRevision 和 retry 动作；"
+            "先按该动作调用 retry，不要 delegate 新复核项，也不要直接 accept。"
         ),
         "when": (
-            "当前 Session 正在 Room 中主持任务，且需要另一位正式伙伴独立处理有界子任务",
-            "同一阶段有 2–3 个无依赖、不重叠的工作轨道，需要真实并行启动",
-            "伙伴已回传证据，需要验收、返修、恢复、改派或作终止决定",
+            "当前 Session 是 Room 的任一正式伙伴，需要直接与另一位伙伴通信或独立处理有界子任务",
+            "同一阶段存在多个无依赖、不重叠的工作轨道，需要按任务规模动态选择并真实并行启动；"
+            "一次最多 7 个可见 Partner，Room 总参与者最多 8 个",
         ),
         "notFor": (
             "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
-            "写入范围重叠，或依赖 WorkItem 尚未通过验收的任务",
+            "存在前后依赖、写入范围重叠，或需要上一阶段交付才能开始的任务",
         ),
-        "input": (
-            "伙伴查询；带阶段、交付合同和依赖的委派；同阶段 2–3 个任务；"
-            "或 WorkItem 验收、返修、恢复、改派、终止与公开发布"
-        ),
-        "output": (
-            "带 workItemId/revision/attempt 的运行回执、待验收合同、"
-            "治理结论或类型明确的公开回执"
-        ),
-        "does": (
-            "PAW 创建和治理 WorkItem，Pi 仍执行普通 Partner Session；"
-            "回传只进入 review，Root 最终答复受未闭环 WorkItem 阻止。"
-        ),
+        "input": "委派合同；childDispatchId 或 workItemId；Facilitator 的两轴判定与证据；或直接通信/公开回执参数",
+        "output": "立即委派回执、显式收集/等待结果、WorkItem 审核回执、直接 Intercom 回执或类型明确的公开回执",
+        "does": "委派立即返回持久回执；Partner 完成由持久 wake 通知，collect/wait 只读取停止点且 wait 超时不取消；Facilitator 依据证据显式 accept 或 return。",
         "operations": (
             "list",
             "delegate",
             "delegate_batch",
+            "retry",
             "accept",
             "return",
-            "resume",
-            "reassign",
-            "fail",
-            "abandon",
+            "collect",
+            "wait",
             "post",
+            "peer_list",
+            "peer_send",
+            "peer_ask",
+            "peer_reply",
         ),
         # Availability is still Room-bound below. Once available, this is the
         # only formal Partner primitive and must be callable directly.
@@ -407,38 +408,40 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "browser",
         "domain": "browser",
-        "displayName": "浏览器共驾",
-        "description": "按需读取已配对浏览器的页面快照，并在用户批准后执行可追踪的网页操作",
-        "when": ("任务需要读取或操作已配对浏览器的真实页面",),
-        "notFor": ("已有 API 或连接器，或只需一般网页知识",),
-        "input": "标签页、快照 ref、URL、文本或滚动参数",
+        "displayName": "PAW Browser",
+        "description": "读取 PAW 内置 Chromium，并通过开放 ego-browser 控制内核执行可追踪的网页任务",
+        "when": ("任务需要读取或操作 PAW Browser 的真实页面",),
+        "notFor": (
+            "已有 API 或连接器，或只需一般网页知识",
+            "操作用户日常 Chrome/Edge，或通过 desktop_semantic 打开第二个浏览器",
+        ),
+        "input": "ego-browser JavaScript、标签页、快照 ref、URL、文本或滚动参数",
         "output": "页面快照、截图、轨迹或带回执的操作结果",
-        "does": "观察并受控操作已配对浏览器。",
+        "does": "在同一 PAW Chromium 和 Task Space 上观察并受控操作网页。",
         "operations": (
             "status",
             "tabs",
             "snapshot",
             "screenshot",
             "trace",
+            "run",
             "navigate",
+            "back",
+            "forward",
             "click",
             "type",
             "scroll",
             "wait",
             "stop",
         ),
-        "operationRisks": {
-            "navigate": "R1",
-            "click": "R1",
-            "type": "R1",
-            "scroll": "R1",
-            "wait": "R1",
-            "stop": "R1",
-        },
+        # This profile belongs to the Agent rather than the user's daily
+        # browser, so browser operations execute directly without approvals.
+        "operationRisks": {},
         "resultPresentation": "tool_result",
     },
     {
         "id": "todo",
+        "modelVisible": False,
         "domain": "planning",
         "displayName": "Todo",
         "description": "维护当前 Session 的分阶段执行清单；状态变更立即同步到任务中心，不需要用户批准",
@@ -467,6 +470,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "agent_goal",
+        "modelVisible": False,
         "domain": "planning",
         "displayName": "长期目标",
         "description": "在用户明确确认后配置并维护当前 Session 的长期 Goal、验收标准、预算与完成证据",
@@ -474,6 +478,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "notFor": (
             "用 Goal 代替普通执行清单",
             "用户尚未确认目标内容时擅自配置，或删除既有 Goal 审计记录",
+            "把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息",
         ),
         "input": "Goal 生命周期动作、目标、验收标准、证据预期、可选预算及完成证据",
         "output": "权威 Goal 状态、预算、完成或取消审计与工作流投影",
@@ -545,7 +550,10 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "桌面语义操作",
         "description": "通过 macOS Accessibility 读取目标窗口语义树和差分，并在原生批准后按语义节点操作；不截屏、不做 OCR",
         "when": ("任务必须读取或操作本机 Mac 应用的可访问性语义树",),
-        "notFor": ("浏览器有专用工具、需要截图 OCR 或存在直接 API",),
+        "notFor": (
+            "浏览器有专用工具、需要截图 OCR 或存在直接 API",
+            "PAW Browser / ego-browser 任务，或打开独立 Chrome/Edge 作为网页验收",
+        ),
         "input": "应用或窗口目标、语义节点与动作",
         "output": "可访问性树、差分、状态或操作回执",
         "does": "通过可访问性语义读取并受控操作桌面应用。",
@@ -734,6 +742,36 @@ _WORKSPACE_TOOLS = frozenset(
         "workspace_job",
     }
 )
+_READ_ONLY_SUBAGENT_WORKSPACE_TOOLS = frozenset(
+    {
+        "workspace_list",
+        "workspace_read",
+        "workspace_search",
+        "workspace_lsp",
+    }
+)
+
+
+def _tool_mode_compatible(
+    session: Mapping[str, object],
+    spec: Mapping[str, object],
+) -> bool:
+    mode = str(session.get("mode") or "assistant")
+    session_modes = tuple(spec.get("sessionModes") or ("assistant", "coordinator"))
+    if mode in session_modes:
+        return True
+    # Delegated read-only Sessions intentionally stay in assistant mode. Their
+    # internal Session kind, profile and explicit allowlist remain separate
+    # gates for these native read projections.
+    return (
+        str(session.get("sessionKind") or "") == "subagent_runtime"
+        and mode == "assistant"
+        and str(session.get("toolProfileVersion") or "")
+        == "subagent-readonly-v1"
+        and str(spec.get("id") or "") in _READ_ONLY_SUBAGENT_WORKSPACE_TOOLS
+    )
+
+
 if (
     len(_TOOL_SPEC_BY_ID) != len(_TOOL_SPECS)
     or tuple(_TOOL_SPEC_BY_ID) != CONTROL_TOOL_IDS
@@ -777,97 +815,202 @@ _KNOWLEDGE_RETRIEVAL_PARAMETER_SCHEMA: dict[str, object] = {
     },
 }
 
-_ROOM_PARTNER_WORK_ID_SCHEMA: dict[str, object] = {
-    "type": "string",
-    "minLength": 1,
-    "maxLength": 240,
-}
-_ROOM_PARTNER_PHASE_SCHEMA: dict[str, object] = {
-    "type": "string",
-    "minLength": 1,
-    "maxLength": 120,
-}
-_ROOM_PARTNER_TASK_PROPERTIES: dict[str, object] = {
-    "targetParticipantId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 240,
-        "description": "必须原样使用 list 返回的 participantId。",
-    },
-    "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
-    "expectedOutput": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 1_200,
-    },
-    "acceptanceCriteria": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 8,
-        "items": {"type": "string", "minLength": 1, "maxLength": 320},
-    },
-    "dependsOnWorkItemIds": {
-        "type": "array",
-        "maxItems": 8,
-        "uniqueItems": True,
-        "items": _ROOM_PARTNER_WORK_ID_SCHEMA,
-    },
-    "parentWorkItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
-}
-_ROOM_PARTNER_TIMEOUT_SCHEMA: dict[str, object] = {
-    "type": "integer",
-    "minimum": 5,
-    "maximum": 300,
-}
-_ROOM_PARTNER_REASON_SCHEMA: dict[str, object] = {
-    "type": "string",
-    "minLength": 1,
-    "maxLength": 2_000,
-}
-_ROOM_PARTNER_TASKS_SCHEMA: dict[str, object] = {
-    "type": "array",
-    "minItems": 2,
-    "maxItems": 3,
-    "description": "同阶段、目标不重复的并行任务。",
-    "items": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": [
-            "targetParticipantId",
-            "task",
-            "expectedOutput",
-            "acceptanceCriteria",
-        ],
-        "properties": _ROOM_PARTNER_TASK_PROPERTIES,
-    },
-}
-_ROOM_PARTNER_OPERATIONS = (
-    "list",
-    "delegate",
-    "delegate_batch",
-    "accept",
-    "return",
-    "resume",
-    "reassign",
-    "fail",
-    "abandon",
-    "post",
-)
-
 _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     "room_partner": {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "op": {"type": "string", "enum": list(_ROOM_PARTNER_OPERATIONS)},
-            "phase": _ROOM_PARTNER_PHASE_SCHEMA,
-            **_ROOM_PARTNER_TASK_PROPERTIES,
-            "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
-            "tasks": _ROOM_PARTNER_TASKS_SCHEMA,
-            "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
-            "reason": _ROOM_PARTNER_REASON_SCHEMA,
-            "nextStep": {"type": "string", "maxLength": 2_000},
-            "content": {"type": "string", "minLength": 1, "maxLength": 8_000},
+            "op": {
+                "type": "string",
+                "description": (
+                    "list 返回 recoverableWorkItems，其中包含退回后仍为 active 且带 "
+                    "reviewFeedback 的 WorkItem 及其 expectedRevision；按其建议使用 retry；"
+                    "retry 沿同一修订链重新派发当前负责人。"
+                ),
+                "enum": [
+                    "list",
+                    "delegate",
+                    "delegate_batch",
+                    "retry",
+                    "accept",
+                    "return",
+                    "collect",
+                    "wait",
+                    "post",
+                    "peer_list",
+                    "peer_send",
+                    "peer_ask",
+                    "peer_reply",
+                ],
+            },
+            "targetParticipantId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": (
+                    "delegate 时必须原样使用 list 返回的 participantId；retry 可省略，"
+                    "省略时继续使用 WorkItem 当前负责人。"
+                ),
+            },
+            "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8_000,
+            },
+            "expectedOutput": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1_200,
+            },
+            "acceptanceCriteria": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 320,
+                },
+            },
+            "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 300,
+                "description": "wait 的有界等待时长；超时只结束本次等待，不取消 Partner。",
+            },
+            "childDispatchId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": "delegate 回执中的持久 childDispatchId。",
+            },
+            "workItemId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": (
+                    "delegate 回执或 collect/wait 结果中的 WorkItem ID；"
+                    "return、blocked 或 failed 后 retry 时携带原 ID。"
+                ),
+            },
+            "expectedRevision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Facilitator 已检查的 WorkItem revision；用于拒绝陈旧审核或重试。",
+            },
+            "operabilityVerdict": {
+                "type": "string",
+                "enum": ["passed", "failed", "unverified"],
+                "description": "真实路径是否运行的独立判定。",
+            },
+            "requirementVerdict": {
+                "type": "string",
+                "enum": ["satisfied", "not_satisfied", "unverified"],
+                "description": "观察结果是否满足精确需求的独立判定。",
+            },
+            "evidenceRefs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 24,
+                "uniqueItems": True,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1_000,
+                },
+                "description": "支撑两个判定的持久证据引用。",
+            },
+            "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2_000,
+                "description": (
+                    "accept 时写明已核对的证据；return 或 retry 时给负责 Partner 的具体原因。"
+                ),
+            },
+            "supersededByWorkId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": (
+                    "当 Partner 已提出 failed/unverified/not_satisfied 时，"
+                    "accept 必须指向该 WorkItem 的直接子复核项；复核项还必须在之后"
+                    "提交并提出 passed/satisfied。"
+                ),
+            },
+            "proposedOperabilityVerdict": {
+                "type": "string",
+                "enum": ["passed", "failed", "unverified"],
+                "description": (
+                    "post kind=work_result 必填：Partner 对真实路径是否运行的诚实提交判定。"
+                ),
+            },
+            "proposedRequirementVerdict": {
+                "type": "string",
+                "enum": ["satisfied", "not_satisfied", "unverified"],
+                "description": (
+                    "post kind=work_result 必填：Partner 对需求是否满足的诚实提交判定。"
+                ),
+            },
+            "phase": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "description": "同一并行波次的可读阶段名称。",
+            },
+            "tasks": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 7,
+                "description": (
+                    "必须互不依赖且目标伙伴不重复的同阶段任务；只按实际可并行工作"
+                    "数量派发，不为凑满 Room 人数创建任务。"
+                ),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "targetParticipantId",
+                        "task",
+                        "expectedOutput",
+                        "acceptanceCriteria",
+                    ],
+                    "properties": {
+                        "targetParticipantId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240,
+                            "description": "必须原样使用 list 返回的 participantId。",
+                        },
+                        "task": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8_000,
+                        },
+                        "expectedOutput": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1_200,
+                        },
+                        "acceptanceCriteria": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 320,
+                            },
+                        },
+                    },
+                },
+            },
+            "content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8_000,
+            },
             "kind": {
                 "type": "string",
                 "enum": [
@@ -879,136 +1022,128 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "wait",
                     "blocked",
                 ],
+                "description": "公开内容类型；省略时为 progress，最终答复使用 result。",
+            },
+            "clientMessageId": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "可选幂等键；省略时使用当前 Tool 调用 ID。",
+            },
+            "replyTo": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": "peer_reply 必须使用 peer_ask 回执中的 message.id。",
             },
         },
         "oneOf": [
             {
-                "type": "object",
-                "additionalProperties": False,
                 "required": ["op"],
                 "properties": {"op": {"const": "list"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
                 "required": [
                     "op",
-                    "phase",
                     "targetParticipantId",
                     "task",
                     "expectedOutput",
                     "acceptanceCriteria",
                 ],
-                "properties": {
-                    "op": {"const": "delegate"},
-                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
-                    **_ROOM_PARTNER_TASK_PROPERTIES,
-                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
-                },
+                "properties": {"op": {"const": "delegate"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
                 "required": ["op", "phase", "tasks"],
-                "properties": {
-                    "op": {"const": "delegate_batch"},
-                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
-                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
-                    "tasks": _ROOM_PARTNER_TASKS_SCHEMA,
-                },
+                "properties": {"op": {"const": "delegate_batch"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op", "workItemId"],
-                "properties": {
-                    "op": {"const": "accept"},
-                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
-                },
-            },
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op", "workItemId", "reason"],
-                "properties": {
-                    "op": {"const": "return"},
-                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
-                    "reason": _ROOM_PARTNER_REASON_SCHEMA,
-                },
-            },
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op", "workItemId", "phase"],
-                "properties": {
-                    "op": {"const": "resume"},
-                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
-                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
-                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
-                },
-            },
-            {
-                "type": "object",
-                "additionalProperties": False,
                 "required": [
                     "op",
                     "workItemId",
-                    "targetParticipantId",
+                    "expectedRevision",
                     "reason",
-                    "phase",
+                ],
+                "properties": {"op": {"const": "retry"}},
+            },
+            {
+                "required": [
+                    "op",
+                    "workItemId",
+                    "expectedRevision",
+                    "operabilityVerdict",
+                    "requirementVerdict",
+                    "evidenceRefs",
+                    "reason",
                 ],
                 "properties": {
-                    "op": {"const": "reassign"},
-                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
-                    "targetParticipantId": _ROOM_PARTNER_TASK_PROPERTIES[
-                        "targetParticipantId"
-                    ],
-                    "reason": _ROOM_PARTNER_REASON_SCHEMA,
-                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
-                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
+                    "op": {"const": "accept"},
+                    "operabilityVerdict": {"const": "passed"},
+                    "requirementVerdict": {"const": "satisfied"},
                 },
             },
-            *[
-                {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["op", "workItemId", "reason"],
-                    "properties": {
-                        "op": {"const": operation},
-                        "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
-                        "reason": _ROOM_PARTNER_REASON_SCHEMA,
-                        "nextStep": {
-                            "type": "string",
-                            "maxLength": 2_000,
-                        },
-                    },
-                }
-                for operation in ("fail", "abandon")
-            ],
             {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op", "content"],
-                "properties": {
-                    "op": {"const": "post"},
-                    "content": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 8_000,
+                "required": [
+                    "op",
+                    "workItemId",
+                    "expectedRevision",
+                    "operabilityVerdict",
+                    "requirementVerdict",
+                    "evidenceRefs",
+                    "reason",
+                ],
+                "properties": {"op": {"const": "return"}},
+                "not": {
+                    "properties": {
+                        "operabilityVerdict": {"const": "passed"},
+                        "requirementVerdict": {"const": "satisfied"},
                     },
-                    "kind": {
-                        "type": "string",
-                        "enum": [
-                            "progress",
-                            "result",
-                            "work_result",
-                            "review_result",
-                            "handoff",
-                            "wait",
-                            "blocked",
-                        ],
-                    },
+                    "required": ["operabilityVerdict", "requirementVerdict"],
                 },
+            },
+            {
+                "required": ["op"],
+                "properties": {"op": {"const": "collect"}},
+                "oneOf": [
+                    {"required": ["childDispatchId"]},
+                    {"required": ["workItemId"]},
+                ],
+            },
+            {
+                "required": ["op", "timeoutSeconds"],
+                "properties": {"op": {"const": "wait"}},
+                "oneOf": [
+                    {"required": ["childDispatchId"]},
+                    {"required": ["workItemId"]},
+                ],
+            },
+            {
+                "required": ["op", "content"],
+                "properties": {"op": {"const": "post"}},
+                "if": {
+                    "required": ["kind"],
+                    "properties": {"kind": {"const": "work_result"}},
+                },
+                "then": {
+                    "required": [
+                        "proposedOperabilityVerdict",
+                        "proposedRequirementVerdict",
+                    ],
+                },
+            },
+            {
+                "required": ["op"],
+                "properties": {"op": {"const": "peer_list"}},
+            },
+            {
+                "required": ["op", "targetParticipantId", "content"],
+                "properties": {"op": {"const": "peer_send"}},
+            },
+            {
+                "required": ["op", "targetParticipantId", "content"],
+                "properties": {"op": {"const": "peer_ask"}},
+            },
+            {
+                "required": ["op", "replyTo", "content"],
+                "properties": {"op": {"const": "peer_reply"}},
             },
         ],
     },
@@ -1978,6 +2113,12 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "refId": {"type": "string", "minLength": 1, "maxLength": 160},
     "url": {"type": "string", "minLength": 1, "maxLength": 4_000},
     "text": {"type": "string", "maxLength": 8_000},
+    "script": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 24_000,
+        "description": "在 PAW 内置 Chromium 中运行的一段 ego-browser JavaScript；不要包含 shell 或 imports。",
+    },
     "clear": {"type": "boolean"},
     "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
     "amount": {"type": "integer", "minimum": 80, "maximum": 2_400},
@@ -2040,6 +2181,12 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]
         "maximum": 86_400,
         "description": "后台任务最长运行秒数；默认 3600，最大 86400。",
     },
+    ("browser", "timeoutMs"): {
+        "type": "integer",
+        "minimum": 1_000,
+        "maximum": 120_000,
+        "description": "ego-browser run 最长 120 秒；普通等待操作仍由浏览器运行时收窄。",
+    },
 }
 
 _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
@@ -2076,7 +2223,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "session_search": ("query", "limit", "includeArchived"),
     "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
     "browser": (
-        "deviceId", "tabId", "refId", "url", "text", "clear", "direction",
+        "deviceId", "tabId", "refId", "url", "text", "script", "clear", "direction",
         "amount", "timeoutMs", "maxChars", "limit",
     ),
     "workspace_list": ("path", "depth", "limit"),
@@ -2151,6 +2298,7 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("agents", "call"): ("targetRunId", "message"),
     ("plugins", "create_package"): ("draftId", "packageJson", "files"),
     ("plugins", "propose_install"): ("validationToken",),
+    ("browser", "run"): ("script",),
     ("browser", "navigate"): ("url",),
     ("browser", "click"): ("refId",),
     ("browser", "type"): ("refId", "text"),
@@ -2695,8 +2843,22 @@ class ControlToolGateway:
             and isinstance(item.get("disclosure"), Mapping)
             and item["disclosure"].get("effective") == "enabled"
         }
+        active_room_facilitator = self._is_active_room_facilitator(session)
         manifests: list[Mapping[str, object]] = []
         for manifest in manifest_items:
+            tool_id = str(manifest["id"])
+            audited_goal_for_facilitator = (
+                tool_id == "agent_goal" and active_room_facilitator
+            )
+            if (
+                tool_id in PI_PACKAGE_OWNED_CONTROL_TOOL_IDS
+                and not audited_goal_for_facilitator
+            ):
+                # Migration storage remains readable through the legacy
+                # management APIs.  The native Package owns transcript-local
+                # workflow state; only a real Room Facilitator also receives
+                # the distinct evidence-audited Product Goal capability.
+                continue
             if manifest.get("enabled") is not True or manifest["id"] not in disclosed_tools:
                 continue
             spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
@@ -2738,7 +2900,7 @@ class ControlToolGateway:
                     else {}
                 ),
             }
-            if spec.get("modelVisible") is False:
+            if spec.get("modelVisible") is False and not audited_goal_for_facilitator:
                 item["modelVisible"] = False
             if projections:
                 item["runtimeProjections"] = [
@@ -2761,16 +2923,17 @@ class ControlToolGateway:
         return manifests
 
     def _is_active_room_facilitator(self, session: Mapping[str, object]) -> bool:
-        if str(session.get("mode") or "") != "coordinator":
+        if (
+            str(session.get("sessionKind") or "") == "subagent_runtime"
+            or str(session.get("mode") or "") != "coordinator"
+        ):
             return False
+        session_id = str(session.get("id") or "").strip()
         rooms = getattr(self.collaboration, "rooms", None)
         participant_for_session = getattr(rooms, "participant_for_session", None)
-        if not callable(participant_for_session):
+        if not session_id or not callable(participant_for_session):
             return False
-        participant = participant_for_session(
-            str(session.get("id") or ""),
-            active_only=True,
-        )
+        participant = participant_for_session(session_id, active_only=True)
         return (
             isinstance(participant, Mapping)
             and str(participant.get("collaborationRole") or "") == "coordinator"
@@ -2793,9 +2956,9 @@ class ControlToolGateway:
             raise ValueError(
                 "Act Gate blocked workspace mutation (Room delegation cannot verify the Root WorkDocument lifecycle)"
             )
-        response = self.work_documents.list(limit=500)  # type: ignore[attr-defined,union-attr]
-        items = response.get("items") if isinstance(response, Mapping) else []
         authority_key = f"session_goal:{goal_id}"
+        documents = self.work_documents.list(limit=500)  # type: ignore[attr-defined,union-attr]
+        items = documents.get("items") if isinstance(documents, Mapping) else []
         if not any(
             isinstance(item, Mapping)
             and str(item.get("authorityKey") or "") == authority_key
@@ -2867,20 +3030,7 @@ class ControlToolGateway:
             }
             validate_contract(manifest, "control-tool-manifest.v1.json")
             if session is not None:
-                fixed_todo = _fixed_todo_for_session(
-                    session,
-                    tool_id=str(spec["id"]),
-                )
-                authorization_session = (
-                    {
-                        **session,
-                        "toolAllowlistMode": "profile",
-                        "allowedTools": [],
-                    }
-                    if fixed_todo
-                    else session
-                )
-                mode_compatible = str(session.get("mode") or "assistant") in manifest["sessionModes"]
+                mode_compatible = _tool_mode_compatible(session, spec)
                 manifest["profileOperations"] = {
                     profile: [
                         operation
@@ -2908,7 +3058,7 @@ class ControlToolGateway:
                     for operation in operations
                     if mode_compatible
                     and _tool_profile_allows(
-                        authorization_session,
+                        session,
                         tool=str(spec["id"]),
                         operation=operation,
                         spec=spec,
@@ -2927,16 +3077,10 @@ class ControlToolGateway:
                 manifest["enabled"] = bool(effective_operations)
                 manifest["effectiveOperations"] = effective_operations
                 manifest["explicitlyAllowed"] = (
-                    True
-                    if fixed_todo
-                    else (
-                        str(session.get("toolAllowlistMode") or "profile") != "explicit"
-                        or str(spec["id"])
-                        in {str(value) for value in session.get("allowedTools") or []}
-                    )
+                    str(session.get("toolAllowlistMode") or "profile") != "explicit"
+                    or str(spec["id"])
+                    in {str(value) for value in session.get("allowedTools") or []}
                 )
-                if fixed_todo and manifest["enabled"] is True:
-                    manifest["alwaysAvailable"] = True
                 if (
                     include_runtime_projection
                     and str(spec["id"]) == "workspace_lsp"
@@ -2980,13 +3124,13 @@ class ControlToolGateway:
                 session_id,
                 args,
                 tool_call_id=str(request["toolCallId"]),
+                source_loop_id=str(request.get("sourceLoopId") or ""),
             )
             return {"ok": True, "result": dict(result)}
         spec = _TOOL_SPEC_BY_ID.get(tool)
         if spec is None:
             raise ValueError("tool is not enabled for this session")
-        session_modes = tuple(spec.get("sessionModes") or ("assistant", "coordinator"))
-        if str(session.get("mode") or "assistant") not in session_modes:
+        if not _tool_mode_compatible(session, spec):
             raise ValueError("tool is not enabled for this session mode")
         operation = str(args.get("op") or "")
         if operation not in spec["operations"]:
@@ -3340,7 +3484,7 @@ class ControlToolGateway:
     def _browser(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         service = self.browser_control
         if service is None:
-            raise ValueError("browser co-pilot is unavailable")
+            raise ValueError("PAW Browser is unavailable")
         if operation == "status":
             return service.status(agent_safe=True)
         if operation == "tabs":
@@ -3375,6 +3519,30 @@ class ControlToolGateway:
                 args,
                 session_id=_bounded_text(args.get("_sessionId"), maximum=240),
                 timeout_seconds=20.0,
+            )
+        if operation == "stop":
+            return service.stop()
+        if operation == "run":
+            return service.submit_command(
+                operation,
+                args,
+                session_id=_bounded_text(args.get("_sessionId"), maximum=240),
+                timeout_seconds=125.0,
+            )
+        if operation in {
+            "navigate",
+            "back",
+            "forward",
+            "click",
+            "type",
+            "scroll",
+            "wait",
+        }:
+            return service.submit_command(
+                operation,
+                args,
+                session_id=_bounded_text(args.get("_sessionId"), maximum=240),
+                timeout_seconds=25.0 if operation in {"navigate", "wait"} else 15.0,
             )
         raise ValueError(f"unsupported browser operation: {operation}")
 
@@ -3585,6 +3753,8 @@ class ControlToolGateway:
             "cancel",
         }:
             raise ValueError("unsupported agent_goal operation")
+        if operation == "complete":
+            self._require_room_terminal_result(session_id)
         payload: dict[str, object] = {
             "action": operation,
             "expectedRevision": _safe_int(current.get("revision")),
@@ -3614,6 +3784,17 @@ class ControlToolGateway:
         )
         goal = workflow["goal"] if isinstance(workflow.get("goal"), Mapping) else {}
         self._publish_workflow(session_id, f"goal:{operation}")
+        goal_id = str(goal.get("goalId") or "")
+        if self.work_documents is not None and goal_id:
+            try:
+                self.work_documents.observe_authority(  # type: ignore[attr-defined,union-attr]
+                    "session_goal",
+                    goal_id,
+                )
+            except Exception:
+                # The observer persists its own retry record. The Goal
+                # transition is already durable and must not be replayed.
+                pass
         summary = {
             "confirm_setup": "长期目标已确认并开始执行",
             "update": "长期目标已更新",
@@ -3629,6 +3810,39 @@ class ControlToolGateway:
             "goal": goal,
             "workflow": workflow,
         }
+
+    def _require_room_terminal_result(self, session_id: str) -> None:
+        """Keep a Room's typed public result ahead of Goal completion."""
+
+        session = self.sessions.get(session_id)
+        if not self._is_active_room_facilitator(session):
+            return
+        rooms = getattr(self.collaboration, "rooms", None)
+        room_turns = getattr(self.collaboration, "room_turns", None)
+        room_events = getattr(self.collaboration, "room_events", None)
+        participant_for_session = getattr(rooms, "participant_for_session", None)
+        active_turn = getattr(room_turns, "active_turn", None)
+        has_projection = getattr(room_events, "has_projection", None)
+        if not (
+            callable(participant_for_session)
+            and callable(active_turn)
+            and callable(has_projection)
+        ):
+            raise ValueError(
+                "Room Goal completion cannot verify the typed terminal result"
+            )
+        participant = participant_for_session(session_id, active_only=True)
+        participant = participant if isinstance(participant, Mapping) else {}
+        room_id = str(participant.get("roomId") or "").strip()
+        root_id, _dispatch_id = active_turn(session_id)
+        root_id = str(root_id or "").strip()
+        if not room_id or not root_id:
+            raise ValueError("Room Goal completion requires an active Room root")
+        if not has_projection(f"room-terminal-result:{room_id}:{root_id}"):
+            raise ValueError(
+                "Room Goal completion requires room_partner post(kind=result) "
+                "for the active Root first"
+            )
 
     def _work_documents(
         self,
@@ -3845,8 +4059,6 @@ class ControlToolGateway:
             return self._apply_configuration_export(approval)
         if (tool, operation) == ("configuration", "restore_apply"):
             return self._apply_configuration_restore(approval)
-        if tool == "browser":
-            return self._apply_browser_action(approval)
         if (tool, operation) != ("planning", "task_action"):
             raise ValueError("approved operation is not enabled")
         preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
@@ -3902,168 +4114,6 @@ class ControlToolGateway:
             result=result,
             audit_persisted=True,
         )
-
-
-    def _prepare_browser_action(
-        self,
-        *,
-        session_id: str,
-        operation: str,
-        args: Mapping[str, object],
-        risk_level: str,
-    ) -> dict[str, object]:
-        service = self.browser_control
-        if service is None:
-            raise ValueError("browser co-pilot is unavailable")
-        allowed_fields = {
-            "deviceId",
-            "tabId",
-            "refId",
-            "url",
-            "text",
-            "clear",
-            "direction",
-            "amount",
-            "timeoutMs",
-        }
-        action_payload = {
-            str(key): value
-            for key, value in args.items()
-            if str(key) in allowed_fields and value is not None
-        }
-        base_state = {
-            "mode": service.mode(),
-        }
-        if operation in {"click", "type"}:
-            snapshot = service.latest_snapshot(
-                device_id=_bounded_text(action_payload.get("deviceId"), maximum=160),
-                tab_id=(
-                    _bounded_int(
-                        action_payload.get("tabId"),
-                        default=0,
-                        minimum=0,
-                        maximum=2_147_483_647,
-                    )
-                    or None
-                ),
-                include_markdown=False,
-            )
-            base_state["snapshotId"] = str(snapshot.get("snapshotId") or "")
-        digest = _approval_payload_digest(
-            session_id=session_id,
-            tool="browser",
-            operation=operation,
-            action_payload=action_payload,
-            base_state=base_state,
-        )
-        labels = {
-            "navigate": "打开网页",
-            "click": "点击页面元素",
-            "type": "向页面输入文本",
-            "scroll": "滚动页面",
-            "wait": "等待页面内容",
-            "stop": "停止浏览器任务",
-        }
-        operation_label = labels.get(operation, operation)
-        preview = {
-            "title": f"确认{operation_label}",
-            "summary": f"浏览器共驾将{operation_label}，操作结果会写入执行轨迹",
-            "operationLabel": operation_label,
-            "changes": [
-                {
-                    "label": "目标",
-                    "path": operation,
-                    "before": "当前页面",
-                    "after": (
-                        _bounded_text(action_payload.get("url"), maximum=320)
-                        or _bounded_text(action_payload.get("refId"), maximum=160)
-                        or operation_label
-                    ),
-                }
-            ],
-            "actionPayload": action_payload,
-            "baseState": base_state,
-        }
-        if operation == "type":
-            preview["changes"].append(
-                {
-                    "label": "输入内容",
-                    "path": "text",
-                    "before": "",
-                    "after": _bounded_text(action_payload.get("text"), maximum=320),
-                }
-            )
-        approval = self.sessions.create_approval(
-            session_id=session_id,
-            tool_name="browser",
-            operation=operation,
-            payload_sha256=digest,
-            preview=preview,
-            risk_level=risk_level,
-            ttl_ms=60_000,
-        )
-        return {
-            "summary": f"等待确认：{preview['summary']}",
-            "approvalRequired": True,
-            "approvalId": approval["approvalId"],
-            "approval": approval,
-        }
-
-    def _apply_browser_action(self, approval: Mapping[str, object]) -> dict[str, object]:
-        service = self.browser_control
-        if service is None:
-            raise ValueError("browser co-pilot is unavailable")
-        operation = str(approval.get("operation") or "")
-        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
-        action_payload = (
-            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
-        )
-        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
-        expected_digest = _approval_payload_digest(
-            session_id=str(approval.get("sessionId") or ""),
-            tool="browser",
-            operation=operation,
-            action_payload=action_payload,
-            base_state=base_state,
-        )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
-            raise ValueError("approval payload no longer matches its preview")
-        if service.mode() != str(base_state.get("mode") or ""):
-            raise ValueError("browser mode changed after the approval preview was created")
-        snapshot_id = str(base_state.get("snapshotId") or "")
-        if snapshot_id:
-            current = service.latest_snapshot(
-                device_id=_bounded_text(action_payload.get("deviceId"), maximum=160),
-                tab_id=(
-                    _bounded_int(
-                        action_payload.get("tabId"),
-                        default=0,
-                        minimum=0,
-                        maximum=2_147_483_647,
-                    )
-                    or None
-                ),
-                include_markdown=False,
-            )
-            if str(current.get("snapshotId") or "") != snapshot_id:
-                raise ValueError("browser page changed after the approval preview was created")
-        if operation == "stop":
-            result = service.stop()
-        else:
-            result = service.submit_command(
-                operation,
-                action_payload,
-                session_id=str(approval.get("sessionId") or ""),
-                timeout_seconds=25.0 if operation in {"navigate", "wait"} else 15.0,
-            )
-        return {
-            **result,
-            "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "browser",
-            "operation": operation,
-            "auditId": str(approval.get("approvalId") or ""),
-        }
-
     def _prepare_approval(
         self,
         *,
@@ -4231,13 +4281,6 @@ class ControlToolGateway:
         if (tool, operation) == ("configuration", "restore_apply"):
             return self._prepare_configuration_restore(
                 session_id=session_id,
-                args=args,
-                risk_level=risk_level,
-            )
-        if tool == "browser":
-            return self._prepare_browser_action(
-                session_id=session_id,
-                operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
@@ -6859,6 +6902,7 @@ class ControlToolGateway:
             else None
         )
         registration_payload: dict[str, object] | None = None
+        rollback_snapshot = None
         if work_document is not None:
             if self.work_documents is None:
                 raise ValueError("work document lifecycle is unavailable")
@@ -6900,6 +6944,10 @@ class ControlToolGateway:
             self.work_documents.preflight_register(  # type: ignore[attr-defined,union-attr]
                 registration_payload
             )
+            rollback_snapshot = self.workspace_harness.prepare_write(
+                session,
+                action_payload,
+            )
         receipt = self.workspace_harness.apply_write(session, action_payload, base_state)
         result = {
             **receipt,
@@ -6908,6 +6956,39 @@ class ControlToolGateway:
             "operation": "apply",
             "auditId": str(approval.get("approvalId") or ""),
         }
+        if registration_payload is not None:
+            try:
+                registration = dict(
+                    self.work_documents.register(registration_payload)  # type: ignore[attr-defined,union-attr]
+                )
+                registration_receipt = (
+                    registration.get("receipt")
+                    if isinstance(registration.get("receipt"), Mapping)
+                    else {}
+                )
+                registration_document = (
+                    registration.get("document")
+                    if isinstance(registration.get("document"), Mapping)
+                    else {}
+                )
+                if (
+                    str(registration_receipt.get("status") or "") != "applied"
+                    or str(registration_document.get("state") or "") != "active"
+                ):
+                    raise ValueError(
+                        "work document registration did not become active"
+                    )
+                result["workDocumentRegistration"] = registration
+            except Exception as registration_error:
+                assert rollback_snapshot is not None
+                try:
+                    self.workspace_harness.rollback_write(rollback_snapshot)
+                except Exception as rollback_error:
+                    raise WorkspaceHarnessError(
+                        "work document registration failed and its workspace write "
+                        "could not be rolled back safely"
+                    ) from rollback_error
+                raise registration_error
         if self.artifact_projector is not None:
             projection = self.artifact_projector.project_workspace_mutation(
                 session=session,
@@ -6917,10 +6998,6 @@ class ControlToolGateway:
                 origin_tool="workspace_write",
             )
             result.update(projection.receipt_fields())
-        if registration_payload is not None:
-            result["workDocumentRegistration"] = dict(
-                self.work_documents.register(registration_payload)  # type: ignore[attr-defined,union-attr]
-            )
         return result
 
     def _prepare_planning_undo(
@@ -9581,20 +9658,6 @@ def _secret_key(key: str) -> bool:
     )
 
 
-def _fixed_todo_for_session(
-    session: Mapping[str, object],
-    *,
-    tool_id: str,
-) -> bool:
-    return (
-        tool_id == "todo"
-        and str(session.get("sessionKind") or "conversation") == "conversation"
-        and str(session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE)
-        == CONTROL_CENTER_TOOL_PROFILE
-        and str(session.get("mode") or "assistant") in {"assistant", "coordinator"}
-    )
-
-
 def _tool_profile_allows(
     session: Mapping[str, object],
     *,
@@ -9665,22 +9728,25 @@ def _tool_profile_allows(
             }
         ),
         "session_search": frozenset({"search"}),
-        # Formal Room delegation does not widen the workspace policy: the
-        # target remains an ordinary participant Session carrying the same
-        # read-only execution mode. Public progress/result posts are Room
-        # projection receipts, not source mutations.
+        # Formal Room operations do not widen the workspace policy. Delegation,
+        # stopping-point reads, evidence-backed review transitions, public
+        # receipts, and direct intercom mutate Room collaboration state rather
+        # than the read-only Session's source workspace.
         "room_partner": frozenset(
             {
                 "list",
                 "delegate",
                 "delegate_batch",
+                "retry",
                 "accept",
                 "return",
-                "resume",
-                "reassign",
-                "fail",
-                "abandon",
+                "collect",
+                "wait",
                 "post",
+                "peer_list",
+                "peer_send",
+                "peer_ask",
+                "peer_reply",
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
@@ -9918,15 +9984,6 @@ def _runtime_tool_parameter_schema(
         # payload in place, and one mutation must not corrupt later Sessions.
         configured = copy.deepcopy(configured)
         allowed = {str(operation) for operation in operations}
-        properties = configured.get("properties")
-        if isinstance(properties, Mapping):
-            op_schema = properties.get("op")
-            if isinstance(op_schema, dict) and isinstance(op_schema.get("enum"), list):
-                op_schema["enum"] = [
-                    operation
-                    for operation in op_schema["enum"]
-                    if str(operation) in allowed
-                ]
         branches = configured.get("oneOf")
         if isinstance(branches, list):
             filtered = [

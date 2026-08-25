@@ -141,10 +141,13 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertNotIn('requiredString("command"', bridge)
         self.assertNotIn("NSTask", bridge)
         self.assertNotIn("unsafe-eval", assets)
-        self.assertIn('"frame-src blob:"', assets)
+        self.assertIn('"frame-src \'self\' blob:"', assets)
         self.assertIn('"img-src \'self\' data: blob: http://127.0.0.1:8766"', assets)
         self.assertNotIn('"frame-src \'none\'"', assets)
         self.assertIn('url.scheme == ControlCenterAssetSchemeHandler.scheme', navigation)
+        self.assertIn('url.path == "/__paw_html_preview"', navigation)
+        self.assertIn("serveIsolatedHTMLPreview", assets)
+        self.assertIn("sandbox allow-downloads", assets)
         self.assertNotIn("NSWorkspace.shared.open(url)", navigation)
         self.assertIn('url.host == "auth.openai.com"', navigation)
         self.assertIn('url.path == "/codex/device"', navigation)
@@ -244,7 +247,7 @@ class ControlCenterWebHostTests(unittest.TestCase):
             script,
         )
         first_dist_guard = script.index('"$ROOT/scripts/check_control_center_web_dist.sh"')
-        destructive_app_rebuild = script.index('rm -rf "$APP"')
+        destructive_app_rebuild = script.index('rm -rf "$APP"', first_dist_guard)
         self.assertLess(first_dist_guard, destructive_app_rebuild)
         self.assertIn(
             '"$WEB/dist" native "$FRONTEND_CHANNEL" "$SOURCE_COMMIT"',

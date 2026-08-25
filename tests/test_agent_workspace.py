@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import os
 import json
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +18,7 @@ from rag_ime.agent_workspace import (
     WorkspaceHarness,
     WorkspaceHarnessError,
     WorkspaceSnapshotError,
+    _sandbox_profile,
     _workspace_command_path,
 )
 
@@ -76,6 +79,32 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertNotIn("state.sqlite", serialized)
         read = harness.read(self.session, {"path": str(self.root / "README.md")})
         self.assertEqual(read["content"], "hello 澄\n")
+
+    def test_read_accepts_a_workspace_basename_prefixed_relative_path(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        read = harness.read(
+            self.session,
+            {"path": f"{self.root.name}/src/main.py"},
+        )
+
+        self.assertEqual(read["content"], "print('ok')\n")
+
+    def test_missing_read_distinguishes_missing_from_outside_and_suggests_nearby(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        with self.assertRaises(WorkspaceHarnessError) as raised:
+            harness.read(self.session, {"path": "src/missing.py"})
+
+        message = str(raised.exception)
+        self.assertIn("path does not exist in the authorized workspace", message)
+        self.assertIn("nearby entries: src/main.py", message)
+        self.assertNotIn("outside", message)
+
+        with self.assertRaises(WorkspaceHarnessError) as outside:
+            harness.read(self.session, {"path": str(self.outside)})
+        self.assertIn("outside the authorized workspace", str(outside.exception))
+        self.assertNotIn("does not exist", str(outside.exception))
 
     def test_sensitive_binary_symlink_and_outside_reads_fail_closed(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})
@@ -511,6 +540,66 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertEqual(preview["actionPayload"]["cwd"], str(self.root.resolve()))
         self.assertEqual(receipt["exitCode"], 0)
         self.assertEqual(captured, [prepared])
+
+    def test_command_sandbox_allows_loopback_preview_without_external_network(self) -> None:
+        temporary = Path(self.temp.name) / "sandbox-temp"
+        temporary.mkdir()
+
+        profile = _sandbox_profile(
+            roots=(self.root.resolve(),),
+            temporary=temporary.resolve(),
+            allow_network=False,
+        )
+
+        self.assertIn('(allow network-bind (local ip "*:*")', profile)
+        self.assertIn(
+            '(allow network-inbound (local ip "localhost:*")',
+            profile,
+        )
+        self.assertNotIn("(allow network-outbound)", profile)
+
+    def test_background_command_serves_the_authorized_workspace_on_loopback(self) -> None:
+        harness = WorkspaceHarness()
+        if not harness.sandbox_executable.is_file():
+            self.skipTest("macOS sandbox-exec is unavailable")
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+        prepared = harness.prepare_background_command(
+            self.session,
+            {
+                "command": (
+                    f"python3 -m http.server {port} "
+                    "--bind 127.0.0.1"
+                ),
+                "cwd": str(self.root),
+                "allowNetwork": False,
+            },
+        )
+        launched = harness.spawn_background(prepared)
+        try:
+            body = ""
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/README.md",
+                        timeout=0.25,
+                    ) as response:
+                        body = response.read().decode("utf-8")
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            self.assertEqual(body, "hello 澄\n")
+        finally:
+            harness.terminate_background(launched)
+            try:
+                launched.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            if launched.process.stdout is not None:
+                launched.process.stdout.close()
+            launched.cleanup()
 
     def test_read_only_command_rejects_network_and_background_jobs(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})

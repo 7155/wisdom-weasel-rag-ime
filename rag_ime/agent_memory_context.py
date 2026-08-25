@@ -24,16 +24,12 @@ class AgentMemoryContextService:
         self,
         *,
         sessions: Any,
-        personas: Any,
-        role_books: Any,
         memory_bootstrap: Any,
         context_runtime: Any,
         task_context: Any,
         runtime_provider: Callable[[], Any],
     ) -> None:
         self.sessions = sessions
-        self.personas = personas
-        self.role_books = role_books
         self.memory_bootstrap = memory_bootstrap
         self.context_runtime = context_runtime
         self.task_context = task_context
@@ -47,32 +43,6 @@ class AgentMemoryContextService:
     @property
     def runtime(self) -> Any:
         return self._runtime_provider()
-
-    def ensure_role_book(
-        self,
-        session_id: str,
-    ) -> dict[str, object]:
-        session = self.sessions.get(session_id)
-        if str(
-            session.get("roleBookRevisionId") or ""
-        ).strip():
-            return session
-        role = self.personas.resolve(
-            session.get("roleId") or "companion-present-v1",
-            session.get("roleVersion") or "1",
-        )
-        try:
-            self.role_books.pin_session(
-                session_id,
-                role.role_id,
-                role.version,
-                role.display_name,
-                role.summary,
-                role.version,
-            )
-        except Exception:
-            return session
-        return self.sessions.get(session_id)
 
     @staticmethod
     def pending_bootstrap(
@@ -97,7 +67,9 @@ class AgentMemoryContextService:
         query_text: str,
     ) -> dict[str, object]:
         session_id = str(session.get("id") or "")
-        role_id = str(session.get("roleId") or "")
+        # Persona visibility is injected only by an installed Persona Package.
+        # The core memory bootstrap deliberately ignores legacy role metadata.
+        role_id = ""
         dedupe_key = self.memory_bootstrap.dedupe_key(
             session_id
         )
@@ -196,7 +168,7 @@ class AgentMemoryContextService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         session_id = _required_text(payload, "sessionId")
-        session = self.ensure_role_book(session_id)
+        session = self.sessions.get(session_id)
         trigger_value = str(
             payload.get("trigger") or "session_start"
         ).strip().lower()

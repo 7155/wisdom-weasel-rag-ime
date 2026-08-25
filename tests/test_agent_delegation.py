@@ -47,7 +47,7 @@ class _CompletingRuntime:
             session_id,
             "message_completed",
             {
-                "message": _assistant_message(session_id, turn_id, f"{template}: {message.splitlines()[1]}"),
+                "message": _assistant_message(session_id, turn_id, f"{template}: {message.splitlines()[-1]}"),
                 "usage": {"totalTokens": 321},
             },
             turn_id=turn_id,
@@ -65,6 +65,18 @@ class _CompletingRuntime:
 
     def stop(self):
         self.stopped = True
+
+
+class AgentTemplateDefaultTests(unittest.TestCase):
+    def test_complex_private_agents_have_async_friendly_duration_budgets(self) -> None:
+        self.assertEqual(
+            real_agent_template("researcher").budget.max_duration_ms,
+            600_000,
+        )
+        self.assertEqual(
+            real_agent_template("worker").budget.max_duration_ms,
+            900_000,
+        )
 
 
 class _CapturingRuntimeDriverFactory:
@@ -439,6 +451,32 @@ class _ResumeRuntime(_CompletingRuntime):
         return []
 
 
+class _RetryExhaustedRuntime(_CompletingRuntime):
+    """A child whose native Pi Provider retry window has already elapsed."""
+
+    def prompt(self, session_id, _message):
+        turn_id = "turn:provider-retry-exhausted"
+        self.events.publish(
+            session_id,
+            "turn_failed",
+            {
+                "error": "fetch failed",
+                "failureKind": "network",
+                "retryable": True,
+                "hadToolActivity": False,
+                "retryExhausted": True,
+                "providerRetryAttempts": 7,
+                "providerRetryMaxAttempts": 7,
+                "nextStep": "模型连接在约 5 分钟自动重试后仍未恢复。",
+            },
+            turn_id=turn_id,
+        )
+        return {"accepted": True, "turnId": turn_id}
+
+    def messages(self, _session_id):
+        return []
+
+
 class AgentDelegationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-delegation-")
@@ -476,7 +514,7 @@ class AgentDelegationTests(unittest.TestCase):
         subagent_session_gc_interval_ms: int | None = None,
         room_context_provider=None,
         runtime_provider=None,
-        model_routing_provider=None,
+        model_route_provider=None,
     ) -> AgentDelegationCoordinator:
         return AgentDelegationCoordinator(
             db_path=self.db_path,
@@ -490,7 +528,7 @@ class AgentDelegationTests(unittest.TestCase):
             subagent_session_retention_ms=subagent_session_retention_ms,
             subagent_session_gc_interval_ms=subagent_session_gc_interval_ms,
             room_context_provider=room_context_provider,
-            model_routing_provider=model_routing_provider,
+            model_route_provider=model_route_provider,
         )
 
     def test_fixed_catalog_parallel_results_and_internal_sessions(self) -> None:
@@ -1018,6 +1056,57 @@ class AgentDelegationTests(unittest.TestCase):
                 tool_call_id="tool:different",
             )
 
+    def test_store_rejects_top_level_false_schema_before_persistence(self) -> None:
+        store = AgentDelegationStore(self.db_path)
+        store.initialize()
+        child = self.sessions.create(title="false schema child")
+        with self.assertRaisesRegex(ValueError, "outputSchema must be a JSON Schema object"):
+            store.create_batch(
+                parent_session_id=str(self.parent["id"]),
+                parent_run_id="",
+                context_mode="fresh",
+                depth=1,
+                max_depth=2,
+                runs=[{
+                    **_run_spec(str(child["id"]), task="验证布尔 Schema"),
+                    "outputSchema": False,
+                }],
+            )
+        self.assertEqual(store.list_batches(parent_session_id=str(self.parent["id"])), [])
+
+    def test_malformed_persisted_structured_schema_is_an_invalid_recoverable_contract(self) -> None:
+        store = AgentDelegationStore(self.db_path)
+        store.initialize()
+        child = self.sessions.create(title="malformed schema child")
+        batch = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[{
+                **_run_spec(str(child["id"]), task="恢复损坏合同"),
+                "outputSchema": {"type": "object"},
+            }],
+        )
+        run_id = str(batch["runs"][0]["id"])
+        store.start_run(run_id)
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE agent_subagent_runs SET output_schema_json = '[' WHERE id = ?",
+                (run_id,),
+            )
+
+        malformed = store.get_run(run_id)
+        self.assertEqual(malformed["contract"]["status"], "invalid")
+        self.assertIn("persisted output schema is malformed", malformed["contract"]["error"])
+        with self.assertRaisesRegex(ValueError, "persisted output schema is malformed"):
+            store.submit_structured_output(
+                child_session_id=str(child["id"]),
+                value={},
+                tool_call_id="tool:malformed",
+            )
+
     def test_missing_structured_output_is_a_local_contract_failure(self) -> None:
         store = AgentDelegationStore(self.db_path)
         store.initialize()
@@ -1056,6 +1145,17 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(finalized["contract"]["status"], "invalid")
         self.assertIn("was not submitted", finalized["contract"]["error"])
 
+        reopened = store.reopen_run(run_id)
+        self.assertEqual(reopened["state"], "queued")
+        self.assertEqual(reopened["contract"]["status"], "pending")
+        store.start_run(run_id)
+        recovered = store.submit_structured_output(
+            child_session_id=str(child["id"]),
+            value={"summary": "已补交"},
+            tool_call_id="tool:recovered",
+        )
+        self.assertEqual(recovered["contract"]["status"], "valid")
+
     def test_retry_policy_allows_only_one_receipt_free_runtime_retry(self) -> None:
         coordinator = self.coordinator()
         base = {
@@ -1084,6 +1184,7 @@ class AgentDelegationTests(unittest.TestCase):
     def test_workspace_boundary_failures_are_tool_errors_not_transient_runtime(self) -> None:
         for message in (
             "path is outside the authorized workspace or does not exist",
+            "path does not exist in the authorized workspace; nearby entries: src/main.py",
             "outside the authorized workspace",
             "permission denied while reading workspace file",
         ):
@@ -1142,7 +1243,7 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(materialized["itemIds"], [item_id])
         payload = materialized["items"][0]["payload"]
         self.assertEqual(payload["deliveryStatus"], "returned")
-        self.assertEqual(payload["verificationStatus"], "unverified")
+        self.assertEqual(payload["verificationStatus"], "contract_invalid")
         self.assertEqual(
             payload["outputSchema"]["required"],
             ["summary"],
@@ -1154,6 +1255,200 @@ class AgentDelegationTests(unittest.TestCase):
             [],
         )
         restarted.close()
+
+    def test_retry_exhaustion_reports_upward_and_returns_control_to_parent(self) -> None:
+        coordinator = self.coordinator(_RetryExhaustedRuntime)
+        try:
+            response = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "researcher",
+                    "task": "等待模型连接后核对证据",
+                    **_TASK_CONTRACT,
+                    "wait": False,
+                },
+            )
+            run_id = str(response["batch"]["runs"][0]["id"])
+            _wait_until(
+                lambda: coordinator.store.get_run(run_id)[
+                    "resultContextScheduledAtMs"
+                ]
+                is not None
+            )
+
+            run = coordinator.store.get_run(run_id)
+            self.assertEqual(run["state"], "failed")
+            self.assertTrue(run["result"]["failureReport"]["retryExhausted"])
+            self.assertEqual(
+                run["result"]["failureReport"]["providerRetryAttempts"],
+                7,
+            )
+            self.assertFalse(run["result"]["retryPolicy"]["automaticScheduled"])
+            self.assertTrue(run["result"]["parentDecision"]["required"])
+            self.assertTrue(
+                run["result"]["parentDecision"]["parentSessionRemainsRunnable"]
+            )
+            self.assertEqual(
+                run["result"]["parentDecision"]["allowedActions"],
+                ["continue_parent", "retry", "resume", "switch_model", "redelegate"],
+            )
+
+            batches = coordinator.store.list_batches(limit=10)
+            self.assertEqual(len(batches), 1, "Pi exhaustion must not trigger a second kernel retry")
+            self.assertNotEqual(
+                self.sessions.get(str(self.parent["id"]))["status"],
+                "faulted",
+            )
+
+            materialized = self.context_runtime.materialize(str(self.parent["id"]))
+            payload = next(
+                item["payload"]
+                for item in materialized["items"]
+                if item["sourceId"] == run_id
+            )
+            self.assertEqual(payload["state"], "failed")
+            self.assertEqual(payload["deliveryStatus"], "not_returned")
+            self.assertTrue(payload["failureReport"]["retryExhausted"])
+            self.assertTrue(payload["parentDecision"]["required"])
+            self.assertIn("不要把父级标记为失败", payload["instruction"])
+
+            def failed_progress_events() -> list[object]:
+                events, _ = self.events.replay(str(self.parent["id"]))
+                return [
+                    event
+                    for event in events
+                    if event.event_type == "tool_progress"
+                    and event.payload.get("runId") == run_id
+                    and event.payload.get("state") == "failed"
+                ]
+
+            _wait_until(lambda: len(failed_progress_events()) == 1)
+            events, gap = self.events.replay(str(self.parent["id"]))
+            self.assertFalse(gap)
+            progress = next(
+                event.payload
+                for event in reversed(events)
+                if event.event_type == "tool_progress"
+                and event.payload.get("runId") == run_id
+                and event.payload.get("state") == "failed"
+            )
+            self.assertTrue(progress["parentDecisionRequired"])
+            self.assertIn("等待上级继续决策或恢复", progress["summary"])
+        finally:
+            coordinator.close()
+
+    def test_configured_model_routes_apply_by_delegated_runtime_role(self) -> None:
+        routes = {
+            "toolAgent": {
+                "modelProfile": "openai-codex/gpt-5.6-luna",
+                "thinkingLevel": "low",
+            },
+            "subagent": {
+                "modelProfile": "openai-codex/gpt-5.6-terra",
+                "thinkingLevel": "high",
+            },
+        }
+        coordinator = self.coordinator(
+            model_route_provider=lambda route_id: routes.get(route_id)
+        )
+        try:
+            prepared_runs: list[dict[str, object]] = []
+            original_create_batch = coordinator.store.create_batch
+
+            def capture_create_batch(*args, **kwargs):
+                prepared_runs.extend(kwargs["runs"])
+                return original_create_batch(*args, **kwargs)
+
+            self.parent = self.sessions.set_runtime_policy(
+                str(self.parent["id"]),
+                mode="coordinator",
+                tool_profile_version="control-center-v1",
+                execution_mode="workspace_managed",
+                grant_workspace_scope=True,
+                allowed_tools=None,
+                workspace_roots=[str(self.root)],
+            )
+            with patch.object(
+                coordinator.store,
+                "create_batch",
+                side_effect=capture_create_batch,
+            ):
+                read_only, writable = coordinator.delegate(
+                    str(self.parent["id"]),
+                    {
+                        "tasks": [
+                            {
+                                "agent": "researcher",
+                                "task": "只读研究",
+                                "modelProfile": "openai-codex/explicit-read-model",
+                                "thinkingLevel": "medium",
+                                **_TASK_CONTRACT,
+                            },
+                            {
+                                "agent": "worker",
+                                "task": "有界实现",
+                                "access": "write",
+                                "modelProfile": "openai-codex/explicit-write-model",
+                                "thinkingLevel": "medium",
+                                **_TASK_CONTRACT,
+                            },
+                        ],
+                    },
+                )["batch"]["runs"]
+            read_only_child = self.sessions.get(str(read_only["childSessionId"]))
+            writable_child = self.sessions.get(str(writable["childSessionId"]))
+            self.assertEqual(
+                read_only_child["modelProfile"],
+                "openai-codex/gpt-5.6-terra",
+            )
+            self.assertEqual(read_only_child["thinkingLevel"], "high")
+            self.assertEqual(
+                writable_child["modelProfile"],
+                "openai-codex/gpt-5.6-luna",
+            )
+            self.assertEqual(writable_child["thinkingLevel"], "low")
+            self.assertEqual(
+                prepared_runs[0]["launchDigest"]["modelRoute"],
+                "subagent",
+            )
+            self.assertEqual(
+                prepared_runs[0]["launchDigest"]["modelRouteSource"],
+                "configured",
+            )
+            self.assertEqual(
+                prepared_runs[1]["launchDigest"]["modelRoute"],
+                "toolAgent",
+            )
+            self.assertEqual(
+                prepared_runs[1]["launchDigest"]["modelRouteSource"],
+                "configured",
+            )
+        finally:
+            coordinator.close()
+
+    def test_inherit_model_route_allows_delegated_task_override(self) -> None:
+        coordinator = self.coordinator(
+            model_route_provider=lambda _route_id: {
+                "modelProfile": "inherit",
+                "thinkingLevel": "inherit",
+            }
+        )
+        try:
+            run = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "researcher",
+                    "task": "使用显式回退路由",
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "medium",
+                    **_TASK_CONTRACT,
+                },
+            )["batch"]["runs"][0]
+            child = self.sessions.get(str(run["childSessionId"]))
+            self.assertEqual(child["modelProfile"], "openai-codex/gpt-5.6-luna")
+            self.assertEqual(child["thinkingLevel"], "medium")
+        finally:
+            coordinator.close()
 
     def test_first_terminal_result_is_ingested_once_and_late_terminal_is_ignored(self) -> None:
         coordinator = self.coordinator(_DuplicateTerminalRuntime)
@@ -1299,7 +1594,7 @@ class AgentDelegationTests(unittest.TestCase):
                     if item["itemId"] == context_items[0]["itemId"]
                 )
                 self.assertEqual(payload["state"], "failed")
-                self.assertEqual(payload["verificationStatus"], "unverified")
+                self.assertEqual(payload["verificationStatus"], "not_applicable")
                 snapshot = coordinator.artifacts.snapshot(
                     owner_kind="subagent_run",
                     owner_id=run_id,
@@ -1400,6 +1695,28 @@ class AgentDelegationTests(unittest.TestCase):
                         "outputSchema": {"type": "array", "items": []},
                     },
                 )
+            self.assertEqual(
+                coordinator.store.list_batches(parent_session_id=str(self.parent["id"])),
+                [],
+            )
+        finally:
+            coordinator.close()
+
+    def test_delegation_rejects_non_object_output_schema_before_launch(self) -> None:
+        coordinator = self.coordinator()
+        try:
+            for output_schema in (["buildCommands", "testCommands", "configFiles"], False):
+                with self.subTest(output_schema=output_schema):
+                    with self.assertRaisesRegex(ValueError, "outputSchema must be a JSON Schema object"):
+                        coordinator.delegate(
+                            str(self.parent["id"]),
+                            {
+                                "agent": "researcher",
+                                "task": "返回构建信息",
+                                **_TASK_CONTRACT,
+                                "outputSchema": output_schema,
+                            },
+                        )
             self.assertEqual(
                 coordinator.store.list_batches(parent_session_id=str(self.parent["id"])),
                 [],
@@ -1588,23 +1905,6 @@ class AgentDelegationTests(unittest.TestCase):
             )
             self.assertTrue(child["piSkillsEnabled"])
             self.assertFalse(child["codexSkillsEnabled"])
-        finally:
-            coordinator.close()
-
-    def test_tool_agent_route_is_used_when_task_does_not_override_model(self) -> None:
-        coordinator = self.coordinator(model_routing_provider=lambda: {
-            "toolAgentModelProfile": "openai-codex/gpt-5.6-luna",
-            "toolAgentThinkingLevel": "low",
-        })
-        try:
-            batch = coordinator.delegate(
-                str(self.parent["id"]),
-                {"agent": "researcher", "task": "核对有界证据", **_TASK_CONTRACT},
-            )["batch"]
-            child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
-
-            self.assertEqual(child["modelProfile"], "openai-codex/gpt-5.6-luna")
-            self.assertEqual(child["thinkingLevel"], "low")
         finally:
             coordinator.close()
 
@@ -2182,7 +2482,7 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertNotEqual(retained["status"], "archived")
         coordinator.close()
 
-    def test_restart_relaunches_queued_work_but_fails_uncheckpointed_running_work(self) -> None:
+    def test_restart_relaunches_queued_work_and_can_resume_interrupted_running_work(self) -> None:
         artifacts = AgentArtifactStore(self.db_path)
         store = AgentDelegationStore(self.db_path, artifacts=artifacts)
         store.initialize()
@@ -2213,6 +2513,22 @@ class AgentDelegationTests(unittest.TestCase):
         failed = coordinator.store.get_batch(str(running["id"]))
         self.assertEqual(failed["state"], "failed")
         self.assertIn("durable terminal checkpoint", failed["runs"][0]["error"])
+        interrupted = failed["runs"][0]
+        coordinator.control(
+            str(self.parent["id"]),
+            str(interrupted["id"]),
+            {
+                "action": "resume",
+                "clientActionId": "action:restart-resume",
+                "message": "恢复上下文\n从保留的子 Agent 会话继续，不要重做已有步骤。",
+            },
+        )
+        _wait_until(
+            lambda: coordinator.store.get_batch(str(running["id"]))["state"]
+            == "completed"
+        )
+        resumed = coordinator.store.get_batch(str(running["id"]))["runs"][0]
+        self.assertEqual(resumed["childSessionId"], interrupted["childSessionId"])
         coordinator.close()
 
     def test_console_uses_live_runtime_and_controls_are_idempotent(self) -> None:

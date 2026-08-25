@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
 
     installation = discover_managed_pi_runtime(
         runtime_app_support,
-        expected_pi_version="0.80.7",
+        expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "").strip(),
     )
     _configure_private_gateway_environment(
         db_path=db_path,

@@ -568,10 +568,77 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     ).fetchone() is not None
 
 
+def _migrate_agent_room_work_review_columns(
+    conn: sqlite3.Connection,
+    _applied_at_ms: int,
+) -> None:
+    columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(agent_room_work_items)")
+    }
+    additions = (
+        (
+            "review_operability_verdict",
+            "TEXT NOT NULL DEFAULT '' CHECK ("
+            "review_operability_verdict IN ('', 'passed', 'failed', 'unverified'))",
+        ),
+        (
+            "review_requirement_verdict",
+            "TEXT NOT NULL DEFAULT '' CHECK ("
+            "review_requirement_verdict IN "
+            "('', 'satisfied', 'not_satisfied', 'unverified'))",
+        ),
+        ("review_evidence_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("review_reason", "TEXT NOT NULL DEFAULT ''"),
+        ("reviewer_participant_id", "TEXT NOT NULL DEFAULT ''"),
+        ("reviewed_at_ms", "INTEGER"),
+    )
+    for name, declaration in additions:
+        if name in columns:
+            continue
+        conn.execute(
+            f"ALTER TABLE agent_room_work_items ADD COLUMN {name} {declaration}"
+        )
+        columns.add(name)
+
+
+def _migrate_agent_room_work_proposed_verdicts(
+    conn: sqlite3.Connection,
+    _applied_at_ms: int,
+) -> None:
+    columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(agent_room_work_items)")
+    }
+    additions = (
+        (
+            "proposed_operability_verdict",
+            "TEXT NOT NULL DEFAULT '' CHECK ("
+            "proposed_operability_verdict IN "
+            "('', 'passed', 'failed', 'unverified'))",
+        ),
+        (
+            "proposed_requirement_verdict",
+            "TEXT NOT NULL DEFAULT '' CHECK ("
+            "proposed_requirement_verdict IN "
+            "('', 'satisfied', 'not_satisfied', 'unverified'))",
+        ),
+    )
+    for name, declaration in additions:
+        if name in columns:
+            continue
+        conn.execute(
+            f"ALTER TABLE agent_room_work_items ADD COLUMN {name} {declaration}"
+        )
+        columns.add(name)
+
+
 _MIGRATION_HOOKS: dict[int, MigrationHook] = {
     1: _canonicalize_memory_feedback_events,
     3: _migrate_context_group_columns,
     7: _canonicalize_input_events,
     29: _migrate_agent_identity_column,
     118: _migrate_project_tool_ids,
+    160: _migrate_agent_room_work_review_columns,
+    162: _migrate_agent_room_work_proposed_verdicts,
 }

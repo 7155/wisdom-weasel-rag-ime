@@ -22,7 +22,7 @@ class ProjectHarnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             errors = validate_project_harness(Path(directory))
 
-        self.assertIn("missing root harness document: AGENTS.md", errors)
+        self.assertIn("missing bootstrap authority document: AGENTS.md", errors)
         self.assertTrue(any("missing core Skill body" in error for error in errors))
         self.assertFalse(any("Session is not running" in error for error in errors))
 

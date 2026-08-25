@@ -41,6 +41,7 @@ _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _MAX_JSON_BYTES = 2 * 1024 * 1024
 _MAX_RUNTIME_FILES = 100_000
+_MAX_RUNTIME_METHODS = 64
 _MAX_RETIRED_GENERATIONS = 64
 REQUIRED_ACCEPTANCE_METHODS = (
     "session.open",
@@ -2614,7 +2615,7 @@ def _protocol_version(value: object) -> str:
 def _runtime_methods(value: object, protocol_version: str) -> tuple[str, ...]:
     if value is None and protocol_version == "1":
         return ()
-    if not isinstance(value, (list, tuple)) or len(value) > 32:
+    if not isinstance(value, (list, tuple)) or len(value) > _MAX_RUNTIME_METHODS:
         raise ManagedPiRuntimeError("managed Pi runtime method list is invalid")
     methods = tuple(str(item or "").strip() for item in value)
     if len(set(methods)) != len(methods) or any(

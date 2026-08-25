@@ -120,6 +120,80 @@ class AgentExtensionService:
             if isinstance(item, Mapping)
         }
         entries: list[dict[str, object]] = []
+        runtime_packages: list[dict[str, object]] = []
+        if runtime_available:
+            try:
+                raw_packages = self._call("plugin_catalog")
+            except AgentRuntimeError:
+                # Older staged runtimes do not expose the native Pi Package
+                # catalog. Keep the legacy first-party catalog readable until
+                # the atomic runtime cutover completes.
+                raw_packages = []
+            if not isinstance(raw_packages, list):
+                raise AgentRuntimeError(
+                    "Pi Runtime Host returned an invalid Pi Package catalog"
+                )
+            runtime_packages = [
+                dict(value) for value in raw_packages if isinstance(value, Mapping)
+            ]
+        for package in runtime_packages:
+            package_id = str(package.get("id") or package.get("name") or "")
+            if not package_id:
+                continue
+            version = str(package.get("version") or "")
+            installed_version = str(package.get("installedVersion") or "")
+            entries.append(
+                {
+                    "id": package_id,
+                    "displayName": str(
+                        package.get("displayName") or package.get("name") or package_id
+                    ),
+                    "description": str(package.get("description") or ""),
+                    "publisher": "Personal Agent Workbench",
+                    "source": {
+                        "kind": "bundled_pi_package",
+                        "label": "Bundled with the active Pi Runtime",
+                    },
+                    "permissions": [],
+                    "capabilities": [
+                        str(value)
+                        for value in package.get("capabilities") or []
+                        if isinstance(value, str)
+                    ],
+                    "compatibility": {"runtimeProtocol": "2", "pi": ">=0.84.2"},
+                    "security": {
+                        "reviewed": True,
+                        "networkAccess": package_id.endswith("/subagent"),
+                        "enforcement": "content_addressed_pi_package",
+                        "notes": (
+                            "First-party Pi Package. Install, enable, disable, and uninstall "
+                            "are owned by the active Pi Runtime Host."
+                        ),
+                    },
+                    "versions": ([{"version": version, "releasedAt": "", "notes": ""}] if version else []),
+                    "latestVersion": version,
+                    "installedVersion": installed_version,
+                    "installed": package.get("installed") is True,
+                    "enabled": package.get("enabled") is True,
+                    "updateAvailable": bool(
+                        installed_version
+                        and version
+                        and _version_key(version) > _version_key(installed_version)
+                    ),
+                    "installState": (
+                        "update_available"
+                        if installed_version
+                        and version
+                        and _version_key(version) > _version_key(installed_version)
+                        else "installed"
+                        if package.get("installed") is True
+                        else "available"
+                    ),
+                    "actionable": True,
+                    "distribution": "pi_package",
+                    "bundled": True,
+                }
+            )
         for raw_entry in document.get("entries") or []:
             if not isinstance(raw_entry, Mapping):
                 continue
@@ -264,11 +338,40 @@ class AgentExtensionService:
         prepared_package_id = ""
         distribution = "review_only"
         if catalog_id:
-            source, resolved_version = self._catalog_source(catalog_id, catalog_version)
-            staged = self._stage_source(source)
-            catalog_selection = {"catalogId": catalog_id, "catalogVersion": resolved_version}
-            validation = self._call("plugin_validate", str(staged))
-            distribution = "bundled"
+            runtime_package = self._runtime_catalog_package(catalog_id, catalog_version)
+            if runtime_package is not None:
+                resolved_version = str(runtime_package.get("version") or "")
+                source = str(runtime_package.get("source") or "")
+                if not source:
+                    raise AgentRuntimeError(
+                        "Pi Runtime Host omitted the bundled Package source"
+                    )
+                validation = self._call("plugin_prepare_package", source)
+                if not isinstance(validation, Mapping):
+                    raise AgentRuntimeError(
+                        "Pi Runtime Host returned an invalid Pi Package validation"
+                    )
+                prepared_package_id = str(validation.get("preparedPackageId") or "")
+                if not prepared_package_id:
+                    raise AgentRuntimeError(
+                        "Pi Runtime Host did not retain the bundled Pi Package"
+                    )
+                catalog_selection = {
+                    "catalogId": catalog_id,
+                    "catalogVersion": resolved_version,
+                }
+                distribution = "pi_package"
+            else:
+                source, resolved_version = self._catalog_source(
+                    catalog_id, catalog_version
+                )
+                staged = self._stage_source(source)
+                catalog_selection = {
+                    "catalogId": catalog_id,
+                    "catalogVersion": resolved_version,
+                }
+                validation = self._call("plugin_validate", str(staged))
+                distribution = "bundled"
         elif package_source:
             validation = self._call("plugin_prepare_package", package_source)
             if not isinstance(validation, Mapping):
@@ -324,7 +427,14 @@ class AgentExtensionService:
 
     def preview(self, payload: Mapping[str, object]) -> dict[str, object]:
         action = str(payload.get("action") or "install").strip().lower()
-        if action not in {"install", "update", "enable", "disable", "rollback"}:
+        if action not in {
+            "install",
+            "update",
+            "enable",
+            "disable",
+            "uninstall",
+            "rollback",
+        }:
             raise ValueError("unsupported plugin action")
         operation: dict[str, object] = {"action": action}
         if action in {"install", "update"}:
@@ -343,6 +453,34 @@ class AgentExtensionService:
                     "enable": payload.get("enable") is True,
                     "manifest": dict(validation["validation"]),
                     "catalog": dict(validation.get("catalog") or {}),
+                }
+            )
+            host_preview_payload: dict[str, object] = {
+                "expectedDigest": str(validation["digest"]),
+                "enable": payload.get("enable") is True,
+            }
+            prepared_package_id = str(validation.get("preparedPackageId") or "")
+            if prepared_package_id:
+                host_preview_payload["preparedPackageId"] = prepared_package_id
+            else:
+                host_preview_payload["sourcePath"] = str(validation["sourcePath"])
+            host_preview = self._call(
+                "plugin_preview_install", host_preview_payload
+            )
+            if not isinstance(host_preview, Mapping):
+                raise AgentRuntimeError(
+                    "Pi Runtime Host returned an invalid plugin install preview"
+                )
+            host_preview_token = str(host_preview.get("previewToken") or "")
+            host_payload_sha256 = str(host_preview.get("payloadSha256") or "")
+            if not host_preview_token or not host_payload_sha256:
+                raise AgentRuntimeError(
+                    "Pi Runtime Host did not return a bound plugin install preview"
+                )
+            operation.update(
+                {
+                    "hostPreviewToken": host_preview_token,
+                    "hostPayloadSha256": host_payload_sha256,
                 }
             )
         else:
@@ -429,6 +567,9 @@ class AgentExtensionService:
             install_payload: dict[str, object] = {
                 "expectedDigest": str(operation.get("expectedDigest") or ""),
                 "enable": operation.get("enable") is True,
+                "previewToken": str(operation.get("hostPreviewToken") or ""),
+                "payloadSha256": str(operation.get("hostPayloadSha256") or ""),
+                "confirmText": "apply",
             }
             prepared_package_id = str(operation.get("preparedPackageId") or "")
             if prepared_package_id:
@@ -444,6 +585,15 @@ class AgentExtensionService:
                 "plugin_enable",
                 str(operation.get("pluginId") or ""),
                 enabled=action == "enable",
+                expected_active_digest=str(
+                    operation.get("expectedActiveDigest") or ""
+                ),
+                expected_enabled=operation.get("expectedEnabled") is True,
+            )
+        elif action == "uninstall":
+            plugin = self._call(
+                "plugin_uninstall",
+                str(operation.get("pluginId") or ""),
                 expected_active_digest=str(
                     operation.get("expectedActiveDigest") or ""
                 ),
@@ -591,6 +741,33 @@ class AgentExtensionService:
         if not _is_within(resolved, root):
             raise ValueError("plugin catalog source escapes the product bundle")
         return resolved, str(selected.get("version") or "")
+
+    def _runtime_catalog_package(
+        self, catalog_id: str, version: str
+    ) -> dict[str, object] | None:
+        try:
+            packages = self._call("plugin_catalog")
+        except AgentRuntimeError:
+            return None
+        if not isinstance(packages, list):
+            raise AgentRuntimeError(
+                "Pi Runtime Host returned an invalid Pi Package catalog"
+            )
+        package = next(
+            (
+                dict(value)
+                for value in packages
+                if isinstance(value, Mapping)
+                and str(value.get("id") or value.get("name") or "") == catalog_id
+            ),
+            None,
+        )
+        if package is None:
+            return None
+        available_version = str(package.get("version") or "")
+        if version and version != available_version:
+            raise ValueError("plugin catalog version does not exist")
+        return package
 
     def _token(self, token: str, *, kind: str, consume: bool) -> dict[str, object]:
         if not token:

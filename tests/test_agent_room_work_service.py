@@ -257,7 +257,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             with urlopen(add, timeout=5) as response:
                 added = json.load(response)
             participant_id = str(added["participant"]["id"])
-            self.assertEqual(added["participant"]["displayName"], "澄·远")
+            self.assertEqual(added["participant"]["displayName"], "Agent 3")
 
             remove = Request(
                 f"{base}/participants",
@@ -588,6 +588,52 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                 "clientMessageId": "ephemeral-work-context",
             },
         )["workItem"]
+        source = self.root / "docs" / "vector-recall-worker.md"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("# 向量召回检查\n\n记录本 WorkItem 的证据。\n", encoding="utf-8")
+        document = self.service.work_documents.register(
+            {
+                "authorityKind": "room_work_item",
+                "authorityId": item["id"],
+                "authorityRevision": 1,
+                "workspaceRoot": str(self.root),
+                "sourcePath": "docs/vector-recall-worker.md",
+                "title": "向量召回工作文档",
+            }
+        )["document"]
+        peer = self.participants[1]
+        peer_item = self.service.create_room_work_item(
+            str(self.room["id"]),
+            {
+                "objective": "核对前端 Workflow 投影",
+                "expectedOutput": "任务图证据",
+                "acceptanceCriteria": ["显示真实依赖"],
+                "currentOwnerParticipantId": peer["id"],
+                "clientMessageId": "peer-document-context",
+            },
+        )["workItem"]
+        peer_source = self.root / "docs" / "workflow-projection-worker.md"
+        peer_source.write_text("# Workflow 投影\n", encoding="utf-8")
+        peer_document = self.service.work_documents.register(
+            {
+                "authorityKind": "room_work_item",
+                "authorityId": peer_item["id"],
+                "authorityRevision": 1,
+                "workspaceRoot": str(self.root),
+                "sourcePath": "docs/workflow-projection-worker.md",
+                "title": "Workflow 投影工作文档",
+            }
+        )["document"]
+        unregistered_item = self.service.create_room_work_item(
+            str(self.room["id"]),
+            {
+                "objective": "先登记自己的活动文档",
+                "expectedOutput": "规范路径回执",
+                "acceptanceCriteria": ["使用当前 authority revision"],
+                "currentOwnerParticipantId": owner["id"],
+                "clientMessageId": "unregistered-document-context",
+            },
+        )["workItem"]
 
         with patch.object(
             self.service,
@@ -607,15 +653,57 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
         transient_context = str(prompt_payload["_transientContext"])
         self.assertIn(objective, transient_context)
         self.assertIn("当前工作卡片", transient_context)
-        self.assertNotIn(str(item["id"]), transient_context)
-        self.assertNotIn("revision=", transient_context)
-        session = self.service.sessions.get(str(owner["sessionId"]))
-        role_book = self.service.role_books.routing_profile(
-            str(owner["roleId"]),
-            str(owner["roleVersion"]),
-            str(session["roleBookRevisionId"]),
+        self.assertIn(str(item["id"]), transient_context)
+        self.assertIn("Room 正在工作的文档索引", transient_context)
+        self.assertIn(str(document["documentId"]), transient_context)
+        self.assertIn(str(document["path"]), transient_context)
+        self.assertIn(str(owner["sessionId"]), transient_context)
+        self.assertIn("[你负责]", transient_context)
+        self.assertIn(str(peer_document["path"]), transient_context)
+        self.assertIn(str(peer["sessionId"]), transient_context)
+        self.assertIn("[Room 共享]", transient_context)
+        self.assertIn("workspace_read", transient_context)
+        self.assertIn(
+            f"authorityId={unregistered_item['id']}",
+            transient_context,
         )
-        self.assertNotIn(objective, str(role_book))
+        self.assertIn("authorityRevision=1", transient_context)
+        self.assertIn("尚未登记活动文档", transient_context)
+        self.assertIn(
+            "workDocumentRegistration.document.path",
+            transient_context,
+        )
+        session = self.service.sessions.get(str(owner["sessionId"]))
+        self.assertEqual(session["roleBookRevisionId"], "")
+
+    def test_new_delegate_gets_authority_revision_with_a_pre_create_room_snapshot(
+        self,
+    ) -> None:
+        owner = self.participants[0]
+        room_before_delegate = dict(self.room)
+        self.assertEqual(room_before_delegate["workItems"], [])
+        item = self.service.create_room_work_item(
+            str(self.room["id"]),
+            {
+                "objective": "先登记新委派的活动文档",
+                "expectedOutput": "绑定写入回执",
+                "acceptanceCriteria": ["不得猜测 authority revision"],
+                "currentOwnerParticipantId": owner["id"],
+                "clientMessageId": "new-delegate-authority-context",
+            },
+        )["workItem"]
+
+        transient_context = self.service._room_participant_prompt_with_documents(
+            room_before_delegate,
+            owner,
+            "",
+            work_item=item,
+        )
+
+        self.assertIn(f"WorkItem：{item['id']}", transient_context)
+        self.assertIn(f"authorityId={item['id']}", transient_context)
+        self.assertIn("authorityRevision=1", transient_context)
+        self.assertIn("不要猜 WorkItem revision", transient_context)
 
 
 if __name__ == "__main__":

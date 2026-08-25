@@ -160,6 +160,7 @@ current Room runtime or UI owner.
 | Light Room | `rag_ime/agent_rooms.py`, `rag_ime/agent_room_turn_registry.py`, Room methods in `agent_service.py` | Room identity, participants, topics, explicit dispatch mapping, public event order, cancellation fan-out, one Root terminal | Pi loop, document quality gates, mandatory review |
 | Persistence | `rag_ime/local_sqlite_core.py` and focused stores | schema, transactions, authoritative local state | Provider or presentation policy |
 | UI projection | `control-center-web/src/contracts/room-reducer.ts`, `control-center-web/src/features/rooms/` | deterministic read model, rendering, user intent | runtime ownership or inferred completion |
+| PAW OS product frontend | PAW-owned product composition in `7155/personal-agent-workbench` plus the existing versioned transport and reducers | App composition, windows, Dock, Mission Control, layout snapshots, PAW surface rendering | Session/Room/Package/WorkDocument/Memory/Knowledge lifecycle or copied Runtime state |
 
 ## Primary Flows
 
@@ -219,6 +220,69 @@ React feature
 Simple route families use descriptors. Streaming, path-parameter, binary, and
 special-authorization routes keep dedicated adapters when a generic descriptor
 would hide behavior.
+
+### PAW OS Frontend Projection
+
+```text
+PAW snapshot / ordered SSE / typed command
+  -> versioned PAW transport adapter
+  -> PAW OS product composition in 7155/personal-agent-workbench
+  -> paw.* App or window surface
+  -> PAW-owned window / Dock / Mission Control / snapshot mechanics
+```
+
+PAW OS is built and released from `7155/personal-agent-workbench`. The existing
+`control-center-web` shell remains a selectable legacy fallback until cutover;
+the new shell shares PAW contracts, generated types, reducers, and Gateway
+adapters instead of copying them. `7155/tutti` and `tutti-os/tutti` are
+reference sources only. PAW may adapt their proven interaction mechanics, but
+no Tutti repository, absolute local path, or Tutti Runtime state is a product
+dependency.
+
+A PAW OS shell snapshot may retain product identity, node identity, frame,
+focus, z-order, and other presentation state. It must not persist or reconstruct
+Room, Session, WorkItem, approval, Package, WorkDocument, Memory, Knowledge, or
+terminal state. Those facts continue to come from their existing PAW/Pi owners
+after refresh. Legacy and PAW OS layout state use separate namespaces so a
+staged migration or rollback cannot overwrite the other shell's layout.
+
+Feature migration keeps the PAW reducer/store/contract owner intact and adds a
+narrow PAW OS surface around it. Closing a window removes or hides that view;
+Stop and Cancel remain explicit PAW/Pi commands. Tutti-inspired behavior is
+implemented behind PAW-owned interfaces and verified inside this repository.
+
+Related Web routes converge into PAW OS Apps instead of becoming one App per
+sidebar item. Project Field / Wayfinder is the windowless OS home and project
+selector, not an ordinary App. Project Workbench owns Overview, WorkItems, and
+WorkDocuments; Agent owns Conversations, Sessions, and Roles; Rooms owns the
+Room list, collaboration timeline, and Workflow graph; Memory and Knowledge
+retain separate context authorities; Input Studio owns voice, Squirrel/Rime,
+lexicon, and input history. App Center, System Monitor, and System Settings own
+capability installation, operational evidence, and policy respectively. Files,
+Browser, and Terminal adapt Tutti's proven presentation mechanics behind
+PAW-owned contracts rather than importing Tutti Runtime ownership.
+
+The Browser App deliberately gives the human and Agent one visible page
+identity:
+
+```text
+Browser App tab + address bar
+  -> selected PAW deviceId + tabId
+  -> browser.command / snapshot / permission / trace
+  -> connected or managed browser
+  -> ordered receipt and refreshed snapshot in the same App surface
+```
+
+Human navigation and Agent actions therefore converge on the same tab and page
+snapshot. PAW remains authoritative for command admission, permission prompts,
+execution traces, cancellation, and Stop. Window chrome, tab presentation, and
+address-bar interaction do not become a second browser state machine.
+
+A Room always has one complete main window plus bounded optional participant
+satellites. The main window retains objective, ordered loops, Workflow, direct
+peer relationships, approvals, Root convergence, and final answer. Satellites
+project one participant's local slice and share the same Room snapshot/reducer/
+event owner; window layout never becomes collaboration truth.
 
 ### Pi Package Market And Skill Creation
 

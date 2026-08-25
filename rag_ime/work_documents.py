@@ -145,8 +145,6 @@ class WorkDocumentService:
             foreign_keys=True,
         ) as conn:
             authority = self._authority(conn, kind, authority_id)
-            if authority["revision"] != revision:
-                raise WorkDocumentError("authority revision is stale")
             if authority["terminal"]:
                 raise WorkDocumentError(
                     "terminal authority cannot register an active document"
@@ -155,15 +153,46 @@ class WorkDocumentService:
                 "SELECT * FROM work_documents WHERE authority_key=?",
                 (authority_key,),
             ).fetchone()
+            if existing is not None and str(existing["state"]) == "archived":
+                raise WorkDocumentError(
+                    "archived document must be reopened through its authority"
+                )
+            _bound_open_revision(existing, authority, revision)
             if existing is not None:
-                if str(existing["state"]) == "archived":
-                    raise WorkDocumentError(
-                        "archived document must be reopened through its authority"
-                    )
                 if _resolve(root, str(existing["relative_path"])) != source:
                     raise WorkDocumentError(
                         "updates must use the canonical active path"
                     )
+
+    def authority_context(
+        self,
+        authority_kind: str,
+        authority_id: str,
+    ) -> dict[str, object]:
+        """Return the current authority receipt used by a document binding.
+
+        This is an advisory prompt projection over the existing authority
+        owner.  It does not reserve a revision or create another document
+        lifecycle.
+        """
+        kind = _required(authority_kind, "authorityKind", 40)
+        identifier = _required(authority_id, "authorityId", 240)
+        with sqlite_connection(
+            self.db_path,
+            row_factory=sqlite3.Row,
+            foreign_keys=True,
+        ) as conn:
+            authority = self._authority(conn, kind, identifier)
+        return {
+            "authorityKind": kind,
+            "authorityId": identifier,
+            "authorityKey": f"{kind}:{identifier}",
+            "authorityRevision": int(authority["revision"]),
+            "state": str(authority["state"]),
+            "terminal": bool(authority["terminal"]),
+            "terminalState": str(authority["terminalState"]),
+            "transitionReceiptId": str(authority["receiptId"]),
+        }
 
     def register(self, payload: Mapping[str, object]) -> dict[str, object]:
         kind = _required(payload.get("authorityKind"), "authorityKind", 40)
@@ -179,22 +208,21 @@ class WorkDocumentService:
         digest = _sha256_file(source)
         now = _now_ms()
         title = _text(payload.get("title"), 240)
-        operation_key = _register_operation_key(
-            document_id,
-            authority_revision=revision,
-            content_sha256=digest,
-            title=title,
-        )
         with self._lock, sqlite_connection(self.db_path, row_factory=sqlite3.Row, foreign_keys=True) as conn:
             authority = self._authority(conn, kind, authority_id)
-            if authority["revision"] != revision:
-                raise WorkDocumentError("authority revision is stale")
             if authority["terminal"]:
                 raise WorkDocumentError("terminal authority cannot register an active document")
             existing = conn.execute("SELECT * FROM work_documents WHERE authority_key = ?", (authority_key,)).fetchone()
+            if existing is not None and str(existing["state"]) == "archived":
+                raise WorkDocumentError("archived document must be reopened through its authority")
+            revision = _bound_open_revision(existing, authority, revision)
+            operation_key = _register_operation_key(
+                document_id,
+                authority_revision=revision,
+                content_sha256=digest,
+                title=title,
+            )
             if existing is not None:
-                if str(existing["state"]) == "archived":
-                    raise WorkDocumentError("archived document must be reopened through its authority")
                 canonical = _resolve(root, str(existing["relative_path"]))
                 if canonical != source:
                     raise WorkDocumentError("updates must use the canonical active path")
@@ -972,6 +1000,25 @@ def _command(
 def _validated(payload: Any, contract: str) -> Any:
     validate_contract(payload, contract)
     return payload
+
+
+def _bound_open_revision(
+    existing: sqlite3.Row | None,
+    authority: Mapping[str, object],
+    requested: int,
+) -> int:
+    live = int(authority["revision"])
+    if live == requested:
+        return live
+    bound = int(existing["authority_revision"]) if existing is not None else None
+    if (
+        bound is not None
+        and str(existing["state"]) == "active"
+        and requested == bound
+        and live >= bound
+    ):
+        return live
+    raise WorkDocumentError("authority revision is stale")
 
 
 def _payload(row: sqlite3.Row) -> WorkDocumentPayload:

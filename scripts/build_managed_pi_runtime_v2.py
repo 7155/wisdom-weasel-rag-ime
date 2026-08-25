@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,12 +36,57 @@ SESSION_RUNTIME_CONTRACT = (
 SKILL_ROUTING_CARDS = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
 BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
 PROJECT_ROUTING_SKILLS = frozenset(
-    {"memory-curation", "plugin-creator", "project-maintainer"}
+    {
+        "bootstrap-project-context",
+        "memory-curation",
+        "pawos-system",
+        "plugin-creator",
+        "project-maintainer",
+    }
 )
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 200
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "a4d15d3a3cc99000f3a2e5e98d19c5dfb3c291d5"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "de1010790c6a11724c99cbf8055a8dd81fbff22b"
+REQUIRED_RUNTIME_METHODS = (
+    "hello",
+    "health",
+    "models.list",
+    "completion.once",
+    "completion.cancel",
+    "tools.list",
+    "tools.sync",
+    "session.open",
+    "session.control_state",
+    "session.settlement.get",
+    "session.await_settled",
+    "session.snapshot",
+    "session.debug.context",
+    "session.commands",
+    "session.fork.candidates",
+    "session.fork",
+    "session.rewind",
+    "session.prompt",
+    "session.steer",
+    "session.follow_up",
+    "session.abort",
+    "session.compact",
+    "session.model.set",
+    "session.thinking.set",
+    "session.close",
+    "room.dispatch",
+    "room.cancel",
+    "approval.resolve",
+    "review.resolve",
+    "ui.resolve",
+    "plugins.list",
+    "plugins.create",
+    "plugins.validate",
+    "plugins.install",
+    "plugins.enable",
+    "plugins.disable",
+    "plugins.rollback",
+)
 _SESSION_RUNTIME_SOURCE_KEYS = (
     "protocol",
     "runtimeHost",
@@ -48,6 +94,7 @@ _SESSION_RUNTIME_SOURCE_KEYS = (
     "toolBridge",
     "toolResults",
     "session",
+    "pluginManager",
 )
 _OAUTH_RUNTIME_MODULES = {
     "anthropic.ts": (
@@ -113,12 +160,20 @@ def _default_node() -> str:
     return shutil.which("node") or ""
 
 
+def _runtime_host_root(pi_root: Path) -> Path:
+    candidates = (
+        pi_root / "integrations" / "rag-ime-runtime-host",
+        pi_root / "packages" / "rag-ime-runtime-host",
+    )
+    return next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
+
+
 def _default_pi_worktree(parent: Path | None = None) -> Path:
     workspace_root = parent or ROOT.parent
     canonical = workspace_root / "pi"
     legacy = workspace_root / "pi-rag-ime-runtime"
     for candidate in (canonical, legacy):
-        if (candidate / "packages" / "rag-ime-runtime-host").is_dir():
+        if _runtime_host_root(candidate).is_dir():
             return candidate
     return canonical
 
@@ -151,6 +206,7 @@ def _source_revision(pi_root: Path) -> tuple[str, str]:
             "HEAD",
             "--",
             "packages",
+            "integrations/rag-ime-runtime-host",
             "package.json",
             "package-lock.json",
             "tsconfig.json",
@@ -168,6 +224,7 @@ def _source_revision(pi_root: Path) -> tuple[str, str]:
             "--exclude-standard",
             "--",
             "packages",
+            "integrations/rag-ime-runtime-host",
             "package.json",
             "package-lock.json",
             "tsconfig.json",
@@ -213,14 +270,7 @@ def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object]
             "Session runtime source provenance is unsupported"
         )
     methods = contract.get("requiredMethods")
-    if methods != [
-        "session.open",
-        "session.prompt",
-        "session.steer",
-        "session.debug.context",
-        "session.abort",
-        "session.snapshot",
-    ]:
+    if methods != list(REQUIRED_RUNTIME_METHODS):
         raise ManagedPiRuntimeError(
             "Session runtime source contract methods are incomplete"
         )
@@ -284,6 +334,25 @@ def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object]
                 )
     protocol_source = source_texts["protocol"]
     runtime_host_source = source_texts["runtimeHost"]
+    runtime_method_declaration = re.search(
+        r"export\s+type\s+RuntimeMethod\s*=\s*(.*?);",
+        protocol_source,
+        flags=re.DOTALL,
+    )
+    if runtime_method_declaration is None:
+        raise ManagedPiRuntimeError(
+            "Pi Runtime Host protocol method declaration is missing"
+        )
+    declared_methods = tuple(
+        re.findall(
+            r'\|\s*"([a-z][a-z0-9_.]{0,63})"',
+            runtime_method_declaration.group(1),
+        )
+    )
+    if declared_methods != tuple(methods):
+        raise ManagedPiRuntimeError(
+            "Session runtime source contract methods do not match the Pi protocol"
+        )
     for method in methods:
         if f'| "{method}"' not in protocol_source or f'case "{method}"' not in runtime_host_source:
             raise ManagedPiRuntimeError(f"Pi Runtime Host does not implement {method}")
@@ -349,6 +418,24 @@ def _skill_frontmatter(skill_file: Path, *, source: str) -> dict[str, object]:
             f"{skill_file.parent.name!r} at {skill_file}"
         )
     return value
+
+
+def _skill_routing_projection(
+    frontmatter: dict[str, object],
+    *,
+    skill_name: str,
+) -> dict[str, object]:
+    metadata = frontmatter.get("metadata")
+    nested = metadata.get("routing") if isinstance(metadata, dict) else None
+    routing = nested if isinstance(nested, dict) else frontmatter
+    projection: dict[str, object] = {"name": frontmatter.get("name")}
+    for field in ROUTING_CARD_FIELDS[1:]:
+        if field not in routing:
+            raise ManagedPiRuntimeError(
+                f"bundled Skill {skill_name!r} is missing routing field {field!r}"
+            )
+        projection[field] = routing[field]
+    return projection
 
 
 def _discover_skill_files(paths: tuple[Path, ...], *, source: str) -> tuple[Path, ...]:
@@ -459,7 +546,7 @@ def _resolve_skill_source_collisions(
 def _compact_card_length(card: dict[str, object]) -> int:
     runtime_card = {
         field: card[field]
-        for field in ("name", "when", "does", "notFor")
+        for field in ROUTING_CARD_FIELDS
         if field in card
     }
     return len(json.dumps(runtime_card, ensure_ascii=False, separators=(",", ":")))
@@ -562,12 +649,7 @@ def _validated_skill_routing_catalog(
                 f"project routing card source Skill is missing: bundled={name}"
             )
         source = _skill_frontmatter(skills_root / name / "SKILL.md", source="bundled")
-        try:
-            projection = {field: source[field] for field in ROUTING_CARD_FIELDS}
-        except KeyError as error:
-            raise ManagedPiRuntimeError(
-                f"bundled Skill {name!r} is missing routing field {error.args[0]!r}"
-            ) from error
+        projection = _skill_routing_projection(source, skill_name=name)
         card = cards_by_name.get(name)
         if card != projection:
             raise ManagedPiRuntimeError(
@@ -824,7 +906,7 @@ def main(argv: list[str] | None = None) -> int:
 
     pi_root = Path(args.pi_worktree).expanduser().resolve()
     node = Path(args.node).expanduser().resolve() if args.node else Path()
-    package_root = pi_root / "packages" / "rag-ime-runtime-host"
+    package_root = _runtime_host_root(pi_root)
     package_json = pi_root / "packages" / "coding-agent" / "package.json"
     esbuild = pi_root / "node_modules" / ".bin" / "esbuild"
     if not package_root.is_dir() or not package_json.is_file() or not esbuild.is_file():
@@ -914,6 +996,31 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=pi_root,
             )
             bundled_entrypoint.chmod(0o755)
+
+            # The Runtime Host is the managed Session RPC entrypoint, not the
+            # coding-agent CLI.  The bundled subagent Package launches
+            # isolated child Sessions through Pi's JSON print mode, so ship a
+            # sibling CLI explicitly instead of letting it recursively invoke
+            # runtime-host/cli.mjs (which exits 0 with no output).
+            bundled_pi_cli = runtime_dir / "pi-cli.mjs"
+            _run(
+                [
+                    str(esbuild),
+                    str(pi_root / "packages" / "coding-agent" / "src" / "cli.ts"),
+                    "--bundle",
+                    "--platform=node",
+                    "--format=esm",
+                    "--target=node22",
+                    f"--outfile={bundled_pi_cli}",
+                    f'--banner:js={_runtime_host_banner(product_skills, routing_catalog["collisionPolicy"])}',
+                ],
+                cwd=pi_root,
+            )
+            bundled_pi_cli.chmod(0o755)
+            bundled_pi_theme_dir = runtime_dir / "dist" / "modes" / "interactive" / "theme"
+            bundled_pi_theme_dir.mkdir(parents=True, exist_ok=True)
+            for theme_file in (pi_root / "packages" / "coding-agent" / "src" / "modes" / "interactive" / "theme").glob("*.json"):
+                shutil.copy2(theme_file, bundled_pi_theme_dir / theme_file.name)
             provider_bridge = runtime_dir / "provider-bridge.mjs"
             _run(
                 [

@@ -15,8 +15,6 @@ ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
 
 class RoomSessionHost(Protocol):
     rooms: Any
-    personas: Any
-    role_books: Any
     room_work: Any
     room_events: Any
     room_turns: RoomTurnRegistry
@@ -27,14 +25,19 @@ class RoomSessionHost(Protocol):
         room: Mapping[str, object],
     ) -> None: ...
 
-    def _ensure_session_role_book(
-        self,
-        session_id: str,
-    ) -> Mapping[str, object]: ...
-
     def _guard_room_session_route(
         self,
         route: str,
+        session_id: str,
+    ) -> None: ...
+
+    def _recover_faulted_room_session(
+        self,
+        session_id: str,
+    ) -> None: ...
+
+    def _resume_room_goal_if_paused(
+        self,
         session_id: str,
     ) -> None: ...
 
@@ -82,6 +85,7 @@ class RoomSessionDispatchService:
         *,
         message: str,
         client_message_id: str,
+        retry_of_root_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
@@ -95,6 +99,7 @@ class RoomSessionDispatchService:
             room_id,
             message=message,
             client_message_id=client_message_id,
+            retry_of_root_id=retry_of_root_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
             attachment_ids=attachment_ids,
@@ -107,6 +112,7 @@ class RoomSessionDispatchService:
         *,
         message: str,
         client_message_id: str,
+        retry_of_root_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
@@ -116,6 +122,38 @@ class RoomSessionDispatchService:
         self.host._restore_room_participant_sessions(room)
         work_item: dict[str, object] | None = None
         authoritative_participant_id = ""
+        if retry_of_root_id and not str(work_item_id or "").strip():
+            returned_candidates: list[Mapping[str, object]] = []
+            for candidate in self.host.room_work.list(
+                room_id=room_id,
+                states=("active",),
+                limit=200,
+            ):
+                if (
+                    not isinstance(candidate, Mapping)
+                    or str(candidate.get("rootTurnId") or "")
+                    != retry_of_root_id
+                ):
+                    continue
+                blocker = candidate.get("blocker")
+                review = candidate.get("review")
+                has_return_feedback = (
+                    isinstance(blocker, Mapping)
+                    and bool(str(blocker.get("reviewFeedback") or "").strip())
+                ) or (
+                    isinstance(review, Mapping)
+                    and bool(str(review.get("reason") or "").strip())
+                )
+                if has_return_feedback:
+                    returned_candidates.append(candidate)
+            if len(returned_candidates) > 1:
+                raise ValueError(
+                    "retryOfRootId matches multiple returned WorkItems; "
+                    "provide workItemId"
+                )
+            if returned_candidates:
+                work_item_id = str(returned_candidates[0].get("id") or "")
+                route_id = "room.message.execute"
         if work_item_id:
             work_item, authoritative_participant_id = (
                 self.host.room_work.authoritative_owner(
@@ -129,36 +167,15 @@ class RoomSessionDispatchService:
                 continue
             if str(value.get("status") or "") != "active":
                 continue
-            role = self.host.personas.resolve(value.get("roleId"), value.get("roleVersion") or "1")
-            session = self.host._ensure_session_role_book(str(value["sessionId"]))
-            try:
-                role_book_profile = self.host.role_books.routing_profile(
-                    role.role_id,
-                    role.version,
-                    str(session.get("roleBookRevisionId") or ""),
-                )
-            except (ValueError, RuntimeError):
-                role_book_profile = {}
-            capability_texts = _role_book_profile_texts(
-                role_book_profile.get("capabilities")
-            )
-            recent_work_texts = _role_book_profile_texts(
-                role_book_profile.get("recentWork")
-            )
+            # Room routing consumes only explicit mentions, collaboration
+            # responsibility and WorkItem ownership. Persona/Role Book is an
+            # optional Package and must not be loaded by the core Room path.
             profiles[str(value["id"])] = {
-                "tagline": role.tagline,
-                "summary": " ".join(
-                    [role.summary, *capability_texts[:4], *recent_work_texts[:3]]
-                ),
-                "traits": list(role.traits),
-                "routingTags": [
-                    *role.traits,
-                    *capability_texts[:8],
-                    *recent_work_texts[:4],
-                ],
-                "roleBookRevisionId": str(
-                    role_book_profile.get("revisionId") or ""
-                ),
+                "tagline": "",
+                "summary": "",
+                "traits": [],
+                "routingTags": [],
+                "roleBookRevisionId": "",
             }
         decisions = self.host.rooms.plan_routes(
             room_id,
@@ -182,6 +199,9 @@ class RoomSessionDispatchService:
             for decision in decisions
         ]
         target_session_ids = [str(target["sessionId"]) for target in targets]
+        if retry_of_root_id:
+            for session_id in target_session_ids:
+                self.host._recover_faulted_room_session(session_id)
         attachment_receipts = self.resolve_attachments(
             room_id,
             target_session_ids,
@@ -194,6 +214,11 @@ class RoomSessionDispatchService:
                 route_id,
                 session_id,
             )
+        # The explicit user message carries the resume intent for a paused
+        # target Goal. This runs before the Root and user event become
+        # durable; wake, partner and Tool Agent dispatches never reach here.
+        for session_id in target_session_ids:
+            self.host._resume_room_goal_if_paused(session_id)
 
         target_by_session_id = {
             session_id: target
@@ -254,6 +279,8 @@ class RoomSessionDispatchService:
             }
             if client_message_id:
                 user_event_payload["clientMessageId"] = client_message_id
+            if retry_of_root_id:
+                user_event_payload["retryOfRootId"] = retry_of_root_id
             if work_item_id:
                 user_event_payload["workItemId"] = work_item_id
             if attachment_receipts:
@@ -321,6 +348,7 @@ class RoomSessionDispatchService:
 
         work_claimed = False
         previous_accepted_turn_id = ""
+        retry_dispatch_id = ""
         try:
             if work_item is not None:
                 previous_accepted_turn_id = str(
@@ -336,6 +364,27 @@ class RoomSessionDispatchService:
                     root_turn_id=room_turn_id,
                 )
                 work_claimed = True
+                # A retry submitted from the Room UI still represents the
+                # same governed Partner WorkItem.  Register its ordinary Room
+                # dispatch in the existing durable Partner ledger so a typed
+                # work_result can settle to review and wake the accountable
+                # Facilitator exactly like a tool-originated retry.
+                retry_dispatch_id = str(decisions[0]["dispatchId"])
+                accountable = self.host.rooms.participant(
+                    str(work_item["accountableParticipantId"])
+                )
+                self.host.room_partner_dispatches.register(
+                    child_dispatch_id=retry_dispatch_id,
+                    room_id=room_id,
+                    root_id=room_turn_id,
+                    parent_dispatch_id=f"room-user-retry:{room_turn_id}",
+                    tool_call_id=client_message_id or room_turn_id,
+                    source_participant_id=str(accountable["id"]),
+                    source_session_id=str(accountable["sessionId"]),
+                    target_participant_id=str(targets[0]["id"]),
+                    target_session_id=str(targets[0]["sessionId"]),
+                    work_item_id=str(work_item["id"]),
+                )
         except Exception as exc:
             for decision, target in zip(decisions, targets, strict=True):
                 self.host._cancel_room_turn(str(target["sessionId"]), room_turn_id)
@@ -389,6 +438,16 @@ class RoomSessionDispatchService:
             ]
 
         successful = [result for result in dispatch_results if result["accepted"] is True]
+        if retry_dispatch_id and successful:
+            self.host.room_partner_dispatches.mark_dispatched(
+                retry_dispatch_id,
+                target_session_turn_id=str(
+                    successful[0].get("sessionTurnId") or ""
+                ),
+            )
+        cancelled_only = bool(dispatch_results) and all(
+            result.get("status") == "cancelled" for result in dispatch_results
+        )
         if work_claimed and work_item is not None and not successful:
             try:
                 work_item = self.host.room_work.fail_dispatch(
@@ -397,7 +456,11 @@ class RoomSessionDispatchService:
                     actor_participant_id=str(targets[0]["id"]),
                     room_turn_id=room_turn_id,
                     previous_accepted_turn_id=previous_accepted_turn_id,
-                    reason="Room runtime rejected the assigned dispatch",
+                    reason=(
+                        "Room dispatch was cancelled before Runtime admission"
+                        if cancelled_only
+                        else "Room Runtime rejected the assigned dispatch"
+                    ),
                 )
             except Exception:
                 pass
@@ -421,7 +484,14 @@ class RoomSessionDispatchService:
             "schemaVersion": "rag-ime.agent-room-message.v1",
             "ok": True,
             "accepted": bool(successful),
-            "status": "accepted" if successful else "rejected",
+            "status": (
+                "accepted"
+                if successful
+                else "cancelled"
+                if cancelled_only
+                else "rejected"
+            ),
+            "cancelled": cancelled_only,
             "executionOwner": "session",
             "phase": (
                 "alignment"
@@ -435,6 +505,7 @@ class RoomSessionDispatchService:
             "roomId": room_id,
             "roomTurnId": room_turn_id,
             "clientMessageId": client_message_id,
+            "retryOfRootId": retry_of_root_id,
             "participant": targets[primary_index],
             "participants": targets,
             "routeDecision": decisions[primary_index],
@@ -481,6 +552,7 @@ class RoomSessionDispatchService:
                 session_id,
                 {
                     "message": message,
+                    "clientMessageId": dispatch_id,
                     "_contextSourceToken": self.host._context_source_token,
                     "_contextSource": "room",
                     "_checkpointText": message,
@@ -489,6 +561,74 @@ class RoomSessionDispatchService:
                     "_mediaOwnerRoomId": str(room["id"]),
                 },
             )
+            if accepted.get("accepted") is False:
+                cancelled = (
+                    accepted.get("cancelled") is True
+                    or accepted.get("admissionCancelled") is True
+                )
+                receipt_error = " ".join(
+                    str(accepted.get("error") or "").split()
+                )[:240]
+                error = receipt_error or (
+                    "Pi Runtime cancelled the Room dispatch before admission"
+                    if cancelled
+                    else "Pi Runtime rejected the Room dispatch"
+                )
+                self.host._cancel_room_turn(session_id, room_turn_id)
+                child = decision.get("child") is True
+                self.host.room_events.publish(
+                    room_id=str(room["id"]),
+                    event_type=(
+                        "participant_activity" if child else "turn_failed"
+                    ),
+                    payload=(
+                        {
+                            "activityKind": "child",
+                            "phase": "aborted" if cancelled else "failed",
+                            "status": (
+                                "dispatch_cancelled"
+                                if cancelled
+                                else "dispatch_rejected"
+                            ),
+                            "rootId": room_turn_id,
+                            "childDispatchId": dispatch_id,
+                            "dispatchId": dispatch_id,
+                            "parentDispatchId": str(
+                                decision.get("parentDispatchId") or ""
+                            ),
+                            "error": error,
+                        }
+                        if child
+                        else {
+                            "rootId": room_turn_id,
+                            "dispatchId": dispatch_id,
+                            "status": (
+                                "dispatch_cancelled"
+                                if cancelled
+                                else "dispatch_rejected"
+                            ),
+                            "cancelled": cancelled,
+                            "error": error,
+                        }
+                    ),
+                    turn_id=room_turn_id,
+                    participant_id=participant_id,
+                    source_session_id=session_id,
+                    topic_id=topic_id,
+                )
+                return {
+                    "participantId": participant_id,
+                    "sessionId": session_id,
+                    "dispatchId": dispatch_id,
+                    "accepted": False,
+                    "cancelled": cancelled,
+                    "admissionCancelled": (
+                        accepted.get("admissionCancelled") is True
+                    ),
+                    "status": "cancelled" if cancelled else "rejected",
+                    "sessionTurnId": "",
+                    "error": error,
+                }
             session_turn_id = str(accepted.get("turnId") or "")
             if not session_turn_id:
                 raise RuntimeError("Pi Runtime accepted a Room dispatch without a turnId")
@@ -509,12 +649,15 @@ class RoomSessionDispatchService:
                 "sessionId": session_id,
                 "dispatchId": dispatch_id,
                 "accepted": True,
+                "cancelled": False,
+                "status": "accepted",
                 "sessionTurnId": session_turn_id,
                 "error": "",
             }
         except Exception as exc:
             self.host._cancel_room_turn(session_id, room_turn_id)
             child = decision.get("child") is True
+            cause_code = _error_cause_code(exc)
             self.host.room_events.publish(
                 room_id=str(room["id"]),
                 event_type=(
@@ -532,12 +675,14 @@ class RoomSessionDispatchService:
                             decision.get("parentDispatchId") or ""
                         ),
                         "error": _public_error(exc),
+                        **({"causeCode": cause_code} if cause_code else {}),
                     }
                     if child
                     else {
                         "rootId": room_turn_id,
                         "dispatchId": dispatch_id,
                         "error": _public_error(exc),
+                        **({"causeCode": cause_code} if cause_code else {}),
                     }
                 ),
                 turn_id=room_turn_id,
@@ -550,6 +695,8 @@ class RoomSessionDispatchService:
                 "sessionId": session_id,
                 "dispatchId": dispatch_id,
                 "accepted": False,
+                "cancelled": False,
+                "status": "failed",
                 "sessionTurnId": "",
                 "error": _public_error(exc),
                 "_exception": exc,
@@ -557,19 +704,23 @@ class RoomSessionDispatchService:
         finally:
             self.host.room_turns.release_priority_session(session_id)
 
-def _role_book_profile_texts(value: object) -> list[str]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        return []
-    result: list[str] = []
-    for item in value:
-        if not isinstance(item, Mapping):
-            continue
-        text = " ".join(str(item.get("text") or "").split())[:280]
-        if text and text not in result:
-            result.append(text)
-    return result
-
-
 def _public_error(error: BaseException) -> str:
     text = " ".join(str(error).split())
     return text[:240] or error.__class__.__name__
+
+
+def _error_cause_code(error: BaseException) -> str:
+    """Project a durable Room causeCode.
+
+    Session receipts keep the canonical lowercase ``error_code``
+    (``goal_paused``). Room timeline events uppercase the same token so they
+    match existing wake/partner cause comparisons.
+    """
+
+    return " ".join(
+        str(
+            getattr(error, "cause_code", "")
+            or getattr(error, "error_code", "")
+            or ""
+        ).split()
+    ).upper()[:80]

@@ -72,6 +72,9 @@ from .agent_room_management import RoomManagementService
 from .agent_room_partner_application import (
     RoomPartnerApplicationService,
 )
+from .agent_room_partner_dispatch_store import (
+    AgentRoomPartnerDispatchStore,
+)
 from .agent_room_prompt_context import (
     agent_message_text as _agent_message_text,
     room_intercom_prompt as _room_intercom_prompt,
@@ -81,7 +84,10 @@ from .collaboration_profile_control import CollaborationProfileControl
 from .agent_task_context import AgentTaskContextResolver
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_work_application import RoomWorkApplicationService
-from .agent_room_turn_registry import RoomTurnRegistry
+from .agent_room_turn_registry import (
+    RoomSessionBusyError,
+    RoomTurnRegistry,
+)
 from .agent_governance_projection import GovernanceProjectionStore
 from .agent_knowledge_promotion import KNOWLEDGE_ROUTE_HASH, KnowledgePromotionStore
 from .knowledge_scope import bound_session_knowledge_caller
@@ -226,6 +232,8 @@ class AgentService:
         self.rooms.initialize()
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
+        self.room_partner_dispatches = AgentRoomPartnerDispatchStore(db_path)
+        self.room_partner_dispatches.initialize()
         self.governance_projection = GovernanceProjectionStore(db_path)
         self.governance_projection.initialize()
         self.knowledge_promotion = KnowledgePromotionStore(db_path)
@@ -250,7 +258,6 @@ class AgentService:
             events=self.events.publish,
             execution_owner=background_job_execution_owner,
         )
-        self.background_jobs.initialize()
         self.work_documents = WorkDocumentService(
             db_path,
             sessions=self.sessions,
@@ -308,14 +315,12 @@ class AgentService:
             tool_manifest_provider=self._runtime_tool_manifest,
             compaction_observer=self._checkpoint_runtime_compaction,
             room_context_provider=self._room_delegation_context,
-            model_routing_provider=self._model_routing_configuration,
+            model_route_provider=self._configured_model_route,
         )
         self.session_application = AgentSessionApplicationService(
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
             runtime_factory=self.runtime_factory,
-            personas=self.personas,
-            role_books=self.role_books,
             configuration_store=self.configuration_store,
             rooms=self.rooms,
             delegation=self.delegation,
@@ -323,9 +328,6 @@ class AgentService:
             events=self.events,
             runtime_status=lambda: self.runtime_status(),
             pending_memory_bootstrap=self._pending_memory_bootstrap,
-            ensure_session_role_book=lambda session_id: (
-                self._ensure_session_role_book(session_id)
-            ),
             probe_memory_maintenance=lambda session_id, **kwargs: (
                 self._probe_memory_maintenance(session_id, **kwargs)
             ),
@@ -333,7 +335,6 @@ class AgentService:
         self.session_policy = AgentSessionPolicyService(
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
-            personas=self.personas,
             rooms=self.rooms,
             events=self.events,
             runtime_status=lambda: self.runtime_status(),
@@ -350,9 +351,6 @@ class AgentService:
             media=self.media,
             events=self.events,
             command_receipts=self.command_receipts,
-            ensure_session_role_book=lambda session_id: (
-                self._ensure_session_role_book(session_id)
-            ),
             prompt_with_checkpoint=lambda **kwargs: (
                 self._prompt_with_checkpoint(**kwargs)
             ),
@@ -364,8 +362,6 @@ class AgentService:
         self.memory_context_application = (
             AgentMemoryContextService(
                 sessions=self.sessions,
-                personas=self.personas,
-                role_books=self.role_books,
                 memory_bootstrap=self.memory_bootstrap,
                 context_runtime=self.context_runtime,
                 task_context=self.task_context,
@@ -446,6 +442,9 @@ class AgentService:
                 ),
             )
         )
+        # Recovered jobs can finish and publish synchronously from initialize().
+        # Their durable event must never race the projection owner into existence.
+        self.background_jobs.initialize()
         self.room_intercom_application = (
             RoomIntercomApplicationService(
                 sessions=self.sessions,
@@ -480,7 +479,7 @@ class AgentService:
                 ),
                 room_intercom_prompt=_room_intercom_prompt,
                 room_participant_prompt=(
-                    _room_participant_prompt
+                    self._room_participant_prompt_with_documents
                 ),
                 publish_room_work_activity=(
                     lambda work, **kwargs: (
@@ -524,7 +523,7 @@ class AgentService:
         )
         self.wake_scheduler = AgentWakeScheduler(
             store=self.wake_schedules,
-            dispatch=self.wake_application.dispatch,
+            dispatch=self._dispatch_wake_claim,
             enabled=wake_scheduler_enabled,
             poll_seconds=wake_scheduler_poll_seconds,
             max_parallel=2,
@@ -535,13 +534,11 @@ class AgentService:
         )
         self.room_dispatch = RoomSessionDispatchService(
             self,
-            build_participant_prompt=_room_participant_prompt,
+            build_participant_prompt=self._room_participant_prompt_with_documents,
             resolve_attachments=self._resolve_room_attachments,
         )
         self.room_cancellation = RoomSessionCancellationService(self)
         self.room_partner_application = RoomPartnerApplicationService(
-            room_work=self.room_work,
-            publish_room_work_activity=self._publish_room_work_activity,
             rooms=self.rooms,
             room_turns=self.room_turns,
             runtime_status=self.runtime.runtime_status,
@@ -553,8 +550,56 @@ class AgentService:
             cancel_room_turn=self._cancel_room_turn,
             abort_session=self.abort,
             room_topic_for_turn=self._room_topic_for_turn,
+            send_room_intercom=lambda session_id, payload: self.room_work_application.send_room_intercom(
+                session_id,
+                payload,
+            )["message"],
+            list_room_intercom=lambda session_id: self.room_work_application.list_room_intercom(
+                session_id,
+                {"limit": 100},
+            )["items"],
+            room_work=self.room_work,
+            publish_room_work_activity=lambda work, **kwargs: self._publish_room_work_activity(
+                work,
+                **kwargs,
+            ),
+            work_document_for_authority=self._work_document_for_authority,
+            dispatch_store=self.room_partner_dispatches,
+            wake_schedules=self.wake_schedules,
+            notify_wake_scheduler=self.wake_scheduler.wake,
+            dispatch_facilitator_wake=self._dispatch_room_partner_wake,
+            command_acceptance_evidence=lambda session_id, client_message_id: (
+                self.command_receipts.acceptance_evidence_for_exact_command(
+                    command_scope="session_prompt",
+                    scope_id=session_id,
+                    client_message_id=client_message_id,
+                )
+            ),
+            command_failure_evidence=lambda session_id, client_message_id: (
+                self.command_receipts.failure_evidence_for_exact_command(
+                    command_scope="session_prompt",
+                    scope_id=session_id,
+                    client_message_id=client_message_id,
+                )
+            ),
+            accept_room_work=lambda session_id, payload: self.room_work_application.accept_room_work(
+                session_id,
+                payload,
+            ),
+            return_room_work=lambda session_id, payload: self.room_work_application.return_room_work(
+                session_id,
+                payload,
+            ),
+            recover_faulted_session=self._recover_faulted_room_session,
         )
         self.room_work_application = RoomWorkApplicationService(self)
+        self._remove_room_partner_observer = self.room_events.add_observer(
+            self.room_partner_application.observe_room_event
+        )
+        self.wake_scheduler.bind_terminal_observer(
+            self.room_partner_application.observe_wake_terminal_event
+        )
+        self.room_partner_application.reconcile()
         self.approval_application = AgentApprovalApplicationService(self)
         self.message_snapshot = AgentMessageSnapshotService(
             sessions=self.sessions,
@@ -578,7 +623,7 @@ class AgentService:
             personas=self.personas,
             events=self.room_events,
             create_session=lambda payload: (
-                self._create_room_partner_session(payload)
+                self.create_session(payload)
             ),
             delete_session=lambda session_id: (
                 self.delete_session(session_id)
@@ -871,6 +916,86 @@ class AgentService:
         # is the recovery source; there is no second Kernel recovery packet.
         return ""
 
+    def _room_participant_prompt_with_documents(
+        self,
+        room: Mapping[str, object],
+        target: Mapping[str, object],
+        message: str,
+        **kwargs: object,
+    ) -> str:
+        """Add a soft, recoverable WorkItem-to-document index to Room context.
+
+        WorkDocument remains the registry owner and Room WorkItem remains the
+        responsibility owner.  The prompt only tells a participant where the
+        current documents live; it does not copy document bodies or create a
+        second context store.
+        """
+        try:
+            documents = self.work_documents.context_discovery(limit=200)["items"]
+        except Exception:
+            # Document discovery is advisory. A registry/read failure must not
+            # turn an otherwise valid Pi Session dispatch into a false failure.
+            documents = []
+        document_authorities: dict[str, Mapping[str, object]] = {}
+        work_candidates = [
+            value
+            for value in room.get("workItems", [])
+            if isinstance(value, Mapping)
+        ]
+        explicit_work_item = kwargs.get("work_item")
+        if isinstance(explicit_work_item, Mapping):
+            explicit_id = str(explicit_work_item.get("id") or "")
+            if explicit_id and all(
+                str(value.get("id") or "") != explicit_id
+                for value in work_candidates
+            ):
+                # A delegate is created after the caller captured its Room
+                # snapshot. The explicit WorkItem is authoritative for this
+                # dispatch and must still receive its current document receipt.
+                work_candidates.append(explicit_work_item)
+        for value in work_candidates:
+            work_id = str(value.get("id") or "").strip()
+            if not work_id:
+                continue
+            try:
+                authority = self.work_documents.authority_context(
+                    "room_work_item",
+                    work_id,
+                )
+            except Exception:
+                # Like document discovery, the hint is recoverable and must
+                # never become a second dispatch gate.
+                continue
+            document_authorities[str(authority["authorityKey"])] = authority
+        return _room_participant_prompt(
+            room,
+            target,
+            message,
+            work_documents=documents,
+            work_document_authorities=document_authorities,
+            **kwargs,
+        )
+
+    def _work_document_for_authority(
+        self,
+        authority_kind: str,
+        authority_id: str,
+    ) -> Mapping[str, object] | None:
+        authority_key = f"{authority_kind}:{authority_id}"
+        try:
+            documents = self.work_documents.list(limit=500)["items"]
+        except Exception:
+            return None
+        return next(
+            (
+                document
+                for document in documents
+                if document.get("state") == "active"
+                and document.get("authorityKey") == authority_key
+            ),
+            None,
+        )
+
 
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
         delegation = getattr(self, "delegation", None)
@@ -928,15 +1053,6 @@ class AgentService:
         changes = payload.get("changes")
         if not isinstance(changes, Mapping):
             raise ValueError("agent configuration update requires a changes object")
-        role_id = changes.get("sessionDefaults.roleId")
-        role_version = changes.get("sessionDefaults.roleVersion")
-        if role_id is not None or role_version is not None:
-            current = self.configuration_store.snapshot()["configuration"]
-            defaults = current["sessionDefaults"]
-            self.personas.resolve_active(
-                role_id or defaults["roleId"],
-                role_version or defaults["roleVersion"],
-            )
         runtime_keys = {
             "runtime.enabled",
             "runtime.startup",
@@ -1420,11 +1536,13 @@ class AgentService:
             )
             result["message"] = (
                 '<managed-goal-follow-up origin="goal-supervisor">'
-                "当前 Goal 仍处于 active，Todo 中有正在执行的任务，且预算允许继续。"
-                "一次回答结束不代表 Goal 完成；立即完成 Todo 中当前正在执行、"
+                "当前 Goal 仍处于 active，且预算允许继续。"
+                "一次回答结束不代表 Goal 完成；先同步更新 Todo 状态，再推进"
                 "能够产生新验收证据的下一步。不要只汇报进度或复述 Todo。"
-                "先同步更新 Todo 状态；若已经没有可继续的下一步，再把 Goal 更新为"
-                "完成、暂停或取消，而不是继续空转。"
+                "没有可继续的下一步时：已有完整验收证据则完成 Goal；"
+                "Room 受阻则发出 blocked/partial 终态，保持 Goal active。"
+                "不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息；"
+                "暂停只用于用户明确要求停止，不是等待继续的手段。"
                 "</managed-goal-follow-up>"
             )
         validate_contract(result, "agent-goal-settle-result.v1.json")
@@ -1472,25 +1590,6 @@ class AgentService:
 
     def create_session(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self.session_application.create_session(payload)
-
-    def _model_routing_configuration(self) -> Mapping[str, object]:
-        configuration = self.configuration_store.snapshot()["configuration"]
-        routing = configuration.get("modelRouting")
-        return routing if isinstance(routing, Mapping) else {}
-
-    def _create_room_partner_session(
-        self,
-        payload: Mapping[str, object],
-    ) -> dict[str, object]:
-        routing = self._model_routing_configuration()
-        return self.create_session(
-            {
-                **dict(payload),
-                "modelProfile": str(routing["roomPartnerModelProfile"]),
-                "thinkingLevel": str(routing["roomPartnerThinkingLevel"]),
-                "_internalModelOverride": True,
-            }
-        )
 
     def list_roles(self) -> dict[str, object]:
         return self.role_application.list_roles()
@@ -1609,6 +1708,15 @@ class AgentService:
 
     def delegate_tasks(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         return self.delegation.delegate(session_id, payload)
+
+    def _configured_model_route(self, route_id: str) -> Mapping[str, object] | None:
+        routing = self.configuration_store.snapshot()["configuration"].get(
+            "modelRouting"
+        )
+        if not isinstance(routing, Mapping):
+            return None
+        route = routing.get(route_id)
+        return dict(route) if isinstance(route, Mapping) else None
 
     def delegation_status(
         self,
@@ -1922,6 +2030,9 @@ class AgentService:
                 f"Room message must not exceed {ROOM_MESSAGE_CHAR_LIMIT} characters"
             )
         client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
+        retry_of_root_id = str(payload.get("retryOfRootId") or "").strip()
+        if len(retry_of_root_id) > 320:
+            raise ValueError("Room retry root identity is too long")
         work_item_id = _optional_work_item_id(payload.get("workItemId"))
         answer_to_post_id = str(payload.get("answerToPostId") or "").strip()
         answer_to_root_id = str(payload.get("answerToRootId") or "").strip()
@@ -1948,6 +2059,7 @@ class AgentService:
                 room_id,
                 message=message,
                 client_message_id="",
+                retry_of_root_id=retry_of_root_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
                 attachment_ids=attachment_ids,
@@ -1960,6 +2072,7 @@ class AgentService:
             client_message_id=client_message_id,
             payload={
                 "message": message,
+                "retryOfRootId": retry_of_root_id,
                 "participantIds": requested_participant_ids,
                 "workItemId": work_item_id,
                 "attachmentIds": attachment_ids,
@@ -1974,6 +2087,7 @@ class AgentService:
                 room_id,
                 message=message,
                 client_message_id=client_message_id,
+                retry_of_root_id=retry_of_root_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
                 attachment_ids=attachment_ids,
@@ -1987,6 +2101,11 @@ class AgentService:
                 scope_id=room_id,
                 client_message_id=client_message_id,
                 error=exc,
+                cause_code=str(
+                    getattr(exc, "cause_code", "")
+                    or getattr(exc, "error_code", "")
+                    or ""
+                ),
             )
             raise
         return self.command_receipts.complete(
@@ -2003,11 +2122,13 @@ class AgentService:
         args: Mapping[str, object],
         *,
         tool_call_id: str,
+        source_loop_id: str = "",
     ) -> dict[str, object]:
         return self.room_partner_application.execute(
             session_id,
             args,
             tool_call_id=tool_call_id,
+            source_loop_id=source_loop_id,
         )
 
     def steer_room_participant(
@@ -2255,6 +2376,7 @@ class AgentService:
         *,
         message: str,
         client_message_id: str,
+        retry_of_root_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
@@ -2267,6 +2389,7 @@ class AgentService:
             room_id,
             message=message,
             client_message_id=client_message_id,
+            retry_of_root_id=retry_of_root_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
             attachment_ids=attachment_ids,
@@ -2407,6 +2530,13 @@ class AgentService:
 
     def command_catalog(self, session_id: str) -> dict[str, object]:
         return self.session_policy.command_catalog(session_id)
+
+    def invoke_command(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.session_policy.invoke_command(session_id, payload)
 
     def select_model(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         return self.session_policy.select_model(session_id, payload)
@@ -2788,11 +2918,6 @@ class AgentService:
             source_kind=source_kind,
             delivery=delivery,
             transient_context=transient_context,
-        )
-
-    def _ensure_session_role_book(self, session_id: str) -> dict[str, object]:
-        return self.memory_context_application.ensure_role_book(
-            session_id
         )
 
     def _pending_memory_bootstrap(
@@ -3238,6 +3363,221 @@ class AgentService:
         self.memory_context_application.clear_recall_state(retired.session_ids)
         return retired.consumed
 
+    def _dispatch_wake_claim(self, claim: Mapping[str, object]) -> None:
+        metadata = claim.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if str(metadata.get("kind") or "") != "room_partner_completion":
+            self.wake_application.dispatch(claim)
+            return
+        if not hasattr(self, "room_partner_application"):
+            self.wake_schedules.defer(
+                str(claim.get("runId") or ""),
+                reason="Room Partner wake adapter is still starting",
+                delay_ms=5_000,
+            )
+            return
+        try:
+            self.room_partner_application.dispatch_wake(claim)
+        except Exception as exc:
+            self.room_partner_application.record_wake_failure(claim, exc)
+            raise
+
+    def _dispatch_room_partner_wake(
+        self,
+        claim: Mapping[str, object],
+        dispatch: Mapping[str, object],
+    ) -> bool:
+        run_id = str(claim.get("runId") or "")
+        session_id = str(dispatch.get("sourceSessionId") or "")
+        root_id = str(dispatch.get("rootId") or "")
+        child_dispatch_id = str(dispatch.get("childDispatchId") or "")
+        self._recover_faulted_room_session(session_id)
+        try:
+            self.room_turns.hold_priority_if_idle((session_id,))
+        except RoomSessionBusyError:
+            self.wake_schedules.defer(
+                run_id,
+                reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                cause_code="AGENT_TURN_CONFLICT",
+                delay_ms=5_000,
+            )
+            return False
+        try:
+            session = self.sessions.get(session_id)
+            session_status = str(session.get("status") or "")
+            if session_status == "busy":
+                self.wake_schedules.defer(
+                    run_id,
+                    reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                    cause_code="AGENT_TURN_CONFLICT",
+                    delay_ms=5_000,
+                )
+                return False
+            if session_status not in {"idle", "active"}:
+                raise ValueError("Facilitator Session is unavailable for Room wake")
+            if not self._room_target_idle(
+                session_id,
+                allow_user_priority=True,
+            ):
+                self.wake_schedules.defer(
+                    run_id,
+                    reason="Facilitator 正在执行上一回合，伙伴交付稍后重试",
+                    cause_code="AGENT_TURN_CONFLICT",
+                    delay_ms=5_000,
+                )
+                return False
+            participant = self.rooms.participant_for_session(
+                session_id,
+                active_only=True,
+            )
+            if participant is None or str(participant.get("id") or "") != str(
+                dispatch.get("sourceParticipantId") or ""
+            ):
+                raise ValueError("Facilitator is no longer active in this Room")
+            room = self.rooms.get(str(dispatch.get("roomId") or ""))
+            topic_id = self._room_topic_for_turn(root_id) or str(
+                room.get("activeTopicId") or ""
+            )
+            self.wake_application.enqueue_room_completion(
+                claim=claim,
+                dispatch=dispatch,
+            )
+            wake_dispatch_id = (
+                f"room-wake-dispatch:{child_dispatch_id}:"
+                f"{int((dispatch.get('wake') or {}).get('generation') or 0)}"
+                if isinstance(dispatch.get("wake"), Mapping)
+                else f"room-wake-dispatch:{child_dispatch_id}"
+            )
+            self._begin_room_turn(
+                session_id,
+                root_id,
+                topic_id,
+                dispatch_id=wake_dispatch_id,
+                child=False,
+            )
+            try:
+                accepted = self.prompt(
+                    session_id,
+                    {
+                        "message": "伙伴交付已到达，请检查并完成双轴验收。",
+                        "clientMessageId": run_id,
+                        "_contextSourceToken": self._context_source_token,
+                        "_contextSource": "room",
+                        "_checkpointText": "伙伴交付已到达，请检查并完成双轴验收。",
+                    },
+                )
+            except Exception as exc:
+                self._cancel_room_turn(session_id, root_id)
+                cause_code = _room_wake_failure_cause_code(exc)
+                if cause_code in {
+                    "SESSION_BUSY",
+                    "AGENT_TURN_CONFLICT",
+                    # Paused Goal must not auto-resume on wake. Defer until an
+                    # explicit user Room message resumes the Goal; do not burn
+                    # the completion wake as a terminal failure.
+                    "GOAL_PAUSED",
+                }:
+                    self.wake_schedules.defer(
+                        run_id,
+                        reason=(
+                            "Facilitator Goal 已暂停，等待用户在 Room 中继续后再验收"
+                            if cause_code == "GOAL_PAUSED"
+                            else "Facilitator 刚刚开始其他回合，伙伴交付稍后重试"
+                        ),
+                        cause_code=cause_code,
+                        # Busy conflicts retry quickly; a paused Goal waits for
+                        # an explicit user Room message, so avoid a 5s storm.
+                        delay_ms=60_000 if cause_code == "GOAL_PAUSED" else 5_000,
+                    )
+                    return False
+                if str(self.sessions.get(session_id).get("status") or "") == "busy":
+                    self.wake_schedules.defer(
+                        run_id,
+                        reason="Facilitator 刚刚开始其他回合，伙伴交付稍后重试",
+                        cause_code="AGENT_TURN_CONFLICT",
+                        delay_ms=5_000,
+                    )
+                    return False
+                raise
+            turn_id = str(accepted.get("turnId") or "")
+            self._accept_room_turn(session_id, turn_id, root_id)
+            self.wake_schedules.accept(
+                run_id,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            replayed, _gap = self.events.replay(session_id)
+            for event in replayed:
+                if (
+                    event.turn_id == turn_id
+                    and event.event_type in {"turn_completed", "turn_failed"}
+                ):
+                    self.wake_scheduler.observe_event(event)
+                    break
+            return True
+        finally:
+            self.room_turns.release_priority_session(session_id)
+
+    def _resume_room_goal_if_paused(self, session_id: str) -> None:
+        """Resume a paused participant Goal for an explicit user Room message.
+
+        The Room conversation entry is the only continue control a returning
+        user has, so the user's message carries the resume intent. Wake,
+        partner and Tool Agent paths never call this.
+        """
+
+        goal = self.sessions.agent_goal(session_id)
+        if str(goal.get("status") or "") != "paused":
+            return
+        self.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "resume", "expectedRevision": int(goal["revision"])},
+            actor="room-user-message",
+        )
+        self.publish_workflow_state(session_id, reason="goal:resume")
+
+    def _recover_faulted_room_session(self, session_id: str) -> None:
+        """Re-open one recoverable Pi Session without replacing Room identity."""
+
+        session = self.sessions.get(session_id)
+        session_status = str(session.get("status") or "")
+        if session_status not in {"faulted", "idle", "active"}:
+            return
+        if (
+            session_status != "faulted"
+            and self.sessions.runtime_binding(session_id) is None
+        ):
+            return
+        # PAW can already project the Session as idle while a restarted Pi Host
+        # restores the interrupted durable turn from JSONL. Re-open the same Pi
+        # Session and retire only that exact turn when Pi proves it is idle; a
+        # genuinely running turn reports isIdle=false and remains untouched.
+        ensured = self.runtime.ensure(session_id)
+        state = ensured.get("state")
+        state = state if isinstance(state, Mapping) else {}
+        active_turn = state.get("activeTurn")
+        active_turn = active_turn if isinstance(active_turn, Mapping) else {}
+        recovered_turn_id = str(active_turn.get("turnId") or "").strip()
+        if state.get("isIdle") is True and recovered_turn_id:
+            retire_recovered_turn = getattr(
+                self.runtime,
+                "retire_recovered_turn",
+                None,
+            )
+            if not callable(retire_recovered_turn):
+                raise RuntimeError(
+                    "Pi Runtime cannot retire the recovered Room Session turn"
+                )
+            retire_recovered_turn(session_id, recovered_turn_id)
+        if (
+            session_status == "faulted"
+            and str(self.sessions.get(session_id).get("status") or "")
+            == "faulted"
+        ):
+            raise RuntimeError(
+                "Room participant Session remained faulted after Pi recovery"
+            )
+
 
 
 
@@ -3249,8 +3589,10 @@ class AgentService:
         self.background_jobs.close()
         self.events.close()
         self._remove_observation_room_observer()
+        self._remove_room_partner_observer()
         self.observations.close()
         self._remove_wake_observer()
+        self.wake_scheduler.bind_terminal_observer(None)
         self.wake_scheduler.close()
         self.room_intercom.close()
 
@@ -3492,6 +3834,17 @@ class AgentService:
             phase=phase,
             actor=actor,
         )
+
+
+def _room_wake_failure_cause_code(error: BaseException) -> str:
+    return " ".join(
+        str(
+            getattr(error, "cause_code", "")
+            or getattr(error, "host_error_code", "")
+            or getattr(error, "error_code", "")
+            or ""
+        ).split()
+    ).upper()[:80]
 
 
 def agent_service_from_environment(

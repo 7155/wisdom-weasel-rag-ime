@@ -48,6 +48,9 @@ simple coherent work needs no workflow Skill.
 - `organize-work-documents`: the background organizer or an explicit cleanup
   request links and condenses accepted document updates. It does not perform
   active work or infer Runtime state.
+- `bootstrap-project-context`: a project-bound Session has no root `AGENTS.md`,
+  or the user explicitly requests project context initialization. It creates a
+  stable docs entrypoint and never records live Session or WorkItem state.
 
 Read a Skill body only after its trigger matches. A Partner or Tool Agent uses
 the same task Skills as a standalone Session; Room does not define a second

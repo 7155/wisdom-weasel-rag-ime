@@ -20,7 +20,6 @@ class AgentSessionBranchingService:
         media: Any,
         events: Any,
         command_receipts: Any,
-        ensure_session_role_book: Callable[[str], Mapping[str, object]],
         prompt_with_checkpoint: Callable[..., Mapping[str, object]],
     ) -> None:
         self.sessions = sessions
@@ -31,7 +30,6 @@ class AgentSessionBranchingService:
         self.media = media
         self.events = events
         self.command_receipts = command_receipts
-        self.ensure_session_role_book = ensure_session_role_book
         self.prompt_with_checkpoint = prompt_with_checkpoint
 
     @property
@@ -60,10 +58,6 @@ class AgentSessionBranchingService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         source = self.forkable_session(session_id)
-        if not str(source.get("roleBookRevisionId") or "").strip():
-            source = dict(
-                self.ensure_session_role_book(session_id)
-            )
         entry_id = _required_text(payload, "entryId")
         requested_title = str(payload.get("title") or "").strip()
         title = requested_title or f"{source['title']} · 分支"
@@ -246,6 +240,7 @@ class AgentSessionBranchingService:
             raise ValueError(
                 "managed Pi runtime does not support in-place conversation rewrite"
             )
+        self.sessions.require_goal_execution(session_id)
         if attachment_ids:
             selected = self.runtime.model_catalog(
                 session_id

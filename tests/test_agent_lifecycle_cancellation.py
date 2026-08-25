@@ -811,7 +811,7 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         )
 
         class FailingHarness:
-            def spawn_background(self, _prepared):
+            def spawn_background(self, _prepared, **_kwargs):
                 raise RuntimeError("launch deliberately stopped")
 
         jobs = AgentBackgroundJobService(
@@ -869,8 +869,8 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                 self.release = threading.Event()
                 self.launched = None
 
-            def spawn_background(self, prepared):
-                self.launched = super().spawn_background(prepared)
+            def spawn_background(self, prepared, **kwargs):
+                self.launched = super().spawn_background(prepared, **kwargs)
                 self.spawned.set()
                 if not self.release.wait(timeout=5):
                     raise TimeoutError("cancellation race release timed out")

@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
 
+from rag_ime.agent_background_jobs import AgentBackgroundJobService
 from rag_ime.agent_protocol import AgentEventEnvelope
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks, provider_block_projection
 from rag_ime.agent_command_receipts import (
@@ -19,6 +20,7 @@ from rag_ime.agent_command_receipts import (
 )
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_prompt_delivery import AgentPromptAcceptanceUnknown
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
@@ -152,6 +154,46 @@ class AgentServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def test_background_job_recovery_publishes_after_event_projection_is_ready(self) -> None:
+        recovered_db = self.root / "background-recovery.sqlite"
+        session_store = AgentSessionStore(recovered_db)
+        session_store.initialize()
+        recovered_session_id = str(
+            session_store.create(title="background recovery")["id"]
+        )
+
+        def publish_recovered_job(background_jobs: AgentBackgroundJobService) -> None:
+            background_jobs.events(
+                recovered_session_id,
+                "background_job_completed",
+                {"jobId": "bg_recovered"},
+            )
+
+        with patch.object(
+            AgentBackgroundJobService,
+            "initialize",
+            publish_recovered_job,
+        ):
+            recovered = AgentService(
+                db_path=recovered_db,
+                runtime_config=PiRuntimeConfig(
+                    enabled=False,
+                    executable=None,
+                    agent_dir=self.root / "background-recovery-agent",
+                    session_dir=self.root / "background-recovery-sessions",
+                    logs_dir=self.root / "background-recovery-logs",
+                ),
+            )
+        try:
+            replay, gap = recovered.events.replay(recovered_session_id)
+            self.assertFalse(gap)
+            self.assertEqual(
+                [event.event_type for event in replay],
+                ["background_job_completed"],
+            )
+        finally:
+            recovered.close()
+
 
 
 
@@ -189,7 +231,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
         self.assertEqual(runtime["status"], "disabled")
         roles = self.service.list_roles()
-        self.assertEqual(roles["items"][0]["displayName"], "澄·远")
+        self.assertEqual(roles["items"][0]["displayName"], "Agent 3")
         self.assertEqual(
             [item["roleId"] for item in roles["items"]],
             ["companion-future-v1", "companion-present-v1", "companion-firstlight-v1", "companion-flash-v1"],
@@ -767,6 +809,62 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(result["approval"]["state"], "applied")
         self.assertEqual(result["receipt"]["exitCode"], 0)
 
+    def test_automatic_approval_bridge_failure_closes_the_pending_approval(self) -> None:
+        session = self.service.create_session({"title": "自动审批桥失败"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "full_trust",
+                "grantWorkspaceScope": True,
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_job",
+            operation="start",
+            payload_sha256="d" * 64,
+            preview={"title": "启动后台任务", "summary": "启动测试任务"},
+            risk_level="R2",
+        )
+        original_decide = self.service.sessions.decide_approval
+        attempts = 0
+
+        def fail_once(*args: object, **kwargs: object) -> dict[str, object]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("automatic approval bridge disconnected")
+            return original_decide(*args, **kwargs)
+
+        with patch.object(
+            self.service.sessions,
+            "decide_approval",
+            side_effect=fail_once,
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertTrue(result["terminal"])
+        self.assertFalse(result["approvalRequired"])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["failureCode"], "automatic_approval_bridge_failed")
+        self.assertEqual(
+            self.service.sessions.get_approval(str(approval["approvalId"]))["state"],
+            "rejected",
+        )
+        events, _ = self.service.events.replay(session_id)
+        resolved = next(
+            event
+            for event in events
+            if event.event_type == "approval_resolved"
+            and event.payload.get("approvalId") == approval["approvalId"]
+        )
+        self.assertEqual(resolved.payload["state"], "rejected")
+        self.assertTrue(resolved.payload["automatic"])
+
     def test_full_trust_scoped_text_edit_does_not_wait_for_the_model_arbiter(self) -> None:
         workspace = self.root / "room-edit"
         workspace.mkdir()
@@ -1023,6 +1121,78 @@ class AgentServiceTests(unittest.TestCase):
                 self.service.prompt(session_id, {"message": "不要继续执行"})
             provider.assert_not_called()
 
+    def test_paused_goal_prompt_receipt_exposes_goal_paused_cause_code(self) -> None:
+        session_id = str(
+            self.service.create_session({"title": "goal paused cause"})["session"]["id"]
+        )
+        goal = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "在预算内完成实现",
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )
+        with patch.object(self.service, "_prompt_with_checkpoint") as provider:
+            with self.assertRaises(AgentCommandReceiptFailed) as failed:
+                self.service.prompt(
+                    session_id,
+                    {
+                        "message": "继续执行",
+                        "clientMessageId": "goal-paused-cause-1",
+                    },
+                )
+            provider.assert_not_called()
+        self.assertEqual(
+            failed.exception.response_payload(),
+            {
+                "code": "AGENT_COMMAND_FAILED",
+                "commandReceipt": {
+                    "state": "failed",
+                    "clientMessageId": "goal-paused-cause-1",
+                    "causeCode": "goal_paused",
+                },
+            },
+        )
+
+    def test_paused_goal_blocks_conversation_rewrite_before_runtime(self) -> None:
+        session_id = str(
+            self.service.create_session({"title": "goal gated rewrite"})["session"]["id"]
+        )
+        goal = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "在预算内完成实现",
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )
+        with (
+            patch.object(self.service.runtime, "rewind_session") as rewind,
+            patch.object(self.service, "_prompt_with_checkpoint") as provider,
+        ):
+            with self.assertRaisesRegex(ValueError, "goal_paused"):
+                self.service.rewrite_session(
+                    session_id,
+                    {
+                        "entryId": "entry-user-1",
+                        "message": "修改后的问题",
+                        "clientMessageId": "rewrite-while-paused",
+                    },
+                )
+            rewind.assert_not_called()
+            provider.assert_not_called()
+
     def test_goal_settle_continuation_is_deterministic_for_one_active_revision(
         self,
     ) -> None:
@@ -1124,6 +1294,10 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(first["goalRevision"], goal["revision"])
         self.assertTrue(str(first["followUpKey"]).startswith("goal-settle:"))
         self.assertIn("<managed-goal-follow-up", str(first["message"]))
+        self.assertIn("不要把仍在进行的 Room Goal 暂停", str(first["message"]))
+        self.assertIn("暂停只用于用户明确要求停止", str(first["message"]))
+        self.assertNotIn("完成、暂停或取消", str(first["message"]))
+        self.assertNotIn("Todo 中有正在执行的任务", str(first["message"]))
         self.assertEqual(stalled["state"], "stalled")
         self.assertEqual(stalled["reason"], "no_progress")
         self.assertEqual(stalled["followUpKey"], "")
@@ -1285,7 +1459,11 @@ class AgentServiceTests(unittest.TestCase):
             specification["source_id"] = str(payload["recallId"])
             return specification
 
-        self.assertTrue(session["roleBookRevisionId"])
+        self.assertEqual(session["roleBookRevisionId"], "")
+        self.assertEqual(
+            created["roleBook"]["status"],
+            "persona_package_not_installed",
+        )
         self.assertTrue(created["memoryBootstrap"]["ok"])
         self.assertEqual(
             created["memoryBootstrap"]["status"],
@@ -1862,19 +2040,76 @@ class AgentServiceTests(unittest.TestCase):
         )
         replay.assert_not_called()
 
-    def test_corrupt_role_book_falls_back_to_base_persona_without_blocking_chat(self) -> None:
+    def test_runtime_disabled_before_prompt_closes_receipt_as_failed(self) -> None:
+        session = self.service.create_session({"title": "本地运行时未启用"})["session"]
+        session_id = str(session["id"])
+        payload = {
+            "message": "这条消息不可能已被 Pi 接纳",
+            "clientMessageId": "runtime-disabled-before-prompt",
+        }
+
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=PiRuntimeError("Pi runtime is disabled"),
+        ):
+            with self.assertRaises(AgentCommandReceiptFailed) as failed:
+                self.service.prompt(session_id, payload)
+
+        self.assertEqual(
+            failed.exception.response_payload(),
+            {
+                "code": "AGENT_COMMAND_FAILED",
+                "commandReceipt": {
+                    "state": "failed",
+                    "clientMessageId": "runtime-disabled-before-prompt",
+                    "causeCode": "PI_RUNTIME_DISABLED",
+                },
+            },
+        )
+
+    def test_runtime_transport_errors_keep_acceptance_unknown(self) -> None:
+        for client_message_id, runtime_error in (
+            (
+                "runtime-prompt-timeout",
+                "Pi Runtime Host command timed out: session.prompt",
+            ),
+            (
+                "runtime-prompt-eof",
+                "Pi Runtime Host stdin closed",
+            ),
+        ):
+            with self.subTest(runtime_error=runtime_error):
+                session = self.service.create_session(
+                    {"title": client_message_id}
+                )["session"]
+                with patch.object(
+                    self.service.runtime,
+                    "prompt",
+                    side_effect=PiRuntimeError(runtime_error),
+                ):
+                    with self.assertRaises(AgentCommandReceiptPending) as pending:
+                        self.service.prompt(
+                            str(session["id"]),
+                            {
+                                "message": "接纳状态无法由传输错误判断",
+                                "clientMessageId": client_message_id,
+                            },
+                        )
+                self.assertEqual(pending.exception.recovery_state, "in_flight")
+
+    def test_session_chat_does_not_load_optional_persona_package(self) -> None:
         with patch.object(
             self.service.role_books,
             "ensure_seeded",
-            side_effect=ValueError("corrupt role book revision"),
-        ):
+        ) as ensure_seeded:
             created = self.service.create_session({"title": "降级对话"})
             session = created["session"]
             self.assertEqual(session["roleBookRevisionId"], "")
-            self.assertFalse(created["roleBook"]["ok"])
+            self.assertTrue(created["roleBook"]["ok"])
             self.assertEqual(
                 created["roleBook"]["status"],
-                "base_persona_fallback",
+                "persona_package_not_installed",
             )
             with patch.object(
                 self.service.runtime,
@@ -1890,8 +2125,10 @@ class AgentServiceTests(unittest.TestCase):
                     str(session["id"]),
                     {"message": "继续工作"},
                 )
+        ensure_seeded.assert_not_called()
         self.assertTrue(accepted["ok"])
         self.assertEqual(accepted["contextItemsDelivered"], 1)
+
     def test_conversation_fork_clones_identity_policy_and_returns_new_session(self) -> None:
         source = self.service.create_session(
             {
@@ -1899,6 +2136,7 @@ class AgentServiceTests(unittest.TestCase):
                 "mode": "assistant",
                 "roleId": "companion-firstlight-v1",
                 "roleVersion": "1",
+                "modelProfile": "openai-codex/gpt-5.6-luna",
                 "toolProfileVersion": "subagent-readonly-v1",
             }
         )["session"]
@@ -2130,8 +2368,7 @@ class AgentServiceTests(unittest.TestCase):
                 "expectedRevision": initial["revision"],
                 "changes": {
                     "sessionDefaults.roleId": "companion-firstlight-v1",
-                    "modelRouting.sessionModelProfile": "deepseek/deepseek-chat",
-                    "modelRouting.sessionThinkingLevel": "off",
+                    "sessionDefaults.modelProfile": "deepseek/deepseek-chat",
                 },
                 "updatedBy": "mac-control",
             }
@@ -2167,6 +2404,78 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertTrue(self.service.runtime_status()["enabled"])
         self.assertEqual(self.service.runtime_status()["idleTimeoutSeconds"], 321)
+
+    def test_model_routing_overrides_legacy_persona_defaults_by_runtime_role(self) -> None:
+        initial = self.service.configuration()["configuration"]
+        self.service.update_configuration(
+            {
+                "expectedRevision": initial["revision"],
+                "changes": {
+                    "modelRouting.primary": {
+                        "modelProfile": "openai-codex/gpt-5.6-terra",
+                        "thinkingLevel": "high",
+                    },
+                    "modelRouting.roomCoordinator": {
+                        "modelProfile": "openai-codex/gpt-5.6-sol",
+                        "thinkingLevel": "xhigh",
+                    },
+                },
+                "updatedBy": "models-ui",
+            }
+        )
+
+        primary = self.service.create_session(
+            {
+                "title": "默认主 Agent",
+                "roleId": "companion-firstlight-v1",
+                "roleVersion": "1",
+            }
+        )["session"]
+        room = self.service.create_session(
+            {
+                "title": "Room 协调",
+                "mode": "coordinator",
+                "roleId": "companion-future-v1",
+                "roleVersion": "1",
+                "_modelRoute": "roomCoordinator",
+            }
+        )["session"]
+
+        self.assertEqual(primary["modelProfile"], "openai-codex/gpt-5.6-terra")
+        self.assertEqual(primary["thinkingLevel"], "high")
+        self.assertEqual(room["modelProfile"], "openai-codex/gpt-5.6-sol")
+        self.assertEqual(room["thinkingLevel"], "xhigh")
+
+        with (
+            patch.object(
+                self.service.personas,
+                "resolve_active",
+                side_effect=AssertionError("core Session loaded Persona"),
+            ),
+            patch.object(
+                self.service.personas,
+                "runtime_defaults",
+                side_effect=AssertionError("Persona selected model"),
+            ),
+            patch.object(
+                self.service.role_books,
+                "ensure_seeded",
+                side_effect=AssertionError("core Session seeded Role Book"),
+            ),
+        ):
+            explicit = self.service.create_session(
+                {
+                    "title": "插件身份仅作元数据",
+                    "roleId": "future-persona-package-v1",
+                    "roleVersion": "2026.1",
+                    "modelProfile": "openai-codex/gpt-5.4",
+                    "toolProfileVersion": "subagent-readonly-v1",
+                }
+            )["session"]
+        self.assertEqual(explicit["roleId"], "future-persona-package-v1")
+        self.assertEqual(explicit["modelProfile"], "openai-codex/gpt-5.4")
+        self.assertEqual(explicit["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertEqual(explicit["roleBookRevisionId"], "")
 
     def test_service_depends_on_runtime_driver_contract_not_pi_manager(self) -> None:
         factory = _GatewayRuntimeFactory(self.root)
@@ -2209,7 +2518,7 @@ class AgentServiceTests(unittest.TestCase):
         finally:
             service.close()
 
-    def test_direct_chat_persona_is_immutable_session_metadata(self) -> None:
+    def test_direct_chat_legacy_role_is_immutable_session_metadata(self) -> None:
         created = self.service.create_session(
             {
                 "title": "Hermes 任务",
@@ -2222,6 +2531,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(created["roleId"], "companion-firstlight-v1")
         self.assertEqual(created["roleVersion"], "1")
         self.assertEqual(created["modelProfile"], "pi/default")
+        self.assertEqual(created["roleBookRevisionId"], "")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "companion-firstlight-v1")
@@ -2353,7 +2663,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(preview["schedule"]["targetSessionId"], session["id"])
         self.assertEqual(preview["schedule"]["targetDisplayName"], "当前 Agent")
 
-    def test_user_created_persona_can_start_a_real_session(self) -> None:
+    def test_user_created_persona_is_optional_session_metadata(self) -> None:
         created_role = self.service.create_role(
             {
                 "displayName": "澄·雨天",
@@ -2406,15 +2716,17 @@ class AgentServiceTests(unittest.TestCase):
         )["room"]
         self.assertEqual(room["participants"][0]["roleId"], created_role["roleId"])
 
-        with self.assertRaisesRegex(ValueError, "tool policy cannot be overridden"):
-            self.service.create_session(
-                {
-                    "title": "越权工具策略",
-                    "roleId": created_role["roleId"],
-                    "roleVersion": "1",
-                    "toolProfileVersion": "subagent-readonly-v1",
-                }
-            )
+        readonly = self.service.create_session(
+            {
+                "title": "独立工具策略",
+                "roleId": created_role["roleId"],
+                "roleVersion": "1",
+                "toolProfileVersion": "subagent-readonly-v1",
+            }
+        )["session"]
+        self.assertEqual(readonly["roleId"], created_role["roleId"])
+        self.assertEqual(readonly["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertEqual(readonly["roleBookRevisionId"], "")
 
     def test_room_intercom_delivery_uses_pi_transcript_without_memory_checkpoint(self) -> None:
         room = self.service.create_room(
@@ -2430,8 +2742,14 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "pi/default")
-        self.assertEqual(target_session["modelProfile"], "pi/default")
+        self.assertEqual(
+            source_session["modelProfile"],
+            "openai-codex/gpt-5.6-sol",
+        )
+        self.assertEqual(
+            target_session["modelProfile"],
+            "openai-codex/gpt-5.6-sol",
+        )
         item = {
             "id": "room-message:test",
             "kind": "ask",
@@ -3741,7 +4059,7 @@ class AgentServiceTests(unittest.TestCase):
             ["model", "thinking"],
         )
 
-    def test_role_runtime_defaults_remain_compatible_but_model_route_owns_new_sessions(self) -> None:
+    def test_role_runtime_defaults_are_legacy_metadata_not_session_model_policy(self) -> None:
         runtime_config = PiRuntimeConfig(
             enabled=False,
             executable=None,
@@ -3826,15 +4144,22 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(updated["defaults"]["modelProfile"], "openai-codex/gpt-5.6-luna")
         with patch.object(service.runtime, "set_thinking_level") as set_thinking:
             session = service.create_session(
-                {"title": "继承角色默认", "roleId": "companion-present-v1", "roleVersion": "1"}
+                {"title": "角色不决定模型", "roleId": "companion-present-v1", "roleVersion": "1"}
             )["session"]
         self.assertEqual(session["modelProfile"], "deepseek/deepseek-v4-flash")
-        self.assertEqual(session["thinkingLevel"], "off")
+        self.assertEqual(session["thinkingLevel"], "")
         set_thinking.assert_not_called()
 
-        with self.assertRaisesRegex(ValueError, "cannot be overridden"):
-            service.create_session({"title": "本轮显式模型", "roleId": "companion-present-v1",
-                                    "roleVersion": "1", "modelProfile": "openai-codex/gpt-5.6-sol"})
+        explicit = service.create_session(
+            {
+                "title": "本轮显式模型",
+                "roleId": "companion-present-v1",
+                "roleVersion": "1",
+                "modelProfile": "openai-codex/gpt-5.6-sol",
+            }
+        )["session"]
+        self.assertEqual(explicit["modelProfile"], "openai-codex/gpt-5.6-sol")
+        self.assertEqual(explicit["thinkingLevel"], "")
 
         with patch.object(
             service.runtime,
@@ -3938,8 +4263,11 @@ class AgentServiceTests(unittest.TestCase):
     def test_session_input_and_runtime_capabilities_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "workspaceRoots must be an array"):
             self.service.create_session({"title": "bad", "workspaceRoots": self.root.as_posix()})
-        with self.assertRaisesRegex(ValueError, "unsupported agent role"):
-            self.service.create_session({"title": "bad", "roleId": "model-injected-role"})
+        metadata_only = self.service.create_session(
+            {"title": "metadata", "roleId": "model-injected-role"}
+        )["session"]
+        self.assertEqual(metadata_only["roleId"], "model-injected-role")
+        self.assertEqual(metadata_only["roleBookRevisionId"], "")
         with self.assertRaisesRegex(ValueError, "cannot carry workspace roots"):
             self.service.create_session({"title": "bad", "workspaceRoots": [self.root.as_posix()]})
 

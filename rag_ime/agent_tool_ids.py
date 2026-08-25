@@ -24,6 +24,12 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "desktop_semantic",
 )
 
+# Plan/Todo and transcript-local Goal state live in the optional native Pi
+# Session Workflow Package.  Keep the legacy identifiers hidden by default.
+# `ControlToolGateway.runtime_manifests()` makes the narrower exception for an
+# active Room Facilitator that must close the separate audited PAW Product Goal.
+PI_PACKAGE_OWNED_CONTROL_TOOL_IDS = frozenset({"todo", "agent_goal"})
+
 COORDINATOR_TOOL_IDS = (
     "workspace_list",
     "workspace_lsp",

@@ -134,6 +134,11 @@ class AgentPromptAuditTests(unittest.TestCase):
             "deliverable",
             "新鲜、权威 evidence receipt",
             "缺失即未完成",
+            "fresh/new 或 fork",
+            "两者一等，无固定偏好",
+            "主 Agent 主管 Goal",
+            "真实路径能否跑通、是否满足当前精确需求",
+            "缺一轴不能闭环",
         ):
             with self.subTest(contract=token):
                 self.assertIn(token, policy)
@@ -195,6 +200,15 @@ class AgentPromptAuditTests(unittest.TestCase):
         self.assertIn("共享工作区允许普通写入", prompt)
         self.assertIn("不要代替独立审查", prompt)
         self.assertIn("伙伴结果不是整个 Room 的最终回复", prompt)
+        self.assertIn("识别未完成或未闭环 WorkItem", prompt)
+        self.assertIn("一次批量启动多个独立子任务", prompt)
+        self.assertIn("父 Agent 同时继续自己的工作", prompt)
+        self.assertIn("两者都支持，没有固定偏好", prompt)
+        self.assertIn("真实路径能否跑通、结果是否满足当前精确需求", prompt)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停", prompt)
+        self.assertIn("审查报告 unverified", prompt)
+        self.assertIn("failed 或未解决", prompt)
+        self.assertIn("HIGH/MEDIUM", prompt)
         self.assertNotIn("room_state", prompt)
         self.assertNotIn("room_commit", prompt)
 

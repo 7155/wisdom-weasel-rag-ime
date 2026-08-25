@@ -309,6 +309,9 @@ class AgentRoomTests(unittest.TestCase):
         first = hub.publish_projection(projection_key="room-post:post:user:1", **values)
         replay = hub.publish_projection(projection_key="room-post:post:user:1", **values)
 
+        self.assertTrue(hub.has_projection("room-post:post:user:1"))
+        self.assertFalse(hub.has_projection("room-post:missing"))
+
         self.assertIsNotNone(first)
         self.assertEqual(replay, first)
         self.assertEqual(len(observed), 1)
@@ -316,6 +319,23 @@ class AgentRoomTests(unittest.TestCase):
             [event["eventType"] for event in self.store.list_events(room_id)],
             ["user_message"],
         )
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute(
+                "DELETE FROM agent_room_events WHERE event_id = ?",
+                (str(first["eventId"]),),  # type: ignore[index]
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertTrue(hub.has_projection("room-post:post:user:1"))
+        self.assertIsNone(
+            hub.publish_projection(
+                projection_key="room-post:post:user:1",
+                **values,
+            )
+        )
+        self.assertEqual(len(observed), 1)
         with self.assertRaisesRegex(ValueError, "projection key was rebound"):
             hub.publish_projection(
                 projection_key="room-post:post:user:1",
@@ -635,11 +655,34 @@ class AgentRoomTests(unittest.TestCase):
                 routing_policy="manual_mentions",
                 participants=participants,
             )
-        with self.assertRaisesRegex(ValueError, "between 2 and 4"):
+        with self.assertRaisesRegex(ValueError, "between 2 and 8"):
             self.store.create(
                 title="人数过少",
                 routing_policy="manual_mentions",
                 participants=[self._participant("companion-future-v1", "VCP")],
+            )
+
+    def test_room_accepts_eight_participants_and_rejects_nine(self) -> None:
+        eight = [
+            self._participant(f"room-role-{index}", f"伙伴 {index}")
+            for index in range(8)
+        ]
+
+        room = self.store.create(
+            title="八位伙伴",
+            routing_policy="manual_mentions",
+            participants=eight,
+        )
+
+        self.assertEqual(len(room["participants"]), 8)
+        with self.assertRaisesRegex(ValueError, "between 2 and 8"):
+            self.store.create(
+                title="九位伙伴",
+                routing_policy="manual_mentions",
+                participants=[
+                    self._participant(f"overflow-role-{index}", f"额外伙伴 {index}")
+                    for index in range(9)
+                ],
             )
 
     def test_sequential_and_natural_routing_are_structured_and_deterministic(self) -> None:
@@ -809,32 +852,6 @@ class AgentRoomServiceTests(unittest.TestCase):
             )
         self.assertEqual(self.service.list_sessions()["items"], [])
 
-    def test_room_partner_model_route_overrides_persona_model_defaults(self) -> None:
-        configuration = self.service.configuration()["configuration"]
-        self.service.update_configuration({
-            "expectedRevision": configuration["revision"],
-            "changes": {
-                "modelRouting.roomPartnerModelProfile": "openai-codex/gpt-5.6-terra",
-                "modelRouting.roomPartnerThinkingLevel": "high",
-            },
-            "updatedBy": "room-model-route-test",
-        })
-        room = self.service.create_room({
-            "title": "统一 Room 模型",
-            "workspaceRoots": [str(self.root)],
-            "participants": [
-                {"roleId": "companion-present-v1", "roleVersion": "1"},
-                {"roleId": "companion-future-v1", "roleVersion": "1"},
-            ],
-        })["room"]
-
-        sessions = [
-            self.service.sessions.get(str(participant["sessionId"]))
-            for participant in room["participants"]
-        ]
-        self.assertEqual({item["modelProfile"] for item in sessions}, {"openai-codex/gpt-5.6-terra"})
-        self.assertEqual({item["thinkingLevel"] for item in sessions}, {"high"})
-
     def test_existing_room_can_add_future_without_replaying_old_history(self) -> None:
         room = self.service.create_room(
             {
@@ -861,7 +878,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             {"roleId": "companion-future-v1", "roleVersion": "1"},
         )
         future = added["participant"]
-        self.assertEqual(future["displayName"], "澄·远")
+        self.assertEqual(future["displayName"], "Agent 3")
         self.assertEqual(len([p for p in added["room"]["participants"] if p["status"] == "active"]), 3)
 
         with patch.object(
@@ -1341,7 +1358,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             [],
         )
 
-    def test_unaddressed_room_starts_with_facilitator_despite_specialist_profile(self) -> None:
+    def test_unaddressed_room_ignores_optional_persona_profile(self) -> None:
         role = self.service.personas.resolve("companion-firstlight-v1", "1")
         self.service.role_books.ensure_seeded(
             role.role_id,
@@ -1368,7 +1385,7 @@ class AgentRoomServiceTests(unittest.TestCase):
                 ]
             },
         )
-        active = self.service.role_books.activate_revision(draft["revisionId"])
+        self.service.role_books.activate_revision(draft["revisionId"])
         room = self.service.create_room(
             {
                 "title": "自然路由",
@@ -1389,7 +1406,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service.sessions.get(str(hermes["sessionId"]))[
                 "roleBookRevisionId"
             ],
-            active["revisionId"],
+            "",
         )
 
         with patch.object(
@@ -1404,11 +1421,22 @@ class AgentRoomServiceTests(unittest.TestCase):
 
         self.assertEqual(accepted["participant"]["id"], facilitator["id"])
         self.assertEqual(accepted["routeDecision"]["reason"], "facilitator")
+        self.assertEqual(
+            self.service.sessions.get(str(hermes["sessionId"]))[
+                "roleBookRevisionId"
+            ],
+            "",
+        )
         facilitator_context = str(
             prompt.call_args.args[1].get("_transientContext") or ""
         )
         self.assertIn("skill_load 加载 facilitate-room", facilitator_context)
         self.assertIn("room_partner", facilitator_context)
+        self.assertIn("这不代表当前请求是普通闲聊", facilitator_context)
+        self.assertIn("输出实现结果前必须先加载 facilitate-room", facilitator_context)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停", facilitator_context)
+        self.assertIn("不得写成 passed/satisfied", facilitator_context)
+        self.assertNotIn("当前阶段：普通对话", facilitator_context)
         evidence = self.service.memory_evidence.list(
             role_id=str(facilitator["roleId"]),
             session_id=str(facilitator["sessionId"]),
@@ -1514,7 +1542,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         work_events = self.service.room_work.list_events(str(work_item["id"]))
         self.assertEqual(
             [event["eventType"] for event in work_events],
-            ["assigned", "accepted", "reassigned"],
+            ["assigned", "accepted", "assigned"],
         )
         self.assertEqual(
             work_events[-1]["payload"]["previousOwnerParticipantId"],
@@ -1582,36 +1610,42 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(future_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(future_session["executionMode"], "workspace_managed")
         self.assertTrue(future_session["workspaceScopeGranted"])
-        self.assertEqual(future_session["modelProfile"], "pi/default")
-        self.assertEqual(future_session["thinkingLevel"], "off")
+        self.assertEqual(
+            future_session["modelProfile"],
+            "openai-codex/gpt-5.6-sol",
+        )
+        self.assertEqual(future_session["thinkingLevel"], "high")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
 
         with patch.object(self.service, "prompt", return_value={"turnId": "turn:hermes"}) as prompt:
             accepted = self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@澄·初 请先诊断状态",
+                    "message": "@Agent 2 请先诊断状态",
                     "clientMessageId": "room-client-1",
+                    "retryOfRootId": "room-turn:prior-failed",
                 },
             )
             replay = self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@澄·初 请先诊断状态",
+                    "message": "@Agent 2 请先诊断状态",
                     "clientMessageId": "room-client-1",
+                    "retryOfRootId": "room-turn:prior-failed",
                 },
             )
         prompt.assert_called_once()
         self.assertEqual(prompt.call_args.args[0], str(hermes["sessionId"]))
         prompt_payload = prompt.call_args.args[1]
-        self.assertEqual(prompt_payload["message"], "@澄·初 请先诊断状态")
+        self.assertEqual(prompt_payload["message"], "@Agent 2 请先诊断状态")
         room_context = prompt_payload["_transientContext"]
         self.assertIn("<room-context>", room_context)
         self.assertIn("你本轮从“实施者”的角度参与", room_context)
         self.assertNotIn(str(self.root.resolve()), room_context)
-        self.assertNotIn("@澄·初 请先诊断状态", room_context)
+        self.assertNotIn("@Agent 2 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
+        self.assertEqual(accepted["retryOfRootId"], "room-turn:prior-failed")
         self.assertTrue(replay["idempotentReplay"])
         self.assertEqual(replay["roomTurnId"], accepted["roomTurnId"])
 
@@ -1644,6 +1678,10 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(events[-2]["participantId"], hermes["id"])
         self.assertEqual(events[-2]["sourceSessionId"], hermes["sessionId"])
         self.assertEqual(events[1]["payload"]["clientMessageId"], "room-client-1")
+        self.assertEqual(
+            events[1]["payload"]["retryOfRootId"],
+            "room-turn:prior-failed",
+        )
         self.assertNotEqual(accepted["roomTurnId"], accepted["sessionTurnId"])
         self.assertEqual(
             {item["turnId"] for item in events[1:]},
@@ -1671,6 +1709,336 @@ class AgentRoomServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)
+
+    def test_room_retry_recovers_faulted_participant_session_before_dispatch(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "失败后继续同一 Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        session_id = str(target["sessionId"])
+        self.service.sessions.set_status(session_id, "faulted")
+
+        def recover(value: str) -> dict[str, object]:
+            self.assertEqual(value, session_id)
+            self.service.sessions.set_status(value, "idle")
+            return {"reused": True}
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "ensure",
+                side_effect=recover,
+            ) as ensure,
+            patch.object(
+                self.service,
+                "prompt",
+                return_value={"turnId": "turn:recovered-retry"},
+            ) as prompt,
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "继续完成刚才失败的回合",
+                    "clientMessageId": "room-retry-after-fault",
+                    "retryOfRootId": "room-turn:failed",
+                },
+            )
+
+        ensure.assert_called_once_with(session_id)
+        prompt.assert_called_once()
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(accepted["participant"]["id"], target["id"])
+        self.assertEqual(accepted["retryOfRootId"], "room-turn:failed")
+
+    def test_room_retry_root_recovers_the_single_returned_work_item(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "退回后继续原 WorkItem",
+                "routingPolicy": "natural",
+                "routingConfig": {"naturalJitter": 0},
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        facilitator, partner = room["participants"]
+        prior_root_id = "room-turn:returned-work"
+        work_item = self.service.room_work.create(
+            room_id=str(room["id"]),
+            objective="补齐浏览器真实验收证据",
+            expected_output="可操作性和需求证据齐全的修订交付",
+            acceptance_criteria=["真实浏览器路径已验证"],
+            current_owner_participant_id=str(partner["id"]),
+            created_by_participant_id=str(facilitator["id"]),
+            accountable_participant_id=str(facilitator["id"]),
+            client_message_id="returned-work-retry",
+            topic_id=str(room["activeTopicId"]),
+            root_turn_id=prior_root_id,
+            state="active",
+        )
+        submitted = self.service.room_work.submit(
+            str(partner["sessionId"]),
+            {
+                "workId": work_item["id"],
+                "resultSummary": "首轮没有完成真实浏览器验收。",
+                "evidenceRefs": ["test:first-pass"],
+                "proposedOperabilityVerdict": "unverified",
+                "proposedRequirementVerdict": "not_satisfied",
+            },
+        )
+        returned = self.service.room_work.return_for_revision(
+            str(facilitator["sessionId"]),
+            {
+                "workId": work_item["id"],
+                "expectedRevision": 0,
+                "operabilityVerdict": "unverified",
+                "requirementVerdict": "not_satisfied",
+                "evidenceRefs": ["test:first-pass"],
+                "reason": "请补齐同窗 Browser 的真实可操作性证据。",
+            },
+        )
+        self.assertEqual(submitted["state"], "review")
+        self.assertEqual(returned["state"], "active")
+        self.assertEqual(returned["revision"], 1)
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:returned-work-retry"},
+        ) as prompt:
+            resumed = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "继续",
+                    "clientMessageId": "retry-returned-work-from-old-ui",
+                    "retryOfRootId": prior_root_id,
+                },
+            )
+
+        prompt.assert_called_once()
+        self.assertEqual(prompt.call_args.args[0], str(partner["sessionId"]))
+        self.assertEqual(resumed["participant"]["id"], partner["id"])
+        self.assertEqual(resumed["routeDecision"]["reason"], "work_item_owner")
+        self.assertEqual(resumed["workItem"]["id"], work_item["id"])
+        self.assertEqual(resumed["workItem"]["revision"], 1)
+        self.assertEqual(len(self.service.room_work.list(room_id=str(room["id"]))), 1)
+        retry_dispatch = self.service.room_partner_dispatches.get_by_work(
+            str(work_item["id"])
+        )
+        self.assertEqual(
+            retry_dispatch["childDispatchId"],
+            resumed["routeDecision"]["dispatchId"],
+        )
+        self.assertEqual(retry_dispatch["rootId"], resumed["roomTurnId"])
+        self.assertEqual(
+            retry_dispatch["sourceParticipantId"],
+            facilitator["id"],
+        )
+        self.assertEqual(retry_dispatch["targetParticipantId"], partner["id"])
+        self.assertEqual(retry_dispatch["status"], "dispatched")
+        self.assertEqual(
+            retry_dispatch["targetSessionTurnId"],
+            "turn:returned-work-retry",
+        )
+
+    def test_room_retry_root_does_not_guess_between_returned_work_items(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "多个退回项需要明确选择",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        facilitator, partner = room["participants"]
+        prior_root_id = "room-turn:ambiguous-returned-work"
+        for index in range(2):
+            work_item = self.service.room_work.create(
+                room_id=str(room["id"]),
+                objective=f"修订轨道 {index + 1}",
+                expected_output="修订交付",
+                acceptance_criteria=["补齐证据"],
+                current_owner_participant_id=str(partner["id"]),
+                created_by_participant_id=str(facilitator["id"]),
+                accountable_participant_id=str(facilitator["id"]),
+                client_message_id=f"ambiguous-returned-work:{index}",
+                topic_id=str(room["activeTopicId"]),
+                root_turn_id=prior_root_id,
+            )
+            self.service.room_work.submit(
+                str(partner["sessionId"]),
+                {
+                    "workId": work_item["id"],
+                    "resultSummary": "仍需修订。",
+                    "evidenceRefs": [f"test:ambiguous:{index}"],
+                    "proposedOperabilityVerdict": "unverified",
+                    "proposedRequirementVerdict": "not_satisfied",
+                },
+            )
+            self.service.room_work.return_for_revision(
+                str(facilitator["sessionId"]),
+                {
+                    "workId": work_item["id"],
+                    "expectedRevision": 0,
+                    "operabilityVerdict": "unverified",
+                    "requirementVerdict": "not_satisfied",
+                    "evidenceRefs": [f"test:ambiguous:{index}"],
+                    "reason": "补齐证据后重交。",
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "provide workItemId"):
+            self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "继续",
+                    "clientMessageId": "ambiguous-retry-from-old-ui",
+                    "retryOfRootId": prior_root_id,
+                },
+            )
+
+    def test_user_room_message_resumes_paused_goal_before_dispatch(self) -> None:
+        """An explicit user Room message is the only conversation entry a
+        returning user has; it must resume a paused target Goal before the
+        Root and user event are persisted, then deliver normally."""
+
+        room = self.service.create_room(
+            {
+                "title": "暂停后从会话入口继续",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        lead = room["participants"][0]
+        lead_session = str(lead["sessionId"])
+        goal = self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "objective": "完成小游戏项目",
+                "expectedRevision": 0,
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )
+
+        statuses_at_dispatch: list[str] = []
+
+        def observe_prompt(
+            session_id: str,
+            payload: dict[str, object],
+        ) -> dict[str, object]:
+            statuses_at_dispatch.append(
+                str(self.service.sessions.agent_goal(session_id)["status"])
+            )
+            return {"turnId": "turn:resumed"}
+
+        with patch.object(
+            self.service,
+            "prompt",
+            side_effect=observe_prompt,
+        ) as prompt:
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {"message": "继续完成", "clientMessageId": "room-goal-resume-1"},
+            )
+
+        prompt.assert_called_once()
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(accepted["participant"]["id"], lead["id"])
+        self.assertEqual(statuses_at_dispatch, ["active"])
+        resumed = self.service.sessions.agent_goal(lead_session)
+        self.assertEqual(resumed["status"], "active")
+        event_types = [
+            event["eventType"]
+            for event in self.service.room_snapshot(str(room["id"]))["events"]
+        ]
+        self.assertNotIn("turn_failed", event_types)
+
+    def test_user_room_message_does_not_resume_cancelled_goal_and_projects_cause(
+        self,
+    ) -> None:
+        """Only a paused Goal is resumed. Terminal Goals keep the existing
+        rejection, and the goal cause code must survive the command receipt
+        and reach the durable turn_failed event."""
+
+        room = self.service.create_room(
+            {
+                "title": "已取消 Goal 不自动恢复",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        lead = room["participants"][0]
+        lead_session = str(lead["sessionId"])
+        goal = self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "objective": "已经放弃的目标",
+                "expectedRevision": 0,
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "用户放弃",
+            },
+        )
+
+        with self.assertRaises(ValueError) as blocked:
+            self.service.post_room_message(
+                str(room["id"]),
+                {"message": "继续完成", "clientMessageId": "room-goal-cancelled-1"},
+            )
+
+        self.assertEqual(
+            getattr(blocked.exception, "cause_code", ""),
+            "goal_cancelled",
+        )
+        self.assertEqual(
+            str(self.service.sessions.agent_goal(lead_session)["status"]),
+            "cancelled",
+        )
+        failures = [
+            event
+            for event in self.service.room_snapshot(str(room["id"]))["events"]
+            if event["eventType"] == "turn_failed"
+        ]
+        self.assertEqual(len(failures), 1)
+        # Room durable events uppercase the same canonical lowercase error_code.
+        self.assertEqual(
+            failures[0]["payload"].get("causeCode"),
+            "GOAL_CANCELLED",
+        )
 
     def test_room_messages_always_use_participant_sessions_even_with_retired_kernel_mode(self) -> None:
         """A stale install flag must not resurrect the retired Room runtime."""

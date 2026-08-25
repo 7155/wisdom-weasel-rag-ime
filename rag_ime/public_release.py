@@ -36,7 +36,6 @@ REQUIRED_FILES = (
     "release/release-manifest.example.json",
 )
 FORBIDDEN_PREFIXES = (
-    "docs/",
     "debug/",
     "macos/RagImeMac/",
     "scripts/build_macos_frontend.sh",
@@ -53,6 +52,8 @@ FORBIDDEN_PREFIXES = (
     "dataset/quarantine/",
     "scripts/quarantine/",
 )
+PUBLIC_DOCUMENT_FILES = {"docs/README.md"}
+PUBLIC_DOCUMENT_PREFIXES = ("docs/project/",)
 FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
 FORBIDDEN_NAMES = {".DS_Store", "installation.yaml"}
 FORBIDDEN_SUFFIXES = (
@@ -556,8 +557,13 @@ def _forbidden_public_path(path: str) -> bool:
     normalized = path.replace("\\", "/")
     parts = set(Path(normalized).parts)
     name = Path(normalized).name
+    local_document = normalized.startswith("docs/") and not (
+        normalized in PUBLIC_DOCUMENT_FILES
+        or any(normalized.startswith(prefix) for prefix in PUBLIC_DOCUMENT_PREFIXES)
+    )
     return (
-        any(normalized.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
+        local_document
+        or any(normalized.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
         or bool(parts & FORBIDDEN_PARTS)
         or name in FORBIDDEN_NAMES
         or name.endswith(".userdb")

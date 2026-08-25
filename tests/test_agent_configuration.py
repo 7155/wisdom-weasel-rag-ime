@@ -30,40 +30,69 @@ class AgentConfigurationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_product_default_routes_models_by_runtime_responsibility(self) -> None:
+    def test_product_default_routes_visible_and_private_collaboration_models(self) -> None:
         configuration = default_agent_configuration()
         self.assertEqual(configuration["sessionDefaults"]["roleId"], "companion-future-v1")
-        self.assertEqual(configuration["modelRouting"], {
-            "sessionModelProfile": "openai-codex/gpt-5.6-sol",
-            "sessionThinkingLevel": "max",
-            "roomPartnerModelProfile": "openai-codex/gpt-5.6-terra",
-            "roomPartnerThinkingLevel": "max",
-            "toolAgentModelProfile": "openai-codex/gpt-5.6-luna",
-            "toolAgentThinkingLevel": "low",
-        })
-        self.assertNotIn("modelProfile", configuration["sessionDefaults"])
         self.assertEqual(
-            default_agent_configuration(model_profile="gateway/default")["modelRouting"],
-            {
-                "sessionModelProfile": "gateway/default",
-                "sessionThinkingLevel": "off",
-                "roomPartnerModelProfile": "gateway/default",
-                "roomPartnerThinkingLevel": "off",
-                "toolAgentModelProfile": "gateway/default",
-                "toolAgentThinkingLevel": "off",
-            },
+            configuration["sessionDefaults"]["modelProfile"],
+            "openai-codex/gpt-5.6-sol",
         )
         self.assertEqual(
             default_agent_configuration(role_id="vcp-v1")["sessionDefaults"]["roleId"],
             "companion-future-v1",
         )
+        self.assertEqual(
+            configuration["modelRouting"],
+            {
+                "primary": {
+                    "modelProfile": "inherit",
+                    "thinkingLevel": "inherit",
+                },
+                "toolAgent": {
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "max",
+                },
+                "subagent": {
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "max",
+                },
+                "roomCoordinator": {
+                    "modelProfile": "openai-codex/gpt-5.6-sol",
+                    "thinkingLevel": "high",
+                },
+            },
+        )
+
+    def test_model_routes_are_revisioned_without_changing_legacy_session_defaults(self) -> None:
+        update = self.store.update(
+            {
+                "modelRouting.toolAgent": {
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "low",
+                },
+            },
+            expected_revision=1,
+            updated_by="models-ui",
+        )
+
+        configuration = update.snapshot["configuration"]
+        self.assertEqual(
+            configuration["modelRouting"]["toolAgent"],
+            {
+                "modelProfile": "openai-codex/gpt-5.6-luna",
+                "thinkingLevel": "low",
+            },
+        )
+        self.assertEqual(
+            configuration["sessionDefaults"]["modelProfile"],
+            "deepseek/deepseek-chat",
+        )
+        self.assertFalse(update.runtime_sync_required)
 
     def test_startup_rewrites_a_persisted_legacy_role_id_once(self) -> None:
         path = Path(self.tmp.name) / "legacy-agent.sqlite"
         legacy = default_agent_configuration()
         legacy["sessionDefaults"]["roleId"] = "zhiyou-v1"
-        legacy.pop("modelRouting")
-        legacy["sessionDefaults"]["modelProfile"] = "deepseek/deepseek-chat"
         with sqlite3.connect(path) as conn:
             apply_database_migrations(conn)
             conn.execute(
@@ -81,14 +110,6 @@ class AgentConfigurationTests(unittest.TestCase):
         snapshot = store.snapshot()
 
         self.assertEqual(snapshot["configuration"]["sessionDefaults"]["roleId"], "companion-present-v1")
-        self.assertEqual(snapshot["configuration"]["modelRouting"], {
-            "sessionModelProfile": "deepseek/deepseek-chat",
-            "sessionThinkingLevel": "off",
-            "roomPartnerModelProfile": "deepseek/deepseek-chat",
-            "roomPartnerThinkingLevel": "off",
-            "toolAgentModelProfile": "deepseek/deepseek-chat",
-            "toolAgentThinkingLevel": "off",
-        })
         self.assertEqual(snapshot["revision"], 8)
         self.assertEqual(snapshot["lastEventId"], "agent-control:1")
         with sqlite3.connect(path) as conn:
@@ -96,25 +117,67 @@ class AgentConfigurationTests(unittest.TestCase):
                 "SELECT configuration_json FROM agent_configuration_state WHERE singleton_id = 1"
             ).fetchone()[0]
         self.assertNotIn("zhiyou-v1", stored)
-        self.assertNotIn('"modelProfile"', stored)
 
-    def test_model_routes_update_atomically_without_runtime_restart(self) -> None:
-        update = self.store.update(
-            {
-                "modelRouting.sessionModelProfile": "openai-codex/gpt-5.6-sol",
-                "modelRouting.sessionThinkingLevel": "max",
-                "modelRouting.roomPartnerModelProfile": "openai-codex/gpt-5.6-terra",
-                "modelRouting.roomPartnerThinkingLevel": "high",
-                "modelRouting.toolAgentModelProfile": "openai-codex/gpt-5.6-luna",
-                "modelRouting.toolAgentThinkingLevel": "low",
-            },
-            expected_revision=1,
-            updated_by="model-routing-ui",
+    def test_startup_migrates_flattened_model_routes_without_losing_choices(self) -> None:
+        path = Path(self.tmp.name) / "legacy-model-routing.sqlite"
+        legacy = default_agent_configuration()
+        legacy["sessionDefaults"].pop("modelProfile")
+        legacy["modelRouting"] = {
+            "sessionModelProfile": "gpt/gpt-5.6-luna",
+            "sessionThinkingLevel": "max",
+            "toolAgentModelProfile": "openai-codex/gpt-5.4",
+            "toolAgentThinkingLevel": "low",
+            "roomPartnerModelProfile": "openai-codex/gpt-5.4",
+            "roomPartnerThinkingLevel": "medium",
+        }
+        with sqlite3.connect(path) as conn:
+            apply_database_migrations(conn)
+            conn.execute(
+                """
+                INSERT INTO agent_configuration_state(
+                    singleton_id, revision, configuration_json, applied_revision,
+                    sync_state, sync_error, updated_at_ms, updated_by
+                ) VALUES (1, 4, ?, 4, 'synchronized', '', 1, 'legacy-model-ui')
+                """,
+                (json.dumps(legacy, ensure_ascii=False, sort_keys=True),),
+            )
+
+        store = AgentConfigurationStore(path)
+        store.initialize(default_agent_configuration())
+        snapshot = store.snapshot()
+        configuration = snapshot["configuration"]
+
+        self.assertEqual(snapshot["revision"], 5)
+        self.assertEqual(
+            configuration["sessionDefaults"]["modelProfile"],
+            "gpt/gpt-5.6-luna",
         )
+        self.assertEqual(
+            configuration["modelRouting"],
+            {
+                "primary": {
+                    "modelProfile": "gpt/gpt-5.6-luna",
+                    "thinkingLevel": "max",
+                },
+                "toolAgent": {
+                    "modelProfile": "openai-codex/gpt-5.4",
+                    "thinkingLevel": "low",
+                },
+                "subagent": {
+                    "modelProfile": "openai-codex/gpt-5.4",
+                    "thinkingLevel": "medium",
+                },
+                "roomCoordinator": {
+                    "modelProfile": "openai-codex/gpt-5.4",
+                    "thinkingLevel": "medium",
+                },
+            },
+        )
+        self.assertEqual(snapshot["lastEventId"], "agent-control:1")
 
-        self.assertFalse(update.runtime_sync_required)
-        self.assertEqual(update.snapshot["configuration"]["modelRouting"]["roomPartnerThinkingLevel"], "high")
-        self.assertEqual(update.snapshot["sync"]["state"], "synchronized")
+        store_again = AgentConfigurationStore(path)
+        store_again.initialize(default_agent_configuration())
+        self.assertEqual(store_again.snapshot()["revision"], 5)
 
     def test_configuration_is_revisioned_and_rejects_stale_writers(self) -> None:
         initial = self.store.snapshot()

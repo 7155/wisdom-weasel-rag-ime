@@ -1,9 +1,9 @@
 # Project Decisions
 
-Updated: 2026-08-16
+Updated: 2026-08-20
 
-This file records decisions that remain relevant across Outcomes. It does not
-record ordinary implementation choices or live status.
+This file records decisions that stay relevant across Outcomes, not
+implementation choices or live status.
 
 ## D-001 — Pi Owns Session Runtime
 
@@ -24,9 +24,9 @@ record ordinary implementation choices or live status.
   dispatch, ordered public events, cancellation fan-out, and one terminal Root.
 - **Why:** Partners already need the same Pi execution capabilities as an
   ordinary Session; a second Room Agent loop and hard Kernel stages add failure
-  modes without adding useful work.
+  modes without useful work.
 - **Consequence:** Partners use ordinary task Skills. Review, worktree isolation,
-  and fan-out are conditional decisions made by the responsible Agent.
+  and fan-out are conditional decisions by the responsible Agent.
 
 ## D-003 — Tool Agents Are Private Child Sessions
 
@@ -38,8 +38,8 @@ record ordinary implementation choices or live status.
 - **Why:** the parent needs useful hands, while responsibility and public Room
   membership must remain explicit.
 - **Consequence:** child events/results return to the parent with evidence-only
-  authority. Direct same-tree peer calls are allowed; private transcripts do
-  not become public Room history.
+  authority. Same-tree peer calls are allowed; private transcripts never
+  become public Room history.
 
 ## D-004 — Skills Are Conditional Methods, Not A Pipeline
 
@@ -57,7 +57,7 @@ record ordinary implementation choices or live status.
 ## D-005 — Semantic Documents And Mechanical State Stay Separate
 
 - **Status:** accepted
-- **Decision:** documents own vision, intent, accepted decisions, work meaning,
+- **Decision:** documents own vision, intent, decisions, work meaning,
   results, explanations, and risks. Runtime, workspace, Git, and event stores
   own running/terminal state, ownership, revisions, dirty/head, Tools,
   approvals, sequence, and cancellation.
@@ -75,7 +75,7 @@ record ordinary implementation choices or live status.
   default.
 - **Why:** long-running work needs stable prompt prefixes, predictable context
   budgets, cache locality, and explicit provenance.
-- **Consequence:** information is promoted only through accepted results and is
+- **Consequence:** information is promoted only through accepted results and
   reduced at each Project/Outcome/Room/Session boundary.
 
 ## D-007 — The Git Root Is The Self-Hosting Bootstrap
@@ -87,7 +87,7 @@ record ordinary implementation choices or live status.
 - **Why:** Pi discovers the root Agent guide automatically, while local review
   packs are too large, private, and unstable to be an automatic prompt source.
 - **Consequence:** current semantic progress is condensed into root files;
-  historical bundles are loaded only by exact reference. A lightweight checker
+  historical bundles load only by exact reference. A lightweight checker
   guards links, budgets, and retired workflow names without interpreting
   completion.
 
@@ -96,10 +96,10 @@ record ordinary implementation choices or live status.
 - **Status:** accepted
 - **Decision:** one sequential writer may use the current authorized workspace;
   shared writes are allowed when the owner accepts conflict risk; isolated
-  worktrees are used for genuinely concurrent/conflicting writes. Independent
-  review is selected by user request or material risk.
-- **Why:** mandatory isolation and review made small work expensive while still
-  failing to solve semantic conflicts automatically.
+  worktrees serve genuinely concurrent writes. Independent review is selected
+  by user request or material risk.
+- **Why:** mandatory isolation and review made small work expensive without
+  solving semantic conflicts automatically.
 - **Consequence:** workspace mode and review evidence are explicit in the
   TaskBrief/result, but neither is a universal gate.
 
@@ -111,16 +111,16 @@ record ordinary implementation choices or live status.
   responsibility selects work ownership and applicable Skills.
 - **Why:** advice such as avoiding defensive overengineering may be correct for
   one model and harmful as a permanent character or permission rule.
-- **Consequence:** Runtime support and UX still need verification. Until then,
-  do not claim that every Provider implements the same thinking controls or
-  that persona changes execution authority.
+- **Consequence:** Runtime support and UX still need verification; until then,
+  do not claim uniform Provider thinking controls or that persona changes
+  execution authority.
 
 ## D-010 — Adopt Harness Mechanisms Selectively
 
 - **Status:** accepted
 - **Decision:** borrow bounded replayable context, model-visible attribution,
   package-owned invariants, quiescent cancellation, and narrow capability seams
-  from mature harnesses. Do not copy an everything-is-a-plugin topology, a
+  from mature harnesses. Do not copy everything-is-a-plugin topology, a
   second event bus, or an unbounded package/doc graph.
 - **Why:** self-hosting requires reliable context and ownership, not the source
   project's entire architecture.
@@ -137,7 +137,34 @@ record ordinary implementation choices or live status.
   and reuses before creating a minimal missing Package.
 - **Why:** self-hosting needs discoverable and creatable capabilities, but a
   PAW-specific loader would fork Pi's Session bootstrap and resource semantics.
-- **Consequence:** source preparation and inspection do not invoke Luna. The
+- **Consequence:** source preparation and inspection never invoke Luna. The
   product asks for confirmation only before installation-state mutation. New
-  Sessions receive the active Package resources; already-running Sessions keep
-  their stable resource snapshot.
+  Sessions receive the active Package resources; running Sessions keep their
+  stable snapshot. A future OS shell may project an installed Package
+  that declares an application surface as an app; its lifecycle stays
+  Pi-owned, and surface-less Packages remain background capabilities rather
+  than fake windowed apps.
+
+## D-012 — PAW OS Frontend Stays In The PAW Product Repository
+
+- **Status:** accepted
+- **Decision:** `7155/personal-agent-workbench` owns both the PAW Runtime and the
+  PAW OS frontend. `control-center-web` remains a selectable legacy fallback
+  while the PAW OS shell is implemented in the same repository. `7155/tutti` and upstream Tutti are reference sources only, not
+  PAW product or release repositories.
+- **Why:** one product repository keeps contracts, generated types, reducers,
+  Runtime adapters, installation, and frontend acceptance at one revision while
+  PAW learns from proven Tutti window, Dock, Mission Control, and App Center
+  patterns.
+- **Consequence:** PAW OS frontend code and product pushes go only to
+  `7155/personal-agent-workbench`. Tutti mechanisms are reimplemented or
+  adapted behind PAW-owned seams; no absolute-path dependency,
+  cross-repository Runtime state, or wholesale Tutti fork becomes a release
+  dependency. Migrated Apps use `paw.*` identities, layout persistence stores
+  presentation only, and themes switch only in System Settings -> Appearance.
+  Project Field / Wayfinder is the OS home, not an App; route identity stays
+  distinct from App identity so Overview, Tasks, and WorkDocuments share
+  Project Workbench while other Apps keep bounded surfaces. Browser chrome may
+  follow Tutti's interaction grammar, but `deviceId + tabId` selection, the
+  command queue, permissions, traces, and Stop stay PAW-owned so human and
+  Agent operate one visible page.

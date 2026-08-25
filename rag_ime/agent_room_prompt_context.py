@@ -20,10 +20,13 @@ def room_participant_prompt(
     omitted_message_count: int = 0,
     request_heading: str = "用户在 Room 中的请求",
     work_item: Mapping[str, object] | None = None,
+    work_documents: Sequence[Mapping[str, object]] = (),
+    work_document_authorities: Mapping[str, Mapping[str, object]] | None = None,
 ) -> str:
     """Build a provider-only Room delta; never persist it as a user message."""
 
     participant_names: dict[str, str] = {}
+    participant_sessions: dict[str, str] = {}
     for value in room.get("participants", []):
         if (
             not isinstance(value, Mapping)
@@ -34,6 +37,10 @@ def room_participant_prompt(
         participant_names[participant_id] = _bounded_text(
             value.get("displayName"),
             maximum=40,
+        )
+        participant_sessions[participant_id] = _bounded_text(
+            value.get("sessionId"),
+            maximum=320,
         )
     role = (
         _bounded_text(target.get("collaborationRole"), maximum=40)
@@ -74,24 +81,47 @@ def room_participant_prompt(
         participant_names,
     )
     target_id = str(target.get("id") or "")
+    room_work_items = [
+        value
+        for value in room.get("workItems", [])
+        if isinstance(value, Mapping)
+        and str(value.get("state") or "")
+        in {"queued", "active", "review", "blocked"}
+    ]
+    related_work_items: list[Mapping[str, object]] = []
     work_lines: list[str] = []
-    for work in room.get("workItems", []):
+    recovery_directives: list[str] = []
+    for work in room_work_items:
         if not isinstance(work, Mapping):
             continue
         state = str(work.get("state") or "")
-        if state not in {"queued", "active", "review", "blocked"}:
-            continue
         if target_id not in {
             str(work.get("accountableParticipantId") or ""),
             str(work.get("currentOwnerParticipantId") or ""),
             str(work.get("offeredToParticipantId") or ""),
         }:
             continue
+        related_work_items.append(work)
         relation = _work_relation(work, target_id)
+        work_id = _bounded_text(work.get("id"), maximum=240)
         work_lines.append(
-            f"- {relation}，{_work_state(state)}："
+            f"- WorkItem {work_id} · {relation}，{_work_state(state)}："
             f"{_bounded_text(work.get('objective'), maximum=320)}"
         )
+        blocker = work.get("blocker")
+        blocker = blocker if isinstance(blocker, Mapping) else {}
+        review_feedback = _bounded_text(
+            blocker.get("reviewFeedback"),
+            maximum=500,
+        )
+        if role == "coordinator" and state == "active" and review_feedback:
+            revision = int(work.get("revision") or 0)
+            recovery_directives.append(
+                "返修待重新派发（先执行，不要把本轮结束为 blocked）："
+                f"op=retry、workItemId={work_id}、expectedRevision={revision}、"
+                "reason=本轮恢复原因；省略 targetParticipantId 会沿用当前负责人。"
+                "Partner 重新提交到 review 后才能 accept，不能直接改写历史 review。"
+            )
         if len(work_lines) >= 4:
             break
     total_omitted = (
@@ -104,8 +134,15 @@ def room_participant_prompt(
         else ""
     )
     work_item_lines: list[str] = []
+    work_item_id = ""
     if work_item is not None:
+        work_item_id = _bounded_text(work_item.get("id"), maximum=240)
+        work_authority = (work_document_authorities or {}).get(
+            f"room_work_item:{work_item_id}",
+            {},
+        )
         work_item_lines = [
+            f"WorkItem：{work_item_id}",
             f"目标：{_bounded_text(work_item.get('objective'), maximum=1_000)}",
             (
                 "预期产物："
@@ -116,60 +153,248 @@ def room_participant_prompt(
                 f"{_acceptance_text(work_item.get('acceptanceCriteria'))}"
             ),
         ]
-    sections = [
+        if work_authority:
+            work_item_lines.append(
+                "文档绑定（使用这里的权威回执，不要猜 WorkItem revision）："
+                "authorityKind=room_work_item；"
+                f"authorityId={work_item_id}；"
+                "authorityRevision="
+                f"{int(work_authority.get('authorityRevision') or 0)}；"
+                "transitionReceiptId="
+                f"{_bounded_text(work_authority.get('transitionReceiptId'), maximum=240)}"
+            )
+    document_by_authority = {
+        _bounded_text(document.get("authorityKey"), maximum=520): document
+        for document in work_documents
+        if isinstance(document, Mapping)
+        and _bounded_text(document.get("authorityKey"), maximum=520)
+    }
+    room_document_lines: list[str] = []
+    related_ids = {
+        str(value.get("id") or "") for value in related_work_items
+    }
+    for work in room_work_items[:12]:
+        work_id = _bounded_text(work.get("id"), maximum=240)
+        if not work_id:
+            continue
+        authority_key = f"room_work_item:{work_id}"
+        authority = (work_document_authorities or {}).get(authority_key, {})
+        authority_revision = authority.get("authorityRevision")
+        authority_binding = (
+            "authorityKind=room_work_item、"
+            f"authorityId={work_id}、"
+            f"authorityRevision={int(authority_revision)}"
+            if isinstance(authority_revision, int)
+            else "先从当前工作卡片核对 authorityRevision"
+        )
+        document = document_by_authority.get(authority_key)
+        if document is None:
+            if work_id in related_ids:
+                room_document_lines.append(
+                    f"- [你负责] WorkItem {work_id} 尚未登记活动文档；"
+                    f"先用 work_documents list 查 authorityKey={authority_key}；"
+                    "这是当前 WorkItem 的第一步：在 Room 工作区 docs/ 下创建 Markdown，"
+                    f"workspace_write.workDocument 必须原样使用 {authority_binding}。"
+                    "成功回执会给出 workDocumentRegistration.document.path；"
+                    "后续 read/write 立即改用该规范路径，不再沿用首次请求路径；"
+                    "后续 bound write 使用当前文档索引给出的 authorityRevision，"
+                    "不要沿用更早记住的旧值。"
+                )
+            continue
+        owner_id = (
+            _bounded_text(work.get("currentOwnerParticipantId"), maximum=240)
+            or _bounded_text(work.get("accountableParticipantId"), maximum=240)
+            or _bounded_text(work.get("offeredToParticipantId"), maximum=240)
+        )
+        owner_name = participant_names.get(owner_id, "未分配伙伴")
+        owner_session = participant_sessions.get(owner_id, "")
+        scope = "你负责" if work_id in related_ids else "Room 共享"
+        live_revision = authority.get("authorityRevision")
+        if not isinstance(live_revision, int):
+            live_revision = document.get("authorityRevision") or 0
+        room_document_lines.append(
+            f"- [{scope}] WorkItem {work_id} → "
+            f"{_bounded_text(document.get('path'), maximum=1_000)}；"
+            f"documentId={_bounded_text(document.get('documentId'), maximum=240)}；"
+            f"authorityRevision={int(live_revision)}；"
+            f"标题={_bounded_text(document.get('title'), maximum=240) or '未命名工作文档'}；"
+            f"负责人=@{owner_name}；Session={owner_session or '未绑定'}"
+        )
+        if work_id in related_ids:
+            room_document_lines.append(
+                "  交付规则：先在该文档写目标、范围与计划；工作中持续更新；"
+                "结束前再写结果、证据、改动文件、验证和剩余风险，并重新绑定登记。"
+            )
+    opening_sections = [
         "<room-context>",
         (
             f"Room：{_bounded_text(room.get('title'), maximum=120)}；"
             f"话题：{topic_title}；你本轮从“{role_label}”的角度参与"
         ),
+        *recovery_directives,
     ]
+    context_sections: list[str] = []
     if topic_summary:
-        sections.append(f"话题摘要：{topic_summary}")
+        context_sections.append(f"话题摘要：{topic_summary}")
     if scenario_prompt:
-        sections.append(f"Room 补充设定（不改变权限）：{scenario_prompt}")
-    if transcript_lines or transcript_note:
-        sections.extend(
-            [
-                "",
-                "本次新增的公开对话：",
-                *(transcript_lines or ["- 无"]),
-            ]
+        context_sections.append(
+            f"Room 补充设定（不改变权限）：{scenario_prompt}"
         )
+    if transcript_lines or transcript_note:
+        transcript_section = [
+            "",
+            "本次新增的公开对话：",
+            *(transcript_lines or ["- 无"]),
+        ]
         if transcript_note:
-            sections.append(transcript_note)
+            transcript_section.append(transcript_note)
+        context_sections.append("\n".join(transcript_section))
     if work_lines:
-        sections.extend(["", "与你有关的未完成工作：", *work_lines])
+        context_sections.append(
+            "\n".join(["", "与你有关的未完成工作：", *work_lines])
+        )
     if work_item_lines:
-        sections.extend(["", "当前工作卡片：", *work_item_lines])
-    elif room_kind == "collaboration":
-        if role == "coordinator":
-            sections.extend(
+        context_sections.append(
+            "\n".join(["", "当前工作卡片：", *work_item_lines])
+        )
+    if room_document_lines:
+        context_sections.append(
+            "\n".join(
                 [
                     "",
-                    "当前职责：Room Facilitator。普通闲聊或一个连贯动作直接处理。"
-                    "当请求包含多个可独立验收步骤、需要不同专长，或并行处理能明显推进时，"
-                    "先用 skill_load 加载 facilitate-room，再按该 Skill 判断是否调用 "
-                    "room_partner list/delegate/delegate_batch；同一阶段多条独立轨道"
-                    "必须用一次 delegate_batch 才能称为并行，不要为了凑伙伴数量机械委派。",
+                    "Room 正在工作的文档索引：",
+                    *room_document_lines,
+                    (
+                        "读取规则：先用 work_documents list/get 核对 documentId、authorityKey "
+                        "和当前哈希，再用 workspace_read 读取上面给出的 path。优先读取标记为"
+                        "“你负责”的文档；需要别的伙伴上下文时直接 @ 对方，不要扫描或继承无关"
+                        "Session 的整段对话。"
+                    ),
+                    (
+                        "提交门槛：负责文档必须已登记且至少形成一次后续内容修订"
+                        "（documentRevision >= 2）；满足它只允许把 WorkItem 提交到 review，"
+                        "不会自动验收。Facilitator 仍须依据证据分别判断运行可操作性和需求满足度。"
+                    ),
                 ]
             )
-        sections.extend(
-            [
-                "",
-                "当前阶段：普通对话，或还没有需要执行的工作。",
-                "普通闲聊直接回答。明确、可安全执行或只读核对的请求直接开始，"
-                "不要让用户先填写额外表格或回复固定开工口令。只有 Facilitator/Reporter "
-                "在缺少且会改变结果的用户选择时，才加载 alignment-and-decision，再用原生 ask "
-                "一次提出一到四个必要问题并给出二到五个唯一选项；前置依赖改变后续问题时"
-                "才分开问。Room partner 把缺口和恢复条件在公开回复中交给 Facilitator；"
-                "nested child 通过子 Agent 结果事件返回 blocker。能从源码、配置或"
-                "运行状态查明的事实自行核对。不要另起一套重复的目标、计划或伙伴任务流程。",
-            ]
         )
-    if message:
-        sections.extend(["", f"{request_heading}：", message])
-    sections.append("</room-context>")
-    return "\n".join(sections)[:ROOM_CONTEXT_PROMPT_CHAR_BUDGET]
+    hard_tail_sections: list[str] = []
+    if room_kind == "collaboration":
+        if role == "coordinator":
+            hard_tail_sections.append(
+                "\n".join(
+                    [
+                        "",
+                        "当前职责：Room Facilitator。普通闲聊或一个连贯动作直接处理；"
+                        "当请求包含多个可独立验收步骤、需要不同专长，或并行处理能明显推进时，"
+                        "先用 skill_load 加载 facilitate-room，再按该 Skill 判断是否调用 "
+                        "room_partner list/delegate/delegate_batch；同一阶段多条独立轨道"
+                        "必须用一次 delegate_batch 才能称为并行，不要为了凑伙伴数量机械委派。",
+                        "拆分完成并注册 Root WorkDocument 后，在委派或修改产品前先用一次 "
+                        "room_partner post(kind=progress) 向用户公开文档路径、目标、工作轨道和验收条件。"
+                        "这是可见计划回执，不新增审批门；没有会改变结果的用户选择时，公开后自动继续。"
+                        "计划发生实质变化时先更新绑定文档，再公开新的文档回执。",
+                        "Room 内所有 participant 都是平等 peer。需要澄清、同步或求助时，"
+                        "直接使用 room_partner peer_list/peer_send/peer_ask/peer_reply 与目标伙伴通信；"
+                        "消息由 source Session 直接投递到 target Session。Facilitator 只负责最终 Root 汇合，"
+                        "不得复制、改写或转发伙伴原话来模拟互相 @。",
+                        "delegate/delegate_batch 只返回异步 receipt（childDispatchId/workItemId），"
+                        "不会在一次 Tool 调用里等待伙伴结束。伙伴完成后由持久 wake 唤醒你；"
+                        "继续推进其他可做工作，只在明确停止点调用 collect/wait。wait 超时只表示仍在运行，"
+                        "不得取消、轮询或重新分派该伙伴。",
+                        "交付到达后先 collect 当前 WorkItem、WorkDocument 与证据，再显式 accept 或 return。"
+                        "分别判断运行可操作性和需求满足度；两轴均通过才用 expectedRevision、verdicts、"
+                        "evidenceRefs 与非空 reason accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
+                        "文档修订都不能代替验收。审查报告 unverified、changes_required、failed 或未解决 "
+                        "HIGH/MEDIUM 时必须 return，不得写成 passed/satisfied；Runtime 会机械拒绝"
+                        "在 Partner 提交的 failed/unverified/not_satisfied 之上 accept。"
+                        "仍为 active 且带 reviewFeedback 的退回项必须先按上文 retry 同一修订链；"
+                        "只有原失败 WorkItem 已是不可返修的终态且出现新证据时，才创建其直接子复核项，"
+                        "待复核提交 passed/satisfied 后用 supersededByWorkId 显式引用，不得改写历史提交结论。"
+                        "return 后重新委派修订时，"
+                        "调用 room_partner retry 并携带原 workItemId、最新 expectedRevision 与具体 reason；"
+                        "省略 targetParticipantId 会继续交给当前负责人，需要改派时才使用 list 返回的精确 ID。"
+                        "不要新建一个 WorkItem 来冒充同一修订链。"
+                        "不要把仍在进行的 Room Goal 暂停来等待用户或界面；受阻时发 blocked/partial，"
+                        "保持 Goal active。网页验收只用 product browser（PAW Browser）；"
+                        "禁止 desktop_semantic 去操作独立 Chrome/Edge。"
+                        "bound write 使用当前文档索引上的 live authorityRevision，不要沿用更早记住的旧值。",
+                        "仅当用户要求 Grill/独立审查、任务复杂度或实现风险值得专门复核，或文档链需要"
+                        "独立一致性检查时，才在生产证据到齐后委派 Reviewer WorkItem 给未负责该实现的伙伴。"
+                        "Reviewer 检查用户原始需求、程序缺陷、各伙伴的有界上下文引用，以及 worker 文档、"
+                        "索引、交叉引用和完成标记；普通低风险任务由 Facilitator 直接双轴验收，不制造额外任务。"
+                        "存在 Reviewer 时，其未验证或问题结论必须修复/退回，不能直接形成 Room 成功终态。",
+                        "room_partner 的 typed post 合同：op=post、kind=progress 只发布过程信息；"
+                        "progress 是非终态，不会完成 WorkItem、Room Goal 或当前 Session 回合，"
+                        "也不得根据 content 前缀或其他文本内容推断终态。主管完成全部 WorkItem 对账，"
+                        "并以 operabilityVerdict=passed、requirementVerdict=satisfied 完成双轴验收后，"
+                        "必须恰好一次调用 room_partner，参数为 op=post、kind=result。只有该 Tool 回执成功后"
+                        "才能调用 agent_goal complete；Goal 完成回执成功后不要再发第二个 result，直接完成"
+                        "正常 assistant 回合，由 Pi 随后产生普通 turn_completed。",
+                    ]
+                )
+            )
+        else:
+            hard_tail_sections.append(
+                "\n".join(
+                    [
+                        "",
+                        "Room 协作规则：所有 participant 都是平等 peer。需要另一位伙伴的信息或回应时，"
+                        "直接使用 room_partner peer_list/peer_send/peer_ask/peer_reply；不要等待 Facilitator 中转，"
+                        "也不要把自己当成上级。Facilitator 只负责最终 Root 汇合。",
+                        "只有所有验收条件满足且负责的 WorkDocument 已完成收尾同步后，才调用一次 "
+                        "room_partner post(kind=work_result)；该结构化交付只会把 WorkItem 提交到 review"
+                        "并通过持久 wake 通知 Facilitator，不会自动验收。work_result 必须携带如实的 "
+                        "proposedOperabilityVerdict 与 proposedRequirementVerdict：未验证写 unverified，"
+                        "失败写 failed/not_satisfied，Facilitator 无法把它们改写成通过。"
+                        "不要把进度或尚未满足的条件伪装成 work_result。"
+                        "网页验收只用 product browser（PAW Browser）；禁止 desktop_semantic "
+                        "去操作独立 Chrome/Edge。bound write 使用当前文档索引上的 live "
+                        "authorityRevision，不要沿用更早记住的旧值。",
+                        (
+                            "当前 WorkItem 完成时只使用这一种提交形状："
+                            f"op=post、kind=work_result、workItemId={work_item_id}、"
+                            "content=交付摘要、proposedOperabilityVerdict=passed|failed|unverified、"
+                            "proposedRequirementVerdict=satisfied|not_satisfied|unverified。"
+                            "省略 kind 或使用 kind=progress 只会发布过程消息，不会提交 review；"
+                            "普通 assistant 最终回复也不会替代这次结构化调用。"
+                            if work_item_id
+                            else ""
+                        ),
+                    ]
+                )
+            )
+        hard_tail_sections.append(
+            "\n".join(
+                [
+                    "",
+                    (
+                        "当前工作卡片已在上文给出；只推进该 WorkItem 的范围和验收条件。"
+                        if work_item_lines
+                        else "当前尚未形成结构化 WorkItem；这不代表当前请求是普通闲聊。"
+                    ),
+                    "先判断用户请求是对话还是执行任务。普通闲聊直接回答；明确、可安全执行"
+                    "或只读核对的请求直接开始。若一个执行请求包含两个以上可独立验收的组成部分，"
+                    "Facilitator 在输出实现结果前必须先加载 facilitate-room，并根据真实 delegate/"
+                    "delegate_batch 回执建立 WorkItem；决定不委派时必须明确说明不能独立验收或并行无收益。"
+                    "不要让用户先填写额外表格或回复固定开工口令。只有 Facilitator/Reporter "
+                    "在缺少且会改变结果的用户选择时，才加载 alignment-and-decision，再用原生 ask "
+                    "一次提出一到四个必要问题并给出二到五个唯一选项；前置依赖改变后续问题时"
+                    "才分开问。Room partner 把缺口和恢复条件在公开回复中交给 Facilitator；"
+                    "nested child 通过子 Agent 结果事件返回 blocker。能从源码、配置或"
+                    "运行状态查明的事实自行核对。不要另起一套重复的目标、计划或伙伴任务流程。",
+                    "Pi 接受一个 Session 回合只表示运行已进入同一 Tool loop，不代表模型必然完成；"
+                    "只有可核对的 Tool 回执、WorkItem 验收和最终 Root 汇合才能作为成功证据。",
+                ]
+            )
+        )
+    return _budgeted_room_prompt(
+        opening_sections=opening_sections,
+        context_sections=context_sections,
+        hard_tail_sections=hard_tail_sections,
+        request_heading=request_heading,
+        message=message,
+    )
 
 
 def room_intercom_prompt(
@@ -218,19 +443,118 @@ def room_intercom_prompt(
     )
 
 
+def _budgeted_room_prompt(
+    *,
+    opening_sections: Sequence[str],
+    context_sections: Sequence[str],
+    hard_tail_sections: Sequence[str],
+    request_heading: str,
+    message: str,
+) -> str:
+    request_sections = (
+        ["", f"{request_heading}：", message]
+        if message
+        else []
+    )
+    tail_sections = [
+        *hard_tail_sections,
+        *request_sections,
+        "</room-context>",
+    ]
+    full_prompt = "\n".join(
+        [*opening_sections, *context_sections, *tail_sections]
+    )
+    if len(full_prompt) <= ROOM_CONTEXT_PROMPT_CHAR_BUDGET:
+        return full_prompt
+
+    if message:
+        tail_without_message = [
+            *hard_tail_sections,
+            "",
+            f"{request_heading}：",
+            "</room-context>",
+        ]
+        fixed_prompt = "\n".join(
+            [*opening_sections, *tail_without_message]
+        )
+        message_budget = max(
+            0,
+            ROOM_CONTEXT_PROMPT_CHAR_BUDGET - len(fixed_prompt) - 1,
+        )
+        bounded_message = _head_tail_bounded_text(
+            message,
+            maximum=message_budget,
+        )
+        tail_sections = [
+            *hard_tail_sections,
+            "",
+            f"{request_heading}：",
+            bounded_message,
+            "</room-context>",
+        ]
+
+    selected_context: list[str] = []
+    for section in context_sections:
+        candidate = "\n".join(
+            [
+                *opening_sections,
+                *selected_context,
+                section,
+                *tail_sections,
+            ]
+        )
+        if len(candidate) > ROOM_CONTEXT_PROMPT_CHAR_BUDGET:
+            break
+        selected_context.append(section)
+
+    omission_notice = "[部分 Room 上下文因提示词预算省略]"
+    with_notice = "\n".join(
+        [
+            *opening_sections,
+            *selected_context,
+            omission_notice,
+            *tail_sections,
+        ]
+    )
+    if len(with_notice) <= ROOM_CONTEXT_PROMPT_CHAR_BUDGET:
+        selected_context.append(omission_notice)
+
+    return "\n".join(
+        [*opening_sections, *selected_context, *tail_sections]
+    )
+
+
+def _head_tail_bounded_text(value: str, *, maximum: int) -> str:
+    if len(value) <= maximum:
+        return value
+    if maximum <= 0:
+        return ""
+    omission_notice = "\n[用户请求中段因提示词预算省略]\n"
+    if maximum <= len(omission_notice):
+        return value[-maximum:]
+    retained = maximum - len(omission_notice)
+    head_length = retained // 2
+    tail_length = retained - head_length
+    return (
+        value[:head_length]
+        + omission_notice
+        + value[-tail_length:]
+    )
+
+
 def _work_relation(work: Mapping[str, object], target_id: str) -> str:
     if str(work.get("offeredToParticipantId") or "") == target_id:
         return "待你接手"
     if str(work.get("currentOwnerParticipantId") or "") == target_id:
         return "由你推进"
-    return "由你负责验收"
+    return "由你负责汇合"
 
 
 def _work_state(value: str) -> str:
     return {
         "queued": "等待开始",
         "active": "进行中",
-        "review": "等待复核",
+        "review": "等待汇合",
         "blocked": "已阻塞",
     }.get(value, "未结")
 

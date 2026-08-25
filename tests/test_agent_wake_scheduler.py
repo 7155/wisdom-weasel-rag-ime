@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_protocol import AgentEventEnvelope
-from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore
+from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 
 
 class AgentWakeScheduleStoreTests(unittest.TestCase):
@@ -42,6 +42,68 @@ class AgentWakeScheduleStoreTests(unittest.TestCase):
         self.assertEqual(final["status"], "completed")
         self.assertEqual(final["latestRun"]["state"], "completed")
         self.assertEqual(final["nextWakeAtMs"], 0)
+
+    def test_scheduler_observer_receives_terminal_schedule_after_run_is_immutable(
+        self,
+    ) -> None:
+        schedule = self._create()
+        claim = self.store.claim_due(now_ms=self.now + 1_000)[0]
+        self.store.accept(
+            str(claim["runId"]),
+            session_id="session:target",
+            turn_id="turn:scheduled",
+            now_ms=self.now + 1_100,
+        )
+        observed: list[tuple[str, dict[str, object]]] = []
+        scheduler = AgentWakeScheduler(
+            store=self.store,
+            dispatch=lambda _claim: None,
+            enabled=False,
+        )
+        scheduler.bind_terminal_observer(
+            lambda event, terminal_schedule: observed.append(
+                (event.event_type, dict(terminal_schedule))
+            )
+        )
+
+        scheduler.observe_event(
+            AgentEventEnvelope(
+                event_id="event:runtime-host-exit",
+                session_id="session:target",
+                turn_id="turn:scheduled",
+                sequence=1,
+                created_at_ms=self.now + 1_200,
+                event_type="turn_failed",
+                payload={
+                    "error": "Pi Runtime Host exited",
+                    "failureKind": "runtime_host_exit",
+                    "exitCode": 1,
+                },
+                resume_token="1",
+            )
+        )
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0], "turn_failed")
+        self.assertEqual(observed[0][1]["id"], schedule["id"])
+        self.assertEqual(observed[0][1]["status"], "failed")
+        self.assertEqual(
+            observed[0][1]["latestRun"]["state"],
+            "failed",
+        )
+        self.assertEqual(
+            observed[0][1]["latestRun"]["result"]["failureKind"],
+            "runtime_host_exit",
+        )
+        self.assertEqual(
+            self.store.runs(str(schedule["id"]))[0]["id"],
+            claim["runId"],
+        )
+        self.assertEqual(
+            self.store.runs(str(schedule["id"]))[0]["result"]["failureKind"],
+            "runtime_host_exit",
+        )
+        scheduler.close()
 
     def test_daily_schedule_reschedules_until_max_runs(self) -> None:
         schedule = self._create(recurrence_kind="daily", max_runs=2)
@@ -119,6 +181,29 @@ class AgentWakeScheduleStoreTests(unittest.TestCase):
         self.assertEqual(deferred["runCount"], 0)
         self.assertEqual(deferred["nextWakeAtMs"], self.now + 61_100)
         self.assertEqual(deferred["latestRun"]["state"], "deferred")
+
+    def test_deferred_run_persists_typed_cause_without_consuming_budget(
+        self,
+    ) -> None:
+        schedule = self._create()
+        claim = self.store.claim_due(now_ms=self.now + 1_000)[0]
+
+        self.store.defer(
+            str(claim["runId"]),
+            reason="Facilitator turn is temporarily busy",
+            cause_code="SESSION_BUSY",
+            delay_ms=5_000,
+            now_ms=self.now + 1_100,
+        )
+
+        deferred = self.store.get(str(schedule["id"]))
+        self.assertEqual(deferred["status"], "scheduled")
+        self.assertEqual(deferred["runCount"], 0)
+        self.assertEqual(deferred["latestRun"]["state"], "deferred")
+        self.assertEqual(
+            deferred["latestRun"]["result"],
+            {"causeCode": "SESSION_BUSY"},
+        )
 
     def test_claim_is_atomic_and_bounded_to_two_active_runs(self) -> None:
         for index in range(3):

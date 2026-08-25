@@ -4,7 +4,6 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .agent_roles import PersonaManifest
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
     PER_ACTION_EXECUTION_MODE,
@@ -13,6 +12,7 @@ from .agent_execution_policy import (
     canonical_tool_profile,
     normalize_execution_mode,
 )
+from .agent_role_identity import canonical_agent_role_id
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     DANGEROUS_MODE_CONFIRMATION,
@@ -29,8 +29,6 @@ class AgentSessionApplicationService:
         sessions: Any,
         runtime_provider: Callable[[], Any],
         runtime_factory: Any,
-        personas: Any,
-        role_books: Any,
         configuration_store: Any,
         rooms: Any,
         delegation: Any,
@@ -38,14 +36,11 @@ class AgentSessionApplicationService:
         events: Any,
         runtime_status: Callable[[], Mapping[str, object]],
         pending_memory_bootstrap: Callable[[Mapping[str, object]], Mapping[str, object]],
-        ensure_session_role_book: Callable[[str], Mapping[str, object]],
         probe_memory_maintenance: Callable[..., Mapping[str, object]],
     ) -> None:
         self.sessions = sessions
         self._runtime_provider = runtime_provider
         self.runtime_factory = runtime_factory
-        self.personas = personas
-        self.role_books = role_books
         self.configuration_store = configuration_store
         self.rooms = rooms
         self.delegation = delegation
@@ -53,7 +48,6 @@ class AgentSessionApplicationService:
         self.events = events
         self.runtime_status = runtime_status
         self.pending_memory_bootstrap = pending_memory_bootstrap
-        self.ensure_session_role_book = ensure_session_role_book
         self.probe_memory_maintenance = probe_memory_maintenance
 
     @property
@@ -62,7 +56,6 @@ class AgentSessionApplicationService:
 
     def ensure_runtime(self, payload: Mapping[str, object]) -> dict[str, object]:
         session_id = _required_text(payload, "sessionId")
-        self.ensure_session_role_book(session_id)
         result = self.runtime.ensure(session_id)
         maintenance = self.probe_memory_maintenance(
             session_id,
@@ -121,20 +114,35 @@ class AgentSessionApplicationService:
         mode = str(payload.get("mode") or "assistant")
         configuration = self.configuration_store.snapshot()["configuration"]
         session_defaults = configuration["sessionDefaults"]
-        model_routing = configuration["modelRouting"]
-        role = self.personas.resolve_active(
-            payload.get("roleId") or session_defaults["roleId"],
-            payload.get("roleVersion") or session_defaults["roleVersion"],
+        model_route_id = str(payload.get("_modelRoute") or "primary").strip()
+        model_routes = configuration.get("modelRouting")
+        if not isinstance(model_routes, Mapping) or model_route_id not in {
+            "primary",
+            "toolAgent",
+            "subagent",
+            "roomCoordinator",
+        }:
+            raise ValueError("agent model route is invalid")
+        configured_model_route = model_routes.get(model_route_id)
+        model_route = (
+            dict(configured_model_route)
+            if isinstance(configured_model_route, Mapping)
+            else {"modelProfile": "inherit", "thinkingLevel": "inherit"}
         )
-        if mode not in role.selectable_modes:
-            raise ValueError(
-                f"agent role {role.role_id}@{role.version} "
-                f"is not available for {mode} sessions"
-            )
+        # Persona is an optional Package boundary, not a Session prerequisite.
+        # Keep these columns as compatibility metadata for existing databases;
+        # core Session creation must not load a Persona manifest or inject it.
+        role_id = canonical_agent_role_id(
+            payload.get("roleId") or session_defaults["roleId"]
+        )
+        role_version = str(
+            payload.get("roleVersion") or session_defaults["roleVersion"]
+        ).strip()
+        if not role_id or not role_version:
+            raise ValueError("legacy role metadata must not be empty")
         requested_tool_profile = str(
             payload.get("toolProfileVersion")
             or session_defaults["toolProfileVersion"]
-            or role.defaults.tool_profile_version
         )
         requested_execution_mode = normalize_execution_mode(
             payload.get("executionMode"),
@@ -152,13 +160,6 @@ class AgentSessionApplicationService:
             raise ValueError(
                 "new conversations must start in a controlled or read-only tool profile"
             )
-        if role.origin == "user":
-            if (
-                payload.get("toolProfileVersion") is not None
-                and requested_tool_profile != role.defaults.tool_profile_version
-            ):
-                raise ValueError("user persona tool policy cannot be overridden")
-            requested_tool_profile = role.defaults.tool_profile_version
         roots_value = payload.get("workspaceRoots")
         if roots_value is None:
             workspace_roots: list[str] = []
@@ -194,17 +195,16 @@ class AgentSessionApplicationService:
                 "full-trust execution requires an explicit native confirmation"
             )
         model_profile, thinking_level = self._session_model_defaults(
-            role,
             payload=payload,
-            model_routing=model_routing,
+            session_defaults=session_defaults,
+            model_route=model_route,
         )
-        role_book_revision_id, role_book_status = self._seed_role_book(role)
         session = self.sessions.create(
             title=title,
             mode=mode,
-            role_id=role.role_id,
-            role_version=role.version,
-            role_book_revision_id=role_book_revision_id,
+            role_id=role_id,
+            role_version=role_version,
+            role_book_revision_id="",
             model_profile=model_profile,
             thinking_level=thinking_level,
             tool_profile_version=requested_tool_profile,
@@ -224,7 +224,11 @@ class AgentSessionApplicationService:
             "schemaVersion": "rag-ime.agent-session-create.v1",
             "ok": True,
             "session": session,
-            "roleBook": role_book_status,
+            "roleBook": {
+                "ok": True,
+                "status": "persona_package_not_installed",
+                "revisionId": "",
+            },
             "memoryBootstrap": self.pending_memory_bootstrap(session),
         }
 
@@ -271,60 +275,32 @@ class AgentSessionApplicationService:
 
     def _session_model_defaults(
         self,
-        role: PersonaManifest,
         *,
         payload: Mapping[str, object],
-        model_routing: Mapping[str, object],
+        session_defaults: Mapping[str, object],
+        model_route: Mapping[str, object],
     ) -> tuple[str, str]:
+        # Model selection belongs to Pi and the product model-routing policy,
+        # not to the legacy Persona catalog.  Role metadata remains readable
+        # on historical Sessions, but until Persona is reintroduced as an
+        # optional Package it must neither lock nor silently choose a model.
         requested_model_profile = payload.get("modelProfile")
-        routed_model_profile = str(model_routing["sessionModelProfile"])
-        routed_thinking_level = str(model_routing["sessionThinkingLevel"])
-        if (
-            role.defaults.model_policy == "fixed"
-            and payload.get("_internalModelOverride") is not True
-        ):
-            if (
-                requested_model_profile is not None
-                and str(requested_model_profile)
-                != routed_model_profile
-            ):
-                raise ValueError(
-                    "the configured Session model cannot be overridden"
-                )
-            return routed_model_profile, routed_thinking_level
         if requested_model_profile is not None:
+            return str(requested_model_profile), ""
+        routed_model_profile = str(
+            model_route.get("modelProfile") or "inherit"
+        ).strip()
+        routed_thinking_level = str(
+            model_route.get("thinkingLevel") or "inherit"
+        ).strip()
+        if routed_model_profile != "inherit":
             return (
-                str(requested_model_profile),
-                str(payload.get("thinkingLevel") or "off"),
+                routed_model_profile,
+                routed_thinking_level
+                if routed_thinking_level != "inherit"
+                else "",
             )
-        return routed_model_profile, routed_thinking_level
-
-    def _seed_role_book(
-        self,
-        role: PersonaManifest,
-    ) -> tuple[str, dict[str, object]]:
-        try:
-            revision_id = str(
-                self.role_books.ensure_seeded(
-                    role.role_id,
-                    role.version,
-                    role.display_name,
-                    role.summary,
-                    role.version,
-                )["revisionId"]
-            )
-        except Exception as exc:
-            return "", {
-                "ok": False,
-                "status": "base_persona_fallback",
-                "revisionId": "",
-                "error": _public_error(exc),
-            }
-        return revision_id, {
-            "ok": True,
-            "status": "pinned",
-            "revisionId": revision_id,
-        }
+        return str(session_defaults["modelProfile"]), ""
 
     def _delete_owned_transcript(self, session_file: str) -> bool:
         if not session_file:
@@ -353,14 +329,6 @@ def _required_text(
     if not value:
         raise ValueError(f"{key} must not be empty")
     return value
-
-
-def _public_error(error: BaseException) -> str:
-    return compact_error(str(error))
-
-
-def compact_error(value: str) -> str:
-    return " ".join(str(value or "").split())[:1_000]
 
 
 def _bool(value: object) -> bool:

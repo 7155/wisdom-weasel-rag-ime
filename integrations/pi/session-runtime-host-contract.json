@@ -3,14 +3,45 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "a4d15d3a3cc99000f3a2e5e98d19c5dfb3c291d5",
+  "minimumHandlersCommit": "de1010790c6a11724c99cbf8055a8dd81fbff22b",
   "requiredMethods": [
+    "hello",
+    "health",
+    "models.list",
+    "completion.once",
+    "completion.cancel",
+    "tools.list",
+    "tools.sync",
     "session.open",
+    "session.control_state",
+    "session.settlement.get",
+    "session.await_settled",
+    "session.snapshot",
+    "session.debug.context",
+    "session.commands",
+    "session.fork.candidates",
+    "session.fork",
+    "session.rewind",
     "session.prompt",
     "session.steer",
-    "session.debug.context",
+    "session.follow_up",
     "session.abort",
-    "session.snapshot"
+    "session.compact",
+    "session.model.set",
+    "session.thinking.set",
+    "session.close",
+    "room.dispatch",
+    "room.cancel",
+    "approval.resolve",
+    "review.resolve",
+    "ui.resolve",
+    "plugins.list",
+    "plugins.create",
+    "plugins.validate",
+    "plugins.install",
+    "plugins.enable",
+    "plugins.disable",
+    "plugins.rollback"
   ],
   "handlerSources": {
     "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
@@ -18,24 +49,25 @@
     "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
     "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
     "toolResults": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
-    "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
+    "session": "packages/rag-ime-runtime-host/src/pi-session.ts",
+    "pluginManager": "packages/rag-ime-runtime-host/src/plugin-manager.ts"
   },
   "requiredSourceMarkers": {
     "protocol": [
       "export const PROTOCOL_VERSION = \"2\" as const;",
-      "| \"session.open\"",
-      "| \"session.prompt\"",
-      "| \"session.steer\"",
-      "| \"session.abort\""
+      "export type RuntimeMethod =",
+      "export function parseRuntimeRequest(value: unknown): RuntimeRequest",
+      "const RUNTIME_METHODS = new Set<RuntimeMethod>(["
     ],
     "runtimeHost": [
-      "case \"session.open\"",
-      "case \"session.snapshot\"",
-      "case \"session.debug.context\"",
-      "case \"session.prompt\"",
-      "case \"session.steer\"",
-      "case \"session.abort\"",
-      "sessionCancelOperationRegistry: true"
+      "sessionAwaitSettled: true",
+      "sessionCancelOperationRegistry: true",
+      "statelessCompletion: true",
+      "await host.plugins.initialize();",
+      "case \"room.dispatch\"",
+      "case \"room.cancel\"",
+      "case \"plugins.install\"",
+      "case \"plugins.rollback\""
     ],
     "contextInspection": [
       "const MAX_TOOLS_PER_TURN = 96;",
@@ -54,10 +86,27 @@
       "truncatedBy: \"model_result_bytes\""
     ],
     "session": [
+      "async awaitSettled(",
+      "settlement(turnId: string",
+      "listCommands(): Array<Record<string, unknown>>",
       "async prompt(options:",
       "async queueMessage(options:",
+      "async dispatchRoom(options:",
       "abort(): Promise<PiSessionAbortReceipt>",
-      "async compact(customInstructions?: string)"
+      "async compact(customInstructions?: string)",
+      "async setModel(provider: string, modelId: string)",
+      "setThinkingLevel(level:"
+    ],
+    "pluginManager": [
+      "export class ManagedPluginManager",
+      "async validate(sourcePath: string)",
+      "async createDraft(input: PluginDraftInput)",
+      "async install(options:",
+      "this.requireApproval(options.approvalToken);",
+      "PLUGIN_MUTATION_GUARD_REQUIRED",
+      "async enable(",
+      "async disable(",
+      "async rollback("
     ]
   }
 }

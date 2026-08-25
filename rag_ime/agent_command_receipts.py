@@ -364,6 +364,86 @@ class AgentCommandReceiptStore:
             str(row["response_json"] or "")
         )
 
+    def acceptance_evidence_for_exact_command(
+        self,
+        *,
+        command_scope: str,
+        scope_id: str,
+        client_message_id: str,
+    ) -> dict[str, object] | None:
+        """Return content-free acceptance proof for one exact command key.
+
+        Room restart recovery does not have the original prompt body available,
+        so it cannot use the payload-digest lookup above.  The full idempotency
+        key is nevertheless exact and already unique.  Only durable acceptance
+        proof is projected; stored prompt content is never returned.
+        """
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT state, response_json
+                FROM agent_command_receipts
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ?
+                """,
+                (command_scope, scope_id, client_message_id),
+            ).fetchone()
+        if row is None or str(row["state"]) == "failed":
+            return None
+        stored = _stored_acceptance_evidence(
+            str(row["response_json"] or "")
+        )
+        if stored is not None:
+            return stored
+        if str(row["state"]) != "accepted":
+            return None
+        response = _accepted_response(row)
+        turn_id = str(response.get("turnId") or "")
+        if not turn_id:
+            return None
+        return {
+            "schemaVersion": (
+                "rag-ime.agent-command-acceptance-evidence.v1"
+            ),
+            "accepted": True,
+            "clientMessageId": client_message_id,
+            "turnId": turn_id,
+            "piEntryId": str(response.get("piEntryId") or ""),
+        }
+
+    def failure_evidence_for_exact_command(
+        self,
+        *,
+        command_scope: str,
+        scope_id: str,
+        client_message_id: str,
+    ) -> dict[str, object] | None:
+        """Return the typed failure for one exact durably failed command."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT state, error
+                FROM agent_command_receipts
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ?
+                """,
+                (command_scope, scope_id, client_message_id),
+            ).fetchone()
+        if row is None or str(row["state"]) != "failed":
+            return None
+        message, cause_code = _stored_failure(
+            str(row["error"] or "")
+        )
+        evidence: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-command-failure.v1",
+            "message": message,
+        }
+        if cause_code:
+            evidence["causeCode"] = cause_code
+        return evidence
+
     def complete(
         self,
         claim: AgentCommandClaim,

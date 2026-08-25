@@ -350,6 +350,12 @@ class RuntimeTurnBindingTests(unittest.TestCase):
         self.assertIsNone(
             registry.claim_cancelled_terminal(aborted)
         )
+        self.assertFalse(
+            registry.mark_cancelled_terminal(
+                "session:target",
+                "room-root:cancelled",
+            )
+        )
 
         late_completed = AgentEventEnvelope(
             event_id="event:cancelled:completed",
@@ -363,6 +369,43 @@ class RuntimeTurnBindingTests(unittest.TestCase):
         )
         self.assertIsNone(
             registry.claim_cancelled_terminal(late_completed)
+        )
+
+    def test_synthetic_abort_terminal_reservation_is_exactly_once(self) -> None:
+        registry = RoomTurnRegistry()
+        registry.begin("session:target", "room-root:cancelled")
+        registry.record_cancellation("room-root:cancelled", "cancel:cancelled")
+
+        self.assertTrue(
+            registry.mark_cancelled_terminal(
+                "session:target",
+                "room-root:cancelled",
+            )
+        )
+        self.assertFalse(
+            registry.mark_cancelled_terminal(
+                "session:target",
+                "room-root:cancelled",
+            )
+        )
+
+    def test_cancelled_root_cannot_begin_a_late_wake_turn(self) -> None:
+        registry = RoomTurnRegistry()
+        registry.record_cancellation(
+            "room-root:cancelled-before-wake",
+            "cancel:before-wake",
+        )
+
+        with self.assertRaisesRegex(ValueError, "cancelled"):
+            registry.begin(
+                "session:facilitator",
+                "room-root:cancelled-before-wake",
+                dispatch_id="room-wake:late",
+            )
+
+        self.assertEqual(
+            registry.cancelled_root_by_session["session:facilitator"],
+            "room-root:cancelled-before-wake",
         )
 
 

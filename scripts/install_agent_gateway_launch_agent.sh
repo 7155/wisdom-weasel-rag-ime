@@ -186,6 +186,7 @@ for key in (
     "RAG_IME_PI_EXTENSION",
     "RAG_IME_PI_PROTOCOL_VERSION",
     "RAG_IME_PI_TOOLS",
+    "RAG_IME_PI_VERSION",
 ):
     environment.pop(key, None)
 
@@ -196,7 +197,6 @@ environment.update({
     "RAG_IME_APP_SUPPORT_DIR": os.environ["APP_SUPPORT_DIR"],
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_PI_ENABLED": "1",
-    "RAG_IME_PI_VERSION": "0.80.7",
     "RAG_IME_AGENT_GATEWAY_ENABLED": "1",
     "RAG_IME_AGENT_GATEWAY_WEB_DIST": os.environ["WEB_INSTALL_DIR"],
     "RAG_IME_AGENT_TOOL_URL": f"http://127.0.0.1:{os.environ['PORT']}/api/agent/tool/execute",

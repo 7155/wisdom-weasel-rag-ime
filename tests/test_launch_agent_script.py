@@ -227,7 +227,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             self.assertTrue(init_prompt.is_file())
             init_prompt_text = init_prompt.read_text(encoding="utf-8")
             self.assertIn("AGENTS.md", init_prompt_text)
-            self.assertIn("不要覆盖", init_prompt_text)
+            self.assertIn("不得把动态 WorkItem", init_prompt_text)
             marker = json.loads((app_dir / "rag-ime-install-marker.json").read_text(encoding="utf-8"))
             with plist_path.open("rb") as fh:
                 payload = plistlib.load(fh)
@@ -406,7 +406,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             env = {
                 **os.environ,
                 "HOME": str(home),
-                "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+                "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
                 "PYTHONPATH": str(stubs),
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_SIDECAR_PORT": "19876",
@@ -521,7 +521,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn("agent-gateway", payload["ProgramArguments"])
         launch_env = payload["EnvironmentVariables"]
         self.assertEqual(launch_env["RAG_IME_PI_ENABLED"], "1")
-        self.assertEqual(launch_env["RAG_IME_PI_VERSION"], "0.80.7")
+        self.assertNotIn("RAG_IME_PI_VERSION", launch_env)
         self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_DIR", launch_env)
         self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES", launch_env)
         self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS", launch_env)

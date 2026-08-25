@@ -57,6 +57,7 @@ from .agent_workspace import WorkspaceHarnessError, WorkspaceSnapshotError
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .browser_control import BrowserControlError, BrowserControlService
+from .system_terminal import SystemTerminalService
 from .demo_seed import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
@@ -339,6 +340,23 @@ def _strict_management_revision(value: object) -> int:
     return parsed
 
 
+class AgentGatewayRequired(RuntimeError):
+    """A passive Sidecar cannot start or steer a Pi-owned Room turn."""
+
+    http_status = HTTPStatus.CONFLICT
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Room runtime writes must be sent to the Agent Gateway"
+        )
+
+    def response_payload(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.agent-gateway-required.v1",
+            "code": "AGENT_GATEWAY_REQUIRED",
+        }
+
+
 @dataclass(frozen=True)
 class DebugServerConfig:
     host: str = "127.0.0.1"
@@ -554,9 +572,13 @@ class DebugImeService:
         )
         self.agent_lifecycle_hooks = AgentLifecycleHookService(config.db_path)
         self.agent_lifecycle_hooks.initialize()
-        self.browser_control = BrowserControlService(
-            config.db_path,
-            extension_root=os.environ.get("RAG_IME_BROWSER_EXTENSION_DIR") or None,
+        self.browser_control = BrowserControlService(config.db_path)
+        self.system_terminal = SystemTerminalService(
+            default_cwd=(
+                os.environ.get("RAG_IME_DEFAULT_WORKSPACE")
+                or os.environ.get("RAG_IME_SOURCE_ROOT")
+                or Path.cwd()
+            ),
         )
         self.agent_tools = ControlToolGateway(
             sessions=self.agent.sessions,
@@ -614,6 +636,10 @@ class DebugImeService:
         self._vector_auto_rebuild_report = self._maybe_auto_rebuild_vector_index()
         self.memory_projection_worker = self._create_memory_projection_worker()
 
+    def require_agent_runtime_execution_owner(self) -> None:
+        if not self._agent_runtime_execution_owner:
+            raise AgentGatewayRequired()
+
     def start_background_services(self) -> None:
         """Start non-critical workers after the HTTP listener owns the process."""
 
@@ -647,6 +673,7 @@ class DebugImeService:
                 # remaining executors and provider clients.
                 pass
         resources = (
+            self.system_terminal,
             self.memory_maintenance_jobs,
             self.active_rag,
             self.knowledge_worker,
@@ -3338,7 +3365,7 @@ class DebugImeService:
             compile_output,
             project=request.project,
             provider=organizer.provider_name,
-            model=config.model,
+            model=organizer.config.model,
             source_bundle=bundle,
         )
         validation = inspect_memory_book_plan(plan)
@@ -6548,6 +6575,36 @@ _MEMORY_ENTITY_PATH_PREFIX = "/api/memory/entities/"
 _MEMORY_REFERENCE_PATH_PREFIX = "/api/memory/references/"
 _KNOWLEDGE_BASES_PATH = "/api/knowledge-bases"
 _MAX_KNOWLEDGE_IMPORT_BYTES = 200 * 1024 * 1024
+_ISOLATED_HTML_PREVIEW_PATH = "/__paw_html_preview"
+_ISOLATED_HTML_PREVIEW_DOCUMENT = b"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PAW HTML Preview</title>
+</head>
+<body>
+  <noscript>This preview requires JavaScript.</noscript>
+  <script>
+  (() => {
+    try {
+      const encoded = window.location.hash.slice(1).replace(/-/g, '+').replace(/_/g, '/');
+      if (!encoded) throw new Error('preview source is missing');
+      const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
+      const binary = window.atob(padded);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const source = new TextDecoder().decode(bytes);
+      document.open();
+      document.write(source);
+      document.close();
+    } catch (error) {
+      document.body.textContent = `HTML preview failed: ${String(error)}`;
+    }
+  })();
+  </script>
+</body>
+</html>
+"""
 _MEMORY_GRAPH_QUERY_FIELDS = frozenset(
     {
         "plane",
@@ -6589,6 +6646,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)
         if not self._authorize_gateway_request("GET", parsed):
+            return
+        if self._serve_isolated_html_preview(parsed.path):
             return
         if self._serve_gateway_static(parsed.path):
             return
@@ -6699,28 +6758,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, response)
             return
-        if parsed.path == "/api/browser/extension/next":
-            if not self._browser_extension_authenticated():
-                return
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.browser_control.next_command(
-                    device_id=_query_first(query, "deviceId"),
-                    client_id=_query_first(query, "clientId") or _query_first(query, "deviceId"),
-                    timeout_seconds=float(_query_first(query, "timeoutSeconds") or 20.0),
-                ),
-            )
-            return
-        if parsed.path == "/api/browser/managed/bootstrap":
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "schemaVersion": "rag-ime.browser-control.v1",
-                    "ok": True,
-                    "summary": "托管浏览器正在完成隔离连接",
-                },
-            )
-            return
         if parsed.path == "/api/browser/snapshots/latest":
             tab_value = _query_first(query, "tabId")
             try:
@@ -6763,29 +6800,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self.service.browser_control.traces(
                     limit=int(_query_first(query, "limit") or 50),
                 ),
-            )
-            return
-        if parsed.path == "/api/browser/permissions":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.browser_control.permissions(
-                    limit=int(_query_first(query, "limit") or 100),
-                ),
-            )
-            return
-        if parsed.path.startswith("/api/browser/permissions/"):
-            prompt_id = parsed.path.removeprefix("/api/browser/permissions/").strip("/")
-            try:
-                response = self.service.browser_control.permission_status(prompt_id)
-            except BrowserControlError as exc:
-                self._write_json(
-                    HTTPStatus.NOT_FOUND,
-                    {"ok": False, "error": str(exc), "code": "browser_permission_not_found"},
-                )
-                return
-            self._write_json(
-                HTTPStatus.OK,
-                response,
             )
             return
         if parsed.path in (
@@ -7859,23 +7873,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(HTTPStatus.OK, self.service.agent.approval_result(self._read_json()))
                 return
-            if path.startswith("/api/browser/extension/"):
-                if not self._browser_extension_authenticated():
-                    return
-                payload = self._read_json()
-                if path == "/api/browser/extension/hello":
-                    response = self.service.browser_control.hello(payload)
-                elif path == "/api/browser/extension/snapshot":
-                    response = self.service.browser_control.push_snapshot(payload)
-                elif path == "/api/browser/extension/result":
-                    response = self.service.browser_control.complete_command(payload)
-                elif path == "/api/browser/extension/permission":
-                    response = self.service.browser_control.request_permission(payload)
-                else:
-                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
-                    return
-                self._write_json(HTTPStatus.OK, response)
-                return
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
@@ -7931,9 +7928,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(status, response)
                 return
-            if path == "/api/browser/mode":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.set_mode(payload.get("mode")))
-                return
             if path == "/api/browser/command":
                 action = str(payload.pop("action", ""))
                 self._write_json(
@@ -7944,17 +7938,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         session_id="control-center",
                         timeout_seconds=float(payload.pop("timeoutSeconds", 20.0)),
                     ),
-                )
-                return
-            if path.startswith("/api/browser/permissions/") and path.endswith("/decision"):
-                prompt_id = (
-                    path.removeprefix("/api/browser/permissions/")
-                    .removesuffix("/decision")
-                    .strip("/")
-                )
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.browser_control.decide_permission(prompt_id, payload.get("decision")),
                 )
                 return
             agent_session_id, agent_action = agent_session_route(path)
@@ -8058,12 +8041,22 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 and background_job_id
                 and background_job_action == "cancel"
             ):
+                room_turn_id = str(payload.get("roomTurnId") or "").strip()
                 self._write_json(
                     HTTPStatus.OK,
-                    self.service.agent.background_jobs.cancel(
-                        background_job_session_id,
-                        background_job_id,
-                        reason=payload.get("reason") or "control_center_requested",
+                    (
+                        self.service.agent.background_jobs.cancel_room_owned(
+                            background_job_session_id,
+                            background_job_id,
+                            room_turn_id=room_turn_id,
+                            reason=payload.get("reason") or "control_center_requested",
+                        )
+                        if room_turn_id
+                        else self.service.agent.background_jobs.cancel(
+                            background_job_session_id,
+                            background_job_id,
+                            reason=payload.get("reason") or "control_center_requested",
+                        )
                     ),
                 )
             elif path == "/api/agent/wake-schedules":
@@ -8166,11 +8159,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     ),
                 )
             elif agent_room_id and room_action == "messages":
+                self.service.require_agent_runtime_execution_owner()
                 self._write_json(
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
                 )
             elif agent_room_id and room_action == "steer":
+                self.service.require_agent_runtime_execution_owner()
                 self._write_json(
                     HTTPStatus.ACCEPTED,
                     self.service.agent.steer_room_participant(agent_room_id, payload),
@@ -8221,6 +8216,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "compact":
                 self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
+            elif agent_session_id and agent_action == "commands":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.invoke_command(agent_session_id, payload),
+                )
             elif agent_session_id and agent_action == "goal":
                 self._write_json(
                     HTTPStatus.OK,
@@ -8400,6 +8400,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if not self._authorize_gateway_request("GET", parsed):
             return
+        if self._serve_isolated_html_preview(parsed.path, include_body=False):
+            return
         if self._serve_gateway_static(parsed.path, include_body=False):
             return
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -8524,11 +8526,44 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; "
             "worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
-            "frame-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            "frame-src 'self' blob:; base-uri 'none'; "
+            "form-action 'none'; frame-ancestors 'none'",
         )
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        if include_body:
+            self.wfile.write(body)
+        return True
+
+    def _serve_isolated_html_preview(
+        self,
+        request_path: str,
+        *,
+        include_body: bool = True,
+    ) -> bool:
+        if request_path != _ISOLATED_HTML_PREVIEW_PATH:
+            return False
+        body = _ISOLATED_HTML_PREVIEW_DOCUMENT
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; script-src 'unsafe-inline' https: http: blob: data:; "
+            "style-src 'unsafe-inline' https: http:; img-src data: blob: https: http:; "
+            "font-src data: blob: https: http:; media-src data: blob: https: http:; "
+            "connect-src https: http: ws: wss:; worker-src blob: data:; "
+            "child-src blob: data: https: http:; object-src 'none'; base-uri 'none'; "
+            "form-action https: http:; "
+            "sandbox allow-downloads allow-forms allow-modals allow-pointer-lock "
+            "allow-popups allow-scripts",
+        )
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         if include_body:
             self.wfile.write(body)
@@ -8653,20 +8688,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if not expected or provided != expected:
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "management token required"}
         return None
-
-    def _browser_extension_authenticated(self) -> bool:
-        provided = self.headers.get("X-RAG-IME-Browser-Token", "")
-        if provided and self.service.browser_control.authenticate(provided):
-            return True
-        self._write_json(
-            HTTPStatus.FORBIDDEN,
-            {
-                "schemaVersion": "rag-ime.browser-control.v1",
-                "ok": False,
-                "error": "browser pairing token required",
-            },
-        )
-        return False
 
     def _knowledge_control(self) -> Any:
         control = self.service.knowledge_control

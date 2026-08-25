@@ -283,13 +283,14 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
             if item["id"] == created_session["session"]["id"]
         )
         self.assertEqual(old_session["roleId"], role["roleId"])
-        blocked_status, blocked = self._request(
+        compatibility_status, compatibility_session = self._request(
             "POST",
             "/api/agent/sessions",
-            {"title": "不应创建", "roleId": role["roleId"], "roleVersion": role["version"]},
+            {"title": "归档角色兼容会话", "roleId": role["roleId"], "roleVersion": role["version"]},
         )
-        self.assertEqual(blocked_status, 400, blocked)
-        self.assertFalse(blocked["ok"])
+        self.assertEqual(compatibility_status, 201, compatibility_session)
+        self.assertTrue(compatibility_session["ok"])
+        self.assertEqual(compatibility_session["session"]["roleId"], role["roleId"])
         builtin_status, builtin = self._request(
             "DELETE",
             "/api/agent/roles",

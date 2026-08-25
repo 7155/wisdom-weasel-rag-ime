@@ -30,7 +30,6 @@ class AgentSessionPolicyService:
         *,
         sessions: Any,
         runtime_provider: Callable[[], Any],
-        personas: Any,
         rooms: Any,
         events: Any,
         runtime_status: Callable[[], Mapping[str, object]],
@@ -38,7 +37,6 @@ class AgentSessionPolicyService:
     ) -> None:
         self.sessions = sessions
         self._runtime_provider = runtime_provider
-        self.personas = personas
         self.rooms = rooms
         self.events = events
         self.runtime_status = runtime_status
@@ -115,6 +113,34 @@ class AgentSessionPolicyService:
             "sessionId": session_id,
             "runtimeAvailable": runtime_available,
             "items": commands,
+        }
+
+    def invoke_command(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        self.sessions.get(session_id)
+        command = _required_text(payload, "command")
+        result = self.runtime.invoke_command(session_id, command)
+        self.events.publish(
+            session_id,
+            "session_command_invoked",
+            {
+                "command": str(result.get("command") or command),
+                "name": str(result.get("name") or ""),
+                "handled": result.get("handled") is True,
+            },
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-command-invocation.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "command": str(result.get("command") or command),
+            "name": str(result.get("name") or ""),
+            "handled": result.get("handled") is True,
+            "result": result.get("result"),
+            "leafId": result.get("leafId"),
         }
 
     def select_model(
@@ -316,15 +342,6 @@ class AgentSessionPolicyService:
         requested_mode = str(
             payload.get("mode") or session.get("mode") or ""
         ).strip()
-        role = self.personas.resolve(
-            session["roleId"],
-            session["roleVersion"],
-        )
-        if requested_mode not in role.selectable_modes:
-            raise ValueError(
-                f"agent role {role.role_id}@{role.version} "
-                f"is not available for {requested_mode} sessions"
-            )
         roots = payload.get("workspaceRoots")
         if roots is not None and not isinstance(roots, list):
             raise ValueError("workspaceRoots must be an array")
@@ -513,11 +530,6 @@ class AgentSessionPolicyService:
             raise ValueError(
                 "unsupported Agent tool allowlist mode"
             )
-        fixed_todo = (
-            str(session.get("sessionKind") or "conversation") == "conversation"
-            and requested_profile == CONTROL_CENTER_TOOL_PROFILE
-            and requested_mode in {"assistant", "coordinator"}
-        )
         if requested_allowlist_mode == "profile":
             return None
         if "allowedTools" not in payload:
@@ -529,8 +541,6 @@ class AgentSessionPolicyService:
                 if session.get("toolAllowlistMode") == "explicit"
                 else []
             )
-            if fixed_todo and "todo" not in allowed_tools:
-                allowed_tools.append("todo")
             return allowed_tools
         raw_allowed_tools = payload.get("allowedTools")
         if not isinstance(raw_allowed_tools, list):
@@ -544,8 +554,6 @@ class AgentSessionPolicyService:
                 )
             if tool_id not in allowed_tools:
                 allowed_tools.append(tool_id)
-        if fixed_todo and "todo" not in allowed_tools:
-            allowed_tools.append("todo")
         if requested_mode == "assistant" and any(
             tool_id.startswith("workspace_")
             for tool_id in allowed_tools

@@ -32,6 +32,14 @@ class AgentDefinitionCompatibilityTests(unittest.TestCase):
             )
             self.assertNotIn("room_commit", prompt)
 
+    def test_room_contract_describes_dynamic_partner_fanout_up_to_room_capacity(self) -> None:
+        prompt = collaboration_role("coordinator").system_prompt
+
+        self.assertIn("按任务规模动态选择", prompt)
+        self.assertIn("最多 7 个 Partner", prompt)
+        self.assertIn("Room 总参与者最多 8 个", prompt)
+        self.assertNotIn("2–3 个无依赖", prompt)
+
     def test_retained_specialist_role_never_claims_domain_expertise(self) -> None:
         specialist = collaboration_role("specialist")
         catalog_entry = next(

@@ -1,14 +1,16 @@
 ---
 name: improve-codebase-architecture
 description: Find evidence-backed architecture improvements before refactoring.
-when:
-  - User explicitly asks to improve codebase architecture
-does: Inspect real friction and return one to three candidates for user selection.
-input: Repository, scope, recent changes, architecture docs, and checks.
-output: Candidates with evidence, benefit, risk, and deletion test.
-notFor:
-  - Known local bug or formatting cleanup
-  - An unselected broad refactor
+metadata:
+  routing:
+    when:
+      - User explicitly asks to improve codebase architecture
+    does: Inspect real friction and return one to three candidates for user selection.
+    input: Repository, scope, recent changes, architecture docs, and checks.
+    output: Candidates with evidence, benefit, risk, and deletion test.
+    notFor:
+      - Known local bug or formatting cleanup
+      - An unselected broad refactor
 ---
 
 # Improve Codebase Architecture

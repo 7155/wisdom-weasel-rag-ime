@@ -18,6 +18,7 @@ from scripts.build_managed_pi_runtime_v2 import (
     _OAUTH_RUNTIME_MODULES,
     ROOT,
     REQUIRED_PI_RUNTIME_BASE_COMMIT,
+    REQUIRED_RUNTIME_METHODS,
     SESSION_RUNTIME_CONTRACT,
     _SESSION_RUNTIME_SOURCE_KEYS,
     _copy_product_skills,
@@ -27,6 +28,7 @@ from scripts.build_managed_pi_runtime_v2 import (
     _product_skill_dirs,
     _resolve_skill_source_collisions,
     _runtime_host_banner,
+    _skill_routing_projection,
     _smoke_oauth_runtime_modules,
     _validated_skill_routing_catalog,
     _verified_session_runtime_contract,
@@ -63,37 +65,19 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         ) as temporary:
             root = Path(temporary)
             relative_sources = {
-                "protocol": Path(
-                    "packages/rag-ime-runtime-host/src/protocol.ts"
-                ),
-                "runtimeHost": Path(
-                    "packages/rag-ime-runtime-host/src/runtime-host.ts"
-                ),
-                "contextInspection": Path(
-                    "packages/rag-ime-runtime-host/src/debug-context.ts"
-                ),
-                "toolBridge": Path(
-                    "packages/rag-ime-runtime-host/src/tool-bridge.ts"
-                ),
-                "toolResults": Path(
-                    "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"
-                ),
-                "session": Path(
-                    "packages/rag-ime-runtime-host/src/pi-session.ts"
-                ),
+                "protocol": Path("packages/rag-ime-runtime-host/src/protocol.ts"),
+                "runtimeHost": Path("packages/rag-ime-runtime-host/src/runtime-host.ts"),
+                "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
+                "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
+                "toolResults": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
+                "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
+                "pluginManager": Path("packages/rag-ime-runtime-host/src/plugin-manager.ts"),
             }
             self.assertEqual(
                 set(relative_sources),
                 set(_SESSION_RUNTIME_SOURCE_KEYS),
             )
-            methods = [
-                "session.open",
-                "session.prompt",
-                "session.steer",
-                "session.debug.context",
-                "session.abort",
-                "session.snapshot",
-            ]
+            methods = list(REQUIRED_RUNTIME_METHODS)
             markers = {
                 key: [f"marker:{key}"]
                 for key in _SESSION_RUNTIME_SOURCE_KEYS
@@ -188,30 +172,43 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["requiredMethods"],
-            [
-                "session.open",
-                "session.prompt",
-                "session.steer",
-                "session.debug.context",
-                "session.abort",
-                "session.snapshot",
-            ],
+            list(REQUIRED_RUNTIME_METHODS),
         )
         serialized = json.dumps(contract, sort_keys=True)
-        self.assertNotIn("room.dispatch", serialized)
-        self.assertNotIn("room.cancel", serialized)
+        self.assertIn("room.dispatch", contract["requiredMethods"])
+        self.assertIn("room.cancel", contract["requiredMethods"])
+        self.assertIn("session.await_settled", contract["requiredMethods"])
+        self.assertIn("plugins.create", contract["requiredMethods"])
+        self.assertIn("plugins.validate", contract["requiredMethods"])
+        self.assertNotIn("session.command.invoke", serialized)
+        self.assertNotIn("plugins.catalog", serialized)
+        self.assertNotIn("plugins.package.prepare", serialized)
+        self.assertNotIn("plugins.uninstall", serialized)
+        self.assertEqual(
+            contract["handlerSources"],
+            {
+                "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
+                "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
+                "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
+                "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
+                "toolResults": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
+                "session": "packages/rag-ime-runtime-host/src/pi-session.ts",
+                "pluginManager": "packages/rag-ime-runtime-host/src/plugin-manager.ts",
+            },
+        )
 
     def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:
             workspace = Path(temporary)
             canonical = workspace / "pi"
             legacy = workspace / "pi-rag-ime-runtime"
-            (canonical / "packages" / "rag-ime-runtime-host").mkdir(parents=True)
+            (canonical / "integrations" / "rag-ime-runtime-host").mkdir(parents=True)
             (legacy / "packages" / "rag-ime-runtime-host").mkdir(parents=True)
 
             self.assertEqual(_default_pi_worktree(workspace), canonical)
 
-            (canonical / "packages" / "rag-ime-runtime-host").rmdir()
+            (canonical / "integrations" / "rag-ime-runtime-host").rmdir()
+            (canonical / "integrations").rmdir()
             self.assertEqual(_default_pi_worktree(workspace), legacy)
 
     def test_oauth_runtime_smoke_loads_every_lazy_module_and_derives_codex_auth(
@@ -261,18 +258,16 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('"productCommit": product_commit', script)
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
         self.assertIn("_verified_session_runtime_contract", script)
+        self.assertNotIn("_copy_bundled_pi_packages", script)
+        self.assertNotIn('package_root / "pi-packages"', script)
+        self.assertIn('bundled_pi_cli = runtime_dir / "pi-cli.mjs"', script)
+        self.assertIn('packages" / "coding-agent" / "src" / "cli.ts"', script)
+        self.assertIn('bundled_pi_theme_dir = runtime_dir / "dist" / "modes" / "interactive" / "theme"', script)
         self.assertIn(
             "source_contract_sha256=session_runtime_contract_sha256",
             script,
         )
-        for method in (
-            "session.open",
-            "session.prompt",
-            "session.steer",
-            "session.debug.context",
-            "session.abort",
-            "session.snapshot",
-        ):
+        for method in REQUIRED_RUNTIME_METHODS:
             self.assertIn(f'"{method}"', contract)
 
     def test_staged_smoke_uses_session_lifecycle_contract(self) -> None:
@@ -292,6 +287,37 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertNotIn('"room.dispatch"', script)
         self.assertNotIn('"room.cancel"', script)
 
+    def test_staged_package_smoke_proves_native_resource_projection(self) -> None:
+        script = (
+            ROOT / "scripts" / "smoke_pi_packages_staged_runtime.py"
+        ).read_text(encoding="utf-8")
+
+        for method in (
+            "plugins.catalog",
+            "plugins.package.prepare",
+            "plugins.install.preview",
+            "plugins.install",
+            "plugins.enable",
+            "plugins.disable",
+            "plugins.uninstall",
+            "session.commands",
+            "tools.list",
+        ):
+            self.assertIn(f'"{method}"', script)
+        self.assertIn("disabledResourcesAbsent", script)
+        self.assertIn("independentCapabilityRemoval", script)
+
+    def test_staged_resilience_smoke_covers_compaction_and_tool_failure_stop(self) -> None:
+        script = (
+            ROOT / "scripts" / "smoke_pi_resilience_staged_runtime.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("threshold-continuation", script)
+        self.assertIn("THRESHOLD-COMPACTION-CONTINUED-OK", script)
+        self.assertIn("tool_loop_no_progress", script)
+        self.assertIn("repeated_failure_signature", script)
+        self.assertIn('"session.snapshot"', script)
+
     def test_staged_room_smoke_uses_the_typed_participant_steer_contract(self) -> None:
         script = (ROOT / "scripts" / "smoke_pi_room_composition.py").read_text(
             encoding="utf-8"
@@ -299,9 +325,15 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
         self.assertIn('"action": "steer_participant"', script)
         self.assertNotIn('"action": "steer",', script)
-        self.assertIn('"phase": "Staged verification"', script)
-        self.assertIn('"contractStatus") != "pending_review"', script)
+        self.assertIn('"authorityKind": "room_work_item"', script)
+        self.assertIn('"partnerWorkDocumentRevision"', script)
+        self.assertIn('"partnerWorkItemState"', script)
+        self.assertIn('"op": "wait"', script)
         self.assertIn('"op": "accept"', script)
+        self.assertIn('"operabilityVerdict": "passed"', script)
+        self.assertIn('"requirementVerdict": "satisfied"', script)
+        self.assertIn("synced_document['documentId']", script)
+        self.assertNotIn('child_result.get("status") != "completed"', script)
 
     def test_product_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"
@@ -312,6 +344,8 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             skill_names,
             sorted({
                 "alignment-and-decision",
+                "bootstrap-project-context",
+                "ego-browser",
                 "facilitate-room",
                 "implementation-planning",
                 "improve-codebase-architecture",
@@ -320,6 +354,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "memory-curation",
                 "orchestrate-session",
                 "organize-work-documents",
+                "pawos-system",
                 "plugin-creator",
                 "project-maintainer",
                 "systematic-debugging",
@@ -401,7 +436,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             )
             self.assertEqual(
                 cards_by_name[name],
-                {field: frontmatter[field] for field in ROUTING_CARD_FIELDS},
+                _skill_routing_projection(frontmatter, skill_name=name),
             )
 
         first = json.dumps(routing_catalog, ensure_ascii=False, separators=(",", ":"))
@@ -512,7 +547,10 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         )
         self.assertEqual(
             card,
-            {field: bundled_frontmatter[field] for field in ROUTING_CARD_FIELDS},
+            _skill_routing_projection(
+                bundled_frontmatter,
+                skill_name="memory-curation",
+            ),
         )
 
     def test_project_routing_card_drift_is_rejected(self) -> None:
@@ -575,8 +613,17 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             facilitation = (
                 runtime_root / "facilitate-room" / "SKILL.md"
             ).read_text(encoding="utf-8")
+            bootstrap = (
+                runtime_root / "bootstrap-project-context" / "SKILL.md"
+            ).read_text(encoding="utf-8")
             organization = (
                 runtime_root / "organize-work-documents" / "SKILL.md"
+            ).read_text(encoding="utf-8")
+            ego_browser = (
+                runtime_root / "ego-browser" / "SKILL.md"
+            ).read_text(encoding="utf-8")
+            independent_review = (
+                runtime_root / "independent-review" / "SKILL.md"
             ).read_text(encoding="utf-8")
             agent_prompt = (skill_root / "agents" / "openai.yaml").read_text(
                 encoding="utf-8"
@@ -589,6 +636,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("alignment-and-decision", copied)
         self.assertIn("orchestrate-session", copied)
         self.assertIn("facilitate-room", copied)
+        self.assertIn("bootstrap-project-context", copied)
         self.assertIn("organize-work-documents", copied)
         for retired in (
             "implementation-execution",
@@ -602,15 +650,48 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("material user-owned choices", alignment)
         self.assertIn("Session's native subagent capability", orchestration)
         self.assertIn("does not define another event bus", orchestration)
+        self.assertIn("Batch dispatch", orchestration)
+        self.assertIn("fresh/new", orchestration)
+        self.assertIn("does not rank either mode", orchestration)
+        self.assertIn("A pass on only one axis is not closure", orchestration)
+        self.assertIn("AGENTS.md", bootstrap)
+        self.assertIn("write's `workDocument` field", bootstrap)
+        self.assertIn("live", bootstrap)
+        self.assertIn("authorityRevision", bootstrap)
+        self.assertIn("never emit `clear`/`passed` for unverified work", independent_review)
+        self.assertIn("rewrite unverified work as `clear`/`passed`", independent_review)
+        self.assertIn("Never fall through to standalone Google", ego_browser)
+        self.assertIn("not permission to drive desktop Chrome or Edge", ego_browser)
         self.assertIn("Partners remain ordinary Sessions", facilitation)
         self.assertIn(
-            "A Partner is assigned only after `room_partner delegate` or `room_partner delegate_batch`",
+            "Partner assignment exists only after a real delegated dispatch",
             facilitation,
         )
+        self.assertIn("prerequisites for submission, not acceptance", facilitation)
         self.assertIn("one `delegate_batch` call", facilitation)
         self.assertIn("never describe consecutive `delegate` calls as parallel", facilitation)
         self.assertIn("emit the best evidence-backed partial or blocked final", facilitation)
+        self.assertIn("unfinished, failed, orphaned, partial, and unclosed", facilitation)
+        self.assertIn("does not prove requirement satisfaction", facilitation)
+        self.assertIn("returns an immediate durable dispatch receipt", facilitation)
+        self.assertIn("durable wake", facilitation)
+        self.assertIn("`room_partner collect` or `wait`", facilitation)
+        self.assertIn("A `wait` timeout never cancels", facilitation)
+        self.assertIn("explicitly call `accept` or `return`", facilitation)
+        self.assertIn("Do not pause a live Room Goal to wait", facilitation)
+        self.assertIn("pause a live Room Goal as a wait", facilitation)
+        self.assertIn("If a reviewer reported `unverified`", facilitation)
+        self.assertIn("live `authorityRevision`", facilitation)
+        self.assertIn("product `browser` tool", facilitation)
+        self.assertIn("Before any requirements, business-code, configuration, or test write", facilitation)
+        self.assertIn("`agent_goal confirm_setup`", facilitation)
+        self.assertIn('workDocument={authorityKind:"session_goal"', facilitation)
+        self.assertIn("successful `workDocumentRegistration`", facilitation)
+        self.assertIn("do not create an unbound requirements file", facilitation)
+        self.assertIn("A plain `docs/agent/requirements.md`, Todo, or Room post is not that binding", facilitation)
+        self.assertNotIn("automatically accepted", facilitation)
         self.assertIn("document gardener", organization)
+        self.assertIn("both verification axes", organization)
         self.assertIn("$orchestrate-session", orchestration_prompt)
         for required in (
             "authorized Evidence -> one Current Atom",

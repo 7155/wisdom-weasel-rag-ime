@@ -11,11 +11,11 @@ Plan only as much structure as the work needs. Prefer one coherent Session when 
 
 1. Read the TaskBrief, acceptance criteria, decisions, relevant ContextRefs, and current implementation seams.
 2. Stop and suggest `alignment-and-decision` only if a newly discovered material user choice prevents a valid plan.
-3. Map each acceptance criterion to an observable implementation seam and fresh verification.
+3. Map each acceptance criterion to an observable implementation seam and to two distinct verification questions: whether the implementation/real path runs, and whether the observed result satisfies the current precise requirement.
 4. Create the smallest vertical work items that produce independently inspectable results; do not use file lists as tasks.
-5. Record blocking dependencies, shared-contract ownership, integration order, rollback points, and the current executable frontier.
+5. For every work item, record requirement refs, current and accountable owner roles, Session/conversation and WorkDocument refs, acceptance, dependencies, next action, verification responsibility, integration order, and rollback point. Runtime supplies actual identities and live state.
 6. Recommend parallel work only when items are independent and concurrency has a material benefit.
-7. Recommend capabilities and workspace needs; leave Agent creation, assignment, and workspace binding to the caller.
+7. Recommend owner roles, capabilities, and workspace needs; leave actual Agent creation, assignment, reassignment, and workspace binding to the supervising caller.
 8. Update the owned workboard with the accepted plan, material blockers, and next frontier.
 
 ## Document Responsibility
@@ -29,8 +29,9 @@ Plan only as much structure as the work needs. Prefer one coherent Session when 
 Return the common `AgentResult` envelope with:
 
 ```text
-work items | acceptance mapping | dependencies | executable frontier
-shared owners | integration order | rollback | review recommendation
+work items and responsibility fields | two-axis acceptance mapping
+dependencies | executable frontier | integration order | rollback
+review recommendation
 workboard update receipt or proposed delta
 ```
 

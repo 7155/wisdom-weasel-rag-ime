@@ -1,8 +1,8 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 13,
-    "projectedBundledCards": 3,
+    "bundledSkillEntries": 16,
+    "projectedBundledCards": 5,
     "canonicalCards": 40
   },
   "collisionPolicy": {
@@ -11,6 +11,8 @@
       "configured": [],
       "pi-installed": [
         "alignment-and-decision",
+        "bootstrap-project-context",
+        "ego-browser",
         "facilitate-room",
         "implementation-planning",
         "improve-codebase-architecture",
@@ -18,6 +20,7 @@
         "memory-curation",
         "orchestrate-session",
         "organize-work-documents",
+        "pawos-system",
         "plugin-creator",
         "project-maintainer",
         "rag-retrieval-optimization",
@@ -66,30 +69,56 @@
     {
       "name": "plugin-creator",
       "when": [
-        "用户要求安装、更新、回滚或创建可复用 Pi Package",
-        "现有 Tool 或 Skill 无法满足且能力值得复用"
+        "用户要求管理或创建可复用 Pi Package",
+        "缺少可复用 Tool 或 Skill"
       ],
       "notFor": [
-        "已有能力可完成的普通任务或一次性修改",
-        "密钥、不明代码、绕过确认或第二套加载器"
+        "普通任务或一次性修改",
+        "密钥、不明代码或绕过确认"
       ],
-      "does": "先搜索已有包；没有合适项时创建、校验并提交安装预览。",
-      "input": "缺失能力、来源、触发边界和验收。",
-      "output": "匹配包或草案、校验回执、安装提议和限制。"
+      "does": "搜索、校验并生成安装预览；缺少时创建包。",
+      "input": "能力、来源和验收。",
+      "output": "包、校验与安装提议。"
+    },
+    {
+      "name": "bootstrap-project-context",
+      "when": [
+        "项目根缺少 AGENTS.md 或用户要求初始化上下文"
+      ],
+      "notFor": [
+        "普通任务或覆盖已有规则"
+      ],
+      "does": "创建精简 AGENTS.md 并索引 docs 与 WorkDocument。",
+      "input": "项目根与文档。",
+      "output": "入口与索引。"
     },
     {
       "name": "project-maintainer",
       "when": [
-        "设计或实施 PAW 构建、安装、卸载、升级、回滚或恢复",
-        "修改安装器、LaunchAgent、受管 Pi Runtime 或自举维护流程"
+        "维护 PAW 安装、升级或回滚",
+        "修改 LaunchAgent 或 Pi Runtime"
       ],
       "notFor": [
-        "普通功能开发、一次性代码修改或外部软件安装",
-        "绕过权限、审批、回执和版本快照"
+        "普通功能或一次性修改",
+        "绕过权限、审批或版本快照"
       ],
-      "does": "识别真实安装层与回执，按可恢复顺序实施并验证。",
-      "input": "维护目标、允许的状态变更和验收边界。",
-      "output": "变更、确认点、安装或恢复回执、验证与残余风险。"
+      "does": "按可恢复顺序实施并验证安装。",
+      "input": "维护目标、授权和验收。",
+      "output": "变更、回执、验证与风险。"
+    },
+    {
+      "name": "pawos-system",
+      "when": [
+        "询问 PAW/PAWOS 用法",
+        "跨 App、窗口或主题改造"
+      ],
+      "notFor": [
+        "单 App 操作",
+        "绕过权限、安装或前台验收"
+      ],
+      "does": "读取最小上下文并路由现有 owner。",
+      "input": "目标、工作区、期望结果。",
+      "output": "说明或变更、验证与边界。"
     },
     {
       "name": "review-agent",
@@ -123,27 +152,15 @@
       ]
     },
     {
-      "name": "browser:control-in-app-browser",
+      "name": "ego-browser",
       "when": [
-        "任务需要操作应用内 Browser 的页面或登录态",
-        "需要导航、点击、输入、截图或本地 Web 测试"
+        "操作 PAW Browser 页面、标签或登录态",
+        "导航、点击、输入、截图或 Web 测试"
       ],
-      "does": "读取和操作应用内 Browser 的真实交互状态。",
+      "does": "用 PAW browser 工具和 ego 内核控制受管 Chromium。",
       "notFor": [
-        "已有连接器、API 或 CLI 可直接完成",
-        "明确依赖用户 Chrome 状态"
-      ]
-    },
-    {
-      "name": "chrome:control-chrome",
-      "when": [
-        "任务依赖用户现有 Chrome 标签页、登录会话或扩展状态",
-        "用户明确要求在其 Chrome 中读取或执行操作"
-      ],
-      "does": "控制用户 Chrome 的真实浏览器状态。",
-      "notFor": [
-        "已有专用连接器、API 或 CLI 可直接完成的任务",
-        "不应接触用户日常 Chrome 状态的隔离浏览任务"
+        "连接器/API 可直接完成",
+        "操作用户日常 Chrome"
       ]
     },
     {
@@ -314,14 +331,6 @@
       "does": "使用 Poppler 和 PDF Python 工具完成 PDF 处理、渲染与版式验证。"
     },
     {
-      "name": "playwright",
-      "when": [
-        "任务需要从终端自动化真实浏览器",
-        "需要导航、表单填写、快照、截图、数据提取或 UI 流程调试"
-      ],
-      "does": "通过 playwright-cli 或包装脚本执行可重复的浏览器自动化。"
-    },
-    {
       "name": "presentations:presentations",
       "when": [
         "用户要求创建或编辑 PowerPoint 演示文稿",
@@ -435,16 +444,16 @@
     {
       "name": "memory-curation",
       "when": [
-        "用户明确要求整理、纠正、遗忘或回滚记忆",
-        "验收结果产生少量可复用事实，或低频维护运行"
+        "用户要求管理或回滚记忆",
+        "验收产生复用事实或低频维护"
       ],
       "notFor": [
-        "普通聊天、临时进度、失败回执或 Room 私有过程",
-        "直写数据库、自动批准或保存整段对话"
+        "普通聊天、临时进度或 Room 私有过程",
+        "直写数据库、自动批准或整段保存"
       ],
-      "does": "基于证据生成可审阅的记忆变更草案。",
-      "input": "用户意图、授权证据、当前记忆和冲突。",
-      "output": "待审变更、证据、冲突、审批和回滚信息。"
+      "does": "据授权证据生成待审草案。",
+      "input": "意图、证据、记忆与冲突。",
+      "output": "变更、审批与回滚。"
     }
   ]
 }

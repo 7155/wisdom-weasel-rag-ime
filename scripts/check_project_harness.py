@@ -66,7 +66,7 @@ def _read_documents(root: Path, errors: list[str]) -> dict[str, str]:
     for relative, budget in ROOT_DOCUMENT_BUDGETS.items():
         path = root / relative
         if not path.is_file():
-            errors.append(f"missing root harness document: {relative}")
+            errors.append(f"missing bootstrap authority document: {relative}")
             continue
         text = path.read_text(encoding="utf-8")
         documents[relative] = text
@@ -81,7 +81,7 @@ def _read_documents(root: Path, errors: list[str]) -> dict[str, str]:
 def _validate_local_links(root: Path, relative: str, text: str, errors: list[str]) -> None:
     source_dir = (root / relative).parent
     for target in LOCAL_LINK_RE.findall(text):
-        if target.startswith(("http://", "https://", "mailto:", "#")):
+        if target.startswith("#") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target):
             continue
         local_target = target.split("#", 1)[0]
         if not local_target:
@@ -253,12 +253,10 @@ def validate_project_harness(root: Path) -> list[str]:
         text = documents.get(relative)
         if text is None:
             text = path.read_text(encoding="utf-8")
+        _validate_local_links(root, relative, text, errors)
         for retired in RETIRED_FLOW_NAMES:
             if retired in text:
                 errors.append(f"{relative} still references retired flow name: {retired}")
-
-    for relative, text in documents.items():
-        _validate_local_links(root, relative, text, errors)
 
     outcomes = documents.get("OUTCOMES.md", "")
     if "release/product-status.json" not in outcomes:
@@ -294,7 +292,7 @@ def main() -> int:
             print(f"- {error}")
         return 1
     print(
-        "OK: bounded root context, progressive Skill routing, "
+        "OK: bounded bootstrap context, progressive docs/Skill routing, "
         "retired-flow cleanup, and release scope are consistent"
     )
     return 0

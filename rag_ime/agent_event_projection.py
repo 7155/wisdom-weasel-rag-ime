@@ -23,6 +23,9 @@ _TRANSIENT_RUNTIME_EVENT_TYPES = frozenset(
     }
 )
 
+_ROOM_DELTA_MAX_LATENCY_MS = 100
+_ROOM_DELTA_MAX_CHARS = 48
+
 
 class AgentEventProjectionService:
     """Persist private Agent events and project bounded Room events."""
@@ -57,6 +60,18 @@ class AgentEventProjectionService:
             record_assistant_evidence
         )
         self.notify_intercom = notify_intercom
+        # Room projection is a public UI stream, not the token transport. Pi
+        # commonly emits one- or two-character fragments; forwarding every
+        # fragment makes the virtual timeline remeasure dozens of times per
+        # second and lets deltas evict useful Room facts from the replay window.
+        self._room_delta_pending: dict[
+            tuple[str, str, str, str, str, int, str],
+            dict[str, object],
+        ] = {}
+        self._room_delta_last_emit_ms: dict[
+            tuple[str, str, str, str, str, int, str],
+            int,
+        ] = {}
 
     def record(self, event: AgentEventEnvelope) -> None:
         # Token and progress deltas already live in the bounded in-memory SSE
@@ -189,7 +204,7 @@ class AgentEventProjectionService:
                 "status": status or phase,
                 "summary": str(event.payload.get("summary") or "")[:500],
             }
-        self.room_events.publish(
+        publication: dict[str, object] = dict(
             room_id=str(participant["roomId"]),
             event_type=mapped_type,
             payload={
@@ -198,7 +213,24 @@ class AgentEventProjectionService:
                 "data": {
                     **public_data,
                     "rootId": room_turn_id,
+                    # The Session turn remains useful for correlation, while
+                    # sourceLoopId is the actual card boundary: one Pi
+                    # assistant/tool loop per Room card.
+                    "sourceTurnId": event.turn_id,
                     **work_identity,
+                    **(
+                        {
+                            "sourceLoopId": bounded_text(
+                                event.payload.get("sourceLoopId"),
+                                maximum=240,
+                            )
+                        }
+                        if bounded_text(
+                            event.payload.get("sourceLoopId"),
+                            maximum=240,
+                        )
+                        else {}
+                    ),
                     **(
                         {"dispatchId": dispatch_id}
                         if dispatch_id
@@ -214,6 +246,11 @@ class AgentEventProjectionService:
             ),
             created_at_ms=event.created_at_ms,
         )
+        if mapped_type == "participant_delta":
+            self._publish_room_delta(event, publication)
+        else:
+            self._flush_room_deltas(str(participant["roomId"]))
+            self.room_events.publish(**publication)
         if event.event_type in {
             "turn_completed",
             "turn_failed",
@@ -223,6 +260,97 @@ class AgentEventProjectionService:
                 event.turn_id,
                 room_turn_id,
             )
+
+    def _publish_room_delta(
+        self,
+        event: AgentEventEnvelope,
+        publication: Mapping[str, object],
+    ) -> None:
+        payload = publication.get("payload")
+        data = payload.get("data") if isinstance(payload, Mapping) else None
+        if not isinstance(data, Mapping):
+            self.room_events.publish(**publication)
+            return
+        room_id = str(publication.get("room_id") or "")
+        key = (
+            room_id,
+            str(publication.get("turn_id") or ""),
+            str(publication.get("participant_id") or ""),
+            str(data.get("messageId") or ""),
+            str(data.get("blockId") or ""),
+            int(data.get("contentIndex") or 0),
+            str(data.get("dispatchId") or ""),
+        )
+        # Replacement deltas are state boundaries and must never be folded into
+        # preceding append deltas.
+        if data.get("replaceBlock") is True or data.get("replaceContent") is True:
+            self._flush_room_deltas(room_id)
+            self.room_events.publish(**publication)
+            self._room_delta_last_emit_ms[key] = event.created_at_ms
+            return
+
+        pending_other_key = any(
+            candidate[0] == room_id and candidate != key
+            for candidate in self._room_delta_pending
+        )
+        if pending_other_key:
+            self._flush_room_deltas(room_id)
+
+        last_emit = self._room_delta_last_emit_ms.get(key)
+        if last_emit is None:
+            # Preserve immediate first-token feedback, then coalesce the burst.
+            self.room_events.publish(**publication)
+            self._room_delta_last_emit_ms[key] = event.created_at_ms
+            return
+
+        pending = self._room_delta_pending.get(key)
+        if pending is None:
+            pending = _copy_room_delta_publication(publication)
+            self._room_delta_pending[key] = pending
+        else:
+            pending_payload = pending.get("payload")
+            pending_data = (
+                pending_payload.get("data")
+                if isinstance(pending_payload, dict)
+                else None
+            )
+            if isinstance(pending_data, dict):
+                pending_data["delta"] = (
+                    str(pending_data.get("delta") or "")
+                    + str(data.get("delta") or "")
+                )
+            if isinstance(pending_payload, dict):
+                pending_payload["sourceEventId"] = event.event_id
+            pending["created_at_ms"] = event.created_at_ms
+
+        pending_payload = pending.get("payload")
+        pending_data = (
+            pending_payload.get("data")
+            if isinstance(pending_payload, dict)
+            else None
+        )
+        buffered_chars = len(str(pending_data.get("delta") or "")) if isinstance(pending_data, dict) else 0
+        if (
+            buffered_chars >= _ROOM_DELTA_MAX_CHARS
+            or event.created_at_ms - last_emit >= _ROOM_DELTA_MAX_LATENCY_MS
+        ):
+            self._flush_room_delta_key(key)
+            self._room_delta_last_emit_ms[key] = event.created_at_ms
+
+    def _flush_room_delta_key(
+        self,
+        key: tuple[str, str, str, str, str, int, str],
+    ) -> None:
+        pending = self._room_delta_pending.pop(key, None)
+        if pending is not None:
+            self.room_events.publish(**pending)
+
+    def _flush_room_deltas(self, room_id: str) -> None:
+        keys = [key for key in self._room_delta_pending if key[0] == room_id]
+        for key in keys:
+            self._flush_room_delta_key(key)
+        for key in [key for key in self._room_delta_last_emit_ms if key[0] == room_id]:
+            self._room_delta_last_emit_ms.pop(key, None)
 
     def _bind_and_persist_blocks(
         self,
@@ -263,6 +391,20 @@ class AgentEventProjectionService:
                 created_at_ms=event.created_at_ms,
             )
         return True
+
+
+def _copy_room_delta_publication(
+    publication: Mapping[str, object],
+) -> dict[str, object]:
+    copied = dict(publication)
+    payload = publication.get("payload")
+    if isinstance(payload, Mapping):
+        copied_payload = dict(payload)
+        data = payload.get("data")
+        if isinstance(data, Mapping):
+            copied_payload["data"] = dict(data)
+        copied["payload"] = copied_payload
+    return copied
 
 
 def room_event_projection(
@@ -322,6 +464,7 @@ def room_event_projection(
             "toolCallId",
             "callId",
             "approvalId",
+            "payloadSha256",
             "requestId",
             "requestKind",
             "runId",
@@ -700,13 +843,9 @@ _ROOM_TOOL_NAMES = frozenset(
 
 _ROOM_REQUEST_TEXT_LIMITS = {
     "op": 40,
-    "phase": 120,
     "targetParticipantId": 240,
-    "workItemId": 240,
     "task": 1_200,
     "expectedOutput": 1_200,
-    "reason": 1_200,
-    "nextStep": 1_200,
     "content": 1_200,
 }
 
@@ -731,12 +870,6 @@ _ROOM_RESULT_KEYS_BY_TOOL = {
         "published",
         "postId",
         "idempotentReplay",
-        "workItemId",
-        "workItemRevision",
-        "attemptId",
-        "contractStatus",
-        "contractError",
-        "requiresAcceptance",
     ),
 }
 
@@ -744,7 +877,6 @@ _ROOM_RESULT_BOOLEAN_KEYS = frozenset(
     {
         "published",
         "idempotentReplay",
-        "requiresAcceptance",
     }
 )
 
@@ -759,10 +891,6 @@ _ROOM_RESULT_TEXT_LIMITS = {
     "status": 160,
     "result": 2_000,
     "postId": 240,
-    "workItemId": 240,
-    "attemptId": 320,
-    "contractStatus": 80,
-    "contractError": 500,
 }
 
 
@@ -860,18 +988,6 @@ def _room_tool_result_projection(
             value = next((item for item in values if isinstance(item, bool)), None)
             if isinstance(value, bool):
                 projected[key] = value
-            continue
-        if key == "workItemRevision":
-            value = next(
-                (
-                    item
-                    for item in values
-                    if isinstance(item, int) and not isinstance(item, bool)
-                ),
-                None,
-            )
-            if isinstance(value, int):
-                projected[key] = max(0, value)
             continue
         maximum = _ROOM_RESULT_TEXT_LIMITS.get(key)
         value = next((item for item in values if isinstance(item, str)), None)
@@ -1111,6 +1227,16 @@ def _room_tool_error(value: object) -> str:
         error = bounded_text(value.get(key), maximum=1_000)
         if error:
             return error
+    content = value.get("content")
+    if isinstance(content, list):
+        for item in content[:8]:
+            if not isinstance(item, Mapping):
+                continue
+            if bounded_text(item.get("type"), maximum=40) != "text":
+                continue
+            error = bounded_text(item.get("text"), maximum=1_000)
+            if error:
+                return error
     for child in value.values():
         error = _room_tool_error(child)
         if error:

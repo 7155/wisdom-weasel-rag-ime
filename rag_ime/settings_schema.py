@@ -7,8 +7,8 @@ from typing import Any, Mapping
 
 DEFAULT_SETTINGS: dict[str, object] = {
     "identity": {
-        "productName": "澄",
-        "assistantName": "澄",
+        "productName": "PAW",
+        "assistantName": "Agent",
         "tagline": "记得你，也陪你做事",
     },
     "interaction": {
@@ -141,6 +141,11 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "detectExplicitCompletion": True,
     },
     "agent": {
+        "defaults": {
+            "modelReference": "inherit",
+            "thinkingLevel": "high",
+            "executionMode": "per_action",
+        },
         "pi": {
             "enabled": False,
             "startup": "lazy",
@@ -259,7 +264,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
                     "key": "identity.productName",
                     "type": "string",
                     "label": "应用名称",
-                    "default": "澄",
+                    "default": "PAW",
                     "minLength": 1,
                     "maxLength": 24,
                 },
@@ -267,7 +272,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
                     "key": "identity.assistantName",
                     "type": "string",
                     "label": "通用伙伴称呼",
-                    "default": "澄",
+                    "default": "Agent",
                     "minLength": 1,
                     "maxLength": 24,
                 },
@@ -521,6 +526,27 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "id": "agent",
             "label": "Agent 运行时",
             "fields": [
+                {
+                    "key": "agent.defaults.modelReference",
+                    "type": "pi-model-or-inherit",
+                    "label": "新建 Session 模型",
+                    "default": "inherit",
+                },
+                {
+                    "key": "agent.defaults.thinkingLevel",
+                    "type": "pi-thinking",
+                    "label": "新建 Session 推理强度",
+                    "default": "high",
+                    "modelKey": "agent.defaults.modelReference",
+                    "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+                },
+                {
+                    "key": "agent.defaults.executionMode",
+                    "type": "enum",
+                    "label": "新建 Session 执行权限",
+                    "default": "per_action",
+                    "options": ["read_only", "per_action", "workspace_managed", "full_trust"],
+                },
                 {"key": "agent.pi.enabled", "type": "boolean", "label": "连接 Pi", "default": False},
                 {"key": "agent.pi.idleTimeoutSeconds", "type": "integer", "label": "空闲退出时间", "default": 900},
                 {"key": "agent.pi.systemProxy", "type": "boolean", "label": "远程模型跟随系统代理", "default": True},
@@ -722,6 +748,18 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
         "expert": True,
     },
     "agent.pi.enabled": {"description": "按需启动受管理的 Pi RPC，不影响普通输入路径"},
+    "agent.defaults.modelReference": {
+        "description": "新建 Session 跟随的 Pi Provider 模型；当前 Session 仍可在 Composer 中单独调整",
+        "applyMode": "next_session",
+    },
+    "agent.defaults.thinkingLevel": {
+        "description": "新建 Session 使用的思考档位；只允许所选模型明确支持的值",
+        "applyMode": "next_session",
+    },
+    "agent.defaults.executionMode": {
+        "description": "新建 Session 的执行权限起点；高风险动作仍服从产品审批与 Runtime policy",
+        "applyMode": "next_session",
+    },
     "agent.pi.idleTimeoutSeconds": {"description": "Pi 无活动后自动退出的等待时间", "min": 0, "max": 86400, "step": 60, "unit": "秒"},
     "agent.pi.systemProxy": {
         "description": "OpenAI 等远程 Provider 默认读取 macOS 的 HTTP/HTTPS 系统代理；localhost 与本机服务始终直连",

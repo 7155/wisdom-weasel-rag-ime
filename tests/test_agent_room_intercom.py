@@ -75,6 +75,23 @@ class AgentRoomIntercomTests(unittest.TestCase):
                 {**payload, "content": "偷偷换一条内容"},
             )
 
+    def test_send_accepts_uuid_shorthand_but_persists_canonical_participant_id(self) -> None:
+        canonical_target = str(self.second_participant["id"])
+        self.assertTrue(canonical_target.startswith("participant:"))
+
+        item, created = self._enqueue(
+            str(self.first["id"]),
+            {
+                "kind": "ask",
+                "targetParticipantId": canonical_target.removeprefix("participant:"),
+                "clientMessageId": "bare-target-uuid",
+                "content": "请直接回复，不经过主持人。",
+            },
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(item["targetParticipantId"], canonical_target)
+
     def test_ask_reply_correlation_is_one_to_one_and_directional(self) -> None:
         ask, _ = self._enqueue(
             str(self.first["id"]),
@@ -181,7 +198,7 @@ class AgentRoomIntercomTests(unittest.TestCase):
         finally:
             router.close()
 
-    def test_router_marks_generation_mismatch_stale_without_delivery(self) -> None:
+    def test_router_delivers_ask_and_reply_across_participant_loop_changes(self) -> None:
         idle = {str(self.second["id"]): False}
         generations = {str(self.first["id"]): 3, str(self.second["id"]): 7}
         delivered: list[dict[str, object]] = []
@@ -189,27 +206,49 @@ class AgentRoomIntercomTests(unittest.TestCase):
             self.store,
             generation_provider=lambda session_id: generations[session_id],
             idle_probe=lambda session_id: idle.get(session_id, True),
-            delivery_handler=lambda item: delivered.append(dict(item)) or {"turnId": "unexpected"},
+            delivery_handler=lambda item: delivered.append(dict(item)) or {
+                "turnId": f"turn:{len(delivered)}"
+            },
             audit_publisher=lambda _item, _phase: None,
         )
         try:
             item = router.enqueue(
                 str(self.first["id"]),
                 {
-                    "kind": "send",
+                    "kind": "ask",
                     "targetParticipantId": self.second_participant["id"],
                     "clientMessageId": "generation-1",
-                    "content": "旧运行时不应收到这条消息",
+                    "content": "请直接给我你的结论",
                 },
             )
             generations[str(self.second["id"])] = 8
             idle[str(self.second["id"])] = True
             router.notify()
 
-            final = self._wait_for_status(str(item["id"]), "stale")
+            delivered_ask = self._wait_for_status(str(item["id"]), "delivered")
 
-            self.assertIn("generation changed", final["error"])
-            self.assertEqual(delivered, [])
+            self.assertEqual(delivered_ask["targetGeneration"], 8)
+            self.assertEqual(delivered_ask["acceptedTurnId"], "turn:1")
+            self.assertEqual(len(delivered), 1)
+
+            reply = router.enqueue(
+                str(self.second["id"]),
+                {
+                    "kind": "reply",
+                    "replyTo": item["id"],
+                    "clientMessageId": "generation-reply-1",
+                    "content": "这是直接回复，没有经过主持人转发",
+                },
+            )
+            delivered_reply = self._wait_for_status(
+                str(reply["id"]), "delivered"
+            )
+
+            self.assertEqual(delivered_reply["sourceParticipantId"], self.second_participant["id"])
+            self.assertEqual(delivered_reply["targetParticipantId"], self.first_participant["id"])
+            self.assertEqual(delivered_reply["acceptedTurnId"], "turn:2")
+            self.assertEqual(self.store.get(str(item["id"]))["status"], "replied")
+            self.assertEqual(len(delivered), 2)
         finally:
             router.close()
 

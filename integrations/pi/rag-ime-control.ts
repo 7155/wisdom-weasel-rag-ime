@@ -234,6 +234,12 @@ type ToolParams = {
   patternKind?: "literal" | "regex" | "glob";
   edits?: Array<{ oldText: string; newText: string }>;
   content?: string;
+  workDocument?: {
+    authorityKind: "session_goal" | "room_work_item";
+    authorityId: string;
+    authorityRevision: number;
+    title?: string;
+  };
   command?: string;
   cwd?: string;
   timeout?: number;
@@ -1417,7 +1423,7 @@ const toolSpecs: ToolSpec[] = [
       "Goal 是当前 Session 的长期目标，不是 Todo 任务清单；只有用户已经明确确认目标、验收标准和禁区时才能 confirm_setup。",
       "先 list 读取当前 revision 和状态；不要覆盖既有 Goal，也不要把 Todo 任务伪装成 Goal。",
       "complete 必须附带至少一条可核验 evidence；工具回执会写入权威完成审计，再由控制中心投影。",
-      "pause、resume 和 cancel 会改变后续执行状态；只有符合用户明确意图时才能调用。删除 Goal 及审计记录只能由用户在控制中心操作。",
+      "pause 只用于用户明确要求停止当前 Goal。不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息；那会让 Root 无法被用户消息唤醒。受阻时发出 blocked/partial，保持 Goal active。resume 和 cancel 同样只在符合用户明确意图时调用。删除 Goal 及审计记录只能由用户在控制中心操作。",
     ],
     parameterSchema: {
       oneOf: [
@@ -1667,6 +1673,7 @@ const coordinatorToolSpecs: ToolSpec[] = [
       "An explicit user execution request is sufficient to attempt an in-scope reversible write. Todo tracks progress but grants no authority; workspace scope, resourceRevision checks, and the existing action-risk approval policy remain authoritative.",
       "For an existing file, read it immediately before writing and copy resourceRevision. For a new path, pass resourceRevision as missing.",
       "Prefer edit for small changes to an existing file; use write for new files or complete rewrites.",
+      "When workDocument is set, copy authorityKind, authorityId, and authorityRevision from the current workboard or work_documents projection for that authority. Do not reuse a previously remembered bound revision after the authority has advanced.",
     ],
     parameterSchema: {
       type: "object",
@@ -1679,6 +1686,21 @@ const coordinatorToolSpecs: ToolSpec[] = [
           pattern: "^(?:sha256:[0-9a-fA-F]{64}|missing)$",
         },
         content: { type: "string", maxLength: 2097152 },
+        workDocument: {
+          type: "object",
+          additionalProperties: false,
+          required: ["authorityKind", "authorityId", "authorityRevision"],
+          properties: {
+            authorityKind: {
+              type: "string",
+              enum: ["session_goal", "room_work_item"],
+            },
+            authorityId: { type: "string", minLength: 1, maxLength: 240 },
+            authorityRevision: { type: "integer", minimum: 0 },
+            title: { type: "string", maxLength: 240 },
+          },
+          description: "Explicit authority binding registered only after the write receipt hash matches.",
+        },
       },
     },
   },
@@ -1930,7 +1952,13 @@ function gatewayParamsFor(spec: ToolSpec, params: ToolParams): ToolParams {
     return { op, path: params.path, resourceRevision: params.resourceRevision, edits: params.edits };
   }
   if (spec.name === "write") {
-    return { op, path: params.path, resourceRevision: params.resourceRevision, content: params.content };
+    return {
+      op,
+      path: params.path,
+      resourceRevision: params.resourceRevision,
+      content: params.content,
+      workDocument: params.workDocument,
+    };
   }
   if (spec.name === "bash") {
     return {
@@ -1950,6 +1978,7 @@ async function callGateway(
   params: ToolParams,
   signal?: AbortSignal,
   runtimeContext?: TrustedRuntimeContext,
+  sourceLoopId = "",
 ) {
   if (!gatewayUrl || !gatewayToken || !sessionId) {
     throw new Error("RAG-IME tool gateway is not configured");
@@ -1966,6 +1995,7 @@ async function callGateway(
       tool,
       toolCallId,
       args: params,
+      ...(sourceLoopId ? { sourceLoopId } : {}),
       ...(runtimeContext ? { runtimeContext } : {}),
     }),
     signal,
@@ -1984,6 +2014,20 @@ async function callGateway(
     throw new GatewayToolError(
       `${message} [errorCode=${errorCode}; retryable=${retryable}]`,
       { errorCode, retryable, httpStatus: response.status },
+    );
+  }
+  if (payload.result.failureCode === "automatic_approval_bridge_failed") {
+    throw new GatewayToolError(
+      String(
+        payload.result.terminalReason
+          ?? payload.result.summary
+          ?? "自动审批执行失败，原操作没有执行",
+      ),
+      {
+        errorCode: "automatic_approval_bridge_failed",
+        retryable: false,
+        httpStatus: response.status,
+      },
     );
   }
   return payload.result;
@@ -2565,6 +2609,17 @@ function specsForToolProfile(specs: ToolSpec[]) {
 }
 
 export default function (pi: any) {
+  let activeSourceLoopId = "";
+  let sourceLoopOrdinal = 0;
+  pi.on?.("message_start", (event: any) => {
+    const message = event?.message;
+    if (!message || String(message.role ?? "").toLowerCase() !== "assistant") return;
+    sourceLoopOrdinal += 1;
+    const timestamp = Number(message.timestamp);
+    activeSourceLoopId = Number.isFinite(timestamp) && timestamp > 0
+      ? `pi:message:assistant:${Math.trunc(timestamp)}`
+      : `pi:loop:${sessionId}:${sourceLoopOrdinal}`;
+  });
   const modeSpecs = sessionMode === "coordinator"
     ? [...toolSpecs, ...coordinatorToolSpecs]
     : toolSpecs;
@@ -2742,6 +2797,7 @@ export default function (pi: any) {
             gatewayParams,
             signal,
             runtimeContext,
+            activeSourceLoopId,
           );
           recentNonRetryableFailures.delete(toolFailureKey(spec.name, params));
         } catch (error) {
