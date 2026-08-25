@@ -175,6 +175,47 @@ function rampRgb(stops: ReadonlyArray<readonly [number, Rgb]>, t: number): Rgb {
 }
 
 /* ------------------------------------------------------------------ */
+/* Spectral star population                                            */
+/* ------------------------------------------------------------------ */
+
+export interface SpectralStarType {
+  /** Upper bound of this type's slice of a 0..1 pick. */
+  cumulative: number;
+  /** Linear RGB 0..1. */
+  rgb: readonly [number, number, number];
+}
+
+/**
+ * Approximate real spectral-type distribution (ported from the q-jade
+ * solar-system reference): a few hot blue O/B stars, some white A/F, and a
+ * warm majority of G/K/M — so the deep sky reads warm-and-cool natural
+ * instead of a uniform blue haze. The dome stars baked into the sky map and
+ * the parallax star shells in front of it share this one table, so the two
+ * layers cannot drift into different populations.
+ */
+const SPECTRAL_STAR_TYPES: readonly SpectralStarType[] = [
+  { cumulative: 0.04, rgb: [0.72, 0.84, 1] },
+  { cumulative: 0.12, rgb: [0.9, 0.94, 1] },
+  { cumulative: 0.24, rgb: [1, 0.96, 0.82] },
+  { cumulative: 0.64, rgb: [1, 0.82, 0.62] },
+  { cumulative: 1, rgb: [1, 0.7, 0.52] },
+];
+
+/** Deterministic spectral type for a 0..1 pick. */
+export function spectralStarType(unit: number): SpectralStarType {
+  const pick = clamp01(unit);
+  for (const type of SPECTRAL_STAR_TYPES) {
+    if (pick <= type.cumulative) return type;
+  }
+  return SPECTRAL_STAR_TYPES[SPECTRAL_STAR_TYPES.length - 1]!;
+}
+
+/** Deterministic spectral tint for a 0..1 pick, RGB channels in 0..1. */
+export function spectralStarColor(unit: number): readonly [number, number, number] {
+  return spectralStarType(unit).rgb;
+}
+
+/* ------------------------------------------------------------------ */
 /* Planet surfaces                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -455,6 +496,9 @@ export function generateStarMap(seed = 'shared-star', width = 128, height?: numb
 /* Deep-sky dome                                                       */
 /* ------------------------------------------------------------------ */
 
+/** Dome width used for the first-frame sky while the full map is queued. */
+export const SKY_PREVIEW_WIDTH = 256;
+
 export function generateSkyMap(seed: string, width = 768, height?: number): GeneratedTextureData {
   const heightPx = height ?? Math.max(4, width >> 1);
   const s = textureSeed(`sky|${seed}`);
@@ -519,8 +563,8 @@ export function generateSkyMap(seed: string, width = 768, height?: number): Gene
     const px = Math.min(width - 1, Math.floor(u * width));
     const py = Math.min(heightPx - 1, Math.floor(v * heightPx));
     const brightness = 90 + ((h2 >>> 8) & 0xff) * 0.65;
-    const tintPick = (h2 >>> 16) & 3;
-    const tint: Rgb = tintPick === 0 ? [255, 221, 190] : tintPick === 1 ? [190, 210, 255] : [236, 240, 255];
+    const spectral = spectralStarColor(((h2 >>> 16) & 0xff) / 255);
+    const tint: Rgb = [spectral[0] * 255, spectral[1] * 255, spectral[2] * 255];
     const large = ((h2 >>> 24) & 0xff) > 249;
 
     const deposit = (x: number, y: number, energy: number) => {
@@ -660,6 +704,16 @@ export class StarfieldTextureFactory {
 
   sky(seed: string): THREE.DataTexture {
     return this.acquire(`sky:${seed}`, { srgb: true, wrapX: true }, () => generateSkyMap(seed));
+  }
+
+  /**
+   * Quarter-area dome shown while the full sky is still being synthesised.
+   * Nebulae and the milky-way band are smooth enough to survive the drop;
+   * only star crispness waits for the upgrade.
+   */
+  skyPreview(seed: string): THREE.DataTexture {
+    return this.acquire(`sky-preview:${seed}`, { srgb: true, wrapX: true }, () =>
+      generateSkyMap(seed, SKY_PREVIEW_WIDTH));
   }
 
   cloud(seed: string, width = 256): THREE.DataTexture {

@@ -10,10 +10,14 @@
  *   fifty moons stays within a few megabytes of texture memory.
  */
 
-/** Hard DPR ceiling — beyond 2 the extra pixels are invisible on a sky. */
-export const MAX_PIXEL_RATIO = 2;
+/**
+ * Hard DPR ceiling. A deep-space scene is dominated by smooth gradients and
+ * additive glows, so anything beyond 1.5 spends GPU time on pixels the eye
+ * cannot separate — the fill-rate saving at 1.5 vs 2 is ~44% per frame.
+ */
+export const MAX_PIXEL_RATIO = 1.5;
 
-/** Total pixel budget per frame ≈ 1080p × 2 supersample. */
+/** Total pixel budget per frame ≈ 1080p × 1.5² supersample, minus headroom. */
 export const MAX_RENDER_PIXELS = 4_200_000;
 
 function round2(value: number): number {
@@ -29,6 +33,19 @@ export function starfieldPixelRatio(devicePixelRatio: number, width: number, hei
   const area = Math.max(width * height, 1);
   if (area * capped * capped <= MAX_RENDER_PIXELS) return round2(capped);
   return round2(Math.max(1, Math.sqrt(MAX_RENDER_PIXELS / area)));
+}
+
+/**
+ * Whether the WebGL context should allocate a multisampled buffer.
+ *
+ * MSAA and supersampling solve the same problem twice. On a retina display
+ * the stage already renders above 1 device pixel per CSS pixel, which smooths
+ * the thin orbit lines MSAA was there for — so the extra samples buy almost
+ * nothing while costing real bandwidth on the largest surface in the app. A
+ * 1× display has no such headroom and keeps its multisampling.
+ */
+export function starfieldAntialias(devicePixelRatio: number): boolean {
+  return (devicePixelRatio || 1) < 1.5;
 }
 
 export type SphereDetail = 'high' | 'medium' | 'low';
@@ -68,5 +85,17 @@ export interface SurfaceTextureSize {
 /** Equirect surface resolution per body size — bounded at 512×256. */
 export function surfaceTextureSize(bodySize: number): SurfaceTextureSize {
   const width = bodySize < 0.45 ? 128 : bodySize < 1 ? 256 : 512;
+  return { width, height: width / 2 };
+}
+
+/**
+ * Resolution for a body that also has a photographic map on its way: the
+ * procedural surface is only the stand-in until the file lands, so it is
+ * synthesised one tier smaller. Generation cost scales with area, making
+ * this a ~4× saving on exactly the bodies whose noise map is about to be
+ * thrown away — while an offline sky still gets a complete surface.
+ */
+export function fallbackSurfaceTextureSize(bodySize: number): SurfaceTextureSize {
+  const width = Math.max(128, surfaceTextureSize(bodySize).width >> 1);
   return { width, height: width / 2 };
 }
