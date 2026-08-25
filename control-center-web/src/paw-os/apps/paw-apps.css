@@ -375,8 +375,13 @@
 .paw-room-governance article strong { font-size: 14px; }
 .paw-room-governance article small { color: var(--paw-muted); font-size: 12px; }
 .paw-room-governance__topics article[data-active] { border-color: color-mix(in srgb, var(--paw-success) 42%, var(--paw-line)); box-shadow: inset 2px 0 var(--paw-success); }
-.paw-room-governance select, .paw-room-governance input { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--paw-line); border-radius: 7px; outline: 0; color: var(--paw-ink); background: var(--paw-panel-strong); font-size: 13px; }
-.paw-room-governance input:focus, .paw-room-governance select:focus { border-color: color-mix(in srgb, var(--paw-accent) 50%, var(--paw-line)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--paw-accent) 8%, transparent); }
+.paw-room-governance .ui-select__trigger, .paw-room-governance input { min-width: 0; height: 32px; min-height: 32px; padding: 0 8px; border: 1px solid var(--paw-line); border-radius: 7px; outline: 0; color: var(--paw-ink); background: var(--paw-panel-strong); box-shadow: none; font-size: 13px; }
+.paw-room-governance input:focus, .paw-room-governance .ui-select__trigger:focus-visible { border-color: color-mix(in srgb, var(--paw-accent) 50%, var(--paw-line)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--paw-accent) 8%, transparent); }
+.paw-room-governance .ui-select__trigger:hover:not(:disabled), .paw-room-governance .ui-select__trigger[data-state='open'] { border-color: color-mix(in srgb, var(--paw-accent) 50%, var(--paw-line)); }
+.paw-room-governance .ui-select__icon { color: var(--paw-muted); }
+/* The member row gives its picker an auto column, so the trigger sizes to the
+   longest role name instead of stretching against an intrinsic track. */
+.paw-room-governance__members .ui-select__trigger { width: auto; min-width: 112px; }
 .paw-room-governance article > button { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; color: var(--paw-muted); cursor: pointer; }
 .paw-room-governance article > button:hover { color: var(--paw-ink); background: var(--paw-panel-soft); }
 .paw-room-governance__invite { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--paw-muted); font-size: 13px; }

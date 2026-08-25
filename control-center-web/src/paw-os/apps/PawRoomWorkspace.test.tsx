@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +8,7 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { previewRoomSnapshot } from '@/app/preview-room-data';
 import { TooltipProvider } from '@/components/primitives';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import type { ControlRequest } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 import { PawRoomWorkspace } from './PawRoomWorkspace';
@@ -195,15 +196,57 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.queryByLabelText('Sol 当前状态')).not.toBeInTheDocument();
     expect(screen.getByLabelText('主 Room 当前状态')).toBeInTheDocument();
   });
+
+  it('governs the Room with the product picker and one vocabulary for every choice', async () => {
+    const user = userEvent.setup();
+    const { container, transport } = renderRoom(900);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    await user.click(within(tools).getByRole('tab', { name: '治理' }));
+    const governance = container.querySelector('.paw-room-governance') as HTMLElement;
+    expect(governance).not.toBeNull();
+
+    // Native dropdowns were the last previous-generation control left in the
+    // Room: an OS-drawn popup opening over the PAWOS window.
+    expect(governance.querySelector('select')).toBeNull();
+
+    // Every picker used to spell its own choices out, so a member row saying
+    // 实现与验证 sat beside a picker saying 实现, and the 空间设置 header saying
+    // 每次确认 sat beside a picker saying 逐项确认.
+    const roleRow = governance.querySelector('.paw-room-governance__members article') as HTMLElement;
+    const memberName = within(roleRow).getByRole('combobox').getAttribute('aria-label')?.replace(' 的分工', '') ?? '';
+    expect(within(roleRow).getByRole('combobox')).toHaveTextContent(roleRow.querySelector('small')?.textContent ?? '');
+    expect(memberName).not.toBe('');
+
+    await user.click(within(roleRow).getByRole('combobox'));
+    const listbox = await screen.findByRole('listbox');
+    expect(within(listbox).getByRole('option', { name: '最终独立复核' })).toBeInTheDocument();
+    expect(within(listbox).queryByRole('option', { name: '复核' })).toBeNull();
+
+    await user.click(within(listbox).getByRole('option', { name: '最终独立复核' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'agent.room.participant.update'
+      && (request.body as { collaborationRole?: string }).collaborationRole === 'reviewer'
+    ))).toBe(true));
+  });
 });
 
 function renderRoom(width: number, openWindow = vi.fn(), record?: RoomSummary) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+  const transport = createPreviewTransport();
+  const requests: { request: ControlRequest }[] = [];
+  const send = transport.request.bind(transport);
+  transport.request = (request: ControlRequest) => {
+    requests.push({ request });
+    return send(request);
+  };
   return {
+    transport: { requests },
     ...render(
       <QueryClientProvider client={queryClient}>
-        <ControlTransportProvider transport={createPreviewTransport()}>
+        <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={openWindow}>
             <TooltipProvider>
               <PawWindowFrame
