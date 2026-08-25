@@ -1,9 +1,10 @@
 /* Scoped archive migration: pawos-workbench-v1. The host owns routing and data.
-   Visual language v3 "viewport deck": glacier-bright aurora canvas, one deep
-   ultramarine deck *band* for the current mission (a compact console strip,
-   never a hero that eats half the window), white instrument plates, ring-optic
-   status marks, dotted topology, azure flow. Desktop viewport logic: chrome is
-   thin, working columns land inside the first screen. No warm paper. */
+   Visual language v3 "viewport deck": glacier-bright canvas washed in a single
+   cobalt accent (one hue, no competing purple flourish), one deep ultramarine
+   deck *band* for the current mission (a compact console strip, never a hero
+   that eats half the window), white instrument plates, ring-optic status
+   marks, dotted topology, azure flow. Desktop viewport logic: chrome is thin,
+   working columns land inside the first screen. No warm paper. */
 .paw-workbench-migrated {
   --paw-wb-bg: #eef2f8;
   --paw-wb-surface: #ffffff;
@@ -20,7 +21,6 @@
   --paw-wb-blue: #0a74df;
   --paw-wb-green: #167d3b;
   --paw-wb-amber: #a45200;
-  --paw-wb-violet: #6850d9;
   --paw-wb-red: #c20c21;
   --paw-wb-deck-ink: #f4f8ff;
   --paw-wb-deck-muted: rgb(223 234 251 / 74%);
@@ -40,7 +40,7 @@
   overflow: hidden;
   background:
     radial-gradient(1200px 560px at 8% -14%, rgb(49 94 172 / 10%), transparent 62%),
-    radial-gradient(1000px 520px at 98% -8%, rgb(104 80 217 / 7%), transparent 58%),
+    radial-gradient(1000px 520px at 98% -8%, rgb(49 94 172 / 7%), transparent 58%),
     radial-gradient(900px 500px at 52% 118%, rgb(10 116 223 / 6%), transparent 62%),
     var(--paw-wb-bg);
   color: var(--paw-wb-ink);
@@ -446,7 +446,7 @@
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: linear-gradient(135deg, rgb(49 94 172 / 16%), rgb(104 80 217 / 11%));
+  background: linear-gradient(135deg, rgb(49 94 172 / 16%), rgb(49 94 172 / 11%));
   color: var(--paw-wb-accent);
   box-shadow: inset 0 0 0 1px rgb(49 94 172 / 14%);
 }
@@ -517,7 +517,7 @@
   position: absolute;
   inset: 0 0 auto;
   height: 2px;
-  background: linear-gradient(90deg, transparent 2%, rgb(49 94 172 / 45%) 30%, rgb(104 80 217 / 34%) 70%, transparent 98%);
+  background: linear-gradient(90deg, transparent 2%, rgb(49 94 172 / 45%) 30%, rgb(49 94 172 / 34%) 70%, transparent 98%);
   pointer-events: none;
 }
 
@@ -812,7 +812,7 @@
   background-color: var(--paw-wb-bg);
   background-image:
     radial-gradient(760px 340px at 14% 0%, rgb(49 94 172 / 8%), transparent 62%),
-    radial-gradient(680px 320px at 90% 100%, rgb(104 80 217 / 6%), transparent 60%),
+    radial-gradient(680px 320px at 90% 100%, rgb(49 94 172 / 6%), transparent 60%),
     radial-gradient(rgb(37 58 92 / 13%) 1px, transparent 1px);
   background-position: left top, right bottom, center;
   background-size: 100% 100%, 100% 100%, 22px 22px;

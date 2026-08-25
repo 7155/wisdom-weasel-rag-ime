@@ -238,9 +238,11 @@
   color: var(--paw-terminal-bright);
 }
 
-/* The error notice is a floating glass layer over the console, not a grid
-   row: appearing and disappearing must never resize or reflow the PTY. It
-   stays until dismissed, retried, or truthfully cleared by the next success. */
+/* The error notice is an opaque instrument panel floated over the console,
+   not a grid row: appearing and disappearing must never resize or reflow the
+   PTY. It stays until dismissed, retried, or truthfully cleared by the next
+   success. It shares the OS-wide "no glass on control surfaces" rule, so it
+   reads on a solid ground instead of a blurred one. */
 .paw-terminal-error {
   position: absolute;
   z-index: 8;
@@ -253,8 +255,7 @@
   padding: 8px 12px;
   border: 1px solid rgb(255 69 58 / 32%);
   border-radius: 12px;
-  background: color-mix(in srgb, #2b161a 88%, transparent);
-  backdrop-filter: blur(14px) saturate(1.15);
+  background: #2b161a;
   box-shadow: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 16px 40px rgb(0 0 0 / 46%);
   color: var(--paw-terminal-danger);
   font-size: 14px;
@@ -310,8 +311,10 @@
 }
 
 /* Scrollback search, the new-terminal-with-cwd form, and the all-sessions
-   switcher float over the console as dark glass instruments; they never
-   displace the PTY grid rows or resize the live terminal. */
+   switcher float over the console as opaque dark instrument panels; they
+   never displace the PTY grid rows or resize the live terminal. Like every
+   other OS control/menu surface, they stay opaque instead of glass so their
+   text can never sit on an unknown backdrop. */
 .paw-terminal-search,
 .paw-terminal-create,
 .paw-terminal-switcher {
@@ -321,8 +324,7 @@
   right: 14px;
   border: 1px solid rgb(255 255 255 / 13%);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--paw-terminal-elevated) 88%, transparent);
-  backdrop-filter: blur(14px) saturate(1.2);
+  background: var(--paw-terminal-raised);
   box-shadow: 0 1px 0 rgb(255 255 255 / 6%) inset, 0 16px 40px rgb(0 0 0 / 52%);
   animation: paw-terminal-overlay-enter 200ms var(--paw-terminal-ease) both;
 }

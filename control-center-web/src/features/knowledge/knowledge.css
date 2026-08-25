@@ -48,6 +48,11 @@
   --k-layer-deep: color-mix(in srgb, var(--k-support) 8%, var(--color-chrome));
   --k-layer-mid: color-mix(in srgb, var(--k-support) 5%, var(--color-surface));
   --k-cool-hairline: color-mix(in srgb, var(--k-support) 16%, var(--color-border-soft));
+
+  /* One PAWOS UI system: the shared --radius-3 token still carries the
+     legacy near-square "paper" corner (4px); Knowledge's library card and
+     base rail read the rounded PAWOS panel radius instead. */
+  --radius-3: 12px;
 }
 
 .knowledge-feature ::selection { background: color-mix(in srgb, var(--k-accent) 22%, transparent); }
@@ -1464,10 +1469,11 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   padding: 3px;
   border: 1px solid var(--k-hairline);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+  /* Opaque floating control cluster over the live graph canvas — PAWOS
+     controls never rely on backdrop-filter to stay readable. */
+  background: var(--color-surface);
   box-shadow: var(--shadow-menu);
   gap: 2px;
-  backdrop-filter: blur(8px);
 }
 
 .knowledge-graph__canvas-controls .ui-button { width: 30px; min-width: 30px; min-height: 30px; padding: 0; border-color: transparent; background: transparent; box-shadow: none; }
@@ -1483,11 +1489,12 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   padding: 6px 10px;
   border: 1px solid var(--k-hairline);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+  /* Opaque floating legend over the live graph canvas, same contract as the
+     canvas controls above. */
+  background: var(--color-surface);
   color: var(--color-text-secondary);
   font-size: 13px;
   gap: 5px 10px;
-  backdrop-filter: blur(8px);
 }
 
 .knowledge-graph__legend span { display: inline-flex; align-items: center; white-space: nowrap; gap: 5px; }
@@ -1560,9 +1567,9 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [
   overflow-y: auto;
   border: 1px solid var(--k-hairline);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  /* Opaque inspector panel floating over the live graph canvas. */
+  background: var(--color-surface);
   box-shadow: var(--shadow-menu);
-  backdrop-filter: blur(12px);
 }
 
 .knowledge-graph__inspector-close {

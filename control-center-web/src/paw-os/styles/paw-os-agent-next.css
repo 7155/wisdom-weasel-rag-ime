@@ -174,13 +174,13 @@
   .agent-activity-group,
   .agent-turn__failure
 )::before { left: -25px; }
+/* The real user bubble (rounded corners, cobalt-tinted gradient, radius/
+   shadow) is owned end-to-end by paw-os-agent-migrated-v1's separated-flow
+   `.agent-user-message .agent-markdown` rule. This wrapper only carries
+   inherited reading properties now — an earlier straight-edged border +
+   drop-shadow here used to frame the rounded bubble underneath it,
+   showing as a ghost rectangle at the bubble's rounded corners. */
 .paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message {
-  min-width: 4.5em;
-  border-color: var(--an-rule);
-  border-left-color: var(--an-ink);
-  border-radius: 10px;
-  background: var(--an-paper-bright);
-  box-shadow: 0 1px 2px rgba(24, 32, 43, .07), 0 6px 16px rgba(24, 32, 43, .05);
   color: var(--an-ink);
   overflow-wrap: break-word;
   word-break: normal;
@@ -188,7 +188,9 @@
 .paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message::before { display: none; }
 .paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message__delivery { color: var(--an-ink-3); }
 .paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-user-message a { color: var(--an-cobalt); }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-assistant-turn__body { border-left: 1px solid var(--an-violet); }
+/* No violet identity bar on assistant replies (One UI contract: no
+   purple-on-white AI cliché) — assistant prose reads as plain document
+   text, exactly like Room's partner/root chronology messages. */
 .paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-assistant-message-shell:hover { background: var(--an-paper-soft); }
 .paw-desktop-root .paw-session-workspace__conversation.paw-agent-next :is(
   .agent-activity-group,
@@ -198,25 +200,10 @@
 ) {
   background: var(--an-paper-bright);
 }
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .paw-session-workspace__composer {
-  border-top-color: var(--an-hairline);
-  background: var(--an-paper-bright);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-composer {
-  border-color: var(--an-rule);
-  background: var(--an-paper-bright);
-  box-shadow: 0 2px 8px rgba(24, 32, 43, .07);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-composer::before {
-  width: 1px;
-  background: var(--an-violet);
-}
-.paw-desktop-root .paw-session-workspace__conversation.paw-agent-next .agent-composer:focus-within {
-  border-color: var(--an-violet);
-  box-shadow: 0 6px 18px rgba(24, 32, 43, .11);
-}
+/* .paw-session-workspace__composer is a sibling of .paw-session-workspace__conversation
+   in PawSessionWorkspace's markup, not a descendant, so composer chrome has no
+   owner here; it is styled once, for both Session and Room, in
+   paw-os-agent-migrated-v1.css. */
 
 /* True Agent trace */
 .an-trace { display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--an-paper); }
@@ -426,7 +413,7 @@
   background: var(--an-paper-bright);
   color: var(--an-ink-2);
   font-family: var(--font-ui, inherit);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   line-height: 1.4;
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;

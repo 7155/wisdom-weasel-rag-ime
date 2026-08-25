@@ -21,9 +21,6 @@
   --paw-browser-muted: #64737d;
   --paw-browser-accent: var(--paw-app-accent, #146f7b);
   --paw-browser-glow: rgb(20 143 158 / 26%);
-  --paw-browser-agent-blue: #5b8cff;
-  --paw-browser-agent-violet: #8b5cf6;
-  --paw-browser-agent-cyan: #52d7ff;
   grid-template-rows: 42px 1fr;
   background: var(--paw-app-surface, #fff);
   color: var(--paw-browser-ink);
