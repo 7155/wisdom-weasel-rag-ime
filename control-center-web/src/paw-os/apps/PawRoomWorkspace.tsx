@@ -55,10 +55,24 @@ import {
 } from '../runtime/runtime-tool-window';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-store';
+import {
+  roomDispatchPlan,
+  roomDispatchPlanText,
+  roomDispatchPolicyLabel,
+  roomDispatchReasonLabel,
+  roomDispatchSignalLabel,
+  roomDispatchSummaryIsGeneric,
+  type RoomDispatchPlan,
+} from '@/features/rooms/room-dispatch-plan';
 import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 import { PawRoomStarfield } from './PawStarfield';
-import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
+import {
+  buildRoomFocusProjection,
+  focusCelestialNameOf,
+  roomFocusCelestialName,
+  type RoomFocusProjection,
+} from './room-focus-projection';
 import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
 import '@/features/rooms/rooms.css';
 
@@ -660,7 +674,7 @@ function PawRoomActivityFold({
     >
       <ChevronRight aria-hidden="true" size={13} />
       <strong>过程 {activities.length} 步</strong>
-      <small>{pawRoomActivitySummary(latest, latestEventType)}</small>
+      <small>{pawRoomActivitySummary(latest, latestEventType, room)}</small>
     </summary>
     <SmoothDisclosureReveal
       className="paw-room-chronology__reveal"
@@ -807,8 +821,17 @@ function PawRoomInlineActivity({ activity, onApprovalDecision, onOpenProcessActi
   const [decisionError, setDecisionError] = useState('');
   const participant = activity.participantId ? room.participants.find((item) => item.id === activity.participantId) : undefined;
   const eventType = roomText(activity.payload.sourceEventType, activity.kind);
-  const summary = pawRoomActivitySummary(activity, eventType);
+  const summary = pawRoomActivitySummary(activity, eventType, room);
   const rawDetail = activity.summary.trim();
+  /* PF-CM-012：route_decision 不再是死标签——payload 里的真实路由结论
+     （策略、原因、候选、阶段、并行轨道）投影成看得懂的分派计划。 */
+  const dispatchPlan = !approvalId && pawRoomDispatchEvent(eventType)
+    ? roomDispatchPlan(activity.payload)
+    : undefined;
+  const celestialOf = focusCelestialNameOf(room);
+  const dispatchTargets = dispatchPlan
+    ? [...new Set(dispatchPlan.targetParticipantIds.map((participantId) => celestialOf(participantId) || dispatchPlan.targetDisplayName || '伙伴'))].join('、')
+    : '';
   const processWindow = onOpenProcessActivity
     ? roomProcessWindowRequest(activity, room.id)
     : null;
@@ -822,9 +845,14 @@ function PawRoomInlineActivity({ activity, onApprovalDecision, onOpenProcessActi
   };
   return <article className="paw-room-chronology__activity" data-kind={approvalId ? 'approval' : eventType} data-status={activity.status}>
     <span aria-hidden="true">{approvalId ? <ShieldAlert size={14} /> : activity.status === 'completed' ? <CheckCircle2 size={14} /> : <LoaderCircle className={activity.status === 'running' ? 'ui-spin' : undefined} size={14} />}</span>
-    <div><strong title={participant?.displayName}>{participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'} · {pawRoomActivityKindLabel(eventType, approvalId)}</strong><p>{summary}</p></div>
+    <div>
+      <strong title={participant?.displayName}>{dispatchPlan ? `分派 → ${dispatchTargets}` : `${participant ? roomFocusCelestialName(participant.ordinal) : 'Sol'} · ${pawRoomActivityKindLabel(eventType, approvalId)}`}</strong>
+      {dispatchPlan
+        ? <PawRoomDispatchPlanBlock nameOf={celestialOf} plan={dispatchPlan} spokenSummary={rawDetail} />
+        : <p>{summary}</p>}
+    </div>
     <time>{pawRoomClock(activity.createdAtMs)}</time>
-    {rawDetail && rawDetail !== summary ? <PawRoomRawActivityDetail detail={rawDetail} /> : null}
+    {rawDetail && rawDetail !== summary && !(dispatchPlan && roomDispatchSummaryIsGeneric(rawDetail)) ? <PawRoomRawActivityDetail detail={rawDetail} /> : null}
     {processWindow ? <footer><button onClick={() => onOpenProcessActivity?.(activity)} type="button">查看后台 Bash</button></footer> : null}
     {approvalPending ? <footer><button disabled={Boolean(submitting)} onClick={() => decide('approved')} type="button">{submitting === 'approved' ? '正在批准' : '批准并继续'}</button><button disabled={Boolean(submitting)} onClick={() => decide('rejected')} type="button">{submitting === 'rejected' ? '正在拒绝' : '拒绝'}</button></footer> : null}
     {decisionError ? <small role="alert">{decisionError}</small> : null}
@@ -870,15 +898,72 @@ function roomProcessWindowRequest(activity: RoomActivityProjection, roomId: stri
     : null;
 }
 
-function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: string): string {
+function pawRoomActivitySummary(activity: RoomActivityProjection, eventType: string, room?: RoomSummary): string {
   const detail = activity.summary.trim();
   const tool = roomText(activity.payload.displayName, roomText(activity.payload.toolName, roomText(activity.payload.toolId, '工具')));
   if (roomText(activity.payload.approvalId)) return detail && !pawRoomRawDetail(detail) ? detail : '等待你确认这项受控操作';
+  if (pawRoomDispatchEvent(eventType) && (roomDispatchSummaryIsGeneric(detail) || pawRoomRawDetail(detail))) {
+    const plan = roomDispatchPlan(activity.payload);
+    if (plan) return roomDispatchPlanText(plan, room ? focusCelestialNameOf(room) : () => '');
+  }
   if (eventType.startsWith('tool_')) {
     if (detail && !pawRoomRawDetail(detail)) return pawRoomCompactText(detail);
     return activity.status === 'running' ? `${tool} 正在执行` : activity.status === 'failed' ? `${tool} 执行失败` : activity.status === 'aborted' ? `${tool} 已停止` : `${tool} 已完成`;
   }
   return detail && !pawRoomRawDetail(detail) ? pawRoomCompactText(detail) : '公开进展已更新';
+}
+
+function pawRoomDispatchEvent(eventType: string): boolean {
+  return eventType.includes('route') || eventType.includes('dispatch');
+}
+
+/**
+ * The dispatch plan block answers "how was this assigned": the partner's own
+ * sentence when there is one, then the structured verdict — policy, target
+ * with reason, wave phase, parallel lane — and the scored candidate row as a
+ * compact diagram of the choice Sol actually made.
+ */
+function PawRoomDispatchPlanBlock({
+  nameOf,
+  plan,
+  spokenSummary,
+}: {
+  nameOf: (participantId: string) => string;
+  plan: RoomDispatchPlan;
+  spokenSummary: string;
+}) {
+  const reasonLabel = roomDispatchReasonLabel(plan.reason);
+  const targets = [...new Set(plan.targetParticipantIds.map((participantId) => nameOf(participantId) || plan.targetDisplayName || '伙伴'))];
+  const humanSummary = !roomDispatchSummaryIsGeneric(spokenSummary) && !pawRoomRawDetail(spokenSummary)
+    ? pawRoomCompactText(spokenSummary)
+    : '';
+  return (
+    <div aria-label="分派方式" className="paw-room-dispatch-plan" role="group">
+      {humanSummary ? <p>{humanSummary}</p> : null}
+      <ul className="paw-room-dispatch-plan__facts">
+        <li data-fact="policy">{roomDispatchPolicyLabel(plan.policy)}</li>
+        <li data-fact="target">→ {targets.join('、')}{reasonLabel ? `（${reasonLabel}）` : ''}</li>
+        {plan.phaseName ? <li data-fact="phase">阶段「{plan.phaseName}」</li> : null}
+        {plan.parallelSize !== undefined && plan.parallelSize > 1 ? (
+          <li data-fact="parallel">{plan.parallelIndex !== undefined ? `并行第 ${plan.parallelIndex + 1}/${plan.parallelSize} 路` : `并行 ${plan.parallelSize} 路`}</li>
+        ) : null}
+      </ul>
+      {plan.candidates.length ? (
+        <ol aria-label="候选伙伴" className="paw-room-dispatch-plan__candidates">
+          {plan.candidates.map((candidate) => {
+            const signals = candidate.signals.map(roomDispatchSignalLabel).filter(Boolean);
+            const name = nameOf(candidate.participantId) || candidate.displayName || '伙伴';
+            return (
+              <li data-selected={candidate.selected || undefined} key={candidate.participantId}>
+                <strong>{name}</strong>
+                <small>{candidate.selected ? (signals.join('、') || '选中') : '未选'}</small>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </div>
+  );
 }
 
 function pawRoomActivityKindLabel(eventType: string, approvalId: string): string {

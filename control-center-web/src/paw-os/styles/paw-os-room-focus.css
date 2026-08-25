@@ -95,19 +95,22 @@
 .paw-desktop-root .paw-room-focus-overview [data-state='completed'] .paw-room-focus-overview__state > i,
 .paw-desktop-root .paw-room-focus-overview__mission-state[data-state='completed'] > i { background: var(--focus-green); }
 
-.paw-desktop-root .paw-room-focus-overview__counts {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-  margin: 0;
-}
-.paw-desktop-root .paw-room-focus-overview__counts > div { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 4px; padding: 7px 9px; border: 1px solid rgb(42 45 52 / .07); border-radius: 10px; background: rgb(255 255 255 / .8); }
-.paw-desktop-root .paw-room-focus-overview__counts dt { color: #858b95; font-size: 12px; }
-.paw-desktop-root .paw-room-focus-overview__counts dd { margin: 0; color: #363c46; font-size: 13px; font-weight: 680; font-variant-numeric: tabular-nums; }
-.paw-desktop-root .paw-room-focus-overview__counts [data-tone='active'] dd { color: var(--focus-blue); }
-.paw-desktop-root .paw-room-focus-overview__counts [data-tone='review'] dd { color: var(--focus-amber); }
-.paw-desktop-root .paw-room-focus-overview__counts [data-tone='blocked'] dd { color: var(--focus-red); }
-.paw-desktop-root .paw-room-focus-overview__counts [data-tone='completed'] dd { color: var(--focus-green); }
+/* PF-CM-012: task state lives on one proportional pulse strip above the
+ * lanes instead of four detached number cards. */
+.paw-desktop-root .paw-room-focus-overview__pulse { display: grid; gap: 4px; padding: 8px 10px 0; }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar { display: flex; height: 6px; gap: 2px; overflow: hidden; border-radius: 999px; }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i { min-width: 8px; border-radius: 999px; background: #c7ccd4; }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='active'] { background: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='review'] { background: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='blocked'] { background: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview__pulse-bar > i[data-tone='completed'] { background: var(--focus-green); }
+.paw-desktop-root .paw-room-focus-overview__pulse-legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: #737a86; font-size: 12px; font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-focus-overview__pulse-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+.paw-desktop-root .paw-room-focus-overview__pulse-legend i { width: 7px; height: 7px; border-radius: 50%; background: #c7ccd4; }
+.paw-desktop-root .paw-room-focus-overview__pulse-legend > span[data-tone='active'] i { background: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__pulse-legend > span[data-tone='review'] i { background: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__pulse-legend > span[data-tone='blocked'] i { background: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview__pulse-legend > span[data-tone='completed'] i { background: var(--focus-green); }
 
 .paw-desktop-root .paw-room-focus-overview__section {
   min-width: 0;
@@ -135,19 +138,38 @@
 .paw-desktop-root .paw-room-focus-overview__inspector > header strong { font-size: 12px; font-weight: 650; }
 .paw-desktop-root .paw-room-focus-overview__section > header small { color: #9197a1; font-size: 12px; font-variant-numeric: tabular-nums; }
 
-.paw-desktop-root .paw-room-focus-overview__tree { display: grid; margin: 0; padding: 5px; list-style: none; }
-.paw-desktop-root .paw-room-focus-overview__tree > li { position: relative; min-width: 0; }
-.paw-desktop-root .paw-room-focus-overview__tree > li[data-level='2'] { margin-left: 16px; }
-.paw-desktop-root .paw-room-focus-overview__tree > li[data-level='2']::before { position: absolute; top: -7px; bottom: 50%; left: -8px; border-left: 1px solid rgb(42 45 52 / .13); border-bottom: 1px solid rgb(42 45 52 / .13); border-radius: 0 0 0 5px; content: ''; }
-.paw-desktop-root .paw-room-focus-overview__tree button { position: relative; z-index: 1; width: 100%; min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 7px; border: 0; border-radius: 8px; color: inherit; background: transparent; text-align: left; cursor: pointer; transition: background-color 120ms ease, transform 100ms ease; }
-.paw-desktop-root .paw-room-focus-overview__tree button:hover { background: rgb(39 131 222 / .045); }
-.paw-desktop-root .paw-room-focus-overview__tree button:active { transform: scale(.992); }
-.paw-desktop-root .paw-room-focus-overview__tree li[aria-selected='true'] button { background: rgb(39 131 222 / .075); box-shadow: inset 0 0 0 1px rgb(39 131 222 / .09); }
-.paw-desktop-root .paw-room-focus-overview__tree-node { display: grid; width: 16px; height: 16px; place-items: center; }
-.paw-desktop-root .paw-room-focus-overview__tree-node::before { position: absolute; width: 7px; height: 7px; border: 1px solid rgb(39 131 222 / .36); border-radius: 50%; background: #fff; content: ''; }
-.paw-desktop-root .paw-room-focus-overview__tree-copy { min-width: 0; display: grid; gap: 1px; }
-.paw-desktop-root .paw-room-focus-overview__tree-copy strong { overflow: hidden; font-size: 12.5px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__tree-copy small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* PF-CM-012/013: parallel task lanes. Each owning planet keeps one lane;
+ * its WorkItems ride the lane as connected nodes in real order, and the
+ * verifier planet is named on items that carry one. */
+.paw-desktop-root .paw-room-focus-overview__lane-list { display: grid; gap: 7px; margin: 0; padding: 8px 10px 10px; list-style: none; }
+.paw-desktop-root .paw-room-focus-overview__lane { min-width: 0; display: grid; gap: 5px; padding: 7px 8px 8px; border: 1px solid rgb(42 45 52 / .07); border-radius: 11px; background: rgb(255 255 255 / .8); }
+.paw-desktop-root .paw-room-focus-overview__lane > header { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.paw-desktop-root .paw-room-focus-overview__lane > header strong { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__lane > header small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__lane > header .paw-room-focus-overview__state { margin-left: auto; }
+.paw-desktop-root .paw-room-focus-overview__lane-planet { display: grid; width: 15px; height: 15px; place-items: center; }
+.paw-desktop-root .paw-room-focus-overview__lane-planet > i { width: 8px; height: 8px; border-radius: 50%; background: #4b8fd0; box-shadow: 0 0 0 3px rgb(75 143 208 / .09); }
+.paw-desktop-root .paw-room-focus-overview__lane[data-orbit='1'] .paw-room-focus-overview__lane-planet > i { background: #bd6355; box-shadow: 0 0 0 3px rgb(189 99 85 / .09); }
+.paw-desktop-root .paw-room-focus-overview__lane[data-orbit='2'] .paw-room-focus-overview__lane-planet > i { background: #b9903f; box-shadow: 0 0 0 3px rgb(185 144 63 / .1); }
+.paw-desktop-root .paw-room-focus-overview__lane[data-orbit='3'] .paw-room-focus-overview__lane-planet > i { background: #786bc2; box-shadow: 0 0 0 3px rgb(120 107 194 / .1); }
+.paw-desktop-root .paw-room-focus-overview__lane:not([data-orbit]) .paw-room-focus-overview__lane-planet > i { background: #9aa1ac; box-shadow: none; }
+.paw-desktop-root .paw-room-focus-overview__lane-track { display: flex; margin: 0; padding: 1px 0; overflow-x: auto; overscroll-behavior-x: contain; list-style: none; scrollbar-width: thin; }
+.paw-desktop-root .paw-room-focus-overview__lane-track > li { flex: 0 1 auto; min-width: 0; max-width: 250px; display: flex; align-items: center; }
+.paw-desktop-root .paw-room-focus-overview__lane-track > li + li::before { flex: 0 0 14px; border-top: 1px dashed rgb(42 45 52 / .22); content: ''; }
+.paw-desktop-root .paw-room-focus-overview__lane-track button { min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr); align-items: start; gap: 6px; padding: 6px 8px; border: 1px solid rgb(42 45 52 / .09); border-radius: 9px; color: inherit; background: #fff; text-align: left; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, transform 100ms ease; }
+.paw-desktop-root .paw-room-focus-overview__lane-track button:hover { border-color: rgb(39 131 222 / .3); }
+.paw-desktop-root .paw-room-focus-overview__lane-track button:active { transform: scale(.99); }
+.paw-desktop-root .paw-room-focus-overview__lane-track button[aria-current] { border-color: rgb(39 131 222 / .42); background: rgb(39 131 222 / .05); box-shadow: inset 0 0 0 1px rgb(39 131 222 / .12); }
+.paw-desktop-root .paw-room-focus-overview__lane-track button > i { width: 8px; height: 8px; margin-top: 5px; border: 1px solid rgb(39 131 222 / .4); border-radius: 50%; background: #fff; }
+.paw-desktop-root .paw-room-focus-overview__lane-track li[data-state='running'] button > i { border-color: var(--focus-blue); background: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__lane-track li[data-state='review'] button > i,
+.paw-desktop-root .paw-room-focus-overview__lane-track li[data-state='waiting'] button > i { border-color: var(--focus-amber); background: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__lane-track li[data-state='blocked'] button > i,
+.paw-desktop-root .paw-room-focus-overview__lane-track li[data-state='failed'] button > i { border-color: var(--focus-red); background: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview__lane-track li[data-state='completed'] button > i { border-color: var(--focus-green); background: var(--focus-green); }
+.paw-desktop-root .paw-room-focus-overview__lane-track button > span { min-width: 0; display: grid; gap: 1px; }
+.paw-desktop-root .paw-room-focus-overview__lane-track button strong { overflow: hidden; font-size: 12.5px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__lane-track button small { overflow: hidden; color: #858c97; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .paw-desktop-root .paw-room-focus-overview__planet-list { display: grid; gap: 3px; margin: 0; padding: 5px; list-style: none; }
 .paw-desktop-root .paw-room-focus-overview__planet-list > li { min-width: 0; }
@@ -208,6 +230,15 @@
 .paw-desktop-root .paw-room-focus-overview__packet-detail dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 0; font-size: 12px; line-height: 16px; }
 .paw-desktop-root .paw-room-focus-overview__packet-detail dt { color: #949aa4; }
 .paw-desktop-root .paw-room-focus-overview__packet-detail dd { min-width: 0; margin: 0; overflow: hidden; color: #5e6673; font-family: var(--font-mono); text-overflow: ellipsis; white-space: pre-line; }
+
+/* PF-CM-012: the routing verdict behind a dispatch packet — every scored
+ * candidate as a chip, the selected planet highlighted. */
+.paw-desktop-root .paw-room-focus-overview__packet-candidates { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.paw-desktop-root .paw-room-focus-overview__packet-candidates > li { display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px 3px; border: 1px solid rgb(42 45 52 / .1); border-radius: 999px; background: #fff; color: #858c97; }
+.paw-desktop-root .paw-room-focus-overview__packet-candidates > li strong { color: #59616e; font-size: 12px; font-weight: 620; }
+.paw-desktop-root .paw-room-focus-overview__packet-candidates > li small { font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__packet-candidates > li[data-selected] { border-color: rgb(39 131 222 / .38); background: rgb(39 131 222 / .07); }
+.paw-desktop-root .paw-room-focus-overview__packet-candidates > li[data-selected] strong { color: #20659f; }
 
 .paw-desktop-root .paw-room-focus-overview__inspector { min-width: 0; display: grid; align-content: start; overflow: hidden; border: 1px solid rgb(39 131 222 / .14); border-radius: 13px; background: #fff; box-shadow: 0 10px 28px rgb(42 45 52 / .055); animation: paw-room-focus-inspector-enter 180ms cubic-bezier(.23, 1, .32, 1) both; }
 .paw-desktop-root .paw-room-focus-overview__inspector-copy { display: grid; gap: 3px; padding: 10px 11px 8px; }

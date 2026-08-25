@@ -3,6 +3,12 @@ import type {
   RoomMessageProjection,
   RoomProjectionState,
 } from '@/contracts/room-reducer';
+import {
+  roomDispatchPlan,
+  roomDispatchPlanText,
+  roomDispatchSummaryIsGeneric,
+  type RoomDispatchPlan,
+} from '@/features/rooms/room-dispatch-plan';
 import { roomActivityFlowKind, roomFlowRefs } from '@/features/rooms/room-flow-projection';
 import type { RoomSummary, RoomWorkItem, RoomWorkState } from '@/features/rooms/room-types';
 
@@ -98,6 +104,9 @@ export interface RoomFocusPacket {
   dispatchId?: string;
   workItemId?: string;
   refs: string[];
+  /** Real routing verdict behind a dispatch packet (PF-CM-012): how the
+   * assignment was made, against which candidates, in which parallel lane. */
+  plan?: RoomDispatchPlan;
 }
 
 export interface RoomFocusProjection {
@@ -225,6 +234,67 @@ export function buildRoomFocusProjection(
       completed: workItems.filter((item) => item.state === 'completed').length,
     },
   };
+}
+
+/** One parallel execution lane of the task flow: a planet (or the unclaimed
+ * pool) with its owned WorkItems in real chronological order. */
+export interface RoomFocusLane {
+  id: string;
+  ownerParticipantId?: string;
+  celestialName: string;
+  displayName?: string;
+  state: RoomFocusState;
+  items: RoomFocusWorkItem[];
+}
+
+/**
+ * Group the projected WorkItems into parallel lanes keyed by their owning
+ * planet (PF-CM-012: task counters and a flat tree become visible task flow).
+ * Lane order follows partner ordinals; work nobody owns yet falls into one
+ * trailing "待认领" lane instead of disappearing.
+ */
+export function roomFocusLanes(focus: RoomFocusProjection): RoomFocusLane[] {
+  const byOwner = new Map<string, RoomFocusWorkItem[]>();
+  for (const item of focus.workItems) {
+    const key = item.ownerParticipantId ?? '';
+    const group = byOwner.get(key) ?? [];
+    group.push(item);
+    byOwner.set(key, group);
+  }
+  const lanes: RoomFocusLane[] = [];
+  for (const partner of focus.partners) {
+    const items = byOwner.get(partner.participantId);
+    if (!items?.length) continue;
+    lanes.push({
+      id: partner.participantId,
+      ownerParticipantId: partner.participantId,
+      celestialName: partner.celestialName,
+      displayName: partner.displayName,
+      state: strongestState(items.map((item) => item.state)),
+      items,
+    });
+    byOwner.delete(partner.participantId);
+  }
+  const unclaimed = [...byOwner.values()].flat()
+    .sort((left, right) => left.updatedAtMs - right.updatedAtMs || left.id.localeCompare(right.id));
+  if (unclaimed.length) {
+    lanes.push({
+      id: 'unassigned',
+      celestialName: '待认领',
+      state: strongestState(unclaimed.map((item) => item.state)),
+      items: unclaimed,
+    });
+  }
+  return lanes;
+}
+
+/** Resolve a participant id to its stable planet alias for display copy. */
+export function focusCelestialNameOf(room: RoomSummary): (participantId: string) => string {
+  const byId = new Map(room.participants.map((participant) => [
+    participant.id,
+    roomFocusCelestialName(participant.ordinal),
+  ]));
+  return (participantId) => byId.get(participantId) ?? '';
 }
 
 export function roomFocusStateLabel(state: RoomFocusState): string {
@@ -365,12 +435,20 @@ function focusFlowPackets(
   projection?: RoomProjectionState,
 ): RoomFocusPacket[] {
   const packets: RoomFocusPacket[] = [];
+  const celestialOf = focusCelestialNameOf(room);
   for (const activity of activities) {
     const kind = roomActivityFlowKind(activity);
     if (!kind) continue;
     const isApproval = kind === 'approval';
     const targetId = isApproval ? 'root' : stringValue(activity.payload.targetParticipantId) || activity.participantId || '';
     if (!targetId) continue;
+    /* A dispatch packet keeps the routing verdict: a stock reducer phrase is
+     * replaced by the plan sentence, a real human summary is preserved. */
+    const plan = kind === 'dispatch' ? roomDispatchPlan(activity.payload) : undefined;
+    const storedSummary = activity.summary.trim() || stringValue(activity.payload.reason);
+    const summary = plan && roomDispatchSummaryIsGeneric(activity.summary)
+      ? roomDispatchPlanText(plan, celestialOf)
+      : storedSummary || '已确认本轮分工';
     packets.push({
       id: `activity:${activity.id}`,
       sourceParticipantId: stringValue(activity.payload.sourceParticipantId)
@@ -380,13 +458,14 @@ function focusFlowPackets(
         || 'root',
       targetParticipantIds: [targetId],
       kind,
-      summary: activity.summary.trim() || stringValue(activity.payload.reason) || '已确认本轮分工',
+      summary,
       status: activity.status,
       createdAtMs: activity.createdAtMs,
       sequence: activity.sequence ?? activity.createdAtMs,
       dispatchId: stringValue(activity.payload.dispatchId) || undefined,
       workItemId: stringValue(activity.payload.workItemId) || stringValue(activity.payload.taskId) || undefined,
       refs: roomFlowRefs(activity.payload),
+      ...(plan ? { plan } : {}),
     });
   }
   for (const message of messages) {

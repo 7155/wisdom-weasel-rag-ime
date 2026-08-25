@@ -14,8 +14,11 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Disclosure } from '@/components/primitives';
+import { roomDispatchSignalLabel, type RoomDispatchPlan } from '@/features/rooms/room-dispatch-plan';
 import {
+  roomFocusLanes,
   roomFocusStateLabel,
+  type RoomFocusLane,
   type RoomFocusPacket,
   type RoomFocusPacketKind,
   type RoomFocusPartner,
@@ -43,8 +46,8 @@ const selectionPriority: RoomFocusState[] = [
 const FLOW_PACKET_WINDOW = 18;
 
 /**
- * Sol collaboration console — the single Room 态势 surface. Mission,
- * WorkItem tree, planet partners, handoffs, the chronological flow ledger and
+ * Sol collaboration console — the single Room 态势 surface. Mission, parallel
+ * task lanes, planet partners, handoffs, the chronological flow ledger and
  * the inspector all project the same real Room data; there is no separate
  * flow/execution panel to keep in sync anymore.
  */
@@ -59,6 +62,7 @@ export function PawRoomFocusOverview({
 }) {
   const defaultSelection = useMemo(() => defaultFocusSelection(focus), [focus]);
   const [selection, setSelection] = useState<FocusSelection>(defaultSelection);
+  const lanes = useMemo(() => roomFocusLanes(focus), [focus]);
 
   useEffect(() => {
     const stillExists = selection.kind === 'work'
@@ -75,6 +79,10 @@ export function PawRoomFocusOverview({
     : selectedWork
       ? focus.partners.find((partner) => partner.participantId === selectedWork.ownerParticipantId)
       : undefined;
+  const selectedVerifier = selectedWork?.accountableParticipantId
+    && selectedWork.accountableParticipantId !== selectedWork.ownerParticipantId
+    ? focus.partners.find((partner) => partner.participantId === selectedWork.accountableParticipantId)
+    : undefined;
 
   return (
     <section aria-label="Sol 协作态势" className="paw-room-focus-overview">
@@ -91,39 +99,26 @@ export function PawRoomFocusOverview({
         </div>
       </header> : null}
 
-      <dl aria-label="协作摘要" className="paw-room-focus-overview__counts">
-        <div data-tone="active"><dt>进行</dt><dd>{focus.counts.active}</dd></div>
-        <div data-tone="review"><dt>复核</dt><dd>{focus.counts.review}</dd></div>
-        <div data-tone="blocked"><dt>受阻</dt><dd>{focus.counts.blocked}</dd></div>
-        <div data-tone="completed"><dt>完成</dt><dd>{focus.counts.completed}</dd></div>
-      </dl>
-
       <section aria-labelledby="paw-room-focus-work-title" className="paw-room-focus-overview__section paw-room-focus-overview__work">
         <header>
-          <span><GitCommitHorizontal aria-hidden="true" size={14} /><strong id="paw-room-focus-work-title">任务树</strong></span>
-          <small>{focus.workItems.length} 项</small>
+          <span><GitCommitHorizontal aria-hidden="true" size={14} /><strong id="paw-room-focus-work-title">任务流</strong></span>
+          <small>{focus.workItems.length} 项 · {lanes.length} 条轨道</small>
         </header>
-        {focus.workItems.length ? (
-          <ol aria-label="任务树" className="paw-room-focus-overview__tree" role="tree">
-            {focus.workItems.map((item) => {
-              const partner = focus.partners.find((candidate) => candidate.participantId === item.ownerParticipantId);
-              const level = item.parentId ? 2 : 1;
-              const selected = selection.kind === 'work' && selection.id === item.id;
-              return (
-                <li aria-level={level} aria-selected={selected} data-level={level} data-state={item.state} key={item.id} role="treeitem">
-                  <button onClick={() => setSelection({ kind: 'work', id: item.id })} type="button">
-                    <span aria-hidden="true" className="paw-room-focus-overview__tree-node"><i /></span>
-                    <span className="paw-room-focus-overview__tree-copy">
-                      <strong>{item.objective}</strong>
-                      <small>{workAction(item)}{partner ? ` · ${partner.celestialName}` : ''}</small>
-                    </span>
-                    <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(item.state)}</span>
-                  </button>
-                </li>
-              );
-            })}
+        <FocusStatePulse counts={focus.counts} />
+        {lanes.length ? (
+          <ol aria-label="并行轨道" className="paw-room-focus-overview__lane-list">
+            {lanes.map((lane) => (
+              <FocusLaneRow
+                key={lane.id}
+                lane={lane}
+                orbit={laneOrbit(lane, focus)}
+                partners={focus.partners}
+                selectedWorkId={selection.kind === 'work' ? selection.id : ''}
+                onSelectWork={(id) => setSelection({ kind: 'work', id })}
+              />
+            ))}
           </ol>
-        ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，任务会从这里生长。</p>}
+        ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，任务流会从这里生长。</p>}
       </section>
 
       <section aria-labelledby="paw-room-focus-partners-title" className="paw-room-focus-overview__section paw-room-focus-overview__partners">
@@ -183,10 +178,93 @@ export function PawRoomFocusOverview({
       <FocusInspector
         onOpenParticipant={onOpenParticipant}
         partner={selectedPartner}
+        verifier={selectedVerifier}
         work={selectedWork}
       />
     </section>
   );
+}
+
+/** Non-zero task states as one proportional pulse strip — the counters live
+ * on the flow they describe instead of four dead number cards. */
+function FocusStatePulse({ counts }: { counts: RoomFocusProjection['counts'] }) {
+  const segments = ([
+    ['active', counts.active, '进行'],
+    ['review', counts.review, '复核'],
+    ['blocked', counts.blocked, '受阻'],
+    ['completed', counts.completed, '完成'],
+  ] as const).filter(([, count]) => count > 0);
+  if (!segments.length) return null;
+  return (
+    <div
+      aria-label={`任务状态：${segments.map(([, count, label]) => `${label} ${count}`).join('，')}`}
+      className="paw-room-focus-overview__pulse"
+      role="img"
+    >
+      <span aria-hidden="true" className="paw-room-focus-overview__pulse-bar">
+        {segments.map(([tone, count]) => <i data-tone={tone} key={tone} style={{ flexGrow: count }} />)}
+      </span>
+      <span aria-hidden="true" className="paw-room-focus-overview__pulse-legend">
+        {segments.map(([tone, count, label]) => <span data-tone={tone} key={tone}><i />{count} {label}</span>)}
+      </span>
+    </div>
+  );
+}
+
+/** One planet's execution lane: owner identity on the left, its WorkItems as
+ * connected nodes on a horizontal track, verifier planets called out on the
+ * items that carry an independent accountable partner. */
+function FocusLaneRow({
+  lane,
+  onSelectWork,
+  orbit,
+  partners,
+  selectedWorkId,
+}: {
+  lane: RoomFocusLane;
+  onSelectWork: (workItemId: string) => void;
+  orbit: number;
+  partners: RoomFocusPartner[];
+  selectedWorkId: string;
+}) {
+  return (
+    <li className="paw-room-focus-overview__lane" data-orbit={orbit < 0 ? undefined : orbit} data-state={lane.state}>
+      <header>
+        <span aria-hidden="true" className="paw-room-focus-overview__lane-planet"><i /></span>
+        <strong>{lane.celestialName}</strong>
+        {lane.displayName ? <small>{lane.displayName}</small> : null}
+        <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(lane.state)}</span>
+      </header>
+      <ol aria-label={`${lane.celestialName} 的任务`} className="paw-room-focus-overview__lane-track">
+        {lane.items.map((item) => {
+          const verifier = item.accountableParticipantId && item.accountableParticipantId !== item.ownerParticipantId
+            ? partners.find((partner) => partner.participantId === item.accountableParticipantId)
+            : undefined;
+          return (
+            <li data-state={item.state} key={item.id}>
+              <button
+                aria-current={item.id === selectedWorkId || undefined}
+                onClick={() => onSelectWork(item.id)}
+                type="button"
+              >
+                <i aria-hidden="true" />
+                <span>
+                  <strong>{item.objective}</strong>
+                  <small>{roomFocusStateLabel(item.state)}{verifier ? ` · 复核 ${verifier.celestialName}` : ''}</small>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </li>
+  );
+}
+
+function laneOrbit(lane: RoomFocusLane, focus: RoomFocusProjection): number {
+  if (!lane.ownerParticipantId) return -1;
+  const index = focus.partners.findIndex((partner) => partner.participantId === lane.ownerParticipantId);
+  return index < 0 ? -1 : index % 4;
 }
 
 /** Chronological ledger of what really moved between Sol and the planets:
@@ -253,6 +331,7 @@ function FocusFlowLedger({
             <span data-status={selectedPacket.status}>{flowStatusLabel(selectedPacket.status)}</span>
           </header>
           <p>{selectedPacket.summary}</p>
+          {selectedPacket.plan ? <FocusPacketPlan actorName={actorName} plan={selectedPacket.plan} /> : null}
           {selectedPacket.dispatchId || selectedPacket.workItemId || selectedPacket.refs.length ? (
             <dl>
               {selectedPacket.dispatchId ? <><dt>分派</dt><dd>{selectedPacket.dispatchId}</dd></> : null}
@@ -266,13 +345,42 @@ function FocusFlowLedger({
   );
 }
 
+/** The routing verdict behind a dispatch packet: every real candidate with
+ * its signals, the selected planet highlighted — how the assignment was made,
+ * not merely that it happened. */
+function FocusPacketPlan({
+  actorName,
+  plan,
+}: {
+  actorName: (participantId: string) => string;
+  plan: RoomDispatchPlan;
+}) {
+  if (!plan.candidates.length) return null;
+  return (
+    <ol aria-label="候选伙伴" className="paw-room-focus-overview__packet-candidates">
+      {plan.candidates.map((candidate) => {
+        const signals = candidate.signals.map(roomDispatchSignalLabel).filter(Boolean);
+        const name = actorName(candidate.participantId);
+        return (
+          <li data-selected={candidate.selected || undefined} key={candidate.participantId}>
+            <strong>{name === candidate.participantId ? candidate.displayName || name : name}</strong>
+            <small>{candidate.selected ? (signals.join('、') || '选中') : '未选'}</small>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function FocusInspector({
   onOpenParticipant,
   partner,
+  verifier,
   work,
 }: {
   onOpenParticipant?: (participantId: string) => void;
   partner?: RoomFocusPartner;
+  verifier?: RoomFocusPartner;
   work?: RoomFocusWorkItem;
 }) {
   const state = work?.state ?? partner?.state ?? 'idle';
@@ -289,10 +397,11 @@ function FocusInspector({
         <strong>{work?.objective || partner?.celestialName || 'Sol'}</strong>
         <p>{action}</p>
       </div>
-      {partner ? (
+      {partner || verifier ? (
         <dl>
-          <div><dt>负责人</dt><dd>{partner.celestialName} · {partner.displayName}</dd></div>
-          {partner.latestReceipt ? <div><dt>最近回执</dt><dd>{partner.latestReceipt}</dd></div> : null}
+          {partner ? <div><dt>负责人</dt><dd>{partner.celestialName} · {partner.displayName}</dd></div> : null}
+          {verifier ? <div><dt>复核人</dt><dd>{verifier.celestialName} · {verifier.displayName}</dd></div> : null}
+          {partner?.latestReceipt ? <div><dt>最近回执</dt><dd>{partner.latestReceipt}</dd></div> : null}
         </dl>
       ) : null}
       {work?.expectedOutput ? (

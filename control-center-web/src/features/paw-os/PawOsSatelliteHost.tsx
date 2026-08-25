@@ -20,7 +20,22 @@ import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import { toggleDisclosurePreservingAnchor } from '@/features/agent/timeline/disclosure-anchor';
-import { buildRoomFocusProjection, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
+import {
+  roomDispatchPlan,
+  roomDispatchPlanText,
+  roomDispatchSummaryIsGeneric,
+} from '@/features/rooms/room-dispatch-plan';
+import {
+  roomSatelliteToolContent,
+  roomSatelliteToolMessage,
+  type RoomSatelliteToolContent,
+} from '@/features/rooms/room-satellite-tool';
+import {
+  buildRoomFocusProjection,
+  focusCelestialNameOf,
+  roomFocusStateLabel,
+  type RoomFocusState,
+} from '@/paw-os/apps/room-focus-projection';
 import './paw-os-satellite.css';
 
 export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
@@ -415,6 +430,7 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
         time: message.createdAtMs,
         order: message.sequence ?? message.createdAtMs,
       }));
+    const celestialOf = room ? focusCelestialNameOf(room) : () => '';
     const activities = projection.activityOrder
       .map((activityId) => projection.activitiesById[activityId])
       .filter((activity) => activity && roomSatelliteActivityBelongsToParticipant(activity, target.id))
@@ -422,6 +438,19 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
       .map((activity) => {
         const eventType = roomSatelliteActivityType(activity.payload, activity.kind);
         const detail = roomSatelliteActivityText(activity.summary, activity.payload, activity.status);
+        /* PF-CM-012/013：工具事件展开成真实内容（工具身份、操作、公开
+           结果披露）；分派事件展开成真实路由结论，不再是死标签。 */
+        const tool = eventType === 'tool' || eventType.startsWith('tool_')
+          ? roomSatelliteToolContent(activity)
+          : undefined;
+        const dispatchPlan = eventType.includes('route') || eventType.includes('dispatch')
+          ? roomDispatchPlan(activity.payload)
+          : undefined;
+        const summary = tool
+          ? roomSatelliteToolMessage(tool, activity.status)
+          : dispatchPlan && (roomDispatchSummaryIsGeneric(detail) || participantDetailIsMachineToken(detail))
+            ? roomDispatchPlanText(dispatchPlan, celestialOf)
+            : conciseParticipantActivity(eventType, activity.status, activity.payload, detail);
         return {
           id: activity.id,
           kind: 'activity' as const,
@@ -430,13 +459,14 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
           status: activity.status,
           eventType,
           text: detail,
-          summary: conciseParticipantActivity(eventType, activity.status, activity.payload, detail),
+          summary,
+          ...(tool ? { tool } : {}),
           time: activity.createdAtMs,
           order: activity.sequence ?? activity.createdAtMs,
         };
       });
     return [...messages, ...activities].sort((left, right) => left.order - right.order);
-  }, [projection, target.id]);
+  }, [projection, room, target.id]);
   const [olderTimelineEntries, setOlderTimelineEntries] = useState(0);
   useEffect(() => setOlderTimelineEntries(0), [target.id]);
   const timelineStart = Math.max(0, fullTimeline.length - PARTICIPANT_TIMELINE_WINDOW - olderTimelineEntries);
@@ -522,6 +552,8 @@ type ParticipantTimelineEntryData = {
   eventType: string;
   text: string;
   summary: string;
+  /** Structured Agent tool disclosure behind a tool activity (PF-CM-012). */
+  tool?: RoomSatelliteToolContent;
   time: number;
   order: number;
 };
@@ -591,6 +623,7 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
       rawText={entry.text}
       status={entry.status}
       time={entry.time}
+      tool={entry.tool}
     />;
   }
   const sourceLabel = fromParticipant
@@ -610,8 +643,10 @@ function ParticipantTimelineEntry({ entry, participantId, room }: {
 }
 
 /** 工具/运行事件压成一行：状态 · 类型 · 消息（可截断）· 时间弱化在行尾。
- *  失败沿用红色警示图标，超出摘要的公开原文披露仍折在行下。 */
-function SatelliteActivityRow({ direction, eventType, message, rawContentId, rawLabel, rawText, status, time }: {
+ *  工具事件用真实工具身份代替不透明的「工具 agents」筹码，行下展开的是
+ *  Agent 公开披露（目标、参数、结果、输出）；没有结构化内容时保留公开
+ *  原文缝隙。失败沿用红色警示图标。 */
+function SatelliteActivityRow({ direction, eventType, message, rawContentId, rawLabel, rawText, status, time, tool }: {
   direction: 'in' | 'out';
   eventType: string;
   message: string;
@@ -620,14 +655,51 @@ function SatelliteActivityRow({ direction, eventType, message, rawContentId, raw
   rawText: string;
   status: string;
   time: number;
+  tool?: RoomSatelliteToolContent;
 }) {
   return <article data-direction={direction} data-event-type={eventType} data-kind="activity" data-status={status}>
     <span className="paw-participant-chat__activity-state"><SatelliteRunState eventType={eventType} status={status} /></span>
-    <strong>{roomSatelliteEntryLabel(eventType)}</strong>
+    <strong>{tool ? tool.label : roomSatelliteEntryLabel(eventType)}</strong>
     <span className="paw-participant-chat__activity-message" title={message}>{message}</span>
     <time>{time ? formatTime(time) : ''}</time>
-    {rawText.trim() !== message.trim() ? <SatelliteRawDetail contentId={rawContentId} label={rawLabel} text={rawText} /> : null}
+    {tool?.hasDetail
+      ? <SatelliteToolDetail contentId={rawContentId} tool={tool} />
+      : rawText.trim() !== message.trim()
+        ? <SatelliteRawDetail contentId={rawContentId} label={rawLabel} text={rawText} />
+        : null}
   </article>;
+}
+
+/** 工具行下的真实往来：目标、请求参数、公开结果条目、输出与错误，全部来自
+ *  Agent 公开披露经 Room 消毒后的投影，与完整 Session 看到的是同一份内容。 */
+function SatelliteToolDetail({ contentId, tool }: { contentId: string; tool: RoomSatelliteToolContent }) {
+  const view = tool.view;
+  const facts = view.fields.filter((field) => field.id !== 'status' && field.id !== 'operation');
+  return <SatelliteDisclosure className="paw-participant-chat__tool-detail" contentId={contentId} summary={(
+    <span>{tool.operation ? `查看${tool.operation}详情` : '查看工具往来'}</span>
+  )}>
+    <div className="paw-participant-chat__tool-detail-body">
+      {view.target ? <p className="paw-participant-chat__tool-target"><code>{view.target}</code></p> : null}
+      {view.request.length ? (
+        <dl className="paw-participant-chat__tool-facts" data-section="request">
+          {view.request.map((field) => <div key={field.id}><dt>{field.label}</dt><dd>{field.code ? <code>{field.value}</code> : field.value}</dd></div>)}
+        </dl>
+      ) : null}
+      {facts.length ? (
+        <dl className="paw-participant-chat__tool-facts" data-section="result">
+          {facts.map((field) => <div key={field.id}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}
+        </dl>
+      ) : null}
+      {view.resultItems.length ? (
+        <ul className="paw-participant-chat__tool-items">
+          {view.resultItems.slice(0, 8).map((item) => <li key={item.id}>{item.label ? <span>{item.label}</span> : null}{item.text}</li>)}
+          {view.resultItems.length > 8 ? <li data-more>… 共 {view.resultItems.length} 条</li> : null}
+        </ul>
+      ) : null}
+      {view.output?.text ? <pre className="paw-participant-chat__tool-output">{view.output.text}{view.output.truncated ? '\n[输出已截断]' : ''}</pre> : null}
+      {view.error ? <p className="paw-participant-chat__tool-error" role="alert">{view.error}</p> : null}
+    </div>
+  </SatelliteDisclosure>;
 }
 
 function SatelliteDisclosure({
@@ -839,7 +911,7 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
             {timelineItems.map((item) => item.kind === 'activity-group' ? (
               <SatelliteDisclosure active={item.active} className="paw-participant-chat__activity-group" contentId={`subagent-activity-${item.id}`} dataActive={item.active} key={item.id} summary={(
                 <>
-                  <span><strong>运行记录</strong><small>{item.entries.length} 条真实事件 · {item.entries.at(-1)?.text}</small></span>
+                  <span><strong>运行记录</strong><small>{item.entries.length} 条真实事件{item.entries.length ? ` · ${subagentEntrySummary(item.entries[item.entries.length - 1]!)}` : ''}</small></span>
                   <SatelliteRunState eventType={item.entries.at(-1)?.eventType ?? 'run'} status={item.entries.at(-1)?.status ?? 'completed'} />
                 </>
               )}>
@@ -869,7 +941,7 @@ function subagentFocusState(state: string): RoomFocusState {
   return 'idle';
 }
 
-type SubagentTimelineEntry = { id: string; actor: string; direction: 'in' | 'out'; kind: 'message' | 'activity' | 'inbox'; text: string; time: number; eventType: string; status: string };
+type SubagentTimelineEntry = { id: string; actor: string; direction: 'in' | 'out'; kind: 'message' | 'activity' | 'inbox'; text: string; time: number; eventType: string; status: string; tool?: RoomSatelliteToolContent };
 type SubagentTimelineItem = SubagentTimelineEntry | { id: string; kind: 'activity-group'; active: boolean; entries: SubagentTimelineEntry[] };
 
 function SubagentHistoryBoundary({ loadedRunCount, onOpenAgent }: { loadedRunCount: number; onOpenAgent: () => void }) {
@@ -883,8 +955,14 @@ function timelineNearLatest(timeline: HTMLDivElement): boolean {
   return timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 48;
 }
 
+function subagentEntrySummary(entry: SubagentTimelineEntry): string {
+  return entry.tool
+    ? roomSatelliteToolMessage(entry.tool, entry.status)
+    : conciseParticipantEntry(entry.text, entry.kind === 'activity' ? '运行状态已更新' : '公开消息已更新');
+}
+
 function SatelliteTimelineEntry({ entry }: { entry: SubagentTimelineEntry }) {
-  const summary = conciseParticipantEntry(entry.text, entry.kind === 'activity' ? '运行状态已更新' : '公开消息已更新');
+  const summary = subagentEntrySummary(entry);
   if (entry.kind === 'activity') {
     return <SatelliteActivityRow
       direction={entry.direction}
@@ -895,6 +973,7 @@ function SatelliteTimelineEntry({ entry }: { entry: SubagentTimelineEntry }) {
       rawText={entry.text}
       status={entry.status}
       time={entry.time}
+      tool={entry.tool}
     />;
   }
   return <article data-direction={entry.direction} data-kind={entry.kind} data-status={entry.status}>
@@ -940,14 +1019,19 @@ function subagentTimeline(value: unknown): SubagentTimelineEntry[] {
   const activity = arrayRecords(snapshot.activity).map((item, index): SubagentTimelineEntry => {
     const eventType = stringValue(item.eventType);
     const payload = asRecord(item.payload);
+    const status = subagentEventStatus(eventType, payload);
+    const tool = eventType === 'tool' || eventType.startsWith('tool_')
+      ? roomSatelliteToolContent({ kind: eventType, status, payload })
+      : undefined;
     return {
       id: stringValue(item.id, `activity:${index}`),
       actor: '运行进度',
       direction: 'out',
       kind: 'activity',
       eventType,
-      status: subagentEventStatus(eventType, payload),
+      status,
       text: stringValue(item.summary) || stringValue(payload.summary) || subagentActivityLabel(eventType, payload),
+      ...(tool ? { tool } : {}),
       time: Number(item.createdAtMs) || 0,
     };
   });

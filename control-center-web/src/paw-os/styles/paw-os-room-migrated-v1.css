@@ -559,6 +559,22 @@
 .paw-desktop-root .paw-room-chronology__terminal > button { min-height: 30px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--room-violet); font-size: 14px; cursor: pointer; }
 .paw-desktop-root .paw-room-chronology__activity > footer button + button { color: #5f6b7c; background: #edf1f6; }
 .paw-desktop-root .paw-room-chronology__activity > small[role='alert'] { grid-column: 2 / -1; color: var(--room-red); font-size: 13px; }
+
+/* PF-CM-012: the dispatch plan replaces the dead "Earth · 分派" label — how
+ * the assignment was made (policy, target, reason, phase, parallel lane) and
+ * the scored candidate row of the choice Sol actually took. */
+.paw-desktop-root .paw-room-dispatch-plan { min-width: 0; display: grid; gap: 4px; }
+.paw-desktop-root .paw-room-dispatch-plan > p { margin: 0; color: #687486; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-dispatch-plan__facts { display: flex; flex-wrap: wrap; gap: 3px 6px; margin: 0; padding: 0; list-style: none; }
+.paw-desktop-root .paw-room-dispatch-plan__facts > li { display: inline-flex; align-items: center; padding: 1px 8px 2px; border: 1px solid rgb(29 36 48 / .1); border-radius: 999px; color: #5f6b7c; background: #f4f6f9; font-size: 12.5px; }
+.paw-desktop-root .paw-room-dispatch-plan__facts > li[data-fact='policy'] { border-color: color-mix(in srgb, var(--room-blue) 30%, rgb(29 36 48 / .06)); color: #21669e; background: color-mix(in srgb, var(--room-blue) 7%, #fff); }
+.paw-desktop-root .paw-room-dispatch-plan__facts > li[data-fact='target'] { font-weight: 600; }
+.paw-desktop-root .paw-room-dispatch-plan__candidates { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.paw-desktop-root .paw-room-dispatch-plan__candidates > li { display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px 3px; border: 1px solid rgb(29 36 48 / .1); border-radius: 999px; background: #fff; color: #8a94a4; }
+.paw-desktop-root .paw-room-dispatch-plan__candidates > li strong { color: #5f6b7c; font-size: 12.5px; font-weight: 620; }
+.paw-desktop-root .paw-room-dispatch-plan__candidates > li small { font-size: 12px; }
+.paw-desktop-root .paw-room-dispatch-plan__candidates > li[data-selected] { border-color: color-mix(in srgb, var(--room-blue) 40%, rgb(29 36 48 / .05)); background: color-mix(in srgb, var(--room-blue) 8%, #fff); }
+.paw-desktop-root .paw-room-dispatch-plan__candidates > li[data-selected] strong { color: #21669e; }
 .paw-desktop-root .paw-room-chronology__terminal { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 4px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #c53d46 24%, rgb(29 36 48 / .08)); border-radius: 10px; background: color-mix(in srgb, #c53d46 5%, #fff); color: #c53d46; }
 .paw-desktop-root .paw-room-chronology__terminal[data-status='aborted'] { border-color: color-mix(in srgb, #b56808 26%, rgb(29 36 48 / .08)); background: color-mix(in srgb, #b56808 5%, #fff); color: #b56808; }
 .paw-desktop-root .paw-room-chronology__terminal > span { display: grid; gap: 2px; }
