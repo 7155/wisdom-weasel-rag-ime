@@ -448,6 +448,21 @@
   color: var(--paw-chat-warn);
 }
 
+/* 一行只读一行：标签在整条通道里不再收缩换行，超长工具名以省略号收口，
+   剩下的宽度全部留给提示。 */
+.paw-desktop-root .paw-chatfx .paw-activity__label {
+  overflow: hidden;
+  max-width: 28ch;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-desktop-root .paw-chatfx .fx-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* 步骤的具体对象（文件、消息、结果摘要）随行内提示直接可扫读，
    不必逐行展开披露（PF-CM-007）。提示占满标签之后的整条通道：
    固定 46ch 上限在宽窗口里白白丢掉可读字数。 */
