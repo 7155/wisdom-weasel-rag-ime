@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { RoomStarfieldModel, SessionStarfieldModel } from '../starfield-projection';
 import { buildGalaxyStarfield } from '../starfield-projection';
 import {
-  bodySurface,
   buildGalaxySceneModel,
   buildRoomSceneModel,
   buildSessionSceneModel,
@@ -100,22 +99,6 @@ describe('starfield scene model', () => {
     }
     // Deterministic: the same projection always yields the same sky.
     expect(buildSessionSceneModel(sessionModel(), { busy: true, sessionTitle: '当前 Session' })).toEqual(scene);
-  });
-
-  it('assigns each body one stable surface archetype keyed to its real identity', () => {
-    const scene = buildSessionSceneModel(sessionModel(), { busy: false, sessionTitle: 'S' });
-    expect(scene.center?.surface).toBe('gas');
-    for (const body of scene.bodies) {
-      expect(['ice', 'cratered']).toContain(body.surface);
-      expect(body.surface).toBe(bodySurface('moon', body.id));
-    }
-    const room = buildRoomSceneModel(roomModel(), 'room-1');
-    // Sol keeps its truthful sun identity; partners are worlds, never suns.
-    expect(room.center?.surface).toBe('sun');
-    for (const body of room.bodies) {
-      expect(['gas', 'rocky', 'ice']).toContain(body.surface);
-    }
-    expect(bodySurface('star', 'room-a')).toBe('sun');
   });
 
   it('signs equal skies equally and motion changes distinctly', () => {

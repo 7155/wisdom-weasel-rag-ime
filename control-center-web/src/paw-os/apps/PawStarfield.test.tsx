@@ -41,6 +41,8 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     expect(sky).toHaveAttribute('data-immersive');
     expect(sky).toHaveAttribute('data-render', '2d');
     expect(within(sky).getByText('预览 Session')).toBeInTheDocument();
+    // Without WebGL the 3D/2D toggle is not offered — the fallback is honest.
+    expect(within(sky).queryByRole('button', { name: /切换为/ })).not.toBeInTheDocument();
 
     // Real preview run graph: one running researcher, one completed reviewer.
     const runningMoon = await within(sky).findByRole('button', { name: /研究员 卫星 .*进行中/ });
