@@ -128,6 +128,45 @@ describe('PAWOS desktop', () => {
     expect(beats.filter(({ header }) => header).length).toBeGreaterThanOrEqual(3);
   });
 
+  it('leads the first viewport with a dense Wayfinder list of every desktop entry', () => {
+    renderDesktop();
+    const shortcuts = screen.getByLabelText('桌面 App');
+    const rows = within(shortcuts).getAllByRole('button');
+    // One compact row per identity — label only, no taglines or marketing
+    // copy competing with the fog field.
+    expect(rows.map((row) => row.textContent)).toEqual(['项目', 'Agent', '文件', '浏览器', '终端']);
+    for (const row of rows) {
+      expect(row.querySelector('[data-paw-app-icon]')).toBeInTheDocument();
+    }
+  });
+
+  it('projects the Dock running language onto Wayfinder rows without renaming them', () => {
+    // Reduced motion lets minimize complete synchronously, as in the Dock test.
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    renderDesktop('agent');
+    const shortcuts = screen.getByLabelText('桌面 App');
+    const agentRow = within(shortcuts).getByRole('button', { name: 'Agent' });
+    expect(agentRow).toHaveAttribute('data-open');
+    expect(agentRow).not.toHaveAttribute('data-minimized');
+    expect(within(shortcuts).getByRole('button', { name: '文件' })).not.toHaveAttribute('data-open');
+
+    fireEvent.click(screen.getByRole('button', { name: '最小化窗口' }));
+    expect(agentRow).toHaveAttribute('data-open');
+    expect(agentRow).toHaveAttribute('data-minimized');
+    // The state lives in title/shape, so the accessible name stays the bare
+    // label and every exact-name query in this suite keeps working.
+    expect(agentRow).toHaveAttribute('title', 'Agent · 已最小化');
+  });
+
   it('walks desktop shortcuts with roving arrow keys instead of tabbing out', () => {
     renderDesktop();
     const shortcuts = screen.getByLabelText('桌面 App');
