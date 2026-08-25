@@ -16,8 +16,10 @@ import {
   FolderTree,
   LoaderCircle,
   RefreshCw,
+  Save,
   ScanSearch,
   Search,
+  SquarePen,
   TriangleAlert,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
@@ -55,6 +57,9 @@ interface WorkspacePreview {
   loadedBytes: number;
   /** More bytes remain beyond loadedBytes. */
   truncated: boolean;
+  /** Whole-file digest the write route requires to accept a save. Empty when
+      the read route did not state one, which makes the file read-only here. */
+  resourceRevision: string;
 }
 
 interface VisibleTreeNode {
@@ -73,6 +78,8 @@ interface PathCrumb {
 const PREVIEW_CHUNK_BYTES = 65_536;
 /** Honest in-App reading window; longer files belong to Terminal/Agent tools. */
 const PREVIEW_MAX_BYTES = 524_288;
+/** The write route's own ceiling. Nothing larger can be saved from here. */
+const WRITE_MAX_BYTES = 2_097_152;
 /** Bounded filter projection so one broad query cannot flood the pane. */
 const FILTER_MATCH_LIMIT = 120;
 
@@ -112,6 +119,16 @@ export function PawOsFilesApp() {
   const [treeFocusPath, setTreeFocusPath] = useState('');
   const [filterQuery, setFilterQuery] = useState('');
   const [copiedAction, setCopiedAction] = useState<'' | 'path' | 'content'>('');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saveStale, setSaveStale] = useState(false);
+  const [savedNotice, setSavedNotice] = useState('');
+  // Set while an unsaved draft blocks a move away from this file. Holding the
+  // blocked action means answering the prompt continues exactly what the
+  // person asked for instead of making them repeat it.
+  const [pendingExit, setPendingExit] = useState<(() => void) | null>(null);
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const treeRef = useRef<HTMLElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -169,6 +186,19 @@ export function PawOsFilesApp() {
   }, [preview?.content, previewIsBinary]);
   const previewRenderer = previewReady && preview ? rendererLabel(preview) : '';
   const directoriesRead = Object.keys(entries).length;
+  // Editing needs the whole file in hand: a partial window would silently
+  // truncate the file on save, and a binary payload is not text at all.
+  const previewEditable = Boolean(
+    previewReady
+    && preview
+    && preview.resourceRevision
+    && !previewIsBinary
+    && !preview.truncated
+    && preview.byteSize <= WRITE_MAX_BYTES,
+  );
+  const draftBytes = useMemo(() => (editing ? new TextEncoder().encode(draft).length : 0), [draft, editing]);
+  const draftOversized = draftBytes > WRITE_MAX_BYTES;
+  const dirty = editing && preview !== null && draft !== preview.content;
 
   const loadSessions = useCallback(async () => {
     setSessionsLoading(true);
@@ -263,6 +293,16 @@ export function PawOsFilesApp() {
     node.focus();
   }, [visibleTreeNodes]);
 
+  const closeEditor = useCallback(() => {
+    setEditing(false);
+    setDraft('');
+    setSaving(false);
+    setSaveError('');
+    setSaveStale(false);
+    setSavedNotice('');
+    setPendingExit(null);
+  }, []);
+
   const loadPreview = useCallback(async (file: WorkspaceEntry) => {
     if (!selectedSessionId) return;
     const generation = ++generationRef.current;
@@ -270,6 +310,7 @@ export function PawOsFilesApp() {
     setPreviewError('');
     setPreviewMoreError('');
     setCopiedAction('');
+    closeEditor();
     try {
       const response = await transport.request({
         pathId: 'agent.session.workspace.read',
@@ -284,6 +325,7 @@ export function PawOsFilesApp() {
         byteSize: chunk.byteSize,
         loadedBytes: chunk.nextOffset,
         truncated: chunk.truncated,
+        resourceRevision: chunk.resourceRevision,
       });
     } catch (error) {
       if (generation === generationRef.current) {
@@ -293,7 +335,7 @@ export function PawOsFilesApp() {
     } finally {
       if (generation === generationRef.current) setPreviewLoading(false);
     }
-  }, [selectedSessionId, transport]);
+  }, [closeEditor, selectedSessionId, transport]);
 
   const loadMorePreview = useCallback(async () => {
     const current = preview;
@@ -317,6 +359,7 @@ export function PawOsFilesApp() {
           byteSize: chunk.byteSize || existing.byteSize,
           loadedBytes: chunk.nextOffset,
           truncated: chunk.truncated,
+          resourceRevision: chunk.resourceRevision || existing.resourceRevision,
         }
         : existing);
     } catch (error) {
@@ -326,10 +369,77 @@ export function PawOsFilesApp() {
     }
   }, [preview, previewLoading, previewMoreLoading, selectedSessionId, transport]);
 
+  const saveDraft = useCallback(async () => {
+    const current = preview;
+    if (!selectedSessionId || !current || !current.resourceRevision || saving) return;
+    const generation = generationRef.current;
+    setSaving(true);
+    setSaveError('');
+    setSaveStale(false);
+    setSavedNotice('');
+    try {
+      const response = await transport.request({
+        pathId: 'agent.session.workspace.write',
+        params: { sessionId: selectedSessionId },
+        body: { path: current.path, resourceRevision: current.resourceRevision, content: draft },
+      });
+      if (generation !== generationRef.current) return;
+      const receipt = workspaceWriteReceipt(response, current.path);
+      // The receipt carries the next revision, so a second save in the same
+      // sitting does not need another read to be accepted.
+      setPreview((existing) => existing && existing.path === current.path
+        ? {
+          ...existing,
+          content: draft,
+          byteSize: receipt.byteSize,
+          loadedBytes: receipt.byteSize,
+          truncated: false,
+          resourceRevision: receipt.resourceRevision,
+        }
+        : existing);
+      setSavedNotice(`已保存 · ${formatBytes(receipt.byteSize)}`);
+    } catch (error) {
+      if (generation !== generationRef.current) return;
+      const stale = isStaleSnapshot(error);
+      setSaveStale(stale);
+      setSaveError(stale
+        ? '文件已在别处改动。重新载入会丢弃这次输入。'
+        : publicError(error, '保存失败。'));
+    } finally {
+      if (generation === generationRef.current) setSaving(false);
+    }
+  }, [draft, preview, saving, selectedSessionId, transport]);
+
   useEffect(() => {
     if (!selectedFile) return;
     void loadPreview(selectedFile);
   }, [loadPreview, selectedFile]);
+
+  function startEditing(): void {
+    if (!preview || !previewEditable) return;
+    setDraft(preview.content);
+    setEditing(true);
+    setSaveError('');
+    setSaveStale(false);
+    setSavedNotice('');
+  }
+
+  /** Every route out of the open file goes through here, so an unsaved draft
+      is never dropped without the person saying so. */
+  function leaveEditor(after: () => void = () => undefined): void {
+    if (dirty) {
+      setPendingExit(() => after);
+      return;
+    }
+    closeEditor();
+    after();
+  }
+
+  function discardAndLeave(): void {
+    const after = pendingExit;
+    closeEditor();
+    after?.();
+  }
 
   function toggleDirectory(path: string): void {
     const willExpand = !expanded.has(path);
@@ -360,28 +470,41 @@ export function PawOsFilesApp() {
 
   function goBackToTree(): void {
     if (!selectedFile) return;
-    pendingFocusPathRef.current = selectedFile.path;
-    setSelectedFile(null);
+    const path = selectedFile.path;
+    leaveEditor(() => {
+      pendingFocusPathRef.current = path;
+      setSelectedFile(null);
+    });
+  }
+
+  function openFile(entry: WorkspaceEntry): void {
+    leaveEditor(() => setSelectedFile(entry));
   }
 
   /** Expand a directory's ancestor chain and hand tree focus to it. In the
       narrow reader layout the tree is hidden, so revealing also returns to
       the list; the wide layout keeps the open file beside the located row. */
   function revealInTree(path: string): void {
-    setExpanded((current) => {
-      const next = new Set(current);
-      for (const ancestor of ancestorDirectories(path, roots)) next.add(ancestor);
-      next.add(path);
-      return next;
-    });
-    void loadDirectory(path);
-    pendingFocusPathRef.current = path;
-    if (treeHidden()) setSelectedFile(null);
+    const reveal = (): void => {
+      setExpanded((current) => {
+        const next = new Set(current);
+        for (const ancestor of ancestorDirectories(path, roots)) next.add(ancestor);
+        next.add(path);
+        return next;
+      });
+      void loadDirectory(path);
+      pendingFocusPathRef.current = path;
+      if (treeHidden()) setSelectedFile(null);
+    };
+    // Only the narrow layout closes the open file to reveal, so only there
+    // does revealing put an unsaved draft at risk.
+    if (treeHidden()) leaveEditor(reveal);
+    else reveal();
   }
 
   function openFilterMatch(entry: WorkspaceEntry): void {
     if (entry.kind !== 'directory') {
-      setSelectedFile(entry);
+      openFile(entry);
       return;
     }
     revealInTree(entry.path);
@@ -510,7 +633,7 @@ export function PawOsFilesApp() {
                   data-family={entryFamily(entry)}
                   data-kind={directory ? 'directory' : symlink ? 'symlink' : undefined}
                   data-selected={!directory && entry.path === selectedFile?.path || undefined}
-                  onClick={() => directory ? toggleDirectory(entry.path) : setSelectedFile(entry)}
+                  onClick={() => directory ? toggleDirectory(entry.path) : openFile(entry)}
                   onFocus={() => setTreeFocusPath(entry.path)}
                   onKeyDown={(event) => onTreeKeyDown(event, entry.path)}
                   ref={(node) => {
@@ -558,7 +681,10 @@ export function PawOsFilesApp() {
         <select
           aria-label="选择文件所属 Session"
           disabled={sessionsLoading || !sessions.length}
-          onChange={(event) => setSelectedSessionId(event.target.value)}
+          onChange={(event) => {
+            const nextSessionId = event.target.value;
+            leaveEditor(() => setSelectedSessionId(nextSessionId));
+          }}
           value={selectedSessionId}
         >
           {sessions.map((session) => (
@@ -749,6 +875,18 @@ export function PawOsFilesApp() {
                 </div>
                 <div className="paw-files-preview__actions">
                   <button
+                    aria-label={editing ? '结束编辑' : '编辑文件'}
+                    aria-pressed={editing}
+                    className="paw-files-preview__action"
+                    data-editing={editing || undefined}
+                    disabled={!previewEditable}
+                    onClick={() => editing ? leaveEditor() : startEditing()}
+                    title={editActionTitle(preview, previewEditable, editing)}
+                    type="button"
+                  >
+                    <SquarePen size={14} />
+                  </button>
+                  <button
                     aria-label={copiedAction === 'content' ? '已复制文件内容' : '复制文件内容'}
                     className="paw-files-preview__action"
                     data-copied={copiedAction === 'content' || undefined}
@@ -779,9 +917,55 @@ export function PawOsFilesApp() {
                   </div>
                 ) : null}
                 {previewError ? <div className="paw-files-preview__state" role="alert"><TriangleAlert size={18} /><span>{previewError}</span><button onClick={() => void loadPreview(selectedFile)} type="button">重试</button></div> : null}
-                {!previewLoading && !previewError && preview ? renderPreview(preview) : null}
+                {!previewLoading && !previewError && preview
+                  ? editing
+                    ? (
+                      <textarea
+                        aria-label={`编辑 ${pathName(preview.path)}`}
+                        className="paw-files-editor"
+                        onChange={(event) => setDraft(event.target.value)}
+                        spellCheck={false}
+                        value={draft}
+                      />
+                    )
+                    : renderPreview(preview)
+                  : null}
               </div>
-              {preview && !previewLoading && !previewError && preview.truncated && !previewIsBinary ? (
+              {editing && preview ? (
+                <footer className="paw-files-preview__save">
+                  {pendingExit ? (
+                    <>
+                      <em role="alert">这次输入还没有保存。</em>
+                      <button onClick={discardAndLeave} type="button">放弃改动并离开</button>
+                      <button data-primary onClick={() => setPendingExit(null)} type="button">继续编辑</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="paw-files-preview__save-state">
+                        {draftOversized
+                          ? `已超过 ${formatBytes(WRITE_MAX_BYTES)} 保存上限`
+                          : dirty
+                            ? `未保存 · ${formatBytes(draftBytes)}`
+                            : savedNotice || `与文件一致 · ${formatBytes(draftBytes)}`}
+                      </span>
+                      {saveError ? <em role="alert">{saveError}</em> : null}
+                      {saveStale ? <button onClick={() => void loadPreview(selectedFile)} type="button">重新载入</button> : null}
+                      <button onClick={() => leaveEditor()} type="button">取消</button>
+                      <button
+                        aria-busy={saving || undefined}
+                        data-primary
+                        disabled={!dirty || saving || draftOversized}
+                        onClick={() => void saveDraft()}
+                        type="button"
+                      >
+                        {saving ? <LoaderCircle className="ui-spin" size={13} /> : <Save size={13} />}
+                        <span>保存</span>
+                      </button>
+                    </>
+                  )}
+                </footer>
+              ) : null}
+              {!editing && preview && !previewLoading && !previewError && preview.truncated && !previewIsBinary ? (
                 <footer className="paw-files-preview__more">
                   <div className="paw-files-preview__range">
                     <span className="paw-files-preview__range-readout">
@@ -959,14 +1143,54 @@ function workspaceListing(value: unknown): WorkspaceListing {
   return { items: sortedEntries(items), limited: value.truncated === true };
 }
 
-function workspaceFileChunk(value: unknown, path: string): { content: string; byteSize: number; nextOffset: number; truncated: boolean } {
+function workspaceFileChunk(value: unknown, path: string): { content: string; byteSize: number; nextOffset: number; truncated: boolean; resourceRevision: string } {
   if (!isRecord(value) || value.path !== path || typeof value.content !== 'string') throw new Error('文件服务返回了无法识别的数据。');
   const byteSize = typeof value.byteSize === 'number' ? value.byteSize : 0;
   const offset = typeof value.offset === 'number' ? value.offset : 0;
   const nextOffset = typeof value.nextOffset === 'number'
     ? value.nextOffset
     : offset + new TextEncoder().encode(value.content).length;
-  return { content: value.content, byteSize, nextOffset, truncated: value.truncated === true };
+  return {
+    content: value.content,
+    byteSize,
+    nextOffset,
+    truncated: value.truncated === true,
+    resourceRevision: typeof value.resourceRevision === 'string' ? value.resourceRevision : '',
+  };
+}
+
+function workspaceWriteReceipt(value: unknown, path: string): { byteSize: number; resourceRevision: string } {
+  if (!isRecord(value) || value.path !== path || typeof value.resourceRevision !== 'string' || !value.resourceRevision) {
+    throw new Error('文件服务返回了无法识别的保存回执。');
+  }
+  return {
+    byteSize: typeof value.byteSize === 'number' ? value.byteSize : 0,
+    resourceRevision: value.resourceRevision,
+  };
+}
+
+/** A save the person can retry after re-reading, as opposed to a save that
+    was refused outright. Both transports carry the service code alongside the
+    message — HTTP under `payload`, the native bridge under `code`/`details` —
+    so the classification never depends on wording. */
+function isStaleSnapshot(error: unknown): boolean {
+  if (!isRecord(error) && !(error instanceof Error)) return false;
+  const carrier = error as { payload?: unknown; code?: unknown; details?: unknown };
+  if (carrier.code === 'stale_snapshot') return true;
+  for (const envelope of [carrier.payload, carrier.details]) {
+    if (isRecord(envelope) && envelope.errorCode === 'stale_snapshot') return true;
+  }
+  return false;
+}
+
+function editActionTitle(preview: WorkspacePreview | null, editable: boolean, editing: boolean): string {
+  if (editing) return '结束编辑';
+  if (editable) return '编辑并保存这个文件';
+  if (!preview) return '内容尚未读取';
+  if (isProbablyBinary(preview.content)) return '二进制文件不能编辑';
+  if (preview.truncated) return '只加载了一部分，读完整个文件才能编辑';
+  if (preview.byteSize > WRITE_MAX_BYTES) return `超过 ${formatBytes(WRITE_MAX_BYTES)} 的文件不能在这里编辑`;
+  return '这个文件不能在这里编辑';
 }
 
 function entryFamily(entry: Pick<WorkspaceEntry, 'kind' | 'name'>): string | undefined {

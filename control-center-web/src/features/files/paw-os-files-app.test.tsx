@@ -1110,6 +1110,218 @@ describe('PawOsFilesApp', () => {
     expect(copyContent).toHaveAttribute('title', '二进制内容不能复制为文本');
   });
 
+  it('edits a fully loaded text file and saves it with the revision it read', async () => {
+    const user = userEvent.setup();
+    const writes: ControlRequest[] = [];
+    let revision = `sha256:${'1'.repeat(64)}`;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/notes.txt', name: 'notes.txt', kind: 'file', byteSize: 6 }],
+        },
+        'agent.session.workspace.read': () => ({
+          ok: true,
+          path: '/workspace/paw/notes.txt',
+          content: 'first\n',
+          byteSize: 6,
+          offset: 0,
+          nextOffset: 6,
+          truncated: false,
+          resourceRevision: revision,
+        }),
+        'agent.session.workspace.write': (request: ControlRequest) => {
+          writes.push(request);
+          revision = `sha256:${'2'.repeat(64)}`;
+          const content = String(writeBody(request).content ?? '');
+          return {
+            ok: true,
+            path: writeBody(request).path,
+            created: false,
+            byteSize: new TextEncoder().encode(content).length,
+            resourceRevision: revision,
+          };
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 notes.txt' }));
+    await user.click(await screen.findByRole('button', { name: '编辑文件' }));
+
+    const editor = screen.getByRole('textbox', { name: '编辑 notes.txt' });
+    expect(editor).toHaveValue('first\n');
+    // Nothing has changed yet, so there is nothing to save.
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+
+    await user.type(editor, 'second');
+    expect(screen.getByText('未保存 · 12 B')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]?.body).toEqual({
+      path: '/workspace/paw/notes.txt',
+      resourceRevision: `sha256:${'1'.repeat(64)}`,
+      content: 'first\nsecond',
+    });
+    expect(await screen.findByText('已保存 · 12 B')).toBeInTheDocument();
+
+    // The receipt's revision carries the next save, so a second edit in the
+    // same sitting is accepted without another read.
+    await user.type(editor, '!');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writeBody(writes[1]).resourceRevision).toBe(`sha256:${'2'.repeat(64)}`);
+    expect(writeBody(writes[1]).content).toBe('first\nsecond!');
+  });
+
+  it('offers editing only for whole, non-binary files the write route can accept', async () => {
+    const user = userEvent.setup();
+    const files = [
+      { path: '/workspace/paw/big.log', name: 'big.log', kind: 'file', byteSize: 131_072 },
+      { path: '/workspace/paw/image.png', name: 'image.png', kind: 'file', byteSize: 900 },
+      { path: '/workspace/paw/huge.txt', name: 'huge.txt', kind: 'file', byteSize: 3_145_728 },
+    ];
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: files },
+        'agent.session.workspace.read': (request: ControlRequest) => {
+          const path = String(request.query?.path ?? '');
+          const base = { ok: true, path, offset: 0, resourceRevision: `sha256:${'3'.repeat(64)}` };
+          if (path.endsWith('big.log')) {
+            return { ...base, content: 'line 1\n', byteSize: 131_072, nextOffset: 65_536, truncated: true };
+          }
+          if (path.endsWith('image.png')) {
+            return { ...base, content: '\u0000PNG\r\n\u001a\n', byteSize: 900, nextOffset: 900, truncated: false };
+          }
+          return { ...base, content: 'still text\n', byteSize: 3_145_728, nextOffset: 3_145_728, truncated: false };
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 big.log' }));
+    await screen.findByText('已显示前 64 KB · 共 128 KB');
+    expect(screen.getByRole('button', { name: '编辑文件' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '编辑文件' })).toHaveAttribute('title', '只加载了一部分，读完整个文件才能编辑');
+
+    await user.click(screen.getByRole('treeitem', { name: '打开文件 image.png' }));
+    await screen.findByText('二进制文件不能作为文本预览。');
+    expect(screen.getByRole('button', { name: '编辑文件' })).toHaveAttribute('title', '二进制文件不能编辑');
+
+    await user.click(screen.getByRole('treeitem', { name: '打开文件 huge.txt' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '编辑文件' }))
+      .toHaveAttribute('title', '超过 2 MB 的文件不能在这里编辑'));
+  });
+
+  it('reports a save that lost the race as reload-and-retry instead of overwriting', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/notes.txt', name: 'notes.txt', kind: 'file', byteSize: 6 }],
+        },
+        'agent.session.workspace.read': {
+          ok: true,
+          path: '/workspace/paw/notes.txt',
+          content: 'first\n',
+          byteSize: 6,
+          offset: 0,
+          nextOffset: 6,
+          truncated: false,
+          resourceRevision: `sha256:${'4'.repeat(64)}`,
+        },
+        'agent.session.workspace.write': () => {
+          throw Object.assign(new Error('workspace_write snapshot is stale'), {
+            payload: { ok: false, errorCode: 'stale_snapshot', retryable: true },
+          });
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 notes.txt' }));
+    await user.click(await screen.findByRole('button', { name: '编辑文件' }));
+    await user.type(screen.getByRole('textbox', { name: '编辑 notes.txt' }), 'raced');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    const failure = await screen.findByRole('alert');
+    expect(failure).toHaveTextContent('文件已在别处改动。重新载入会丢弃这次输入。');
+    // The draft is still on screen, and reloading is an explicit choice.
+    expect(screen.getByRole('textbox', { name: '编辑 notes.txt' })).toHaveValue('first\nraced');
+    await user.click(screen.getByRole('button', { name: '重新载入' }));
+    expect(await screen.findByText('first')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '编辑 notes.txt' })).not.toBeInTheDocument();
+  });
+
+  it('holds an unsaved draft until the person chooses to drop it', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [
+            { path: '/workspace/paw/notes.txt', name: 'notes.txt', kind: 'file', byteSize: 6 },
+            { path: '/workspace/paw/other.txt', name: 'other.txt', kind: 'file', byteSize: 6 },
+          ],
+        },
+        'agent.session.workspace.read': (request: ControlRequest) => ({
+          ok: true,
+          path: request.query?.path,
+          content: 'first\n',
+          byteSize: 6,
+          offset: 0,
+          nextOffset: 6,
+          truncated: false,
+          resourceRevision: `sha256:${'5'.repeat(64)}`,
+        }),
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 notes.txt' }));
+    await user.click(await screen.findByRole('button', { name: '编辑文件' }));
+    await user.type(screen.getByRole('textbox', { name: '编辑 notes.txt' }), 'unsaved');
+
+    // Opening another file does not silently drop the draft.
+    await user.click(screen.getByRole('treeitem', { name: '打开文件 other.txt' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('这次输入还没有保存。');
+    expect(screen.getByRole('heading', { name: 'notes.txt', level: 2 })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '继续编辑' }));
+    expect(screen.getByRole('textbox', { name: '编辑 notes.txt' })).toHaveValue('first\nunsaved');
+
+    await user.click(screen.getByRole('treeitem', { name: '打开文件 other.txt' }));
+    await user.click(await screen.findByRole('button', { name: '放弃改动并离开' }));
+    expect(await screen.findByRole('heading', { name: 'other.txt', level: 2 })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /^编辑 / })).not.toBeInTheDocument();
+  });
+
   it('distinguishes a missing Session from an unbound workspace', async () => {
     const noSessions = new MockControlTransport({
       routes: { 'agent.sessions.list': { ok: true, items: [] } },
@@ -1147,6 +1359,11 @@ function applyNarrowLayout(): HTMLStyleElement {
   `;
   document.head.append(emulation);
   return emulation;
+}
+
+function writeBody(request: ControlRequest | undefined): Record<string, unknown> {
+  const body = request?.body;
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
 }
 
 function renderApp(transport: MockControlTransport, child: React.ReactNode) {
