@@ -1,11 +1,6 @@
 import { BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, TriangleAlert } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import {
-  Virtuoso,
-  type ScrollSeekConfiguration,
-  type ScrollSeekPlaceholderProps,
-  type VirtuosoHandle,
-} from 'react-virtuoso';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Virtuoso, type ListRange, type VirtuosoHandle } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button, IconButton } from '@/components/primitives';
 import type {
@@ -381,7 +376,19 @@ export function AgentTimeline({
   }, []);
   const [timelineScroller, setTimelineScroller] = useState<HTMLElement | null>(null);
   const [activeTargetId, setActiveTargetId] = useState('');
+  const [scrolling, setScrolling] = useState(false);
   const [visibleRange, setVisibleRange] = useState({ startIndex: 0, endIndex: 0 });
+  /* Only the jump rail reads the visible range. Publishing every range change
+     re-rendered the whole transcript on a scroll frame, and a Session that
+     hides the rail paid that cost for a value nothing consumed. */
+  const handleRangeChanged = useCallback((range: ListRange) => {
+    if (!showConversationNavigation) return;
+    setVisibleRange((current) => (
+      current.startIndex === range.startIndex && current.endIndex === range.endIndex
+        ? current
+        : { startIndex: range.startIndex, endIndex: range.endIndex }
+    ));
+  }, [showConversationNavigation]);
   /* -1 means "follow the active marker"; a real value pins the roving stop
      to wherever the keyboard user last was. */
   const [navFocusIndex, setNavFocusIndex] = useState(-1);
@@ -436,7 +443,6 @@ export function AgentTimeline({
     ? navFocusIndex
     : activeTurnIndex;
   const timelineComponents = useMemo(() => ({
-    ScrollSeekPlaceholder: AgentTurnTombstone,
     Header: AgentTimelineScrollHeader,
     Footer: AgentTimelineScrollFooter,
   }), []);
@@ -669,7 +675,16 @@ export function AgentTimeline({
     /* `log` describes the transcript, but its implicit polite live region made
        a screen reader re-read the whole answer on every batched token commit.
        The log is silent; SettledTurnAnnouncer speaks once per settled turn. */
-    <div className="agent-timeline" aria-label="对话时间线" aria-live="off" role="log">
+    <div
+      aria-label="对话时间线"
+      aria-live="off"
+      className="agent-timeline"
+      /* Hover feedback is answered per row. While the transcript moves, every
+         row that passes under a stationary pointer repaints its own hover
+         state, which reads as flicker rather than as a response. */
+      data-scrolling={scrolling || undefined}
+      role="log"
+    >
       <SettledTurnAnnouncer sessionId={sessionId} />
       <Virtuoso
         ref={virtuosoRef}
@@ -684,14 +699,17 @@ export function AgentTimeline({
           followStateRef.current.mode === 'following' ? liveFollowScrollBehavior() : false
         )}
         initialTopMostItemIndex={initialTopMostItemIndex}
-        increaseViewportBy={{ top: 320, bottom: 520 }}
+        // A turn is expensive to mount and cheap to keep. A wider retained
+        // window means a reader reversing direction lands on rows that are
+        // already measured instead of on rows being mounted mid-gesture.
+        increaseViewportBy={{ top: 700, bottom: 900 }}
         components={timelineComponents}
         context={timelineContext}
         scrollerRef={handleScrollerRef}
-        rangeChanged={setVisibleRange}
+        rangeChanged={handleRangeChanged}
+        isScrolling={setScrolling}
         atBottomStateChange={handleAtBottomChange}
         atBottomThreshold={120}
-        scrollSeekConfiguration={agentScrollSeekConfiguration}
         itemContent={(_index, turnId) => (
           <AgentTurn
             key={turnId}
@@ -793,11 +811,6 @@ export function AgentTimeline({
   );
 }
 
-export const agentScrollSeekConfiguration = {
-  enter: (velocity) => Math.abs(velocity) > 900,
-  exit: (velocity) => Math.abs(velocity) < 120,
-} satisfies ScrollSeekConfiguration;
-
 interface AgentTimelineContext {
   leadingContent?: ReactNode;
 }
@@ -815,19 +828,12 @@ function AgentTimelineScrollHeader({ context }: { context?: AgentTimelineContext
   );
 }
 
-function AgentTurnTombstone({
-  height,
-}: ScrollSeekPlaceholderProps) {
-  return (
-    <div
-      aria-hidden="true"
-      className="agent-turn-tombstone"
-      style={{ height }}
-    />
-  );
-}
-
-export function AgentTurn({
+/* Scroll-seek placeholders were the transcript's loudest scrolling artifact:
+   past ~900 px/s every mounted turn was swapped for an empty measured box and
+   swapped back on deceleration, so moving up and down repeatedly blanked and
+   restored whole screens of conversation. Turns render at real height at every
+   velocity instead; the memoized item below is what keeps that affordable. */
+export const AgentTurn = memo(function AgentTurn({
   sessionId,
   turnId,
   persona,
@@ -1087,7 +1093,7 @@ export function AgentTurn({
       ) : null}
     </article>
   );
-}
+});
 
 type TurnTimelineItem = {
   kind: 'message';

@@ -75,8 +75,7 @@
   .agent-user-message-shell,
   .agent-assistant-turn,
   .agent-activity-group,
-  .agent-turn__failure,
-  .agent-turn-tombstone
+  .agent-turn__failure
 ) { position: relative; }
 
 .paw-desktop-root .agent-timeline :is(
@@ -322,16 +321,12 @@
   color: var(--comp8-paper-hi);
 }
 
-/* 失败与墓碑：红信号条 */
+/* 失败：红信号条 */
 .paw-desktop-root .agent-turn__failure {
   border: 1px solid color-mix(in srgb, var(--comp8-red) 55%, transparent);
   border-left: 4px solid var(--comp8-red);
   border-radius: 10px;
   background: color-mix(in srgb, var(--comp8-red) 7%, var(--comp8-paper-hi));
-}
-.paw-desktop-root .agent-turn-tombstone {
-  color: var(--paw-muted);
-  font-size: 12px;
 }
 
 /* 用量与消息动作：淡墨小字，悬停浮现 */

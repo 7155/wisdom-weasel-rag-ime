@@ -28,7 +28,10 @@ import type { UiAgentMessage } from '@/contracts/ui-events';
 const virtuosoMock = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
   atBottomStateChange: undefined as ((atBottom: boolean) => void) | undefined,
+  components: undefined as Record<string, unknown> | undefined,
   followOutput: undefined as ((isAtBottom: boolean) => 'auto' | 'smooth' | false) | undefined,
+  isScrolling: undefined as ((scrolling: boolean) => void) | undefined,
+  scrollSeekConfiguration: undefined as unknown,
   scroller: undefined as HTMLDivElement | undefined,
 }));
 
@@ -38,18 +41,24 @@ vi.mock('react-virtuoso', async () => {
     Virtuoso: React.forwardRef(({
     alignToBottom,
     atBottomStateChange,
+    components,
     data,
     followOutput,
     initialTopMostItemIndex,
+    isScrolling,
     itemContent,
+    scrollSeekConfiguration,
     scrollerRef,
   }: {
     alignToBottom?: boolean;
     atBottomStateChange?: (atBottom: boolean) => void;
+    components?: Record<string, unknown>;
     data: string[];
     followOutput?: (isAtBottom: boolean) => 'auto' | 'smooth' | false;
     initialTopMostItemIndex?: { index: string | number; align?: string };
+    isScrolling?: (scrolling: boolean) => void;
     itemContent: (index: number, item: string) => ReactNode;
+    scrollSeekConfiguration?: unknown;
     scrollerRef?: (scroller: HTMLElement | Window | null) => void;
   }, ref) => {
     const localScrollerRef = React.useRef<HTMLDivElement>(null);
@@ -65,7 +74,10 @@ vi.mock('react-virtuoso', async () => {
       };
     }, [scrollerRef]);
     virtuosoMock.atBottomStateChange = atBottomStateChange;
+    virtuosoMock.components = components;
     virtuosoMock.followOutput = followOutput;
+    virtuosoMock.isScrolling = isScrolling;
+    virtuosoMock.scrollSeekConfiguration = scrollSeekConfiguration;
     return (
       <div
         ref={localScrollerRef}
@@ -86,7 +98,10 @@ afterEach(() => {
   setDocumentVisibility('visible');
   virtuosoMock.scrollToIndex.mockReset();
   virtuosoMock.atBottomStateChange = undefined;
+  virtuosoMock.components = undefined;
   virtuosoMock.followOutput = undefined;
+  virtuosoMock.isScrolling = undefined;
+  virtuosoMock.scrollSeekConfiguration = undefined;
   virtuosoMock.scroller = undefined;
   for (const session of previewSessions) useAgentLiveStore.getState().clear(session.id);
   useAgentLiveStore.getState().clear('session-history');
@@ -461,6 +476,24 @@ describe('Agent experience', () => {
     expect(markers[0]).toHaveTextContent('第 1 轮');
     expect(navigator).toHaveTextContent('读取输入法工具书');
     expect(navigator).toHaveTextContent('Agent');
+  });
+
+  it('keeps every mounted turn rendered and stops answering hover while the transcript scrolls', async () => {
+    renderAgent(featureTransport());
+    await screen.findByRole('textbox', { name: '消息' });
+    const timeline = screen.getByRole('log', { name: '对话时间线' });
+
+    // Scroll-seek swapped whole screens of conversation for empty measured
+    // boxes above a velocity threshold and swapped them back on deceleration,
+    // which is what made repeated up/down scrolling flicker.
+    expect(virtuosoMock.scrollSeekConfiguration).toBeUndefined();
+    expect(virtuosoMock.components).not.toHaveProperty('ScrollSeekPlaceholder');
+
+    expect(timeline).not.toHaveAttribute('data-scrolling');
+    act(() => virtuosoMock.isScrolling?.(true));
+    expect(timeline).toHaveAttribute('data-scrolling', 'true');
+    act(() => virtuosoMock.isScrolling?.(false));
+    expect(timeline).not.toHaveAttribute('data-scrolling');
   });
 
   it('preserves bottom-follow through layout growth and restores it after the reader returns', async () => {

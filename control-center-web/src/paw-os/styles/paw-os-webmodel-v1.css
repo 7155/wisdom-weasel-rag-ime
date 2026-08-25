@@ -73,8 +73,7 @@
   .agent-user-message-shell,
   .agent-assistant-turn,
   .agent-activity-group,
-  .agent-turn__failure,
-  .agent-turn-tombstone
+  .agent-turn__failure
 )::before {
   display: none;
 }
