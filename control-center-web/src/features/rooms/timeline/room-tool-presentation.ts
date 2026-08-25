@@ -91,7 +91,10 @@ export function roomPublicToolResultView(view: PublicToolResultView): PublicTool
     ...(view.language ? { language: view.language } : {}),
     ...(preview ? { preview } : {}),
     ...(outputText && view.output
-      ? { output: { ...view.output, text: outputText } }
+      ? {
+          output: { ...view.output, text: outputText },
+          ...(view.outputLabel ? { outputLabel: view.outputLabel } : {}),
+        }
       : {}),
     ...(error ? { error } : {}),
     ...(view.recovery ? { recovery: view.recovery } : {}),
