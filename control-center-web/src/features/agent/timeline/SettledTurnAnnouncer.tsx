@@ -5,7 +5,6 @@ import { isRoomPublicPostMessage } from './AgentTimeline';
 
 const ACTIVE_TURN_STATUSES = new Set(['queued', 'running', 'waiting']);
 const TERMINAL_TURN_STATUSES = new Set(['completed', 'failed', 'aborted']);
-const ANNOUNCEMENT_CHARACTERS = 200;
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -20,9 +19,13 @@ function turnStatus(projection: AgentProjectionState | undefined, turnId: string
 }
 
 /**
- * One bounded sentence describing a turn that just reached a terminal status.
- * The transcript itself remains readable; this only orients a reader who
- * cannot see that the stream stopped.
+ * One sentence describing a turn that just reached a terminal status.
+ *
+ * It deliberately reports that the turn ended and how much there is to read,
+ * and never echoes the answer. The reply already exists in the log one node
+ * away; copying it here would duplicate it in select-all, in find-in-page and
+ * in every text query, and would put a truncated second copy of the answer in
+ * a transcript whose whole premise is that it is the record.
  */
 export function settledTurnAnnouncement(
   projection: AgentProjectionState | undefined,
@@ -31,24 +34,18 @@ export function settledTurnAnnouncement(
   const turn = projection?.turnsById[turnId];
   if (!projection || !turn) return '';
   if (turn.status === 'aborted') return '本轮已停止。';
-  if (turn.status === 'failed') {
-    const failure = (turn.failure ?? '').replace(/\s+/gu, ' ').trim();
-    return failure ? `本轮未完成：${failure.slice(0, ANNOUNCEMENT_CHARACTERS)}` : '本轮未完成。';
-  }
-  const reply = turn.messageIds
+  if (turn.status === 'failed') return '本轮未完成，时间线里有失败说明与恢复操作。';
+  const characters = turn.messageIds
     .map((messageId) => projection.messagesById[messageId])
     .filter((message) => (
       message?.role === 'assistant' && !isRoomPublicPostMessage(message)
     ))
     .flatMap((message) => message?.blocks ?? [])
-    .map((block) => text(block.data.text ?? block.data.markdown))
-    .join(' ')
-    .replace(/\s+/gu, ' ')
-    .trim();
-  if (!reply) return 'Agent 本轮没有文本回复，工作明细在时间线中。';
-  return reply.length > ANNOUNCEMENT_CHARACTERS
-    ? `Agent 回复已完成，共 ${reply.length} 字，开头是：${reply.slice(0, ANNOUNCEMENT_CHARACTERS)}…`
-    : `Agent 回复已完成：${reply}`;
+    .map((block) => text(block.data.text ?? block.data.markdown).replace(/\s+/gu, ''))
+    .reduce((total, value) => total + value.length, 0);
+  return characters > 0
+    ? `Agent 回复已完成，共 ${characters} 字。`
+    : 'Agent 本轮没有文本回复，工作明细在时间线中。';
 }
 
 /**
@@ -86,10 +83,15 @@ export function SettledTurnAnnouncer({ sessionId }: { sessionId: string }) {
     });
   }, [sessionId]);
   return (
+    /* Its own live region: the enclosing log is explicitly `off`, and a
+       descendant live root is not suppressed by a silent ancestor. No
+       `role="status"` — the transcript already carries visible status
+       elements, and a second one would compete with them in the a11y tree. */
     <p
       aria-atomic="true"
       aria-live="polite"
       className="agent-timeline__announcer"
+      data-transcript-announcer=""
     >
       {announcement}
     </p>
