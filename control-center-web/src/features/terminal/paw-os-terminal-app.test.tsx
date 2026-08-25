@@ -541,7 +541,6 @@ describe('PawOsTerminalApp', () => {
     // sits above the surface, so it can never cover a reported match.
     expect(consoleBands).toHaveAttribute('data-search');
     expect(band.parentElement).toBe(consoleBands);
-    // eslint-disable-next-line no-bitwise
     expect(band.compareDocumentPosition(surface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Taking a row must not cost the live session: the PTY is refit, not rebuilt.
     expect(xtermConstructorOptions).toHaveLength(1);
@@ -735,9 +734,62 @@ describe('PawOsTerminalApp', () => {
 });
 
 describe('paw-os-terminal-app.css contracts', () => {
-  it('keeps the ended-session notice inside the console grid without displacing the status footer', () => {
+  it('builds the App as fixed chrome bands around one flexible surface', () => {
+    // Window skeleton, not a web page: the App is a column, the tab strip is
+    // an intrinsic band, and exactly one band absorbs the window.
+    expect(terminalCss).toMatch(/\.paw-terminal-app\s*\{[^}]*flex-direction:\s*column;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app > \.paw-terminal-app__toolbar\s*\{[^}]*flex:\s*0 0 auto;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app__workspace\s*\{[^}]*flex:\s*1 1 auto;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app__workspace\s*\{[^}]*min-height:\s*0;/s);
+  });
+
+  it('gives the console one row template per real band combination', () => {
     expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) 30px;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\[data-search\]\s*\{[\s\S]*?grid-template-rows:\s*32px minmax\(0, 1fr\) 30px;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\[data-ended\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) auto 30px;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\[data-search\]\[data-ended\]\s*\{[\s\S]*?grid-template-rows:\s*32px minmax\(0, 1fr\) auto 30px;/s);
+  });
+
+  it('keeps search a band and keeps the menus that must not resize the PTY floating', () => {
+    expect(terminalCss).not.toMatch(/\.paw-terminal-search\s*\{[^}]*position:\s*absolute;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-switcher\s*\{[^}]*position:\s*absolute;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-error\s*\{[^}]*position:\s*absolute;/s);
+  });
+
+  it('answers narrow widths with the container that owns the width, down to icon-first tabs', () => {
+    // The strip is portalled into the titlebar, so it must query its own box
+    // rather than the App body it no longer lives in.
+    expect(terminalCss).toMatch(/\.paw-terminal-app__toolbar\s*\{[^}]*container:\s*paw-terminal-bar \/ inline-size;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app\s*\{[^}]*container:\s*paw-terminal \/ inline-size;/s);
+    expect(terminalCss).not.toMatch(/@media[^{]*\(max-width/);
+
+    const iconFirst = terminalCss.slice(terminalCss.indexOf('@container paw-terminal-bar (max-width: 300px)'));
+    expect(iconFirst).toMatch(/\.paw-terminal-tab-label,[\s\S]*?\.paw-terminal-tab-exit\s*\{\s*display:\s*none;\s*\}/);
+    expect(iconFirst).toMatch(/\.paw-terminal-tab-ordinal\s*\{\s*display:\s*block;\s*\}/);
+
+    // The status band retires its confirming facts, never the live state or
+    // the path, and the search band never retires a hit target.
+    const narrowApp = terminalCss.slice(terminalCss.indexOf('@container paw-terminal (max-width: 560px)'));
+    expect(narrowApp).toMatch(/\.paw-terminal-statusbar__facts\s*\{\s*display:\s*none;\s*\}/);
+    expect(narrowApp).not.toMatch(/\.paw-terminal-state-tag\s*\{\s*display:\s*none;/);
+    expect(narrowApp).not.toMatch(/\.paw-terminal-cwd\s*\{\s*display:\s*none;/);
+    expect(narrowApp).not.toMatch(/\.paw-terminal-search button\s*\{\s*display:\s*none;/);
+  });
+
+  it('carries exactly the three deliberate motions and silences all of them', () => {
+    // 1: the tab-switch beam. 2: the search band unfolding. 3: the PTY focus edge.
+    expect(terminalCss).toMatch(/\.paw-terminal-tab::before\s*\{[^}]*transform:\s*scaleX\(\.3\);/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-tab\[data-selected\]::before\s*\{[^}]*transform:\s*scaleX\(1\);/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-search\s*\{[^}]*animation:\s*paw-terminal-band-open/s);
+    expect(terminalCss).toMatch(/@keyframes paw-terminal-band-open/);
+    expect(terminalCss).toMatch(/\.paw-terminal-xterm:focus-within::before\s*\{[^}]*border-top-color:/s);
+
+    expect(terminalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-terminal-tab\[data-selected\]::before\s*\{\s*transform:\s*none;/);
+    expect(terminalCss).toMatch(/:root\[data-reduce-motion='true'\] \.paw-terminal-tab\[data-selected\]::before\s*\{\s*transform:\s*none;/);
+    // The focus edge is colour and shadow only, so it survives reduced motion
+    // without ever moving anything.
+    expect(terminalCss).toMatch(/\.paw-terminal-xterm::before\s*\{[^}]*transition:\s*border-color[^}]*box-shadow[^}]*\}/s);
+    expect(terminalCss).not.toMatch(/\.paw-terminal-xterm::before\s*\{[^}]*transition:[^};]*transform/s);
   });
 
   it('keeps the tab strip locally scrollable while the new-terminal action stays outside it', () => {
