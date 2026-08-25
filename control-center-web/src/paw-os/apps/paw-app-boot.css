@@ -1,0 +1,50 @@
+/* App boot state -----------------------------------------------------------
+ *
+ * The window a user sees between pressing an App and that App's code arriving.
+ *
+ * It must be styled by a stylesheet that is already in the document when the
+ * App chunk is still in flight. `paw-apps.css` cannot do that: it ships inside
+ * the lazy `PawAppsRuntime` chunk this state is waiting for, so a rule written
+ * there arrives only after the state it describes is gone. That is how the
+ * boot state came to render as a bare block box with its mark in the window's
+ * top-left corner. This file is imported by `PawApps.tsx`, the eager module
+ * that renders the fallback, so the two cannot come apart again.
+ */
+
+.paw-app-boot {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--paw-muted);
+  text-align: center;
+}
+
+.paw-app-boot .paw-app-icon {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+}
+
+/* Caption over name. Set inline they read as one run — “正在打开Agent” — and
+   the tracking meant for the App name smears the caption along with it. */
+.paw-app-boot > span {
+  display: grid;
+  gap: 3px;
+}
+
+.paw-app-boot > span small {
+  color: var(--paw-muted);
+  font-size: 12px;
+  letter-spacing: normal;
+}
+
+.paw-app-boot > span strong {
+  color: var(--paw-ink);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: .28em;
+  text-indent: .28em;
+}
