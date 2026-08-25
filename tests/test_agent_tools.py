@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1468,6 +1470,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "operabilityVerdict",
                 "requirementVerdict",
                 "evidenceRefs",
+                "reason",
             ],
         )
         self.assertEqual(
@@ -1534,6 +1537,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:real-path", "test:requirement"],
+                "reason": "真实路径与需求验收均通过。",
             },
             {
                 "op": "return",
@@ -1567,6 +1571,15 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "expectedRevision": 0,
                 "operabilityVerdict": "passed",
                 "requirementVerdict": "not_satisfied",
+                "evidenceRefs": ["test:requirement"],
+                "reason": "需求未满足不能验收。",
+            },
+            {
+                "op": "accept",
+                "workItemId": "room-work:1",
+                "expectedRevision": 0,
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
                 "evidenceRefs": ["test:requirement"],
             },
             {
@@ -2188,6 +2201,82 @@ class ControlToolGatewayTests(unittest.TestCase):
                 )
             )
 
+    def test_agent_goal_complete_archives_bound_root_work_document(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-goal-root-document"
+        (workspace / "docs").mkdir(parents=True)
+        (workspace / "docs" / "root.md").write_text(
+            "# Root WorkDocument\n",
+            encoding="utf-8",
+        )
+        coordinator = self.store.create(
+            title="goal root document coordinator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=8,
+        )
+        session_id = str(coordinator["id"])
+        goal = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "交付并归档 Root WorkDocument",
+            },
+        )["workflow"]["goal"]
+        documents = WorkDocumentService(
+            self.store.db_path,
+            sessions=self.store,
+            context_runtime=AgentContextRuntime(self.store.db_path),
+        )
+        documents.initialize()
+        registered = documents.register(
+            {
+                "authorityKind": "session_goal",
+                "authorityId": goal["goalId"],
+                "authorityRevision": goal["revision"],
+                "workspaceRoot": str(workspace),
+                "sourcePath": "docs/root.md",
+                "title": "Root WorkDocument",
+            }
+        )
+        self.assertEqual(registered["document"]["state"], "active")
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            work_documents=documents,
+        )
+
+        completed = gateway.execute(
+            {
+                **self._tool_call(
+                    "agent_goal",
+                    "complete",
+                    summary="Root WorkDocument 已随 Goal 完成进入终态",
+                    evidence=[
+                        {
+                            "kind": "receipt",
+                            "summary": "工具路径完成回执",
+                            "reference": "tool:agent-goal:archive-test",
+                        }
+                    ],
+                ),
+                "sessionId": session_id,
+            }
+        )["result"]
+        self.assertEqual(completed["goal"]["status"], "completed")
+        # Read the raw registry row: a later list/detail call would lazily
+        # reconcile authorities and hide a missing observe on the tool path.
+        with closing(sqlite3.connect(self.store.db_path)) as conn:
+            state = conn.execute(
+                "SELECT state FROM work_documents WHERE document_id = ?",
+                (str(registered["document"]["documentId"]),),
+            ).fetchone()[0]
+        self.assertEqual(state, "archived")
+
     def test_active_room_facilitator_alone_receives_audited_goal_tool(self) -> None:
         facilitator = self.store.create(
             title="Room facilitator",
@@ -2242,6 +2331,10 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("agent_goal", facilitator_manifests)
         self.assertNotIn("todo", facilitator_manifests)
         self.assertNotIn("modelVisible", facilitator_manifests["agent_goal"])
+        self.assertIn(
+            "把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息",
+            facilitator_manifests["agent_goal"]["notFor"],
+        )
         complete = next(
             branch
             for branch in facilitator_manifests["agent_goal"]["parameters"]["oneOf"]
@@ -3462,6 +3555,101 @@ class ControlToolGatewayTests(unittest.TestCase):
             registration["document"]["documentId"],
         )
 
+    def test_workspace_write_apply_rebinds_after_open_authority_advances(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-work-document-rebind"
+        workspace.mkdir()
+        coordinator = self.store.create(
+            title="work document rebind coordinator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=9,
+        )
+        session_id = str(coordinator["id"])
+        todo = self._start_todo(session_id)
+        documents = WorkDocumentService(
+            self.store.db_path,
+            sessions=self.store,
+            context_runtime=AgentContextRuntime(self.store.db_path),
+        )
+        documents.initialize()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            work_documents=documents,
+        )
+        prepared = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_write",
+                    "apply",
+                    path="docs/work.md",
+                    resourceRevision="missing",
+                    content="# Canonical work\n",
+                    workDocument={
+                        "authorityKind": "session_todo",
+                        "authorityId": session_id,
+                        "authorityRevision": todo["revision"],
+                        "title": "Canonical work",
+                    },
+                ),
+                "sessionId": session_id,
+            }
+        )["result"]
+        first = gateway.apply_approval(
+            self.store.decide_approval(
+                prepared["approval"]["approvalId"],
+                approved=True,
+                payload_sha256=prepared["approval"]["payloadSha256"],
+            )
+        )
+        canonical = str(first["workDocumentRegistration"]["document"]["path"])
+        bound_revision = int(
+            first["workDocumentRegistration"]["document"]["authorityRevision"]
+        )
+        self.store.mutate_agent_todo(
+            session_id,
+            {"op": "append", "phase": "受控工作区执行", "items": ["继续绑定写回"]},
+            actor="test-user",
+        )
+        live = documents.authority_context("session_todo", session_id)
+        self.assertGreater(int(live["authorityRevision"]), bound_revision)
+        rewritten = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_write",
+                    "apply",
+                    path=canonical,
+                    resourceRevision="sha256:" + str(first["postimageSha256"]),
+                    content="# Canonical work\n\nrebound\n",
+                    workDocument={
+                        "authorityKind": "session_todo",
+                        "authorityId": session_id,
+                        "authorityRevision": bound_revision,
+                        "title": "Canonical work",
+                    },
+                ),
+                "sessionId": session_id,
+            }
+        )["result"]
+        receipt = gateway.apply_approval(
+            self.store.decide_approval(
+                rewritten["approval"]["approvalId"],
+                approved=True,
+                payload_sha256=rewritten["approval"]["payloadSha256"],
+            )
+        )
+        self.assertEqual(
+            int(receipt["workDocumentRegistration"]["document"]["authorityRevision"]),
+            int(live["authorityRevision"]),
+        )
+        self.assertEqual(
+            receipt["workDocumentRegistration"]["document"]["state"],
+            "active",
+        )
+
     def test_workspace_write_rolls_back_when_work_document_registration_fails(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-work-document-rollback"
         workspace.mkdir()
@@ -4623,6 +4811,8 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertIn("默认省略 modelProfile 并继承父 Session", extension)
         self.assertIn('operations: ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"]', extension)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停来等待用户、界面或后续消息", extension)
+        self.assertIn("Do not reuse a previously remembered bound revision", extension)
         self.assertIn('error.errorCode === "workflow_gate_closed"', extension)
         self.assertIn('requiredAction: "review_workflow_state"', extension)
         self.assertIn(

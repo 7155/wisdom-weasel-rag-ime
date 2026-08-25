@@ -37,6 +37,19 @@ class AgentApprovalNotFound(KeyError):
     pass
 
 
+class AgentGoalExecutionBlocked(ValueError):
+    """Configured Goal cannot incur new model or delegation work.
+
+    ``error_code`` stays lowercase (`goal_paused`, …) so Session receipts and
+    the workflow actGate share one spelling. Room event projection may
+    uppercase when publishing durable causeCode fields.
+    """
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(f"Goal execution blocked ({reason}): {message}")
+        self.error_code = reason
+
+
 _SESSION_SELECT = """
 SELECT
     s.*,
@@ -1487,6 +1500,12 @@ class AgentSessionStore:
                 raise ValueError(
                     "only an active or paused goal can be cancelled"
                 )
+            if action == "complete":
+                _agent_goal_completion_authority_gate(
+                    conn,
+                    session_id=session_id,
+                    goal_id=str(current["goalId"]),
+                )
 
             goal_id = (
                 f"goal:{uuid.uuid4()}"
@@ -1938,16 +1957,19 @@ class AgentSessionStore:
             return state
         status = str(goal.get("status") or "")
         if status == "paused":
-            raise ValueError(
-                "Goal execution blocked (goal_paused): 当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。"
+            raise AgentGoalExecutionBlocked(
+                "goal_paused",
+                "当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。",
             )
         if status == "cancelled":
-            raise ValueError(
-                "Goal execution blocked (goal_cancelled): 当前 Goal 已取消，不能继续调用模型或委派任务。"
+            raise AgentGoalExecutionBlocked(
+                "goal_cancelled",
+                "当前 Goal 已取消，不能继续调用模型或委派任务。",
             )
         if goal.get("budgetExceeded") is True:
-            raise ValueError(
-                "Goal execution blocked (goal_budget_exhausted): Goal 的 Token 或时间预算已经耗尽。"
+            raise AgentGoalExecutionBlocked(
+                "goal_budget_exhausted",
+                "Goal 的 Token 或时间预算已经耗尽。",
             )
         return state
 
@@ -3335,6 +3357,70 @@ def _agent_goal_projection(
         "cancellationAudit": cancellation_audit,
         "updatedAtMs": int(row["created_at_ms"]),
     }
+
+
+def _agent_goal_completion_authority_gate(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    goal_id: str,
+) -> None:
+    """Reject a Goal completion receipt that would strand open owned work.
+
+    This is a read-only authority projection over the shared database, not a
+    Markdown or prose check. Room WorkItems this Session owns, created, or is
+    accountable for must already be reconciled (done/failed/cancelled, or
+    explicitly blocked), and the Root WorkDocument bound to this Goal must not
+    sit in a broken ``error`` lifecycle that cannot accept the terminal
+    receipt. ``cancel`` stays ungated as the explicit abandon path.
+    """
+
+    participant = conn.execute(
+        "SELECT id, room_id FROM agent_room_participants WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    if participant is not None:
+        participant_id = str(participant["id"])
+        open_items = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM agent_room_work_items
+                WHERE room_id = ?
+                  AND state IN ('queued', 'active', 'review')
+                  AND (
+                      current_owner_participant_id = ?
+                      OR created_by_participant_id = ?
+                      OR accountable_participant_id = ?
+                  )
+                """,
+                (
+                    str(participant["room_id"]),
+                    participant_id,
+                    participant_id,
+                    participant_id,
+                ),
+            ).fetchone()[0]
+        )
+        if open_items:
+            raise AgentGoalExecutionBlocked(
+                "goal_open_work_items",
+                f"仍有 {open_items} 个此 Session 负责的 Room WorkItem 处于 "
+                "queued/active/review；必须先显式验收、退回、阻塞或放弃这些工作"
+                "再完成 Goal。",
+            )
+    broken_documents = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM work_documents "
+            "WHERE authority_key = ? AND state = 'error'",
+            (f"session_goal:{goal_id}",),
+        ).fetchone()[0]
+    )
+    if broken_documents:
+        raise AgentGoalExecutionBlocked(
+            "goal_root_work_document_error",
+            "绑定此 Goal 的 Root WorkDocument 处于 error 状态，无法随完成回执"
+            "进入终态；请先修复其归档生命周期。",
+        )
 
 
 def _agent_goal_continuation_budget(

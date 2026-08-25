@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -647,6 +648,20 @@ class AgentRoomWorkStore:
             raise ValueError(
                 "work submission requires at least one artifactRefs or evidenceRefs entry"
             )
+        proposed_operability = _optional_verdict(
+            payload.get("proposedOperabilityVerdict"),
+            "proposedOperabilityVerdict",
+            allowed=OPERABILITY_VERDICTS,
+        )
+        proposed_requirement = _optional_verdict(
+            payload.get("proposedRequirementVerdict"),
+            "proposedRequirementVerdict",
+            allowed=REQUIREMENT_VERDICTS,
+        )
+        if not proposed_operability and not proposed_requirement:
+            inferred_op, inferred_req = infer_proposed_verdicts_from_summary(summary)
+            proposed_operability = inferred_op
+            proposed_requirement = inferred_req
         with self._connect(immediate=True) as conn:
             actor = _participant_for_session(conn, session_id)
             row = self._owned_row(conn, work_id, actor)
@@ -668,13 +683,18 @@ class AgentRoomWorkStore:
                 """
                 UPDATE agent_room_work_items
                 SET state = 'review', result_summary = ?, artifact_refs_json = ?,
-                    evidence_refs_json = ?, blocker_json = '{}', updated_at_ms = ?
+                    evidence_refs_json = ?, blocker_json = '{}',
+                    proposed_operability_verdict = ?,
+                    proposed_requirement_verdict = ?,
+                    updated_at_ms = ?
                 WHERE id = ?
                 """,
                 (
                     summary,
                     json.dumps(artifact_refs, ensure_ascii=False, separators=(",", ":")),
                     json.dumps(evidence_refs, ensure_ascii=False, separators=(",", ":")),
+                    proposed_operability,
+                    proposed_requirement,
                     timestamp,
                     work_id,
                 ),
@@ -1027,6 +1047,8 @@ class AgentRoomWorkStore:
                     result_summary = '', artifact_refs_json = '[]',
                     evidence_refs_json = '[]',
                     blocker_json = ?,
+                    proposed_operability_verdict = '',
+                    proposed_requirement_verdict = '',
                     review_operability_verdict = '',
                     review_requirement_verdict = '',
                     review_evidence_refs_json = '[]', review_reason = '',
@@ -1340,6 +1362,10 @@ class AgentRoomWorkStore:
                 "Room work may be accepted only when operability is passed "
                 "and the requirement is satisfied"
             )
+        if accept and not feedback:
+            raise ValueError(
+                "accept requires a concrete reason stating what was verified"
+            )
         if not accept and not feedback:
             raise ValueError("revision return requires a concrete reason")
         if (
@@ -1350,6 +1376,10 @@ class AgentRoomWorkStore:
             raise ValueError(
                 "a passed and satisfied review must be accepted, not returned"
             )
+        superseded_by_work_id = _optional_text(
+            payload.get("supersededByWorkId"),
+            maximum=240,
+        )
         with self._connect(immediate=True) as conn:
             actor = _participant_for_session(conn, session_id)
             row = self._row(conn, work_id)
@@ -1358,6 +1388,13 @@ class AgentRoomWorkStore:
                 raise ValueError("Room work must be in review")
             if int(row["revision"]) != expected_revision:
                 raise ValueError("Room work revision changed; refresh before review")
+            event_payload: dict[str, object] | None = None
+            if accept:
+                event_payload = self._accept_over_proposed_payload(
+                    conn,
+                    row,
+                    superseded_by_work_id=superseded_by_work_id,
+                )
             review_values = (
                 operability_verdict,
                 requirement_verdict,
@@ -1431,10 +1468,69 @@ class AgentRoomWorkStore:
                 event_type=event_type,
                 actor_participant_id=str(actor["id"]),
                 created_at_ms=timestamp,
+                payload=event_payload,
             )
         result = work_item_payload(row)
         self._notify_terminal(result)
         return result
+
+    def _accept_over_proposed_payload(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        superseded_by_work_id: str,
+    ) -> dict[str, object] | None:
+        proposed_operability = str(row["proposed_operability_verdict"] or "")
+        proposed_requirement = str(row["proposed_requirement_verdict"] or "")
+        blocking_operability = proposed_operability in {"failed", "unverified"}
+        blocking_requirement = proposed_requirement in {
+            "not_satisfied",
+            "unverified",
+        }
+        if not blocking_operability and not blocking_requirement:
+            return None
+        if not superseded_by_work_id:
+            raise ValueError(
+                "cannot accept passed/satisfied over Partner proposed "
+                f"operability={proposed_operability or 'empty'} "
+                f"requirement={proposed_requirement or 'empty'} "
+                "without a superseding review WorkItem; return the item "
+                "or pass supersededByWorkId"
+            )
+        review = conn.execute(
+            "SELECT * FROM agent_room_work_items WHERE id = ?",
+            (superseded_by_work_id,),
+        ).fetchone()
+        if review is None:
+            raise ValueError("superseding review WorkItem was not found")
+        if str(review["id"]) == str(row["id"]):
+            raise ValueError(
+                "superseding review WorkItem must be a distinct WorkItem"
+            )
+        if str(review["room_id"]) != str(row["room_id"]):
+            raise ValueError(
+                "superseding review WorkItem must belong to the same Room"
+            )
+        if int(review["created_at_ms"]) <= int(row["updated_at_ms"]):
+            raise ValueError(
+                "superseding review WorkItem must be created after the "
+                "failed or unverified submission"
+            )
+        if str(review["state"]) not in {"review", "done"}:
+            raise ValueError(
+                "superseding review WorkItem must already be submitted "
+                "with honest dual-axis evidence"
+            )
+        if (
+            str(review["proposed_operability_verdict"] or "") != "passed"
+            or str(review["proposed_requirement_verdict"] or "") != "satisfied"
+        ):
+            raise ValueError(
+                "superseding review WorkItem must propose "
+                "operability=passed and requirement=satisfied"
+            )
+        return {"supersededByWorkId": superseded_by_work_id}
 
     def _notify_terminal(self, work: Mapping[str, object]) -> None:
         if str(work.get("state") or "") not in {"done", "failed", "cancelled"}:
@@ -1596,6 +1692,12 @@ def work_item_payload(row: sqlite3.Row) -> dict[str, object]:
             str(value)
             for value in json.loads(str(row["evidence_refs_json"] or "[]"))
         ],
+        "proposedOperabilityVerdict": str(
+            row["proposed_operability_verdict"] or ""
+        ),
+        "proposedRequirementVerdict": str(
+            row["proposed_requirement_verdict"] or ""
+        ),
         "review": {
             "operabilityVerdict": str(
                 row["review_operability_verdict"] or ""
@@ -1722,6 +1824,56 @@ def _verdict(value: object, name: str, *, allowed: frozenset[str]) -> str:
             f"{name} must be one of: {', '.join(sorted(allowed))}"
         )
     return verdict
+
+
+def _optional_verdict(
+    value: object,
+    name: str,
+    *,
+    allowed: frozenset[str],
+) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text not in allowed:
+        raise ValueError(
+            f"{name} must be one of: {', '.join(sorted(allowed))}"
+        )
+    return text
+
+
+def infer_proposed_verdicts_from_summary(summary: str) -> tuple[str, str]:
+    """Derive honest Partner-proposed axes from submission prose.
+
+    Explicit axis tokens win. Standalone FAILED / UNVERIFIED markers only
+    populate non-passing proposals so Facilitator accept cannot paper over
+    a Partner failure claim. Passing claims are never inferred.
+    """
+
+    text = str(summary or "")
+    operability = ""
+    requirement = ""
+    for match in re.finditer(
+        r"(?:proposed)?operability(?:Verdict)?\s*[:=]\s*"
+        r"(passed|failed|unverified)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        operability = match.group(1).lower()
+    for match in re.finditer(
+        r"(?:proposed)?requirement(?:Verdict)?\s*[:=]\s*"
+        r"(satisfied|not_satisfied|unverified)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        requirement = match.group(1).lower()
+    if operability or requirement:
+        return operability, requirement
+    if re.search(r"\bUNVERIFIED\b", text):
+        return "unverified", "unverified"
+    if re.search(r"\bFAILED\b", text):
+        return "failed", "not_satisfied"
+    return "", ""
 
 
 def _optional_text(value: object, *, maximum: int) -> str:

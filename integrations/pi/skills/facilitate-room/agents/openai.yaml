@@ -1,4 +1,4 @@
 interface:
   display_name: "Facilitate Room"
   short_description: "Supervise owned Room work through verified closeout"
-  default_prompt: "Use $facilitate-room to supervise explicit Partner WorkItems, reconcile unfinished work, verify operability and requirement satisfaction separately, and produce one truthful Room result with document receipts."
+  default_prompt: "Use $facilitate-room to supervise explicit Partner WorkItems, reconcile unfinished work, verify operability and requirement satisfaction separately, and produce one truthful Room result with document receipts. Do not pause a live Room Goal to wait; do not accept unverified review as passed."

@@ -180,7 +180,9 @@ def room_participant_prompt(
                     "这是当前 WorkItem 的第一步：在 Room 工作区 docs/ 下创建 Markdown，"
                     f"workspace_write.workDocument 必须原样使用 {authority_binding}。"
                     "成功回执会给出 workDocumentRegistration.document.path；"
-                    "后续 read/write 立即改用该规范路径，不再沿用首次请求路径，也不要重猜 revision。"
+                    "后续 read/write 立即改用该规范路径，不再沿用首次请求路径；"
+                    "后续 bound write 使用当前文档索引给出的 authorityRevision，"
+                    "不要沿用更早记住的旧值。"
                 )
             continue
         owner_id = (
@@ -191,11 +193,14 @@ def room_participant_prompt(
         owner_name = participant_names.get(owner_id, "未分配伙伴")
         owner_session = participant_sessions.get(owner_id, "")
         scope = "你负责" if work_id in related_ids else "Room 共享"
+        live_revision = authority.get("authorityRevision")
+        if not isinstance(live_revision, int):
+            live_revision = document.get("authorityRevision") or 0
         room_document_lines.append(
             f"- [{scope}] WorkItem {work_id} → "
             f"{_bounded_text(document.get('path'), maximum=1_000)}；"
             f"documentId={_bounded_text(document.get('documentId'), maximum=240)}；"
-            f"authorityRevision={int(document.get('authorityRevision') or 0)}；"
+            f"authorityRevision={int(live_revision)}；"
             f"标题={_bounded_text(document.get('title'), maximum=240) or '未命名工作文档'}；"
             f"负责人=@{owner_name}；Session={owner_session or '未绑定'}"
         )
@@ -278,9 +283,17 @@ def room_participant_prompt(
                         "不得取消、轮询或重新分派该伙伴。",
                         "交付到达后先 collect 当前 WorkItem、WorkDocument 与证据，再显式 accept 或 return。"
                         "分别判断运行可操作性和需求满足度；两轴均通过才用 expectedRevision、verdicts、"
-                        "evidenceRefs accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
-                        "文档修订都不能代替验收。return 后重新委派修订时，必须用新的 Tool 调用并携带"
-                        "原 workItemId；不要新建一个 WorkItem 来冒充同一修订链。",
+                        "evidenceRefs 与非空 reason accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
+                        "文档修订都不能代替验收。审查报告 unverified、changes_required、failed 或未解决 "
+                        "HIGH/MEDIUM 时必须 return，不得写成 passed/satisfied；Runtime 会机械拒绝"
+                        "在 Partner 提交的 failed/unverified/not_satisfied 之上 accept。出现新证据时"
+                        "先委派复核 WorkItem，待复核提交 passed/satisfied 后用 supersededByWorkId "
+                        "显式引用，不得改写历史提交结论。return 后重新委派修订时，"
+                        "必须用新的 Tool 调用并携带原 workItemId；不要新建一个 WorkItem 来冒充同一修订链。"
+                        "不要把仍在进行的 Room Goal 暂停来等待用户或界面；受阻时发 blocked/partial，"
+                        "保持 Goal active。网页验收只用 product browser（PAW Browser）；"
+                        "禁止 desktop_semantic 去操作独立 Chrome/Edge。"
+                        "bound write 使用当前文档索引上的 live authorityRevision，不要沿用更早记住的旧值。",
                         "room_partner 的 typed post 合同：op=post、kind=progress 只发布过程信息；"
                         "progress 是非终态，不会完成 WorkItem、Room Goal 或当前 Session 回合，"
                         "也不得根据 content 前缀或其他文本内容推断终态。主管完成全部 WorkItem 对账，"
@@ -301,8 +314,13 @@ def room_participant_prompt(
                         "也不要把自己当成上级。Facilitator 只负责最终 Root 汇合。",
                         "只有所有验收条件满足且负责的 WorkDocument 已完成收尾同步后，才调用一次 "
                         "room_partner post(kind=work_result)；该结构化交付只会把 WorkItem 提交到 review"
-                        "并通过持久 wake 通知 Facilitator，不会自动验收。不要把进度或尚未满足的条件"
-                        "伪装成 work_result。",
+                        "并通过持久 wake 通知 Facilitator，不会自动验收。work_result 必须携带如实的 "
+                        "proposedOperabilityVerdict 与 proposedRequirementVerdict：未验证写 unverified，"
+                        "失败写 failed/not_satisfied，Facilitator 无法把它们改写成通过。"
+                        "不要把进度或尚未满足的条件伪装成 work_result。"
+                        "网页验收只用 product browser（PAW Browser）；禁止 desktop_semantic "
+                        "去操作独立 Chrome/Edge。bound write 使用当前文档索引上的 live "
+                        "authorityRevision，不要沿用更早记住的旧值。",
                     ]
                 )
             )

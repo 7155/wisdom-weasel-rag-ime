@@ -619,6 +619,12 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             organization = (
                 runtime_root / "organize-work-documents" / "SKILL.md"
             ).read_text(encoding="utf-8")
+            ego_browser = (
+                runtime_root / "ego-browser" / "SKILL.md"
+            ).read_text(encoding="utf-8")
+            independent_review = (
+                runtime_root / "independent-review" / "SKILL.md"
+            ).read_text(encoding="utf-8")
             agent_prompt = (skill_root / "agents" / "openai.yaml").read_text(
                 encoding="utf-8"
             )
@@ -649,6 +655,13 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("does not rank either mode", orchestration)
         self.assertIn("A pass on only one axis is not closure", orchestration)
         self.assertIn("AGENTS.md", bootstrap)
+        self.assertIn("write's `workDocument` field", bootstrap)
+        self.assertIn("live", bootstrap)
+        self.assertIn("authorityRevision", bootstrap)
+        self.assertIn("never emit `clear`/`passed` for unverified work", independent_review)
+        self.assertIn("rewrite unverified work as `clear`/`passed`", independent_review)
+        self.assertIn("Never fall through to standalone Google", ego_browser)
+        self.assertIn("not permission to drive desktop Chrome or Edge", ego_browser)
         self.assertIn("Partners remain ordinary Sessions", facilitation)
         self.assertIn(
             "Partner assignment exists only after a real delegated dispatch",
@@ -665,6 +678,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("`room_partner collect` or `wait`", facilitation)
         self.assertIn("A `wait` timeout never cancels", facilitation)
         self.assertIn("explicitly call `accept` or `return`", facilitation)
+        self.assertIn("Do not pause a live Room Goal to wait", facilitation)
+        self.assertIn("pause a live Room Goal as a wait", facilitation)
+        self.assertIn("If a reviewer reported `unverified`", facilitation)
+        self.assertIn("live `authorityRevision`", facilitation)
+        self.assertIn("product `browser` tool", facilitation)
         self.assertIn("Before any requirements, business-code, configuration, or test write", facilitation)
         self.assertIn("`agent_goal confirm_setup`", facilitation)
         self.assertIn('workDocument={authorityKind:"session_goal"', facilitation)

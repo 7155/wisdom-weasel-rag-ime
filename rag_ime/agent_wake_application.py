@@ -406,7 +406,9 @@ class AgentWakeApplicationService:
                 "instruction": (
                     "先调用 room_partner collect 读取交付、WorkItem、"
                     "WorkDocument 与证据。分别判断运行可操作性和需求满足度；"
-                    "只有两轴均通过时显式 accept，否则显式 return 并写明原因。"
+                    "两轴均通过时用非空 reason 显式 accept，否则显式 return 并写明原因。"
+                    "审查报告 unverified、changes_required、failed 或未解决 HIGH/MEDIUM "
+                    "时必须 return，不得写成 passed/satisfied。"
                 ),
             },
         )

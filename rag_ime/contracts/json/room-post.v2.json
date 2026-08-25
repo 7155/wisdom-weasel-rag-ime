@@ -99,6 +99,21 @@
         }
       }
     },
+    "workResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposedOperabilityVerdict", "proposedRequirementVerdict"],
+      "properties": {
+        "proposedOperabilityVerdict": {
+          "type": "string",
+          "enum": ["passed", "failed", "unverified"]
+        },
+        "proposedRequirementVerdict": {
+          "type": "string",
+          "enum": ["satisfied", "not_satisfied", "unverified"]
+        }
+      }
+    },
     "idempotencyKey": {"type": "string", "minLength": 1},
     "publicationSource": {
       "type": "object",

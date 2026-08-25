@@ -36,6 +36,11 @@ class RoomSessionHost(Protocol):
         session_id: str,
     ) -> None: ...
 
+    def _resume_room_goal_if_paused(
+        self,
+        session_id: str,
+    ) -> None: ...
+
     def _room_target_idle(
         self,
         session_id: str,
@@ -176,6 +181,11 @@ class RoomSessionDispatchService:
                 route_id,
                 session_id,
             )
+        # The explicit user message carries the resume intent for a paused
+        # target Goal. This runs before the Root and user event become
+        # durable; wake, partner and Tool Agent dispatches never reach here.
+        for session_id in target_session_ids:
+            self.host._resume_room_goal_if_paused(session_id)
 
         target_by_session_id = {
             session_id: target
@@ -571,6 +581,7 @@ class RoomSessionDispatchService:
         except Exception as exc:
             self.host._cancel_room_turn(session_id, room_turn_id)
             child = decision.get("child") is True
+            cause_code = _error_cause_code(exc)
             self.host.room_events.publish(
                 room_id=str(room["id"]),
                 event_type=(
@@ -588,12 +599,14 @@ class RoomSessionDispatchService:
                             decision.get("parentDispatchId") or ""
                         ),
                         "error": _public_error(exc),
+                        **({"causeCode": cause_code} if cause_code else {}),
                     }
                     if child
                     else {
                         "rootId": room_turn_id,
                         "dispatchId": dispatch_id,
                         "error": _public_error(exc),
+                        **({"causeCode": cause_code} if cause_code else {}),
                     }
                 ),
                 turn_id=room_turn_id,
@@ -618,3 +631,20 @@ class RoomSessionDispatchService:
 def _public_error(error: BaseException) -> str:
     text = " ".join(str(error).split())
     return text[:240] or error.__class__.__name__
+
+
+def _error_cause_code(error: BaseException) -> str:
+    """Project a durable Room causeCode.
+
+    Session receipts keep the canonical lowercase ``error_code``
+    (``goal_paused``). Room timeline events uppercase the same token so they
+    match existing wake/partner cause comparisons.
+    """
+
+    return " ".join(
+        str(
+            getattr(error, "cause_code", "")
+            or getattr(error, "error_code", "")
+            or ""
+        ).split()
+    ).upper()[:80]

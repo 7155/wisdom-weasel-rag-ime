@@ -12,7 +12,10 @@ PAW exposes the upstream `ego-browser` helper surface through the product
 `browser` tool. The browser is PAW's existing isolated Chromium profile; the
 open host provides `globalThis.ego`, CDP forwarding, semantic snapshots, and
 Task Spaces. Do not install ego lite, run its DMG installer, invoke Playwright,
-or launch Chrome yourself.
+or launch Chrome, Edge, or any second browser yourself. If the built-in PAW
+Browser has no open page or the channel errors, recover that same PAW Browser
+(`openOrReuseTab` in this profile). Never fall through to standalone Google
+Chrome, Microsoft Edge, Playwright, or `desktop_semantic`.
 
 This isolated PAW profile executes Browser capability calls directly without
 per-action approval. Every action remains visible in the Browser trajectory,
@@ -87,8 +90,10 @@ A Task Space is a PAW-owned tab set in the same managed profile. It isolates
 tab/control ownership, not cookies. Ownership is `agent`,
 `agentDelegatedToUser`, or `user`.
 
-- A user-controlled, inactive, or unassigned error is a hard stop. Do not retry,
-  work around it, or take over automatically.
+- A missing PAW Browser tab or "no open page" error is recoverable inside this
+  same managed profile. It is not permission to drive desktop Chrome or Edge.
+- A user-controlled, inactive, or unassigned Task Space error is a hard stop.
+  Do not retry, work around it, or take over automatically.
 - For login, captcha, payment, destructive confirmation, or another manual
   step, prepare safely, call `taskSpaces.handOff`, check its result, and tell the
   user exactly what remains.

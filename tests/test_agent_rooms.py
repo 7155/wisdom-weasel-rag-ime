@@ -1411,6 +1411,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertIn("room_partner", facilitator_context)
         self.assertIn("这不代表当前请求是普通闲聊", facilitator_context)
         self.assertIn("输出实现结果前必须先加载 facilitate-room", facilitator_context)
+        self.assertIn("不要把仍在进行的 Room Goal 暂停", facilitator_context)
+        self.assertIn("不得写成 passed/satisfied", facilitator_context)
         self.assertNotIn("当前阶段：普通对话", facilitator_context)
         evidence = self.service.memory_evidence.list(
             role_id=str(facilitator["roleId"]),
@@ -1731,6 +1733,135 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertTrue(accepted["accepted"])
         self.assertEqual(accepted["participant"]["id"], target["id"])
         self.assertEqual(accepted["retryOfRootId"], "room-turn:failed")
+
+    def test_user_room_message_resumes_paused_goal_before_dispatch(self) -> None:
+        """An explicit user Room message is the only conversation entry a
+        returning user has; it must resume a paused target Goal before the
+        Root and user event are persisted, then deliver normally."""
+
+        room = self.service.create_room(
+            {
+                "title": "暂停后从会话入口继续",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        lead = room["participants"][0]
+        lead_session = str(lead["sessionId"])
+        goal = self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "objective": "完成小游戏项目",
+                "expectedRevision": 0,
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )
+
+        statuses_at_dispatch: list[str] = []
+
+        def observe_prompt(
+            session_id: str,
+            payload: dict[str, object],
+        ) -> dict[str, object]:
+            statuses_at_dispatch.append(
+                str(self.service.sessions.agent_goal(session_id)["status"])
+            )
+            return {"turnId": "turn:resumed"}
+
+        with patch.object(
+            self.service,
+            "prompt",
+            side_effect=observe_prompt,
+        ) as prompt:
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {"message": "继续完成", "clientMessageId": "room-goal-resume-1"},
+            )
+
+        prompt.assert_called_once()
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(accepted["participant"]["id"], lead["id"])
+        self.assertEqual(statuses_at_dispatch, ["active"])
+        resumed = self.service.sessions.agent_goal(lead_session)
+        self.assertEqual(resumed["status"], "active")
+        event_types = [
+            event["eventType"]
+            for event in self.service.room_snapshot(str(room["id"]))["events"]
+        ]
+        self.assertNotIn("turn_failed", event_types)
+
+    def test_user_room_message_does_not_resume_cancelled_goal_and_projects_cause(
+        self,
+    ) -> None:
+        """Only a paused Goal is resumed. Terminal Goals keep the existing
+        rejection, and the goal cause code must survive the command receipt
+        and reach the durable turn_failed event."""
+
+        room = self.service.create_room(
+            {
+                "title": "已取消 Goal 不自动恢复",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        lead = room["participants"][0]
+        lead_session = str(lead["sessionId"])
+        goal = self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "objective": "已经放弃的目标",
+                "expectedRevision": 0,
+            },
+        )["workflow"]["goal"]
+        self.service.sessions.mutate_agent_goal(
+            lead_session,
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "用户放弃",
+            },
+        )
+
+        with self.assertRaises(ValueError) as blocked:
+            self.service.post_room_message(
+                str(room["id"]),
+                {"message": "继续完成", "clientMessageId": "room-goal-cancelled-1"},
+            )
+
+        self.assertEqual(
+            getattr(blocked.exception, "cause_code", ""),
+            "goal_cancelled",
+        )
+        self.assertEqual(
+            str(self.service.sessions.agent_goal(lead_session)["status"]),
+            "cancelled",
+        )
+        failures = [
+            event
+            for event in self.service.room_snapshot(str(room["id"]))["events"]
+            if event["eventType"] == "turn_failed"
+        ]
+        self.assertEqual(len(failures), 1)
+        # Room durable events uppercase the same canonical lowercase error_code.
+        self.assertEqual(
+            failures[0]["payload"].get("causeCode"),
+            "GOAL_CANCELLED",
+        )
 
     def test_room_messages_always_use_participant_sessions_even_with_retired_kernel_mode(self) -> None:
         """A stale install flag must not resurrect the retired Room runtime."""

@@ -26,6 +26,8 @@
     "resultSummary",
     "artifactRefs",
     "evidenceRefs",
+    "proposedOperabilityVerdict",
+    "proposedRequirementVerdict",
     "review",
     "blocker",
     "acceptedTurnId",
@@ -71,6 +73,14 @@
       "type": "array",
       "maxItems": 24,
       "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+    },
+    "proposedOperabilityVerdict": {
+      "type": "string",
+      "enum": ["", "passed", "failed", "unverified"]
+    },
+    "proposedRequirementVerdict": {
+      "type": "string",
+      "enum": ["", "satisfied", "not_satisfied", "unverified"]
     },
     "review": {
       "type": "object",

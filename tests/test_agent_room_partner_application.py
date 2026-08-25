@@ -127,6 +127,12 @@ class _RoomWorkLedger:
             item["state"] = "review"
             item["resultSummary"] = payload["resultSummary"]
             item["evidenceRefs"] = list(payload["evidenceRefs"])
+            item["proposedOperabilityVerdict"] = str(
+                payload.get("proposedOperabilityVerdict") or ""
+            )
+            item["proposedRequirementVerdict"] = str(
+                payload.get("proposedRequirementVerdict") or ""
+            )
             return dict(item)
 
     def accept(self, _session_id: str, payload: object) -> dict[str, object]:
@@ -837,6 +843,77 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         self.assertEqual(result["state"], "review")  # type: ignore[index]
         self.assertEqual(result["resultSummary"], "文档和实现均已交付")  # type: ignore[index]
         self.assertEqual(published_phases, ["assigned", "submitted"])
+
+    def test_work_result_post_requires_structured_proposed_verdicts(self) -> None:
+        participant = {
+            "id": "room-a:p2",
+            "roomId": "room-a",
+            "sessionId": "room-a:s2",
+            "displayName": "澄·今",
+            "status": "active",
+        }
+        room = {
+            "id": "room-a",
+            "status": "active",
+            "activeTopicId": "topic-a",
+        }
+        events = _RoomEvents()
+        service = RoomPartnerApplicationService(
+            rooms=SimpleNamespace(
+                participant_for_session=lambda *_args, **_kwargs: participant,
+                get=lambda _room_id: room,
+            ),
+            room_turns=SimpleNamespace(
+                active_turn=lambda _session_id: ("root-a", "dispatch-b"),
+            ),
+            runtime_status=lambda: {},
+            sessions=SimpleNamespace(),
+            room_events=events,
+            room_target_idle=lambda *_args, **_kwargs: True,
+            begin_room_turn=lambda *_args, **_kwargs: None,
+            room_dispatch=SimpleNamespace(),
+            cancel_room_turn=lambda *_args, **_kwargs: None,
+            abort_session=lambda *_args, **_kwargs: {},
+            room_topic_for_turn=lambda _root_id: "topic-a",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "proposedOperabilityVerdict",
+        ):
+            service.execute(
+                "room-a:s2",
+                {
+                    "op": "post",
+                    "kind": "work_result",
+                    "content": "交付完成，但缺少结构化提交判定。",
+                },
+                tool_call_id="tool:work-result-missing",
+            )
+        self.assertEqual(events.published, [])
+
+        receipt = service.execute(
+            "room-a:s2",
+            {
+                "op": "post",
+                "kind": "work_result",
+                "content": "浏览器执行 FAILED，两轴 UNVERIFIED。",
+                "proposedOperabilityVerdict": "failed",
+                "proposedRequirementVerdict": "unverified",
+            },
+            tool_call_id="tool:work-result-honest",
+        )
+
+        self.assertEqual(receipt["kind"], "work_result")
+        post = events.published[0]["payload"]["post"]  # type: ignore[index]
+        validate_contract(post, "room-post.v2.json")
+        self.assertEqual(
+            post["workResult"],
+            {
+                "proposedOperabilityVerdict": "failed",
+                "proposedRequirementVerdict": "unverified",
+            },
+        )
 
     def test_post_publishes_one_valid_typed_room_post(self) -> None:
         participant = {
