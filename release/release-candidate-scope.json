@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 522,
+    "pathCount": 532,
     "dispositionCounts": {
       "delete_old_implementation": 20,
-      "keep_release": 502
+      "keep_release": 512
     },
     "groupCounts": {
       "control_center_release_ui": 269,
       "desktop_semantic_accessibility": 12,
       "installation_reliability": 9,
       "memory_curation": 14,
-      "project_harness": 11,
+      "project_harness": 12,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
-      "session_room_skill_flow": 202
+      "session_room_skill_flow": 211
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -3751,6 +3751,76 @@
       "disposition": "keep_release",
       "group": "installation_reliability",
       "reason": "Keep the reproducible dependency and installed Gateway reliability changes."
+    },
+    {
+      "path": "PAW_ROOM_MULTI_AGENT_BLACKBOX_ACCEPTANCE_20260825.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the source-linked Room multi-Agent black-box acceptance receipt and its honest foreground boundary."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-room-work-item.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep generated Room work verdict contracts aligned with the accepted source schema."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-room.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep generated Room participant capacity contracts aligned with the accepted source schema."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/room-post.v2.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep generated Room post review contracts aligned with the accepted source schema."
+    },
+    {
+      "path": "rag_ime/agent_background_jobs.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep background Agent job recovery aligned with durable Session and Room continuation."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-participant.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the authoritative participant capacity contract used by eight-participant Rooms."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-room.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the authoritative Room capacity contract used by eight-participant Rooms."
+    },
+    {
+      "path": "rag_ime/db/migrations/0163_agent_background_job_reattach.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep append-only persistence needed for background job reattachment after restart."
+    },
+    {
+      "path": "tests/test_agent_definitions.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Room capacity and participant-definition regression coverage."
+    },
+    {
+      "path": "tests/test_agent_lifecycle_cancellation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep restart, cancellation, and background-job continuation regression coverage."
     }
   ]
 }
