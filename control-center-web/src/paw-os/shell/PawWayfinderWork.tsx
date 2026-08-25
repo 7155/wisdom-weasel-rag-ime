@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, CircleAlert, LoaderCircle, Search, Users } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { sessionItems } from '@/features/agent/types';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
@@ -20,8 +20,12 @@ import {
  * keeps the first screen short. It reads the same directory the Agent App
  * owns, and every row opens straight into the Agent window — the desktop
  * projects work, it does not manage it.
+ *
+ * The panel takes no props, so memo makes it a true leaf: it re-renders when
+ * its own directory read, query or expansion state changes, and never because
+ * the desktop above it moved a window, drew a lasso or ticked the clock.
  */
-export function PawWayfinderWork() {
+export const PawWayfinderWork = memo(function PawWayfinderWork() {
   const transport = useControlTransport();
   const api = usePawDesktopApi();
   const desktopIdle = usePawDesktopStore((state) => Object.keys(state.windows).length === 0);
@@ -141,7 +145,7 @@ export function PawWayfinderWork() {
       </div>
     </section>
   );
-}
+});
 
 function WorkBucket({ bucket, expanded, expandedRepeats, onOpen, onToggle, onToggleRepeats, searching }: {
   bucket: WayfinderWorkBucket;

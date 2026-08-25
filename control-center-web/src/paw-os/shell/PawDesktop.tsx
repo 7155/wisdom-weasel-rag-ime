@@ -1,5 +1,5 @@
 import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
@@ -29,6 +29,13 @@ const LAUNCHPAD_KIND_LABEL: Record<(typeof LAUNCHPAD_KIND_ORDER)[number], string
 type PawMenuState = PawMenuTarget & { x: number; y: number };
 type PawSelectionRect = { x: number; y: number; width: number; height: number };
 
+const selectMenuSignature = (state: { windows: Record<string, { id: string; appId: PawAppId; placement?: string }> }) => Object
+  .values(state.windows)
+  .map((node) => `${node.id}\u0001${node.appId}\u0001${node.placement ?? ''}`)
+  .sort()
+  .join('\u0000');
+const selectNoMenuSignature = () => '';
+
 export function PawDesktop() {
   const api = usePawDesktopApi();
   const activeWindowId = usePawDesktopStore((state) => state.activeWindowId);
@@ -37,19 +44,6 @@ export function PawDesktop() {
   ));
   const launchpadOpen = usePawDesktopStore((state) => state.launchpadOpen);
   const overviewOpen = usePawDesktopStore((state) => state.overviewOpen);
-  /* Menus and their disabled states need only structural window facts:
-   * identity, owning App and placement. Subscribing to that sorted signature
-   * instead of the windows record keeps the whole shell (menu bar, Wayfinder,
-   * Dock, Launchpad) from re-rendering on bounds commits after every drag,
-   * resize or viewport refit, and on runtime title/target binds. */
-  const menuSignature = usePawDesktopStore((state) => Object.values(state.windows)
-    .map((node) => `${node.id}\u0001${node.appId}\u0001${node.placement ?? ''}`)
-    .sort()
-    .join('\u0000'));
-  const menuWindows = useMemo(() => menuSignature.split('\u0000').filter(Boolean).map((item) => {
-    const [id, appId, placement] = item.split('\u0001') as [string, PawAppId, string];
-    return { id, appId, placement };
-  }), [menuSignature]);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
   const collaborationFocus = Boolean(collaborationFocusGroup);
   /* The wallpaper only spends frames when somebody can actually watch it.
@@ -63,6 +57,16 @@ export function PawDesktop() {
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
+  /* Menus and their disabled states need only structural window facts:
+   * identity, owning App and placement. Nobody reads them until a menu is
+   * actually open, so a closed desktop subscribes to a constant — window
+   * opens, closes, snaps and runtime title binds then cost the shell nothing,
+   * and no bounds commit can re-render the menu bar, Wayfinder or Dock. */
+  const menuSignature = usePawDesktopStore(contextMenu ? selectMenuSignature : selectNoMenuSignature);
+  const menuWindows = useMemo(() => menuSignature.split('\u0000').filter(Boolean).map((item) => {
+    const [id, appId, placement] = item.split('\u0001') as [string, PawAppId, string];
+    return { id, appId, placement };
+  }), [menuSignature]);
   const viewportRef = useRef<HTMLElement>(null);
   const menuAppRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -129,7 +133,12 @@ export function PawDesktop() {
     };
   }, [api]);
 
-  const openApp = (appId: PawAppId) => {
+  /* Every shell callback below reads live state through api.getState()
+   * instead of closing over render-time values, so each is created once.
+   * That referential stability is what lets Wayfinder and the Dock be memo
+   * leaves: focus changes, lasso frames and context menus re-render this
+   * component without re-rendering those subtrees. */
+  const openApp = useCallback((appId: PawAppId) => {
     const state = api.getState();
     const existingWindowId = [...state.stack].reverse().find((windowId) => state.windows[windowId]?.appId === appId)
       ?? Object.values(state.windows).find((node) => node.appId === appId)?.id;
@@ -138,7 +147,17 @@ export function PawDesktop() {
     state.setLaunchpadOpen(false);
     pulsePawComposition('app', .72);
     window.history.replaceState(null, '', `${window.location.search}#${pawApp(appId).route}`);
-  };
+  }, [api]);
+  const toggleLaunchpad = useCallback(() => {
+    const state = api.getState();
+    state.setLaunchpadOpen(!state.launchpadOpen);
+  }, [api]);
+  const closeLaunchpad = useCallback(() => api.getState().setLaunchpadOpen(false), [api]);
+  const toggleOverview = useCallback(() => {
+    pulsePawComposition('system', .58);
+    const state = api.getState();
+    state.setOverviewOpen(!state.overviewOpen);
+  }, [api]);
   const selectApp = useCallback((appId: PawAppId, additive: boolean) => {
     setSelectedApps((current) => {
       if (!additive) return new Set([appId]);
@@ -194,6 +213,12 @@ export function PawDesktop() {
     const baseline = additive ? new Set(selectedApps) : new Set<PawAppId>();
     if (!additive) setSelectedApps(new Set());
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    /* Desktop identities cannot move while the lasso is being drawn, so their
+     * boxes are measured once at the gesture edge. Re-reading them per frame
+     * forced a synchronous layout of the whole desktop on every sample — the
+     * single most expensive thing a rubber-band selection could do. */
+    const targets = Array.from(viewport.querySelectorAll<HTMLElement>('[data-desktop-app]'))
+      .map((element) => ({ appId: element.dataset.desktopApp as PawAppId, rect: element.getBoundingClientRect() }));
     let frame = 0;
     let latest: PointerEvent | null = null;
     const apply = () => {
@@ -212,13 +237,12 @@ export function PawDesktop() {
         height: bottom - top,
       });
       const next = new Set(baseline);
-      viewport.querySelectorAll<HTMLElement>('[data-desktop-app]').forEach((element) => {
-        const rect = element.getBoundingClientRect();
-        if (rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top) {
-          next.add(element.dataset.desktopApp as PawAppId);
-        }
-      });
-      setSelectedApps(next);
+      for (const { appId, rect } of targets) {
+        if (rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top) next.add(appId);
+      }
+      // Most frames of a drag cross no new identity; keeping the same Set
+      // keeps the Wayfinder out of the frame entirely.
+      setSelectedApps((current) => sameAppSelection(current, next) ? current : next);
     };
     const move = (moveEvent: PointerEvent) => {
       latest = moveEvent;
@@ -347,7 +371,7 @@ export function PawDesktop() {
       onContextMenu={openContextMenu}
     >
       <header className="paw-menu-bar">
-        <button aria-label="打开全部 App" className="paw-system-mark" onClick={() => api.getState().setLaunchpadOpen(!launchpadOpen)} type="button"><PawBrandMark size={15} /><span className="paw-brand-wordmark">PAW</span></button>
+        <button aria-label="打开全部 App" className="paw-system-mark" onClick={toggleLaunchpad} type="button"><PawBrandMark size={15} /><span className="paw-brand-wordmark">PAW</span></button>
         <button
           aria-expanded={contextMenu?.kind === 'menubar'}
           aria-haspopup="menu"
@@ -377,15 +401,12 @@ export function PawDesktop() {
       ><X size={14} />退出协作聚焦</button> : null}
       <PawDock
         activeAppId={activeAppId}
-        onLaunchpad={() => api.getState().setLaunchpadOpen(!launchpadOpen)}
+        onLaunchpad={toggleLaunchpad}
         onOpen={openApp}
-        onOverview={() => {
-          pulsePawComposition('system', .58);
-          api.getState().setOverviewOpen(!overviewOpen);
-        }}
+        onOverview={toggleOverview}
         overviewOpen={overviewOpen}
       />
-      {launchpadOpen ? <PawLaunchpad onClose={() => api.getState().setLaunchpadOpen(false)} onOpen={openApp} /> : null}
+      {launchpadOpen ? <PawLaunchpad onClose={closeLaunchpad} onOpen={openApp} /> : null}
       {contextMenu ? (
         <PawContextMenu
           anchor={contextMenu.kind === 'menubar' ? menuAppRef : undefined}
@@ -423,7 +444,11 @@ function PawMenuClock() {
   return <span>{clock}</span>;
 }
 
-function Wayfinder({ onOpen, onSelect, selectedApps }: {
+/* The Wayfinder is the desktop's heaviest resting subtree: the wallpaper, the
+ * recent-work panel and the identity column. Its props are the two stable
+ * callbacks plus the selection set, so clock ticks, menus, focus changes and
+ * every lasso frame that crosses no new identity leave it untouched. */
+const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
   onOpen: (id: PawAppId) => void;
   onSelect: (id: PawAppId, additive: boolean) => void;
   selectedApps: ReadonlySet<PawAppId>;
@@ -491,7 +516,7 @@ function Wayfinder({ onOpen, onSelect, selectedApps }: {
       </div>
     </section>
   );
-}
+});
 
 /* One projection answers "which Apps are running, which are hidden" for both
  * the Wayfinder list and the Dock. The sorted string signature keeps the
@@ -514,7 +539,11 @@ function usePawRunningApps(): { open: ReadonlySet<PawAppId>; visible: ReadonlySe
   }, [signature]);
 }
 
-function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }: {
+/* The shelf answers the pointer directly through dock-magnification's style
+ * writes, so React only owns its resting content: which App is current, which
+ * are running, whether the overview is open. Everything else on the desktop
+ * re-renders without touching it. */
+const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }: {
   activeAppId: PawAppId | null;
   onLaunchpad: () => void;
   onOpen: (id: PawAppId) => void;
@@ -551,7 +580,7 @@ function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }:
       <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
     </nav>
   );
-}
+});
 
 /* Magnetic Dock conduction. A rAF-throttled pointer stream feeds the pure
  * magnet geometry in dock-magnification.ts (cosine grow, neighbour push and
@@ -718,6 +747,14 @@ function timeLabel(): string {
     minute: '2-digit',
     hour12: false,
   }).format(new Date());
+}
+
+function sameAppSelection(left: ReadonlySet<PawAppId>, right: ReadonlySet<PawAppId>): boolean {
+  if (left.size !== right.size) return false;
+  for (const appId of right) {
+    if (!left.has(appId)) return false;
+  }
+  return true;
 }
 
 function launchpadKind(app: PawAppDefinition): (typeof LAUNCHPAD_KIND_ORDER)[number] {

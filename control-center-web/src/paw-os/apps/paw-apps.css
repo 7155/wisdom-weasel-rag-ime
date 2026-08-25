@@ -180,18 +180,19 @@
   width: 100%; height: 100%; min-width: 0; min-height: 0;
   display: grid; grid-template-rows: 44px minmax(0, 1fr);
   overflow: hidden; color: var(--paw-ink);
-  /* Room is a live OS surface: let the desktop breathe behind the content
-     while keeping the native window titlebar opaque. */
-  background: color-mix(in srgb, var(--paw-panel-strong) 76%, transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
-  backdrop-filter: blur(18px) saturate(125%);
+  /* The window shell beneath this surface is opaque white (shell material
+     contract), so a backdrop-filter here can only blur a flat colour — it
+     costs a full-window compositor layer per Agent window and changes zero
+     pixels. Opaque surface, no glass. */
+  background: var(--paw-panel-strong);
   container: paw-session-workspace / inline-size;
 }
 .paw-session-workspace__header {
   z-index: 6; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 17px;
   border-bottom: 1px solid var(--paw-line-soft);
-  background: color-mix(in srgb, var(--paw-panel-strong) 94%, transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%);
+  /* Same rule the Room header already follows: a stacked header blur would
+     re-rasterize the streaming timeline on every frame for no visible gain. */
+  background: color-mix(in srgb, var(--paw-panel-strong) 97%, transparent);
   user-select: none;
 }
 .paw-session-workspace__view-switch { flex: 1 1 auto; }

@@ -7,6 +7,7 @@ import { PawDesktopProvider } from '../runtime/desktop-context';
 import { pawApps, type PawAppId } from '../runtime/app-registry';
 import { PawDesktop } from './PawDesktop';
 import desktopSource from './PawDesktop.tsx?raw';
+import wayfinderWorkSource from './PawWayfinderWork.tsx?raw';
 
 const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate');
 const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, 'getAnimations');
@@ -436,6 +437,57 @@ describe('PAWOS desktop', () => {
     expect(desktopSource).toContain('windowGestureOwnsPointer');
     expect(desktopSource).toMatch(/dataset\.windowInteraction/);
     expect(desktopSource).toMatch(/requestAnimationFrame\(apply\)/);
+  });
+
+  it('measures desktop identities once per lasso instead of on every frame', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      frames[handle - 1] = () => undefined;
+    });
+    renderDesktop();
+    const viewport = screen.getByRole('main');
+    const shortcuts = screen.getByLabelText('桌面 App');
+    const agent = within(shortcuts).getByRole('button', { name: 'Agent' });
+    let measurements = 0;
+    Object.defineProperty(viewport, 'getBoundingClientRect', { value: () => domRect(0, 0, 900, 700) });
+    Object.defineProperty(agent, 'getBoundingClientRect', {
+      value: () => {
+        measurements += 1;
+        return domRect(680, 80, 78, 70);
+      },
+    });
+
+    fireEvent.pointerDown(viewport, { button: 0, clientX: 650, clientY: 50, pointerId: 9 });
+    expect(measurements).toBe(1);
+
+    for (const clientY of [180, 260, 340]) {
+      fireEvent.pointerMove(window, { clientX: 790, clientY, pointerId: 9 });
+      act(() => {
+        frames.splice(0).forEach((callback) => callback(performance.now()));
+      });
+    }
+
+    // Identities cannot move while the band is drawn, so the gesture reads
+    // their boxes exactly once — no forced layout per sampled frame.
+    expect(measurements).toBe(1);
+    expect(agent).toHaveAttribute('aria-selected', 'true');
+    fireEvent.pointerUp(window, { clientX: 790, clientY: 340, pointerId: 9 });
+  });
+
+  it('keeps the Wayfinder, its work panel and the Dock out of desktop re-renders', () => {
+    expect(desktopSource).toMatch(/const Wayfinder = memo\(function Wayfinder/);
+    expect(desktopSource).toMatch(/const PawDock = memo\(function PawDock/);
+    expect(wayfinderWorkSource).toMatch(/export const PawWayfinderWork = memo\(function PawWayfinderWork/);
+    // Memo only pays off when the props are stable identities.
+    expect(desktopSource).toMatch(/const openApp = useCallback\(/);
+    expect(desktopSource).toMatch(/const toggleLaunchpad = useCallback\(/);
+    expect(desktopSource).toMatch(/const toggleOverview = useCallback\(/);
+    // …and when a lasso frame that crosses no new identity keeps its Set.
+    expect(desktopSource).toMatch(/sameAppSelection\(current, next\) \? current : next/);
   });
 });
 

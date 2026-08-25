@@ -97,8 +97,9 @@
   gap: 12px;
   padding: 0 12px;
   border-bottom: 1px solid var(--paw-wb-line);
-  background: rgb(255 255 255 / 88%);
-  backdrop-filter: blur(16px) saturate(1.15);
+  /* The deck is a fixed grid row — nothing ever scrolls beneath it, so a
+     backdrop blur can only sample the flat window surface. Opaque, no glass. */
+  background: rgb(255 255 255 / 97%);
   user-select: none;
   z-index: 4;
 }
@@ -646,8 +647,8 @@
   gap: 10px;
   padding: 5px 10px;
   border-bottom: 1px solid var(--paw-wb-line);
-  background: rgb(255 255 255 / 84%);
-  backdrop-filter: blur(14px) saturate(1.1);
+  /* Fixed toolbar row over the flat panel — blur here was invisible cost. */
+  background: rgb(255 255 255 / 96%);
 }
 .paw-workbench-migrated .paw-wb-planning-tools__date,
 .paw-workbench-migrated .paw-wb-planning-tools__actions { min-width: 0; display: flex; align-items: center; gap: 5px; }
