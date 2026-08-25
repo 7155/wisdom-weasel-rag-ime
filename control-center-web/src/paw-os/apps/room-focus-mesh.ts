@@ -1,8 +1,9 @@
-import type {
-  RoomFocusHandoff,
-  RoomFocusProjection,
-  RoomFocusState,
-  RoomFocusWorkItem,
+import {
+  roomFocusHasCoordinator,
+  type RoomFocusHandoff,
+  type RoomFocusProjection,
+  type RoomFocusState,
+  type RoomFocusWorkItem,
 } from './room-focus-projection';
 
 /**
@@ -11,13 +12,18 @@ import type {
  * authoritative RoomFocusProjection field: ownership, accountability,
  * recorded review, parent/child lineage or a real handoff.
  *
- * Columns are identity lanes: Sol (the origin) leftmost, then one stable lane
+ * Columns are identity lanes: the origin leftmost, then one stable lane
  * per partner; a WorkItem lives in its owner's lane. Rows are real event
  * order — a node's vertical position comes only from recorded times
  * (WorkItem updatedAtMs, handoff createdAtMs, flow packet createdAtMs), so
  * reading top→bottom is reading time. Nothing invents a timestamp: a partner
  * with no recorded involvement stays on the origin row. Layout is pure
  * deterministic math over stable orderings (UR-023).
+ *
+ * The origin only becomes Sol once a connected partner really holds the
+ * `coordinator` role. Without a host the column stays a reserved gutter for
+ * unowned work: no root node, no lifeline, and lineage edges fall away with
+ * it rather than pointing at a chair nobody sits in.
  */
 
 export type RoomFocusMeshEdgeKind = 'ownership' | 'accountable' | 'review' | 'parent' | 'handoff';
@@ -60,6 +66,8 @@ export interface RoomFocusMeshLane {
 }
 
 export interface RoomFocusMesh {
+  /** True only while a connected partner really holds the coordinator role. */
+  hasOrigin: boolean;
   nodes: RoomFocusMeshNode[];
   edges: RoomFocusMeshEdge[];
   /** Edge kinds actually present, in legend order. Never lists absent kinds. */
@@ -92,8 +100,9 @@ export function roomFocusMeshEdgeKindLabel(kind: RoomFocusMeshEdgeKind): string 
 }
 
 export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
-  const partnerColumn = new Map(focus.partners.map((partner, index) => [partner.participantId, index + 1]));
-  const columnCount = focus.partners.length + 1;
+  const coordinatorActive = roomFocusHasCoordinator(focus.partners);
+  const partnerColumn = new Map(focus.partners.map((partner, index) => [partner.participantId, index + (coordinatorActive ? 1 : 0)]));
+  const columnCount = focus.partners.length + (coordinatorActive ? 1 : 0);
   const laneX = (column: number) => round(X_MARGIN + ((column + 0.5) * (100 - 2 * X_MARGIN)) / columnCount);
 
   /* Chronological rows: every timed node in real event order. Ties keep
@@ -118,7 +127,7 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
   const height = Math.max(MIN_HEIGHT, ROW_TOP + (rowCount - 1) * ROW_STEP + ROW_BOTTOM);
   const rowY = (row: number) => round(ROW_TOP + row * ROW_STEP);
 
-  const nodes: RoomFocusMeshNode[] = [{
+  const nodes: RoomFocusMeshNode[] = coordinatorActive ? [{
     id: 'root',
     kind: 'root',
     refId: '',
@@ -126,13 +135,13 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
     y: rowY(0),
     state: focus.goal.state,
     label: focus.goal.title,
-  }];
+  }] : [];
   focus.partners.forEach((partner, index) => {
     nodes.push({
       id: `partner:${partner.participantId}`,
       kind: 'partner',
       refId: partner.participantId,
-      x: laneX(index + 1),
+      x: laneX(coordinatorActive ? index + 1 : index),
       /* No recorded involvement → the partner waits on the origin row. */
       y: rowY(rowById.get(`partner:${partner.participantId}`) ?? 0),
       state: partner.state,
@@ -185,12 +194,16 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
   const workIds = new Set(focus.workItems.map((item) => item.id));
   for (const item of focus.workItems) {
     const workId = `work:${item.id}`;
-    connect(
-      'parent',
-      item.parentId && workIds.has(item.parentId) ? `work:${item.parentId}` : 'root',
-      workId,
-      item.state,
-    );
+    const parentId = item.parentId && workIds.has(item.parentId)
+      ? `work:${item.parentId}`
+      : coordinatorActive
+        ? 'root'
+        : item.ownerParticipantId
+          ? `partner:${item.ownerParticipantId}`
+          : focus.partners[0]
+            ? `partner:${focus.partners[0].participantId}`
+            : workId;
+    connect('parent', parentId, workId, item.state);
     if (item.ownerParticipantId) connect('ownership', `partner:${item.ownerParticipantId}`, workId, item.state);
     if (item.accountableParticipantId && item.accountableParticipantId !== item.ownerParticipantId) {
       connect('accountable', `partner:${item.accountableParticipantId}`, workId, item.state);
@@ -209,7 +222,9 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
     );
   }
 
-  const lanes: RoomFocusMeshLane[] = [{ id: 'root', x: laneX(0), y0: rowY(0), y1: height - 4 }];
+  const lanes: RoomFocusMeshLane[] = coordinatorActive
+    ? [{ id: 'root', x: laneX(0), y0: rowY(0), y1: height - 4 }]
+    : [];
   for (const partner of focus.partners) {
     const node = byId.get(`partner:${partner.participantId}`)!;
     lanes.push({ id: partner.participantId, x: node.x, y0: node.y, y1: height - 4 });

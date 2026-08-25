@@ -25,6 +25,7 @@ import {
 import type { RoomSummary } from '@/features/rooms/room-types';
 import {
   roomFocusStateLabel,
+  roomFocusHasCoordinator,
   type RoomFocusProjection,
   type RoomFocusState,
 } from './room-focus-projection';
@@ -169,6 +170,8 @@ export interface RoomStarfieldBeam {
 
 export interface RoomStarfieldModel {
   goal: { title: string; state: RoomFocusState; stateLabel: string };
+  /** Sol centre only when a connected coordinator hosts the Room. */
+  hasCoordinator: boolean;
   planets: RoomStarfieldPlanet[];
   beams: RoomStarfieldBeam[];
   counts: RoomFocusProjection['counts'];
@@ -235,6 +238,7 @@ export function buildRoomStarfield(focus: RoomFocusProjection): RoomStarfieldMod
       state: focus.goal.state,
       stateLabel: roomFocusStateLabel(focus.goal.state),
     },
+    hasCoordinator: roomFocusHasCoordinator(focus.partners),
     planets,
     beams,
     counts: focus.counts,

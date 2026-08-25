@@ -18,6 +18,7 @@ import {
   roomFocusMeshEdgeKindLabel,
   type RoomFocusMeshNode,
 } from './room-focus-mesh';
+import { roomFocusHasCoordinator } from './room-focus-projection';
 import {
   roomFocusStateLabel,
   type RoomFocusPacket,
@@ -83,10 +84,11 @@ export function PawRoomFocusOverview({
     : selectedWork
       ? focus.partners.find((partner) => partner.participantId === selectedWork.ownerParticipantId)
       : undefined;
+  const coordinatorActive = roomFocusHasCoordinator(focus.partners);
 
   return (
-    <section aria-label="Sol 协作态势" className="paw-room-focus-overview">
-      {!hideMission ? <header className="paw-room-focus-overview__mission">
+    <section aria-label="Sol 协作态势" className="paw-room-focus-overview" data-coordinator={coordinatorActive || undefined}>
+      {!hideMission && coordinatorActive ? <header className="paw-room-focus-overview__mission">
         <span aria-hidden="true" className="paw-room-focus-overview__sol"><i /></span>
         <div>
           <small>Sol · 当前目标</small>
@@ -96,6 +98,12 @@ export function PawRoomFocusOverview({
         <div aria-label={`目标状态：${roomFocusStateLabel(focus.goal.state)}`} className="paw-room-focus-overview__mission-state" data-state={focus.goal.state}>
           <i aria-hidden="true" />
           <span>{roomFocusStateLabel(focus.goal.state)}</span>
+        </div>
+      </header> : !hideMission ? <header className="paw-room-focus-overview__mission paw-room-focus-overview__mission--dormant">
+        <div>
+          <small>等待主持</small>
+          <strong>{focus.goal.title}</strong>
+          <p>指定一位伙伴为「主持」后，Sol 协作态势与星空才会点亮。</p>
         </div>
       </header> : null}
 
