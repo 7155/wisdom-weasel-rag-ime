@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RoomFocusProjection } from './room-focus-projection';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
@@ -164,28 +165,44 @@ const focus: RoomFocusProjection = {
 };
 
 describe('PawRoomFocusOverview', () => {
-  it('answers goal, owner, state and handoff without opening every partner', () => {
-    render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+  it('answers goal, owner, state and handoff from the mesh without opening every partner', () => {
+    const { container } = render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
     expect(screen.getByRole('region', { name: 'Sol 协作态势' })).toHaveTextContent('任务图依赖验证');
-    expect(screen.getByRole('tree', { name: '任务树' })).toHaveTextContent('实现依赖数据投影');
-    expect(screen.getByRole('list', { name: '行星伙伴' })).toHaveTextContent('Earth');
-    expect(screen.getByLabelText('任务交接')).toHaveTextContent('Earth → Mars');
+    const mesh = screen.getByRole('group', { name: '协作网状图' });
+    // Partners and WorkItems are nodes with their real names and states.
+    expect(within(mesh).getByRole('button', { name: 'Earth，Agent 1，已完成' })).toBeInTheDocument();
+    expect(within(mesh).getByRole('button', { name: '实现依赖数据投影，进行中' })).toBeInTheDocument();
+    expect(within(mesh).getByRole('img', { name: 'Sol，等待复核' })).toBeInTheDocument();
+    // The real Earth → Mars handoff is a directed dashed edge, not a list row.
+    expect(container.querySelector('.paw-room-focus-overview__mesh-edge[data-kind="handoff"][data-state="dispatched"]')).not.toBeNull();
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
   });
 
-  it('selects a planet with pointer or keyboard and opens only its real participant target', () => {
+  it('selects a planet with pointer or keyboard and opens only its real participant target', async () => {
+    const user = userEvent.setup();
     const onOpenParticipant = vi.fn();
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={onOpenParticipant} />);
-    const planets = screen.getByRole('list', { name: '行星伙伴' });
-    const mars = within(planets).getByRole('button', { name: /Mars/ });
+    const mesh = screen.getByRole('group', { name: '协作网状图' });
 
-    fireEvent.click(mars);
+    await user.click(within(mesh).getByRole('button', { name: /^Mars，/ }));
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('正在核对依赖投影');
-    fireEvent.keyDown(within(planets).getByRole('button', { name: /Earth/ }), { key: 'Enter' });
-    fireEvent.click(screen.getByRole('button', { name: '打开 Earth 伙伴窗口' }));
+    within(mesh).getByRole('button', { name: /^Earth，/ }).focus();
+    await user.keyboard('{Enter}');
+    await user.click(screen.getByRole('button', { name: '打开 Earth 伙伴窗口' }));
 
     expect(onOpenParticipant).toHaveBeenCalledWith('p-earth');
+  });
+
+  it('drives the inspector from a work node exactly like the old tree rows', () => {
+    render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+    const mesh = screen.getByRole('group', { name: '协作网状图' });
+    const workNode = within(mesh).getByRole('button', { name: '实现任务图交互，已完成' });
+
+    fireEvent.click(workNode);
+
+    expect(workNode).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('任务图交互已通过测试');
   });
 
   it('keeps the chronological flow ledger inside the console with celestial actor names and packet detail', () => {
@@ -225,7 +242,7 @@ describe('PawRoomFocusOverview', () => {
     expect(plan).toHaveTextContent('explicit_invite · 1.0');
   });
 
-  it('projects the pulse bar and the parallel wave lanes with owner and verifier planets', () => {
+  it('projects the pulse meter and mesh edges from real ownership, review and lineage fields', () => {
     const { container } = render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
     // Pulse: proportional segments plus the exact numbers (进行1 复核1 完成1).
@@ -234,17 +251,25 @@ describe('PawRoomFocusOverview', () => {
     expect(pulse).toHaveTextContent('进行');
     expect(pulse).toHaveTextContent('复核');
 
-    const tree = screen.getByRole('tree', { name: '任务树' });
-    // The real wave groups both branches under one parallel header with tracks.
-    expect(within(tree).getByText('并行波次 · 并行实现两条支线')).toBeInTheDocument();
-    expect(within(tree).getByText('2 道轨道同时推进')).toBeInTheDocument();
-    expect(within(tree).getByText('∥ 轨道 1/2')).toBeInTheDocument();
-    expect(within(tree).getByText('∥ 轨道 2/2')).toBeInTheDocument();
-    // Owner planets and the dual-axis verifier chip stay text, not just color.
-    expect(within(tree).getByText('负责 Earth')).toBeInTheDocument();
-    expect(within(tree).getByText('负责 Mars')).toBeInTheDocument();
-    expect(within(tree).getByText(/复核 Venus ✓✓/)).toBeInTheDocument();
-    expect(container.querySelectorAll('[data-in-wave]')).toHaveLength(2);
+    const mesh = screen.getByRole('group', { name: '协作网状图' });
+    // The real wave slots stay readable lane sublabels on their work nodes.
+    expect(within(mesh).getByText('∥ 轨道 1/2')).toBeInTheDocument();
+    expect(within(mesh).getByText('∥ 轨道 2/2')).toBeInTheDocument();
+
+    // One ownership edge per owned WorkItem, one recorded review edge, and
+    // lineage Sol → root → both branches. Nothing else is invented.
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="ownership"]')).toHaveLength(3);
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="review"]')).toHaveLength(1);
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="parent"]')).toHaveLength(3);
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="accountable"]')).toHaveLength(0);
+    // Node states stay visible as color data, and the legend names only
+    // relations that exist.
+    expect(container.querySelector('.paw-room-focus-overview__mesh-node--work[data-state="running"]')).not.toBeNull();
+    const legend = screen.getByRole('list', { name: '关系图例' });
+    expect(legend).toHaveTextContent('负责');
+    expect(legend).toHaveTextContent('复核');
+    expect(legend).toHaveTextContent('交接');
+    expect(legend).not.toHaveTextContent('问责');
   });
 
   it('answers the dual-axis review verdict inside the inspector', () => {

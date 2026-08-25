@@ -12,6 +12,15 @@ import type { RoomSummary } from '@/features/rooms/room-types';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 import { PawRoomWorkspace } from './PawRoomWorkspace';
 
+/* Lazy-bundle proof: this flag flips only when the PawStarfield module is
+ * actually evaluated. Rendering the Room conversation must never flip it;
+ * only pressing the 星空 button may. */
+const starfieldChunk = vi.hoisted(() => ({ evaluated: false }));
+vi.mock('./PawStarfield', async (importOriginal) => {
+  starfieldChunk.evaluated = true;
+  return await importOriginal();
+});
+
 afterEach(cleanup);
 
 describe('PAWOS Room collaboration tools', () => {
@@ -32,7 +41,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getAllByRole('tab')).toHaveLength(2);
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
-    expect(within(tools).getByRole('tree', { name: '任务树' })).toHaveTextContent('实现 Room 依赖数据投影');
+    expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
     const timeline = screen.getByRole('log', { name: '公开对话时间线' });
     const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
@@ -60,6 +69,11 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
+
+    /* Default conversation path pays nothing for the sky: no region, no
+     * canvas, and the starfield module itself was never evaluated. */
+    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(starfieldChunk.evaluated).toBe(false);
   });
 
   it('turns the whole Room into one clickable solar system in 星空 mode', async () => {
@@ -68,11 +82,18 @@ describe('PAWOS Room collaboration tools', () => {
     const { container } = renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
+    // Before the explicit 星空 click nothing starfield exists — neither the
+    // region nor the module (the chunk stays un-fetched in production).
+    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(starfieldChunk.evaluated).toBe(false);
+
     await user.click(screen.getByRole('button', { name: '星空' }));
 
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'starfield');
-    // The sky is an immersive fullscreen overlay portaled to <body>.
-    const sky = screen.getByRole('region', { name: 'Room 星空' });
+    // The sky is an immersive fullscreen overlay portaled to <body>; it
+    // resolves through the lazy boundary, so the lookup awaits the chunk.
+    const sky = await screen.findByRole('region', { name: 'Room 星空' });
+    expect(starfieldChunk.evaluated).toBe(true);
     expect(sky).toHaveAttribute('data-immersive');
     expect(within(sky).getByText('Sol')).toBeInTheDocument();
     // The workspace behind the overlay keeps its state for the way back.
@@ -94,9 +115,12 @@ describe('PAWOS Room collaboration tools', () => {
       }),
     });
 
-    // The exit control returns to the conversation view.
+    // The exit control returns to the conversation view and tears the whole
+    // stage down: no region, no leftover sky DOM, nothing left animating.
     await user.click(within(sky).getByRole('button', { name: /返回 Room/ }));
     expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(document.querySelector('.paw-sf')).toBeNull();
+    expect(document.querySelector('.paw-sf__canvas')).toBeNull();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'conversation');
   });
 
@@ -107,8 +131,8 @@ describe('PAWOS Room collaboration tools', () => {
     await screen.findByRole('textbox', { name: '协作消息' });
 
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
-    const partners = within(tools).getByRole('list', { name: '行星伙伴' });
-    await user.click(within(partners).getByRole('button', { name: /Mars/ }));
+    const mesh = within(tools).getByRole('group', { name: '协作网状图' });
+    await user.click(within(mesh).getByRole('button', { name: /^Mars，/ }));
     await user.click(within(tools).getByRole('button', { name: '打开 Mars 伙伴窗口' }));
 
     expect(screen.queryByRole('button', { name: /铺开 .* 位/ })).not.toBeInTheDocument();

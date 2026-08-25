@@ -5,9 +5,7 @@ import {
   FileCheck2,
   FileText,
   GitBranch,
-  GitCommitHorizontal,
   MessageCircle,
-  Orbit,
   Route,
   Send,
   ShieldCheck,
@@ -16,13 +14,18 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Disclosure } from '@/components/primitives';
 import {
+  buildRoomFocusMesh,
+  roomFocusMeshEdgeKindLabel,
+  roomFocusMeshRings,
+  type RoomFocusMeshNode,
+} from './room-focus-mesh';
+import {
   roomFocusStateLabel,
   type RoomFocusPacket,
   type RoomFocusPacketKind,
   type RoomFocusPartner,
   type RoomFocusProjection,
   type RoomFocusState,
-  type RoomFocusWaveSlot,
   type RoomFocusWorkItem,
 } from './room-focus-projection';
 import type { RoomDispatchPlan } from './room-gravity-projection';
@@ -47,10 +50,11 @@ const FLOW_PACKET_WINDOW = 18;
 
 /**
  * Sol collaboration console — the single Room 态势 surface. Mission, the
- * pulse instrument, the parallel-lane WorkItem tree, planet partners,
- * handoffs, the chronological flow ledger and the inspector all project the
- * same real Room data. The solar metaphor stays visual seasoning: every row
- * keeps its real role/task text (PF-CM-013).
+ * pulse instrument, the collaboration mesh (partners and WorkItems as nodes,
+ * ownership/accountability/review/lineage/handoff as edges), the
+ * chronological flow ledger and the inspector all project the same real Room
+ * data. The solar metaphor stays visual seasoning: every node keeps its real
+ * role/task text (PF-CM-013, UR-023).
  */
 export function PawRoomFocusOverview({
   focus,
@@ -97,63 +101,11 @@ export function PawRoomFocusOverview({
 
       <FocusPulse counts={focus.counts} />
 
-      <FocusWorkTree
+      <FocusMeshGraph
         focus={focus}
         selection={selection}
-        onSelect={(id) => setSelection({ kind: 'work', id })}
+        onSelect={setSelection}
       />
-
-      <section aria-labelledby="paw-room-focus-partners-title" className="paw-room-focus-overview__section paw-room-focus-overview__partners">
-        <header>
-          <span><Orbit aria-hidden="true" size={14} /><strong id="paw-room-focus-partners-title">行星伙伴</strong></span>
-          <small>{focus.partners.length} 位</small>
-        </header>
-        <ul aria-label="行星伙伴" className="paw-room-focus-overview__planet-list" role="list">
-          {focus.partners.map((partner, index) => {
-            const selected = selection.kind === 'partner' && selection.id === partner.participantId;
-            return (
-              <li data-orbit={index % 4} data-state={partner.state} key={partner.participantId}>
-                <button
-                  aria-pressed={selected}
-                  aria-label={`${partner.celestialName}，${partner.displayName}，${roomFocusStateLabel(partner.state)}`}
-                  onClick={() => setSelection({ kind: 'partner', id: partner.participantId })}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    setSelection({ kind: 'partner', id: partner.participantId });
-                  }}
-                  type="button"
-                >
-                  <span aria-hidden="true" className="paw-room-focus-overview__planet"><i /></span>
-                  <span><strong>{partner.celestialName}</strong><small>{partner.displayName}</small></span>
-                  <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(partner.state)}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-
-      <section aria-label="任务交接" className="paw-room-focus-overview__section paw-room-focus-overview__handoffs">
-        <header>
-          <span><ArrowRight aria-hidden="true" size={14} /><strong>任务交接</strong></span>
-          <small>{focus.handoffs.length} 次</small>
-        </header>
-        {focus.handoffs.length ? (
-          <ol>
-            {focus.handoffs.map((handoff) => {
-              const source = focus.partners.find((partner) => partner.participantId === handoff.sourceParticipantId);
-              const target = focus.partners.find((partner) => partner.participantId === handoff.targetParticipantId);
-              return (
-                <li data-state={handoff.state} key={handoff.id}>
-                  <span><strong>{source?.celestialName ?? 'Sol'} → {target?.celestialName ?? '伙伴'}</strong><small>{handoff.task || handoff.artifactOrContract || '工作项交接'}</small></span>
-                  <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusHandoffStateLabel(handoff.state)}</span>
-                </li>
-              );
-            })}
-          </ol>
-        ) : <p className="paw-room-focus-overview__empty">当前没有待追踪的交接。</p>}
-      </section>
 
       <FocusFlowLedger
         flow={focus.flow}
@@ -198,131 +150,122 @@ function FocusPulse({ counts }: { counts: RoomFocusProjection['counts'] }) {
   );
 }
 
-type FocusTreeRow =
-  | { kind: 'wave'; wave: RoomFocusWaveSlot; count: number }
-  | { kind: 'item'; item: RoomFocusWorkItem; lane?: { index: number; size: number } };
-
-/** Rows for the WorkItem tree: items dispatched in the same real wave are
- * grouped under one 并行波次 header, in track order. Grouping only reorders
- * presentation inside the wave; it never invents parallelism. */
-export function focusWorkTreeRows(items: RoomFocusWorkItem[]): FocusTreeRow[] {
-  const rows: FocusTreeRow[] = [];
-  const consumed = new Set<string>();
-  for (const item of items) {
-    if (consumed.has(item.id)) continue;
-    const waveId = item.wave?.waveId;
-    if (waveId) {
-      const members = items.filter((candidate) => candidate.wave?.waveId === waveId && !consumed.has(candidate.id));
-      if (members.length > 1) {
-        members.sort((left, right) => (left.wave?.parallelIndex ?? 0) - (right.wave?.parallelIndex ?? 0) || left.id.localeCompare(right.id));
-        /* Lane count is distinct tracks, not member rows: two rows on the same
-         * track (rare duplicate) must not fabricate an extra parallel lane. */
-        const tracks = new Set(members.map((member) => Math.max(member.wave?.parallelIndex ?? 0, 0)));
-        const size = Math.max(item.wave?.parallelSize ?? 0, ...[...tracks].map((track) => track + 1));
-        rows.push({ kind: 'wave', wave: { ...item.wave!, parallelSize: size }, count: tracks.size });
-        for (const member of members) {
-          consumed.add(member.id);
-          rows.push({
-            kind: 'item',
-            item: member,
-            lane: { index: Math.max(member.wave?.parallelIndex ?? 0, 0), size },
-          });
-        }
-        continue;
-      }
-    }
-    consumed.add(item.id);
-    rows.push({ kind: 'item', item });
-  }
-  return rows;
-}
-
-/** WorkItem tree: every row answers objective, live action, owner planet,
- * verifier planet and blocker without opening the item. */
-function FocusWorkTree({
+/** 协作网 — partners and WorkItems as one mesh. Nodes carry real names and
+ * live state colors; edges draw only recorded relations (ownership,
+ * accountability, review, parent/child lineage, handoffs). Clicking a node
+ * drives the same selection the inspector and open-partner path already use. */
+function FocusMeshGraph({
   focus,
   onSelect,
   selection,
 }: {
   focus: RoomFocusProjection;
-  onSelect: (id: string) => void;
+  onSelect: (selection: FocusSelection) => void;
   selection: FocusSelection;
 }) {
-  const rows = useMemo(() => focusWorkTreeRows(focus.workItems), [focus.workItems]);
-  const partnerName = (participantId?: string) => (
-    focus.partners.find((partner) => partner.participantId === participantId)?.celestialName
-  );
-  const partnerOrbit = (participantId?: string) => {
-    const index = focus.partners.findIndex((partner) => partner.participantId === participantId);
-    return index < 0 ? undefined : index % 4;
-  };
+  const mesh = useMemo(() => buildRoomFocusMesh(focus), [focus]);
+  const hasActors = focus.partners.length > 0 || focus.workItems.length > 0;
   return (
-    <section aria-labelledby="paw-room-focus-work-title" className="paw-room-focus-overview__section paw-room-focus-overview__work">
+    <section aria-label="协作网" className="paw-room-focus-overview__section paw-room-focus-overview__mesh">
       <header>
-        <span><GitCommitHorizontal aria-hidden="true" size={14} /><strong id="paw-room-focus-work-title">任务树</strong></span>
-        <small>{focus.workItems.length} 项</small>
+        <span><Waypoints aria-hidden="true" size={14} /><strong>协作网</strong></span>
+        <small>{focus.partners.length} 位伙伴 · {focus.workItems.length} 项任务</small>
       </header>
-      {focus.workItems.length ? (
-        <ol aria-label="任务树" className="paw-room-focus-overview__tree" role="tree">
-          {rows.map((row) => {
-            if (row.kind === 'wave') {
-              return (
-                <li className="paw-room-focus-overview__wave" key={`wave:${row.wave.waveId}`} role="presentation">
-                  <Waypoints aria-hidden="true" size={12} />
-                  <strong>并行波次{row.wave.phaseName ? ` · ${row.wave.phaseName}` : ''}</strong>
-                  <small>{row.count} 道轨道同时推进</small>
-                </li>
-              );
-            }
-            const { item, lane } = row;
-            const owner = partnerName(item.ownerParticipantId);
-            const verifier = item.review ? partnerName(item.review.reviewerParticipantId) : undefined;
-            const level = item.parentId ? 2 : 1;
-            const selected = selection.kind === 'work' && selection.id === item.id;
-            return (
-              <li
-                aria-level={level}
-                aria-selected={selected}
-                data-in-wave={lane ? '' : undefined}
-                data-level={level}
-                data-state={item.state}
-                key={item.id}
-                role="treeitem"
+      {hasActors ? (
+        <div aria-label="协作网状图" className="paw-room-focus-overview__mesh-canvas" role="group">
+          <svg aria-hidden="true" focusable="false" preserveAspectRatio="none" viewBox="0 0 100 100">
+            {[roomFocusMeshRings.partner, roomFocusMeshRings.work].map((ring) => (
+              <ellipse
+                className="paw-room-focus-overview__mesh-guide"
+                cx={roomFocusMeshRings.center.x}
+                cy={roomFocusMeshRings.center.y}
+                key={ring.rx}
+                rx={ring.rx}
+                ry={ring.ry}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            {mesh.edges.map((edge) => (
+              <g
+                className="paw-room-focus-overview__mesh-edge"
+                data-kind={edge.kind}
+                data-state={edge.state}
+                key={edge.id}
               >
-                <button onClick={() => onSelect(item.id)} type="button">
-                  <span aria-hidden="true" className="paw-room-focus-overview__tree-node"><i /></span>
-                  <span className="paw-room-focus-overview__tree-copy">
-                    <strong>{item.objective}</strong>
-                    {workAction(item) ? <small>{workAction(item)}</small> : null}
-                    <span className="paw-room-focus-overview__tree-chips">
-                      {lane ? <span className="paw-room-focus-overview__lane-chip">∥ 轨道 {lane.index + 1}/{lane.size}</span> : null}
-                      {owner ? (
-                        <span className="paw-room-focus-overview__planet-chip" data-orbit={partnerOrbit(item.ownerParticipantId)}>
-                          <i aria-hidden="true" />负责 {owner}
-                        </span>
-                      ) : null}
-                      {item.review ? (
-                        <span
-                          className="paw-room-focus-overview__verify-chip"
-                          data-verdict={reviewPassed(item) ? 'passed' : 'attention'}
-                          title={`可运行：${reviewVerdictLabel(item.review.operability)} · 符合需求：${reviewVerdictLabel(item.review.requirement)}`}
-                        >
-                          <ShieldCheck aria-hidden="true" size={11} />复核{verifier ? ` ${verifier}` : ''} {reviewMarks(item)}
-                        </span>
-                      ) : null}
-                    </span>
-                    {item.state === 'blocked' && item.blocker?.reason ? (
-                      <span className="paw-room-focus-overview__tree-blocker">{item.blocker.reason}</span>
-                    ) : null}
-                  </span>
-                  <span className="paw-room-focus-overview__state"><i aria-hidden="true" />{roomFocusStateLabel(item.state)}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，任务会从这里生长。</p>}
+                <path d={edge.path} vectorEffect="non-scaling-stroke" />
+                {edge.tip ? <circle cx={edge.tip.x} cy={edge.tip.y} r="1.1" /> : null}
+              </g>
+            ))}
+          </svg>
+          {mesh.nodes.map((node) => <FocusMeshNode
+            key={node.id}
+            node={node}
+            selected={node.kind === 'work'
+              ? selection.kind === 'work' && selection.id === node.refId
+              : node.kind === 'partner' && selection.kind === 'partner' && selection.id === node.refId}
+            onSelect={onSelect}
+          />)}
+        </div>
+      ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，协作网会从这里生长。</p>}
+      {mesh.edgeKinds.length ? (
+        <ul aria-label="关系图例" className="paw-room-focus-overview__mesh-legend">
+          {mesh.edgeKinds.map((kind) => (
+            <li data-kind={kind} key={kind}><i aria-hidden="true" />{roomFocusMeshEdgeKindLabel(kind)}</li>
+          ))}
+        </ul>
+      ) : null}
     </section>
+  );
+}
+
+function FocusMeshNode({
+  node,
+  onSelect,
+  selected,
+}: {
+  node: RoomFocusMeshNode;
+  onSelect: (selection: FocusSelection) => void;
+  selected: boolean;
+}) {
+  const position = { left: `${node.x}%`, top: `${node.y}%` };
+  if (node.kind === 'root') {
+    return (
+      <div
+        aria-label={`Sol，${roomFocusStateLabel(node.state)}`}
+        className="paw-room-focus-overview__mesh-node paw-room-focus-overview__mesh-node--root"
+        data-state={node.state}
+        role="img"
+        style={position}
+        title={node.label}
+      >
+        <i aria-hidden="true" />
+        <span><strong>Sol</strong></span>
+      </div>
+    );
+  }
+  const stateLabel = roomFocusStateLabel(node.state);
+  return (
+    <button
+      aria-label={node.kind === 'partner'
+        ? `${node.label}，${node.sublabel ?? ''}，${stateLabel}`
+        : `${node.label}，${stateLabel}`}
+      aria-pressed={selected}
+      className={`paw-room-focus-overview__mesh-node paw-room-focus-overview__mesh-node--${node.kind}`}
+      data-orbit={node.orbit}
+      data-state={node.state}
+      onClick={() => onSelect(node.kind === 'partner'
+        ? { kind: 'partner', id: node.refId }
+        : { kind: 'work', id: node.refId })}
+      style={position}
+      title={node.sublabel ? `${node.label} · ${node.sublabel}` : node.label}
+      type="button"
+    >
+      <i aria-hidden="true" />
+      <span>
+        <strong>{node.label}</strong>
+        {node.sublabel ? <small>{node.sublabel}</small> : null}
+      </span>
+    </button>
   );
 }
 
@@ -553,12 +496,6 @@ function reviewPassed(work: RoomFocusWorkItem): boolean {
   return good.has(work.review.operability) && good.has(work.review.requirement);
 }
 
-function reviewMarks(work: RoomFocusWorkItem): string {
-  if (!work.review) return '';
-  const good = new Set(['passed', 'satisfied', 'pass', 'ok']);
-  return `${good.has(work.review.operability) ? '✓' : '✗'}${good.has(work.review.requirement) ? '✓' : '✗'}`;
-}
-
 function reviewVerdictLabel(verdict: string): string {
   return ({
     passed: '通过',
@@ -612,16 +549,6 @@ function flowStatusLabel(status: string): string {
 
 function packetClock(timestamp: number): string {
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp));
-}
-
-function roomFocusHandoffStateLabel(state: RoomFocusProjection['handoffs'][number]['state']): string {
-  return ({
-    offered: '待接收',
-    dispatched: '已分派',
-    completed: '已交付',
-    failed: '需要关注',
-    stopped: '已停止',
-  } as const)[state];
 }
 
 function defaultFocusSelection(focus: RoomFocusProjection): FocusSelection {

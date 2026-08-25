@@ -7,7 +7,11 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { previewRoomSnapshot } from '@/app/preview-room-data';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { PawGalaxyStarfield, PawRoomStarfield, PawSessionStarfield } from './PawStarfield';
+import { LazyPawRoomStarfield } from './PawStarfieldLazy';
 import { buildRoomFocusProjection } from './room-focus-projection';
+import roomWorkspaceSource from './PawRoomWorkspace.tsx?raw';
+import sessionWorkspaceSource from './PawSessionWorkspace.tsx?raw';
+import starfieldLazySource from './PawStarfieldLazy.tsx?raw';
 
 afterEach(cleanup);
 
@@ -30,6 +34,32 @@ function renderSessionSky(overrides: {
     </QueryClientProvider>,
   );
 }
+
+describe('星空 lazy bundle boundary', () => {
+  it('keeps PawStarfield out of the default Agent home / Room bundle path', () => {
+    // A static value import would pull the whole sky (scene model, feed,
+    // texture factory) back into the conversation chunk. Only the erased
+    // `import type` and the boundary's dynamic import may name the module.
+    const staticValueImport = /import\s+(?!type\b)[^;]*?from\s+'\.\/PawStarfield'/u;
+    expect(roomWorkspaceSource).not.toMatch(staticValueImport);
+    expect(sessionWorkspaceSource).not.toMatch(staticValueImport);
+    expect(roomWorkspaceSource).toContain("from './PawStarfieldLazy'");
+    expect(sessionWorkspaceSource).toContain("from './PawStarfieldLazy'");
+    expect(starfieldLazySource).not.toMatch(staticValueImport);
+    expect(starfieldLazySource).toMatch(/lazy\(/u);
+    expect(starfieldLazySource).toMatch(/await import\('\.\/PawStarfield'\)/u);
+  });
+
+  it('mounts the Room sky through the lazy boundary once the chunk resolves', async () => {
+    const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+    const focus = buildRoomFocusProjection(room);
+    render(<LazyPawRoomStarfield focus={focus} roomId={room.id} />);
+
+    const sky = await screen.findByRole('region', { name: 'Room 星空' });
+    expect(sky).toHaveAttribute('data-immersive');
+    expect(within(sky).getByText('Sol')).toBeInTheDocument();
+  });
+});
 
 describe('PAWOS 星空 v2 immersive visualization', () => {
   it('renders the Session as an immersive fullscreen sky with honest per-run motion', async () => {
@@ -62,6 +92,11 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     const feed = within(sky).getByRole('complementary', { name: '星空信息流' });
     expect(feed).toHaveTextContent('检索 Agent 状态投影和知识来源证据');
     expect(feed).toHaveTextContent('审阅前端交互与工具生命周期边界');
+
+    // Presence layer: seeded shooting-star streaks exist as decoration only
+    // (aria-hidden), and CSS stills them under reduced motion.
+    expect(sky.querySelectorAll('.paw-sf2__meteor')).toHaveLength(3);
+    expect(sky.querySelector('.paw-sf2__meteors')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('opens a detail card on pick and only then jumps into the run', async () => {
