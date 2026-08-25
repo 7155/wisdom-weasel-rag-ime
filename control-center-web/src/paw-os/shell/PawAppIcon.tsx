@@ -99,50 +99,47 @@ export function PawAppIcon({ appId, className = '', size = 24, style, title, ...
   );
 }
 
-/** Eight rounded gear teeth as one path; the base circle unions them visually. */
-const GEAR_TEETH =
-  'M23.1 2.4L24.9 2.4A3.4 3.4 0 0 1 28.3 5.8L28.3 7.6A3.4 3.4 0 0 1 24.9 11L23.1 11A3.4 3.4 0 0 1 19.7 7.6L19.7 5.8A3.4 3.4 0 0 1 23.1 2.4Z'
-  + 'M38.64 8.09L39.91 9.36A3.4 3.4 0 0 1 39.91 14.17L38.64 15.44A3.4 3.4 0 0 1 33.83 15.44L32.56 14.17A3.4 3.4 0 0 1 32.56 9.36L33.83 8.09A3.4 3.4 0 0 1 38.64 8.09Z'
-  + 'M45.6 23.1L45.6 24.9A3.4 3.4 0 0 1 42.2 28.3L40.4 28.3A3.4 3.4 0 0 1 37 24.9L37 23.1A3.4 3.4 0 0 1 40.4 19.7L42.2 19.7A3.4 3.4 0 0 1 45.6 23.1Z'
-  + 'M39.91 38.64L38.64 39.91A3.4 3.4 0 0 1 33.83 39.91L32.56 38.64A3.4 3.4 0 0 1 32.56 33.83L33.83 32.56A3.4 3.4 0 0 1 38.64 32.56L39.91 33.83A3.4 3.4 0 0 1 39.91 38.64Z'
-  + 'M24.9 45.6L23.1 45.6A3.4 3.4 0 0 1 19.7 42.2L19.7 40.4A3.4 3.4 0 0 1 23.1 37L24.9 37A3.4 3.4 0 0 1 28.3 40.4L28.3 42.2A3.4 3.4 0 0 1 24.9 45.6Z'
-  + 'M9.36 39.91L8.09 38.64A3.4 3.4 0 0 1 8.09 33.83L9.36 32.56A3.4 3.4 0 0 1 14.17 32.56L15.44 33.83A3.4 3.4 0 0 1 15.44 38.64L14.17 39.91A3.4 3.4 0 0 1 9.36 39.91Z'
-  + 'M2.4 24.9L2.4 23.1A3.4 3.4 0 0 1 5.8 19.7L7.6 19.7A3.4 3.4 0 0 1 11 23.1L11 24.9A3.4 3.4 0 0 1 7.6 28.3L5.8 28.3A3.4 3.4 0 0 1 2.4 24.9Z'
-  + 'M8.09 9.36L9.36 8.09A3.4 3.4 0 0 1 14.17 8.09L15.44 9.36A3.4 3.4 0 0 1 15.44 14.17L14.17 15.44A3.4 3.4 0 0 1 9.36 15.44L8.09 14.17A3.4 3.4 0 0 1 8.09 9.36Z';
+/** Head and cord of the plug an App Center package is installed with. */
+const PLUG_BODY =
+  'M9.5 13h28a3.5 3.5 0 0 1 3.5 3.5V23c0 8.3-6.7 15-15 15h-4c-8.3 0-15-6.7-15-15v-6.5A3.5 3.5 0 0 1 9.5 13Z'
+  + 'M21 37h6v4a3 3 0 0 1-6 0z';
 
-/** The two blades of the plug an App Center package is installed with. */
+/** The two blades above that head. */
 const PLUG_PRONGS =
-  'M18.5 4h1a3 3 0 0 1 3 3V16.5h-7V7a3 3 0 0 1 3-3Z'
-  + 'M28.5 4h1a3 3 0 0 1 3 3V16.5h-7V7a3 3 0 0 1 3-3Z';
+  'M18 4a3 3 0 0 1 3 3v9h-6V7a3 3 0 0 1 3-3Z'
+  + 'M30 4a3 3 0 0 1 3 3v9h-6V7a3 3 0 0 1 3-3Z';
 
-/** Three keycaps cut out of the Input Studio keyboard as one path. */
+/** Four keycaps cut out of the Input Studio keyboard as one path. */
 const KEY_ROW =
-  'M13.2 19h2a1.8 1.8 0 0 1 1.8 1.8v2a1.8 1.8 0 0 1-1.8 1.8h-2a1.8 1.8 0 0 1-1.8-1.8v-2A1.8 1.8 0 0 1 13.2 19Z'
-  + 'M23 19h2a1.8 1.8 0 0 1 1.8 1.8v2a1.8 1.8 0 0 1-1.8 1.8h-2a1.8 1.8 0 0 1-1.8-1.8v-2A1.8 1.8 0 0 1 23 19Z'
-  + 'M32.8 19h2a1.8 1.8 0 0 1 1.8 1.8v2a1.8 1.8 0 0 1-1.8 1.8h-2a1.8 1.8 0 0 1-1.8-1.8v-2A1.8 1.8 0 0 1 32.8 19Z';
+  'M11.8 21.5h3.4a1.8 1.8 0 0 1 1.8 1.8v2.4a1.8 1.8 0 0 1-1.8 1.8h-3.4a1.8 1.8 0 0 1-1.8-1.8v-2.4a1.8 1.8 0 0 1 1.8-1.8Z'
+  + 'M19.3 21.5h3.4a1.8 1.8 0 0 1 1.8 1.8v2.4a1.8 1.8 0 0 1-1.8 1.8h-3.4a1.8 1.8 0 0 1-1.8-1.8v-2.4a1.8 1.8 0 0 1 1.8-1.8Z'
+  + 'M26.8 21.5h3.4a1.8 1.8 0 0 1 1.8 1.8v2.4a1.8 1.8 0 0 1-1.8 1.8h-3.4a1.8 1.8 0 0 1-1.8-1.8v-2.4a1.8 1.8 0 0 1 1.8-1.8Z'
+  + 'M34.3 21.5h3.4a1.8 1.8 0 0 1 1.8 1.8v2.4a1.8 1.8 0 0 1-1.8 1.8h-3.4a1.8 1.8 0 0 1-1.8-1.8v-2.4a1.8 1.8 0 0 1 1.8-1.8Z';
 
 const silhouettes: Record<PawIdentityIconId, ReactNode> = {
   /* Session bubble with a linked satellite node: system connection, not a face.
      The node rides the bubble's own corner, so the mark reads as one Session
      with one companion instead of a bubble wearing a notification badge. */
   agent: <>
-    <path className="paw-app-icon__primary" d="M14 8h14c5.5 0 10 4.5 10 10v8c0 5.5-4.5 10-10 10H18.6L10 44v-8.7C6.3 33.5 4 30 4 26v-8C4 12.5 8.5 8 14 8Z" />
-    <circle className="paw-app-icon__secondary paw-app-icon__outlined" cx="37.4" cy="11" r="5" strokeWidth="2.8" />
-    <rect className="paw-app-icon__paper" height="5.4" rx="2.7" width="16.5" x="11.5" y="15.4" />
-    <rect className="paw-app-icon__paper" height="5.4" rx="2.7" width="10" x="11.5" y="24" />
+    <path className="paw-app-icon__primary" d="M11 14h14a7 7 0 0 1 7 7v12a7 7 0 0 1-7 7H11a7 7 0 0 1-7-7V21a7 7 0 0 1 7-7ZM22 16.5 34 6.5l-4.5 12z" />
+    <circle className="paw-app-icon__secondary" cx="39" cy="10.5" r="4.6" />
+    <rect className="paw-app-icon__paper" height="5" rx="2.5" width="16" x="10" y="21" />
+    <rect className="paw-app-icon__paper" height="5" rx="2.5" width="10" x="10" y="29" />
   </>,
-  /* Sol with one orbit and one planet: the Room solar collaboration metaphor. */
+  /* Sol with one orbit and one planet riding that orbit's own line: the Room
+     solar collaboration metaphor. */
   room: <>
-    <circle className="paw-app-icon__primary" cx="21.5" cy="26" r="10.5" />
-    <ellipse className="paw-app-icon__ring" cx="21.5" cy="26" rx="17" ry="6.5" strokeWidth="3.2" transform="rotate(-24 21.5 26)" />
-    <circle className="paw-app-icon__secondary" cx="38.5" cy="11.5" r="4.6" />
+    <circle className="paw-app-icon__primary" cx="23" cy="27" r="11" />
+    <ellipse className="paw-app-icon__ring" cx="23" cy="27" rx="17.5" ry="6.8" strokeWidth="3.2" transform="rotate(-24 23 27)" />
+    <circle className="paw-app-icon__secondary" cx="39" cy="19.9" r="4.7" />
   </>,
-  /* Globe with a two-tone compass needle. A window with an address bar was the
-     fourth rounded rectangle in the set and read as an appliance at 16px. */
+  /* A browser window: tab, chrome, address field. A globe belongs to every
+     network product and a compass needle is another vendor's browser. */
   browser: <>
-    <circle className="paw-app-icon__primary" cx="24" cy="24" r="20" />
-    <path className="paw-app-icon__paper" d="M34.9 13.1 27.4 27.4l-6.8-6.8z" />
-    <path className="paw-app-icon__secondary" d="M13.1 34.9l7.5-14.3 6.8 6.8z" />
+    <path className="paw-app-icon__primary" d="M8.5 8h31a4.5 4.5 0 0 1 4.5 4.5v23a4.5 4.5 0 0 1-4.5 4.5h-31A4.5 4.5 0 0 1 4 35.5v-23A4.5 4.5 0 0 1 8.5 8Z" />
+    <rect className="paw-app-icon__secondary" height="4.6" rx="2.3" width="21" x="9" y="11.5" />
+    <circle className="paw-app-icon__paper" cx="24" cy="28.5" r="8.6" />
+    <path className="paw-app-icon__stroke" d="M24 19.9a3.7 8.6 0 0 1 0 17.2 3.7 8.6 0 0 1 0-17.2M15.4 28.5h17.2" strokeWidth="1.8" />
   </>,
   /* A naked prompt: rounded chevron plus the live cursor. */
   terminal: <>
@@ -155,19 +152,20 @@ const silhouettes: Record<PawIdentityIconId, ReactNode> = {
     <path className="paw-app-icon__primary" d="M4 17.5h40V34c0 3.6-2.9 6.5-6.5 6.5h-27C6.9 40.5 4 37.6 4 34z" />
     <rect className="paw-app-icon__paper" height="4.6" rx="2.3" width="17" x="10.5" y="24" />
   </>,
-  /* The plan board itself: a clipped work sheet carrying two task lines. */
+  /* The plan board itself: a clipped work sheet carrying one settled step.
+     Two stacked bars on a sheet were a progress meter, not a plan. */
   'project-workbench': <>
-    <rect className="paw-app-icon__secondary" height="8" rx="4" width="16" x="16" y="5" />
-    <path className="paw-app-icon__primary" d="M11.5 10h25c3 0 5.5 2.5 5.5 5.5v23c0 3-2.5 5.5-5.5 5.5h-25C8.5 44 6 41.5 6 38.5v-23C6 12.5 8.5 10 11.5 10Z" />
-    <rect className="paw-app-icon__paper" height="5.2" rx="2.6" width="21" x="13.5" y="21" />
-    <rect className="paw-app-icon__paper" height="5.2" rx="2.6" width="13" x="13.5" y="30.5" />
+    <rect className="paw-app-icon__secondary" height="8" rx="4" width="14" x="17" y="5" />
+    <path className="paw-app-icon__primary" d="M11.5 9h25a5.5 5.5 0 0 1 5.5 5.5v24a5.5 5.5 0 0 1-5.5 5.5h-25A5.5 5.5 0 0 1 6 38.5v-24A5.5 5.5 0 0 1 11.5 9Z" />
+    <path className="paw-app-icon__paper" d="m32.4 19.6 3.1 3.1L21.2 37l-8.7-8.7 3.1-3.1 5.6 5.6z" />
   </>,
-  /* An offset stack of memory cards; the front card keeps one traceable entry. */
+  /* An offset stack of memory cards; the front card keeps one traceable entry.
+     The offset is wide enough to survive the menu bar as a stack. */
   memory: <>
-    <rect className="paw-app-icon__secondary" height="24" rx="5" width="30" x="11" y="7" />
-    <rect className="paw-app-icon__primary" height="25" rx="6" width="34" x="7" y="15" />
-    <circle className="paw-app-icon__paper" cx="15.5" cy="27.5" r="3.6" />
-    <rect className="paw-app-icon__paper" height="5" rx="2.5" width="13" x="22" y="25" />
+    <rect className="paw-app-icon__secondary" height="21" rx="5" width="29" x="13" y="6" />
+    <rect className="paw-app-icon__primary" height="24" rx="6" width="32" x="6" y="16" />
+    <circle className="paw-app-icon__paper" cx="14.2" cy="28" r="3.6" />
+    <rect className="paw-app-icon__paper" height="4.8" rx="2.4" width="12" x="21" y="25.6" />
   </>,
   /* Open book: two leaves and a light spine. */
   knowledge: <>
@@ -178,15 +176,16 @@ const silhouettes: Record<PawIdentityIconId, ReactNode> = {
   /* The keyboard Input Studio actually owns, under its candidate bar. Voice is
      one input source here, so an equaliser cannot stand for the whole App. */
   'input-studio': <>
-    <path className="paw-app-icon__primary" d="M9.5 13h29c3 0 5.5 2.5 5.5 5.5v11c0 3-2.5 5.5-5.5 5.5h-29C6.5 35 4 32.5 4 29.5v-11C4 15.5 6.5 13 9.5 13Z" />
+    <rect className="paw-app-icon__secondary" height="8.5" rx="4.25" width="32" x="8" y="5" />
+    <path className="paw-app-icon__primary" d="M8.5 17h31a4.5 4.5 0 0 1 4.5 4.5v17a4.5 4.5 0 0 1-4.5 4.5h-31A4.5 4.5 0 0 1 4 38.5v-17A4.5 4.5 0 0 1 8.5 17Z" />
     <path className="paw-app-icon__paper" d={KEY_ROW} />
-    <rect className="paw-app-icon__secondary" height="5" rx="2.5" width="21" x="13.5" y="26.5" />
+    <rect className="paw-app-icon__paper" height="5.5" rx="2.75" width="20" x="14" y="31.5" />
   </>,
   /* The plug a package is installed with; the grid it replaced was the one
      interchangeable mark in the set and doubled the conversation tool mark. */
   'app-center': <>
     <path className="paw-app-icon__secondary" d={PLUG_PRONGS} />
-    <path className="paw-app-icon__primary" d="M11 13h26a4 4 0 0 1 4 4v5c0 9.4-7.6 17-17 17S7 31.4 7 22v-5a4 4 0 0 1 4-4ZM20 34h8v6a4 4 0 0 1-8 0z" />
+    <path className="paw-app-icon__primary" d={PLUG_BODY} />
   </>,
   /* Live gauge: dial, signal needle, hub. */
   'system-monitor': <>
@@ -194,12 +193,14 @@ const silhouettes: Record<PawIdentityIconId, ReactNode> = {
     <path className="paw-app-icon__stroke-accent" d="M24 30.5 13.5 16.5" strokeLinecap="round" strokeWidth="5" />
     <circle className="paw-app-icon__paper" cx="24" cy="30.5" r="4.2" />
   </>,
-  /* Rounded-tooth gear. Slider rails carry no mass at 16px, where a settings
-     mark has to survive the menu bar. */
+  /* Two tuned controls: full-width rails with knobs set to different values.
+     A gear is the one icon every OS already owns and says nothing about what
+     this App actually does. */
   'system-settings': <>
-    <path className="paw-app-icon__primary" d={GEAR_TEETH} />
-    <circle className="paw-app-icon__primary" cx="24" cy="24" r="16.6" />
-    <circle className="paw-app-icon__paper" cx="24" cy="24" r="7.2" />
+    <rect className="paw-app-icon__primary" height="10" rx="5" width="38" x="5" y="10.5" />
+    <circle className="paw-app-icon__secondary" cx="33" cy="15.5" r="7.5" />
+    <rect className="paw-app-icon__primary" height="10" rx="5" width="38" x="5" y="27.5" />
+    <circle className="paw-app-icon__paper" cx="17" cy="32.5" r="7.5" />
   </>,
 };
 
@@ -228,11 +229,14 @@ export function PawBrandMark({ className = '', size = 16, title, ...props }: Paw
       width={size}
     >
       {title ? <title>{title}</title> : null}
-      {/* Flared toe pads so the system paw reads as a mark, not three identical dots. */}
-      <ellipse cx="9.8" cy="18.2" rx="5.4" ry="7.4" transform="rotate(-18 9.8 18.2)" />
-      <ellipse cx="24" cy="12.2" rx="6.2" ry="7.8" />
-      <ellipse cx="38.2" cy="18.2" rx="5.4" ry="7.4" transform="rotate(18 38.2 18.2)" />
-      <path d="M24 23.6c4.4 0 8.4 1.9 11 4.8 2.2 2.4 3.5 5.4 3.5 8.2 0 6.2-6.5 10-14.5 10S9.5 42.8 9.5 36.6c0-2.8 1.3-5.8 3.5-8.2 2.6-2.9 6.6-4.8 11-4.8z" />
+      {/* A real paw print: four toes on a spread arc, the outer pair smaller and
+          splayed, over one shouldered pad. Three even dots over a circle was a
+          generic animal glyph. */}
+      <ellipse cx="8.9" cy="23.4" rx="4.5" ry="6.1" transform="rotate(-34 8.9 23.4)" />
+      <ellipse cx="18.4" cy="13.6" rx="5.1" ry="6.9" transform="rotate(-13 18.4 13.6)" />
+      <ellipse cx="30.4" cy="13.1" rx="5.1" ry="6.9" transform="rotate(13 30.4 13.1)" />
+      <ellipse cx="39.6" cy="23.4" rx="4.5" ry="6.1" transform="rotate(34 39.6 23.4)" />
+      <path d="M24 25.6c4.9 0 9.4 2.1 12.2 5.4 2.4 2.8 3.8 6 3.8 8.8 0 4-3.4 6.4-8.2 6.4H16.2C11.4 46.2 8 43.8 8 39.8c0-2.8 1.4-6 3.8-8.8 2.8-3.3 7.3-5.4 12.2-5.4Z" />
     </svg>
   );
 }
