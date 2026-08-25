@@ -313,7 +313,10 @@
   height: 34px;
   flex: 0 0 auto;
   border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
+  /* --radius-md was never defined (dead reference dropped the corner
+     entirely); 10px matches the PAWOS icon-mark convention used by the
+     other ~34px identity swatches across Memory/Workbench. */
+  border-radius: 10px;
   background: var(--color-accent-soft);
   color: var(--color-accent);
   place-items: center;
@@ -619,7 +622,7 @@
   width: 32px;
   height: 32px;
   border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
+  border-radius: 10px;
   color: var(--timeline-period-color);
   place-items: center;
 }
