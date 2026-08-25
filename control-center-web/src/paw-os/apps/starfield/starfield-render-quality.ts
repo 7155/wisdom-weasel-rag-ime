@@ -4,6 +4,9 @@
  *
  * - device pixel ratio is capped by a hard ceiling *and* a total pixel
  *   budget, so a fullscreen retina sky never renders 8M+ pixels per frame;
+ * - a one-way quality ladder lowers that ceiling further under sustained
+ *   slow frames, so a loaded machine gets its GPU headroom back instead of
+ *   the sky dragging the whole OS;
  * - sphere geometry LOD levels whose switch distances scale with body size,
  *   so far-away moons cost a fraction of the vertices;
  * - surface texture resolutions bounded per body size, so a Session with
@@ -33,6 +36,39 @@ export function starfieldPixelRatio(devicePixelRatio: number, width: number, hei
   const area = Math.max(width * height, 1);
   if (area * capped * capped <= MAX_RENDER_PIXELS) return round2(capped);
   return round2(Math.max(1, Math.sqrt(MAX_RENDER_PIXELS / area)));
+}
+
+/**
+ * Adaptive resolution ladder: each step lowers the effective DPR ceiling.
+ * One-way (never steps back up) so the sky cannot oscillate between
+ * resolutions while load fluctuates around the threshold.
+ */
+export const PIXEL_RATIO_LADDER = [MAX_PIXEL_RATIO, 1.25, 1] as const;
+
+/** A frame slower than this (≈38 fps) counts against the budget. */
+export const SLOW_FRAME_S = 0.026;
+
+/** Sustained slow frames required before stepping the ladder down. */
+export const SLOW_FRAMES_BEFORE_STEP = 60;
+
+/** Pixel-budgeted ratio further capped by the current ladder step. */
+export function ladderedPixelRatio(
+  devicePixelRatio: number,
+  width: number,
+  height: number,
+  step: number,
+): number {
+  const bounded = Math.min(Math.max(step, 0), PIXEL_RATIO_LADDER.length - 1);
+  return Math.min(starfieldPixelRatio(devicePixelRatio, width, height), PIXEL_RATIO_LADDER[bounded]!);
+}
+
+/**
+ * Slow-frame accounting: sustained misses accumulate, healthy frames pay the
+ * counter down twice as fast, so only genuine load (not a single GC pause)
+ * reaches `SLOW_FRAMES_BEFORE_STEP`.
+ */
+export function nextSlowFrameCount(current: number, frameDtS: number): number {
+  return frameDtS > SLOW_FRAME_S ? current + 1 : Math.max(0, current - 2);
 }
 
 /**
