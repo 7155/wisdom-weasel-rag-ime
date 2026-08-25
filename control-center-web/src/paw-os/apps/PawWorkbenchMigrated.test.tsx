@@ -102,6 +102,23 @@ describe('PawWorkbenchMigrated', () => {
     expect(screen.queryByRole('img', { name: /整体完成/ })).not.toBeInTheDocument();
   });
 
+  it('stops publishing a pulse of zeroes when there is no task to have a pulse', () => {
+    renderWorkbench({
+      pageId: 'overview',
+      planning: { tasks: [] },
+      documents: [{ ...workDocument(), updatedAtMs: 1_700_000_000_000 }],
+    });
+
+    // 受阻 / 待验收 / 进行中 can only read 0 here, so the band keeps the one
+    // fact that still varies instead of spending the first viewport on three
+    // zeroes.
+    const pulse = within(screen.getByLabelText('未完成工作脉搏'));
+    expect(pulse.queryByText('受阻')).toBeNull();
+    expect(pulse.queryByText('待验收')).toBeNull();
+    expect(pulse.queryByText('进行中')).toBeNull();
+    expect(pulse.getByText('证据更新').nextElementSibling).not.toHaveTextContent('暂无文档');
+  });
+
   it('keeps repository facts secondary behind an explicit disclosure', () => {
     renderWorkbench({
       pageId: 'overview',
