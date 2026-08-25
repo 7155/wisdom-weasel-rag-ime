@@ -227,7 +227,7 @@ main[data-route-id='memory'] {
   font: inherit;
   text-align: left;
   cursor: pointer;
-  grid-template-columns: 26px auto auto;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
   gap: 9px;
   transition: background var(--duration-enter) var(--ease-standard);
 }
