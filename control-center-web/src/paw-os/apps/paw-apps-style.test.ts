@@ -154,6 +154,11 @@ describe('PAWOS semantic type roles', () => {
     expect(shellMigratedCss).not.toMatch(/:not\(\[data-active\]\)[^{]*\.paw-window\s*\{[^}]*opacity/s);
     expect(pawOsCss).not.toMatch(/transition:\s*all/);
     expect(shellMigratedCss).not.toMatch(/transition:\s*all/);
+    // Live drag/resize freezes chrome glass: menu bar and Dock must not
+    // re-sample a moving window through backdrop-filter (pointer starvation).
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-menu-bar\s*\{[^}]*backdrop-filter:\s*none;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-dock\s*\{[^}]*backdrop-filter:\s*none;/s);
+    expect(pawOsCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-window-shell:not\(\[data-interaction\]\)\s*\{[^}]*pointer-events:\s*none;/s);
     // Reduced-motion may still force stillness; material never needs force.
     expect(shellMigratedCss).not.toMatch(/(?:background|border|color|opacity|border-radius)[^;{}]*!important/);
     // Warm-paper leftovers stay retired from every shell owner.

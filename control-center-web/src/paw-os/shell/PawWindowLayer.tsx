@@ -32,12 +32,16 @@ export function PawWindowLayer() {
   /* Room projections stream — during a live turn they change many times per
    * second. The layer only reads them for flow groups (which require a
    * participant window) and the focus mode bar, so an ordinary desktop
-   * subscribes to a constant instead and never re-renders on Room events. */
-  const wantsRoomProjections = useMemo(
-    () => Boolean(collaborationFocusGroup?.startsWith('room:'))
-      || Object.values(windows).some((node) => node.target?.kind === 'participant'),
-    [collaborationFocusGroup, windows],
-  );
+   * subscribes to a constant instead and never re-renders on Room events.
+   * The participant signature ignores bounds/title churn so a geometry
+   * commit cannot flip the subscription or fan into Room live-store. */
+  const participantSignature = usePawDesktopStore((state) => Object.values(state.windows)
+    .filter((node) => node.target?.kind === 'participant')
+    .map((node) => node.id)
+    .sort()
+    .join('\u0000'));
+  const wantsRoomProjections = Boolean(collaborationFocusGroup?.startsWith('room:'))
+    || Boolean(participantSignature);
   const projections = useRoomLiveStore(wantsRoomProjections ? selectRoomProjections : selectNoRoomProjections);
   const ids = useMemo(() => idSignature.split('\u0000').filter(Boolean), [idSignature]);
   const [viewport, setViewport] = useState(() => desktopSize());
@@ -320,19 +324,44 @@ export function windowFlowGroupsWithLivePoints(
 function useLiveWindowFlowPoints(): Record<string, WindowFlowPoint> {
   const [livePoints, setLivePoints] = useState<Record<string, WindowFlowPoint>>({});
   useEffect(() => {
-    const handle = (event: Event) => {
-      const detail = (event as CustomEvent<WindowFlowGeometryDetail>).detail;
+    let frame = 0;
+    let pending: WindowFlowGeometryDetail | null = null;
+    const flush = () => {
+      frame = 0;
+      const detail = pending;
+      pending = null;
       if (!detail?.windowId) return;
       setLivePoints((current) => {
-        if (detail.point) return { ...current, [detail.windowId]: detail.point };
+        if (detail.point) {
+          const prior = current[detail.windowId];
+          if (prior && prior.x === detail.point.x && prior.y === detail.point.y) return current;
+          return { ...current, [detail.windowId]: detail.point };
+        }
         if (!(detail.windowId in current)) return current;
         const next = { ...current };
         delete next[detail.windowId];
         return next;
       });
     };
+    const handle = (event: Event) => {
+      const detail = (event as CustomEvent<WindowFlowGeometryDetail>).detail;
+      if (!detail?.windowId) return;
+      // Clears must land immediately so release never paints a stale path;
+      // live points coalesce to one React write per frame.
+      if (!detail.point) {
+        pending = detail;
+        if (frame) window.cancelAnimationFrame(frame);
+        flush();
+        return;
+      }
+      pending = detail;
+      if (!frame) frame = window.requestAnimationFrame(flush);
+    };
     window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
-    return () => window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
+    return () => {
+      window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, []);
   return livePoints;
 }

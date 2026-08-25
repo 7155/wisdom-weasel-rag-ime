@@ -10,6 +10,7 @@ import { PawDesktopProvider } from '../runtime/desktop-context';
 import { usePawDesktopApi } from '../runtime/desktop-context';
 import { PawWindowChromePortal } from './PawWindowChrome';
 import { PAW_WINDOW_FLOW_GEOMETRY_EVENT, PawRoomFocusRail, PawWindowFrame, PawWindowLayer, roomWindowFlowGroups } from './PawWindowLayer';
+import windowLayerSource from './PawWindowLayer.tsx?raw';
 
 const appProcessRenders = vi.hoisted(() => new Map<string, number>());
 vi.mock('../apps/PawApps', () => ({
@@ -332,6 +333,12 @@ describe('PAWOS compositor window frame', () => {
     expect(root).toHaveAttribute('data-window-interaction', 'true');
     fireEvent.pointerUp(window, { clientX: 520, clientY: 300, pointerId: 22 });
     expect(root).not.toHaveAttribute('data-window-interaction');
+  });
+
+  it('coalesces live flow geometry into one React write per animation frame', () => {
+    expect(windowLayerSource).toContain('function useLiveWindowFlowPoints');
+    expect(windowLayerSource).toMatch(/requestAnimationFrame\(flush\)/);
+    expect(windowLayerSource).toMatch(/prior\.x === detail\.point\.x && prior\.y === detail\.point\.y/);
   });
 
   it('keeps an untracked window drag free of live flow geometry work', () => {

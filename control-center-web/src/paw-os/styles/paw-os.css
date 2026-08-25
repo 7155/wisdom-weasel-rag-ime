@@ -485,6 +485,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 /* The pointer owns the frame: promote it once for the whole gesture, and
    release the hint at rest so idle windows never hold compositor layers. */
 .paw-window-shell[data-interaction='dragging'] { will-change: transform; }
+.paw-window-shell[data-interaction='resizing'] { will-change: transform, width, height; }
+/* Idle siblings drop out of hit-testing for the gesture: the captured
+   pointer already owns the stream, and skipping their hit regions keeps
+   the main thread free under a dense window stack. */
+.paw-desktop-root[data-window-interaction] .paw-window-shell:not([data-interaction]) {
+  pointer-events: none;
+}
 .paw-window {
   position: relative;
   width: 100%; height: 100%; display: block;
@@ -502,6 +509,11 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-desktop[data-collaboration-focus] .paw-window-shell[data-collaboration-role='unrelated'] .paw-window {
   opacity: .84;
   filter: brightness(.94) saturate(.72);
+}
+/* Full-viewport filters + a live transform starve the pointer; freeze the
+   dim to opacity-only for the exact duration of a drag/resize. */
+.paw-desktop-root[data-window-interaction] .paw-desktop[data-collaboration-focus] .paw-window-shell[data-collaboration-role='unrelated'] .paw-window {
+  filter: none;
 }
 .paw-desktop[data-collaboration-focus] .paw-window-shell[data-collaboration-role='hidden'] {
   opacity: 0;

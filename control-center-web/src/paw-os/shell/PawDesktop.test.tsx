@@ -394,6 +394,14 @@ describe('PAWOS desktop', () => {
   });
 
   it('selects desktop Apps with a lasso instead of webpage text selection', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      frames[handle - 1] = () => undefined;
+    });
     renderDesktop();
     const viewport = screen.getByRole('main');
     const shortcuts = screen.getByLabelText('桌面 App');
@@ -411,6 +419,10 @@ describe('PAWOS desktop', () => {
 
     fireEvent.pointerDown(viewport, { button: 0, clientX: 650, clientY: 50, pointerId: 4 });
     fireEvent.pointerMove(window, { clientX: 790, clientY: 270, pointerId: 4 });
+    act(() => {
+      const queued = frames.splice(0);
+      queued.forEach((callback) => callback(performance.now()));
+    });
 
     expect(screen.getByTestId('paw-selection-lasso')).toBeInTheDocument();
     expect(agent).toHaveAttribute('aria-selected', 'true');
@@ -418,6 +430,12 @@ describe('PAWOS desktop', () => {
 
     fireEvent.pointerUp(window, { clientX: 790, clientY: 270, pointerId: 4 });
     expect(screen.queryByTestId('paw-selection-lasso')).not.toBeInTheDocument();
+  });
+
+  it('opts the magnetic Dock out while a window gesture owns the pointer', () => {
+    expect(desktopSource).toContain('windowGestureOwnsPointer');
+    expect(desktopSource).toMatch(/dataset\.windowInteraction/);
+    expect(desktopSource).toMatch(/requestAnimationFrame\(apply\)/);
   });
 });
 
