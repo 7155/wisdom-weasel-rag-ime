@@ -197,6 +197,11 @@ describe('PawRoomFocusOverview', () => {
     // A WorkItem shares its owner's identity lane.
     expect(marsWork.style.left).toBe(within(mesh).getByRole('button', { name: /^Mars，/ }).style.left);
     expect(rootWork.style.left).toBe(within(mesh).getByRole('button', { name: /^Venus，/ }).style.left);
+
+    // The real covered time range is captioned under the canvas (first flow
+    // packet t=10 → latest WorkItem t=30), never an invented clock.
+    const timespan = document.querySelector('.paw-room-focus-overview__mesh-timespan')!;
+    expect(timespan).toHaveTextContent(/^起 \d{2}:\d{2}止 \d{2}:\d{2}$/);
   });
 
   it('selects a planet with pointer or keyboard and opens only its real participant target', async () => {

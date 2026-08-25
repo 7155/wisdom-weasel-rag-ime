@@ -201,6 +201,13 @@ describe('buildRoomFocusMesh', () => {
     expect(twice.edges.filter((edge) => edge.kind === 'handoff')).toHaveLength(1);
   });
 
+  it('exposes the real covered time range for the axis caption, never inventing one', () => {
+    // Earth enters at the flow packet (t=2); the last event is work-root (t=40).
+    expect(buildRoomFocusMesh(focus).timeline).toEqual({ startMs: 2, endMs: 40 });
+    // A quiet room has no recorded times, so there is no range to caption.
+    expect(buildRoomFocusMesh(projection({ partners: [partner('p-earth', 'Earth')] })).timeline).toBeUndefined();
+  });
+
   it('never invents a time — a partner with no recorded involvement waits on the origin row', () => {
     const mesh = buildRoomFocusMesh(projection({
       partners: [partner('p-earth', 'Earth'), partner('p-mars', 'Mars')],

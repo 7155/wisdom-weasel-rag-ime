@@ -216,6 +216,12 @@ function FocusMeshGraph({
           />)}
         </div>
       ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，协作网会从这里生长。</p>}
+      {mesh.timeline ? (
+        <p className="paw-room-focus-overview__mesh-timespan">
+          <span>起 {packetClock(mesh.timeline.startMs)}</span>
+          <span>止 {packetClock(mesh.timeline.endMs)}</span>
+        </p>
+      ) : null}
       {mesh.edgeKinds.length ? (
         <ul aria-label="关系图例" className="paw-room-focus-overview__mesh-legend">
           {mesh.edgeKinds.map((kind) => (

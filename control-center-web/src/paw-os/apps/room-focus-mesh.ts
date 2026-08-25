@@ -67,6 +67,9 @@ export interface RoomFocusMesh {
   lanes: RoomFocusMeshLane[];
   /** viewBox height in the same units as the fixed 0..100 width. */
   height: number;
+  /** Real recorded time range covered by the rows (first→last event), for the
+   * axis caption. Absent when nothing carries a real timestamp yet. */
+  timeline?: { startMs: number; endMs: number };
 }
 
 const X_MARGIN = 3;
@@ -219,6 +222,10 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
     edgeKinds: EDGE_KIND_ORDER.filter((kind) => present.has(kind)),
     lanes,
     height,
+    /* `timed` is already sorted, so its ends are the real covered range. */
+    ...(timed.length
+      ? { timeline: { startMs: timed[0]!.at, endMs: timed[timed.length - 1]!.at } }
+      : {}),
   };
 }
 
