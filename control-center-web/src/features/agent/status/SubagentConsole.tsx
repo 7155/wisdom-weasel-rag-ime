@@ -225,6 +225,7 @@ function Overview({
   onControl: (action: ControlAction, options?: { message?: string }) => Promise<void>;
 }) {
   const { run, capabilities } = snapshot;
+  const [confirmingAbort, setConfirmingAbort] = useState(false);
   const launch = record(run.launchDigest);
   const outputContract = record(launch.outputContract);
   const contract = record(run.contract);
@@ -285,18 +286,33 @@ function Overview({
           >
             <RefreshCw size={14} />重试
           </Button>
-          <Button
-            variant="danger"
-            disabled={!capabilities.abort.available}
-            loading={pendingAction === 'abort'}
-            onClick={() => {
-              if (!confirmDestructive('确定停止这个子 Agent 吗？当前运行会被中止。')) return;
-              void onControl('abort');
-            }}
-            title={capabilities.abort.reason}
-          >
-            <OctagonX size={14} />停止
-          </Button>
+          {/* Stopping is armed in place, the way the rest of the product asks
+              before a destructive act. A window.confirm dropped an OS dialog
+              over the console, blocked the run it was talking about, and could
+              not say what would be lost. */}
+          {confirmingAbort ? (
+            <span aria-label="确认停止子 Agent" className="subagent-console__confirm" role="group">
+              <em>停止后当前运行会被中止，已产出的结果保留。</em>
+              <Button
+                loading={pendingAction === 'abort'}
+                onClick={() => { setConfirmingAbort(false); void onControl('abort'); }}
+                variant="danger"
+              >
+                确认停止
+              </Button>
+              <Button onClick={() => setConfirmingAbort(false)} variant="quiet">取消</Button>
+            </span>
+          ) : (
+            <Button
+              variant="danger"
+              disabled={!capabilities.abort.available}
+              loading={pendingAction === 'abort'}
+              onClick={() => setConfirmingAbort(true)}
+              title={capabilities.abort.reason}
+            >
+              <OctagonX size={14} />停止
+            </Button>
+          )}
         </div>
         {!capabilities.steer.available ? <small>{capabilities.steer.reason}</small> : null}
       </section>
@@ -447,10 +463,6 @@ function TabButton({
       {icon}<span>{children}</span>{count > 0 ? <i>{count}</i> : null}
     </button>
   );
-}
-
-function confirmDestructive(message: string): boolean {
-  return typeof window === 'undefined' || window.confirm(message);
 }
 
 function RunState({ run }: { run: AgentSubagentRunV1 }) {

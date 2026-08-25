@@ -94,7 +94,7 @@ describe('SubagentConsoleDialog', () => {
     });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const confirm = vi.spyOn(window, 'confirm');
     render(
       <ControlTransportProvider transport={transport}>
         <QueryClientProvider client={queryClient}>
@@ -105,11 +105,23 @@ describe('SubagentConsoleDialog', () => {
 
     await user.click(screen.getByRole('button', { name: '停止测试' }));
     const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: /停止/ }));
+
+    // The first press only arms the stop, in place and inside the console.
+    await user.click(within(dialog).getByRole('button', { name: '停止' }));
     expect(transport.requests.filter((request) => request.pathId === 'agent.subagent.control')).toHaveLength(0);
-    await user.click(within(dialog).getByRole('button', { name: /停止/ }));
+    const armed = within(dialog).getByRole('group', { name: '确认停止子 Agent' });
+    expect(within(armed).getByText('停止后当前运行会被中止，已产出的结果保留。')).toBeInTheDocument();
+
+    // Backing out leaves the run alone and restores the ordinary action row.
+    await user.click(within(armed).getByRole('button', { name: '取消' }));
+    expect(within(dialog).queryByRole('group', { name: '确认停止子 Agent' })).toBeNull();
+    expect(transport.requests.filter((request) => request.pathId === 'agent.subagent.control')).toHaveLength(0);
+
+    await user.click(within(dialog).getByRole('button', { name: '停止' }));
+    await user.click(within(dialog).getByRole('button', { name: '确认停止' }));
     expect(transport.requests.filter((request) => request.pathId === 'agent.subagent.control')).toHaveLength(1);
-    expect(confirm).toHaveBeenCalledTimes(2);
+    // No OS dialog was ever raised over the console.
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it('labels an ordinary returned result as unverified instead of completed', async () => {

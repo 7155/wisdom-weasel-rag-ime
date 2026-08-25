@@ -295,6 +295,30 @@
   gap: 6px;
 }
 
+/* The armed stop takes the whole action row so the sentence it asks stays on
+   one line beside its two answers. */
+.subagent-console__confirm {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 34%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+}
+
+.subagent-console__confirm em {
+  min-width: 0;
+  flex: 1 1 180px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
 .subagent-console__failure,
 .subagent-console__error {
   color: var(--color-danger);
