@@ -23,11 +23,15 @@ import { PAW_COMPOSITION_PULSE_EVENT, type PawCompositionPulseSource } from '../
  * owns the desktop. Full-bleed at any scale (`slice` cover on a 1440x900
  * stage).
  *
- * Render budget: the only continuously animated subtrees (mist drift) carry
- * no SVG filter — the fog banks are pre-blurred radial gradients, so drift is
- * a pure transform instead of a per-frame Gaussian re-raster. Depth-of-field
- * blurs exist only on the three far ranges where they read, and both grain
- * speckle passes share one feTurbulence evaluation.
+ * Render budget: the only continuously animated subtrees (mist drift, high
+ * cirrus, the daylight tide, warmth breathe) carry no SVG filter — the fog
+ * banks are pre-blurred radial gradients, so drift is a pure transform
+ * instead of a per-frame Gaussian re-raster. Depth-of-field blurs exist only
+ * on the three far ranges where they read, and both grain speckle passes
+ * share one feTurbulence evaluation. All ambient motion runs on stepped
+ * minutes-long clocks (see the shell stylesheet), and pulses stay silent
+ * while the document is hidden, while collaboration focus owns the stage,
+ * and while a window drag/resize gesture owns the frame budget.
  */
 export function PawCompositionField({ effects = false }: { effects?: boolean } = {}) {
   const fieldRef = useRef<SVGSVGElement>(null);
@@ -47,15 +51,22 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
     // Mist rest opacities are static stylesheet values; caching them keeps
     // repeated pulses from forcing a style flush via getComputedStyle.
     const restOpacities = new Map<Element, number>();
+    // The wallpaper never spends frames nobody can see: a hidden document, a
+    // collaboration-focused desktop and a live window drag/resize all swallow
+    // pulses entirely — no energy write, no bloom transition, no WAAPI.
+    const pulsesSuspended = () => {
+      if (document.hidden) return true;
+      if (field.closest('[data-collaboration-focus]')) return true;
+      const root = field.closest<HTMLElement>('.paw-desktop-root');
+      return Boolean(root?.dataset.windowInteraction);
+    };
     const drive = (source: PawCompositionPulseSource, energyValue: number) => {
+      if (pulsesSuspended()) return;
       const energy = Math.max(0, Math.min(1, Number.isFinite(energyValue) ? energyValue : .65));
       field.dataset.drive = source;
       field.style.setProperty('--paw-composition-energy', energy.toFixed(3));
       const reduceMotionAttr = document.documentElement.getAttribute('data-reduce-motion') === 'true';
-      // Collaboration focus quiets the wallpaper exactly like reduced motion:
-      // no pulse choreography runs behind the focus plane.
-      const collaborationFocus = field.closest('[data-collaboration-focus]') !== null;
-      if (reducedMotion.matches || reduceMotionAttr || collaborationFocus || energy === 0) return;
+      if (reducedMotion.matches || reduceMotionAttr || energy === 0) return;
       const signal = field.querySelector<SVGCircleElement>('.paw-field__signal');
       if (signal) {
         cancelPulse(signal);
@@ -186,6 +197,13 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
           <stop offset=".8" stopColor="#ffffff" stopOpacity=".45" />
           <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
         </radialGradient>
+        {/* The daylight tide: a slow luminance swell over the light gap that
+            reads as early daylight moving through the valley. */}
+        <radialGradient id="paw-field-daylight" cx="50%" cy="50%" r="50%">
+          <stop offset="0" stopColor="#ffffff" stopOpacity=".66" />
+          <stop offset=".55" stopColor="#fbf8f0" stopOpacity=".3" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
         {/* Depth of field: only the far ranges soften into the haze — the
             near terrain reads sharp without spending blur. One-time rasters;
             nothing here ever re-filters. */}
@@ -209,6 +227,14 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
       <rect className="paw-field__sky" width="1440" height="900" fill="url(#paw-field-sky)" />
       <circle className="paw-field__bloom" cx="985" cy="552" r="560" fill="url(#paw-field-bloom)" />
       <circle className="paw-field__warmth" cx="985" cy="552" r="210" fill="url(#paw-field-warmth)" />
+      {/* High cirrus haze: thin bright bands crossing the sky against the
+          valley mist over minutes, so the weather has two moving depths. */}
+      <g className="paw-field__cirrus">
+        <g className="paw-field__cirrus-drift">
+          <ellipse cx="430" cy="176" rx="540" ry="30" fill="url(#paw-field-mist-ball)" opacity=".17" />
+          <ellipse cx="1090" cy="238" rx="620" ry="34" fill="url(#paw-field-mist-ball)" opacity=".13" />
+        </g>
+      </g>
       <path
         className="paw-field__ridge paw-field__ridge--veil"
         d="M -60 558.4 L -44 558.7 L -28 558.9 L -12 559.1 L 4 559.3 L 20 559.5 L 36 559.7 L 52 559.9 L 68 560.0 L 84 560.1 L 100 560.1 L 116 560.0 L 132 559.9 L 148 559.7 L 164 559.5 L 180 559.3 L 196 559.0 L 212 558.6 L 228 558.2 L 244 557.9 L 260 557.5 L 276 557.3 L 292 557.3 L 308 557.4 L 324 557.4 L 340 557.4 L 356 557.5 L 372 557.8 L 388 558.2 L 404 559.0 L 420 560.1 L 436 561.5 L 452 563.0 L 468 564.4 L 484 565.8 L 500 566.8 L 516 567.4 L 532 567.5 L 548 567.3 L 564 567.0 L 580 566.6 L 596 566.1 L 612 565.4 L 628 564.6 L 644 563.7 L 660 562.4 L 676 560.8 L 692 559.0 L 708 557.2 L 724 555.6 L 740 554.2 L 756 553.2 L 772 552.6 L 788 552.1 L 804 552.0 L 820 552.0 L 836 552.0 L 852 552.0 L 868 552.0 L 884 552.0 L 900 552.0 L 916 552.0 L 932 552.0 L 948 552.0 L 964 552.3 L 980 552.6 L 996 552.9 L 1012 553.0 L 1028 553.1 L 1044 552.9 L 1060 552.8 L 1076 552.6 L 1092 552.5 L 1108 552.5 L 1124 553.0 L 1140 553.7 L 1156 554.6 L 1172 555.6 L 1188 556.6 L 1204 557.4 L 1220 557.9 L 1236 558.2 L 1252 558.3 L 1268 558.3 L 1284 558.3 L 1300 558.4 L 1316 558.8 L 1332 559.5 L 1348 560.5 L 1364 561.6 L 1380 562.8 L 1396 563.9 L 1412 564.8 L 1428 565.3 L 1444 565.5 L 1460 565.2 L 1476 564.5 L 1492 563.6 L 1500 960 L -60 960 Z"
@@ -222,6 +248,7 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
         filter="url(#paw-field-dof-far)"
       />
       <circle className="paw-field__airlight paw-field__airlight--far" cx="985" cy="560" r="640" fill="url(#paw-field-airlight)" />
+      <ellipse className="paw-field__daylight" cx="985" cy="566" rx="560" ry="132" fill="url(#paw-field-daylight)" />
       <path
         className="paw-field__ridge paw-field__ridge--midfar"
         d="M -60 641.2 L -44 633.0 L -28 639.5 L -12 649.1 L 4 653.7 L 20 651.9 L 36 645.5 L 52 631.8 L 68 621.9 L 84 613.3 L 100 620.8 L 116 622.9 L 132 629.7 L 148 637.0 L 164 635.3 L 180 640.0 L 196 641.0 L 212 641.8 L 228 636.8 L 244 631.4 L 260 627.4 L 276 627.8 L 292 628.4 L 308 629.6 L 324 632.4 L 340 632.6 L 356 627.3 L 372 622.1 L 388 625.3 L 404 615.9 L 420 616.2 L 436 613.4 L 452 613.9 L 468 615.0 L 484 614.3 L 500 619.5 L 516 620.9 L 532 627.7 L 548 624.4 L 564 619.3 L 580 618.6 L 596 625.5 L 612 625.1 L 628 622.5 L 644 624.2 L 660 627.5 L 676 627.1 L 692 626.9 L 708 630.0 L 724 634.0 L 740 638.6 L 756 645.3 L 772 646.4 L 788 647.4 L 804 650.9 L 820 648.7 L 836 648.2 L 852 646.8 L 868 645.0 L 884 644.5 L 900 644.9 L 916 641.9 L 932 642.8 L 948 641.7 L 964 641.0 L 980 645.0 L 996 647.6 L 1012 648.6 L 1028 650.4 L 1044 649.2 L 1060 649.0 L 1076 646.7 L 1092 642.6 L 1108 637.8 L 1124 641.9 L 1140 638.9 L 1156 634.2 L 1172 634.6 L 1188 628.3 L 1204 620.3 L 1220 617.4 L 1236 619.9 L 1252 622.5 L 1268 622.8 L 1284 618.9 L 1300 618.5 L 1316 606.8 L 1332 598.5 L 1348 600.7 L 1364 606.4 L 1380 621.4 L 1396 636.0 L 1412 648.1 L 1428 649.2 L 1444 650.6 L 1460 648.1 L 1476 647.8 L 1492 648.1 L 1500 960 L -60 960 Z"

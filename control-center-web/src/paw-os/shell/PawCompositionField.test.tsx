@@ -14,6 +14,8 @@ describe('PAWOS Wayfinder fog terrain', () => {
       'paw-field__sky',
       'paw-field__bloom',
       'paw-field__warmth',
+      'paw-field__cirrus',
+      'paw-field__daylight',
       'paw-field__ridge--veil',
       'paw-field__ridge--far',
       'paw-field__ridge--midfar',
@@ -70,6 +72,41 @@ describe('PAWOS Wayfinder fog terrain', () => {
     // CSS-driven ambient mist drift on the same elements.
     expect(compositionSource).toContain("const pulseId = 'paw-field-pulse'");
     expect(compositionSource).toContain('if (animation.id === pulseId) animation.cancel()');
+  });
+
+  it('keeps every filter on static geometry so the moving weather is cheap to draw', () => {
+    // Ridge depth-of-field and film grain rasterize once and never animate;
+    // everything that moves (mist, cirrus, daylight, warmth, signal) is plain
+    // gradient geometry with no filter attribute, so a weather step repaints
+    // cached gradients instead of re-running Gaussian blurs.
+    expect(compositionSource).not.toContain('paw-field-mist-soften');
+    expect(compositionSource).toContain('url(#paw-field-mist-ball)');
+    expect(compositionSource).toContain('url(#paw-field-daylight)');
+    for (const line of compositionSource.split('\n')) {
+      if (!/paw-field__(mist|cirrus|daylight|warmth|signal|bloom)/.test(line)) continue;
+      expect(line, `animated layer stays filter-free: ${line.trim()}`).not.toContain('filter=');
+    }
+    // The wallpaper is one sealed paint world behind the desktop.
+    expect(desktopCss).toMatch(/\.paw-field-media\s*\{[^}]*contain:\s*strict/s);
+  });
+
+  it('moves on a stepped minutes-long clock and pauses whenever it cannot be watched', () => {
+    // steps() turns sixty invisible sub-pixel updates per second into one
+    // visible update every couple of seconds — the picture moves the same,
+    // the idle desktop stops re-rasterizing and re-blurring chrome glass.
+    expect(shellCss).toMatch(/paw-field-mist-drift 2[0-9]{2}s steps\(1[0-9]{2}\)/);
+    expect(shellCss).toMatch(/paw-field-cirrus-drift 3[0-9]{2}s steps\(/);
+    expect(shellCss).toMatch(/paw-field-daylight 1[0-9]{2}s steps\(/);
+    expect(shellCss).toMatch(/paw-field-breathe 26s steps\(/);
+    // A live window drag/resize freezes the weather in place instead of
+    // resetting it (collaboration focus has its own identical pause rule).
+    expect(desktopCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-composition-field \*\s*\{[^}]*animation-play-state:\s*paused/s);
+    // Pulses stay silent while hidden, focused-away or mid-gesture: no energy
+    // write, no bloom transition, no WAAPI.
+    expect(compositionSource).toContain('if (pulsesSuspended()) return;');
+    expect(compositionSource).toContain('if (document.hidden) return true;');
+    expect(compositionSource).toContain("field.closest('[data-collaboration-focus]')");
+    expect(compositionSource).toContain('root?.dataset.windowInteraction');
   });
 
   it('rests still under both reduced-motion signals and keeps the pulse bloom invisible at rest', () => {

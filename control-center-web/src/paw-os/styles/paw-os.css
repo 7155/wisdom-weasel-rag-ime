@@ -155,6 +155,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   inset: 0;
   overflow: hidden;
   pointer-events: none;
+  /* The wallpaper is its own sealed paint world: a weather step can never
+     invalidate desktop chrome, and desktop work can never re-rasterize the
+     field's one-time filters (ridge depth-of-field, film grain). */
+  contain: strict;
 }
 .paw-composition-field {
   --paw-composition-energy: 0;
@@ -178,6 +182,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   opacity: .7;
 }
 .paw-desktop[data-collaboration-focus] .paw-composition-field * {
+  animation-play-state: paused;
+}
+/* A live window drag/resize owns the frame budget the same way: freeze the
+   weather in place (play-state, not reset) so the wallpaper costs nothing
+   mid-gesture and resumes from the same sky at rest. */
+.paw-desktop-root[data-window-interaction] .paw-composition-field * {
   animation-play-state: paused;
 }
 .paw-desktop[data-collaboration-focus] .paw-wayfinder,
