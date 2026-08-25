@@ -575,10 +575,16 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   };
 
   const takeScreenshot = async () => {
-    if (!electronHost || !selectedHostTab?.webContentsId) return;
+    if (!electronHost) return;
+    const webContentsId = selectedHostTab?.webContentsId;
+    if (!webContentsId) {
+      setShowBrowserMenu(false);
+      setBrowserActionReceipt('页面还没有就绪，无法截图');
+      return;
+    }
     setBusy('screenshot');
     try {
-      const receipt = await electronHost.takeScreenshot(selectedHostTab.webContentsId);
+      const receipt = await electronHost.takeScreenshot(webContentsId);
       setBrowserActionReceipt(receipt.saved ? `截图已保存到 ${receipt.path}` : '截图未保存');
     } catch (requestError) {
       setBrowserActionReceipt(`截图失败：${errorText(requestError)}`);
@@ -832,7 +838,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
         </div>
       </section>
 
-      <section className="paw-browser-workspace" data-show-agent={showTrace && activeAgentTrace ? true : undefined}>
+      {/* The grid column follows the rendered sidebar, not the Agent: an
+        * on-demand trace opened while nobody is executing still needs its
+        * own column instead of stacking under the page. */}
+      <section className="paw-browser-workspace" data-show-agent={showTrace || undefined}>
         <div className="paw-browser-viewport" data-agent-state={agentExecutionState || undefined}>
           {selectedGuestLoading ? (
             <span aria-hidden="true" className="paw-browser-loadbar" />
