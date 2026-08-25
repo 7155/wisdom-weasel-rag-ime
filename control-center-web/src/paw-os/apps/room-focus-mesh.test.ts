@@ -60,11 +60,13 @@ describe('buildRoomFocusMesh', () => {
         accountableParticipantId: 'p-earth',
         state: 'review',
         review: { operability: 'passed', requirement: 'satisfied', reviewerParticipantId: 'p-venus' },
+        updatedAtMs: 40,
       }),
       work('work-child', {
         parentId: 'work-root',
         ownerParticipantId: 'p-mars',
         wave: { waveId: 'wave-a', parallelIndex: 1, parallelSize: 2 },
+        updatedAtMs: 25,
       }),
     ],
     handoffs: [{
@@ -74,12 +76,22 @@ describe('buildRoomFocusMesh', () => {
       state: 'dispatched',
       createdAtMs: 5,
     }],
+    flow: [{
+      id: 'packet-1',
+      sourceParticipantId: 'root',
+      targetParticipantIds: ['p-earth'],
+      kind: 'request',
+      summary: '目标交给 Earth',
+      status: 'completed',
+      createdAtMs: 2,
+      sequence: 1,
+      refs: [],
+    }],
   });
 
   it('projects Sol, every partner and every WorkItem as one node each', () => {
     const mesh = buildRoomFocusMesh(focus);
 
-    // Work nodes take ring slots grouped near their owner, so assert the set.
     expect(mesh.nodes.map((node) => node.id).sort()).toEqual([
       'partner:p-earth', 'partner:p-mars', 'partner:p-venus', 'root', 'work:work-child', 'work:work-root',
     ]);
@@ -88,11 +100,45 @@ describe('buildRoomFocusMesh', () => {
     expect(root.state).toBe('running');
     // Partner nodes keep celestial identity plus the real display name.
     const earth = mesh.nodes.find((node) => node.id === 'partner:p-earth')!;
-    expect(earth).toMatchObject({ label: 'Earth', sublabel: 'Agent Earth', orbit: 0, refId: 'p-earth' });
+    expect(earth).toMatchObject({ label: 'Earth', sublabel: 'Agent Earth', tone: 0, refId: 'p-earth' });
     // A real wave slot becomes the readable lane sublabel — never invented.
     const child = mesh.nodes.find((node) => node.id === 'work:work-child')!;
     expect(child.sublabel).toBe('∥ 轨道 2/2');
     expect(mesh.nodes.find((node) => node.id === 'work:work-root')!.sublabel).toBeUndefined();
+  });
+
+  it('lays nodes on chronological rows — reading down is reading real event order', () => {
+    const mesh = buildRoomFocusMesh(focus);
+
+    // Earth enters at the flow packet (t=2), Mars at the handoff (t=5), the
+    // child WorkItem updated at t=25, Venus first named at t=40 just ahead of
+    // the WorkItem that names her. Sol is the origin row.
+    const ordered = [...mesh.nodes].sort((left, right) => left.y - right.y).map((node) => node.id);
+    expect(ordered).toEqual([
+      'root', 'partner:p-earth', 'partner:p-mars', 'work:work-child', 'partner:p-venus', 'work:work-root',
+    ]);
+    // One row per node: no two nodes share a y, so the order stays readable.
+    const rows = [...mesh.nodes].map((node) => node.y).sort((left, right) => left - right);
+    for (let index = 1; index < rows.length; index += 1) expect(rows[index]!).toBeGreaterThan(rows[index - 1]!);
+  });
+
+  it('keeps every node in its actor identity lane with a lifeline per actor', () => {
+    const mesh = buildRoomFocusMesh(focus);
+    const at = (id: string) => mesh.nodes.find((node) => node.id === id)!;
+
+    // Sol owns the leftmost origin lane; work sits in its owner's lane.
+    for (const node of mesh.nodes) if (node.id !== 'root') expect(at('root').x).toBeLessThan(node.x);
+    expect(at('work:work-child').x).toBe(at('partner:p-mars').x);
+    expect(at('work:work-root').x).toBe(at('partner:p-venus').x);
+
+    // One lifeline per actor, dropping from the actor's entry row.
+    expect(mesh.lanes.map((lane) => lane.id)).toEqual(['root', 'p-earth', 'p-mars', 'p-venus']);
+    for (const lane of mesh.lanes) {
+      const node = at(lane.id === 'root' ? 'root' : `partner:${lane.id}`);
+      expect(lane.x).toBe(node.x);
+      expect(lane.y0).toBe(node.y);
+      expect(lane.y1).toBeLessThanOrEqual(mesh.height);
+    }
   });
 
   it('draws only recorded relations as edges', () => {
@@ -116,6 +162,9 @@ describe('buildRoomFocusMesh', () => {
     expect(byKind('review').map((edge) => `${edge.sourceId}->${edge.targetId}`)).toEqual([
       'partner:p-venus->work:work-root',
     ]);
+    // Ownership drops straight down the lane; the review verdict on the same
+    // endpoints bows aside so both relations stay legible.
+    expect(byKind('ownership')[0]!.path).not.toBe(byKind('review')[0]!.path);
     // Handoffs stay directed partner→partner with their lifecycle state.
     const handoff = byKind('handoff')[0]!;
     expect(handoff).toMatchObject({ sourceId: 'partner:p-earth', targetId: 'partner:p-mars', state: 'dispatched' });
@@ -134,9 +183,12 @@ describe('buildRoomFocusMesh', () => {
       ],
     }));
 
-    // The missing parent falls back to Sol; nothing points at absent partners.
+    // The missing parent falls back to Sol — and so does the lane; nothing
+    // points at absent partners.
     expect(mesh.edges.map((edge) => edge.id)).toEqual(['parent:root->work:work-a']);
     expect(mesh.edgeKinds).toEqual(['parent']);
+    expect(mesh.nodes.find((node) => node.id === 'work:work-a')!.x)
+      .toBe(mesh.nodes.find((node) => node.id === 'root')!.x);
 
     const twice = buildRoomFocusMesh(projection({
       partners: [partner('p-earth', 'Earth'), partner('p-mars', 'Mars')],
@@ -149,7 +201,19 @@ describe('buildRoomFocusMesh', () => {
     expect(twice.edges.filter((edge) => edge.kind === 'handoff')).toHaveLength(1);
   });
 
-  it('is deterministic and keeps every node inside the canvas', () => {
+  it('never invents a time — a partner with no recorded involvement waits on the origin row', () => {
+    const mesh = buildRoomFocusMesh(projection({
+      partners: [partner('p-earth', 'Earth'), partner('p-mars', 'Mars')],
+      workItems: [work('work-a', { ownerParticipantId: 'p-earth', updatedAtMs: 10 })],
+    }));
+    const at = (id: string) => mesh.nodes.find((node) => node.id === id)!;
+
+    expect(at('partner:p-mars').y).toBe(at('root').y);
+    expect(at('partner:p-earth').y).toBeGreaterThan(at('root').y);
+    expect(at('work:work-a').y).toBeGreaterThan(at('partner:p-earth').y);
+  });
+
+  it('is deterministic, keeps every node inside the canvas and grows with the timeline', () => {
     const first = buildRoomFocusMesh(focus);
     const second = buildRoomFocusMesh(focus);
     expect(second).toEqual(first);
@@ -158,14 +222,25 @@ describe('buildRoomFocusMesh', () => {
       expect(node.x).toBeGreaterThanOrEqual(0);
       expect(node.x).toBeLessThanOrEqual(100);
       expect(node.y).toBeGreaterThanOrEqual(0);
-      expect(node.y).toBeLessThanOrEqual(100);
+      expect(node.y).toBeLessThanOrEqual(first.height);
     }
-    // Owned work slots sit nearer their owner than any other partner.
-    const mars = first.nodes.find((node) => node.id === 'partner:p-mars')!;
-    const venus = first.nodes.find((node) => node.id === 'partner:p-venus')!;
-    const child = first.nodes.find((node) => node.id === 'work:work-child')!;
-    const distance = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
-    expect(distance(child, mars)).toBeLessThan(distance(child, venus));
+
+    // More recorded events → a taller timeline, never a denser orbit.
+    const longer = buildRoomFocusMesh(projection({
+      partners: focus.partners,
+      workItems: [
+        ...focus.workItems,
+        work('work-late-1', { ownerParticipantId: 'p-earth', updatedAtMs: 50 }),
+        work('work-late-2', { ownerParticipantId: 'p-mars', updatedAtMs: 60 }),
+      ],
+      handoffs: focus.handoffs,
+      flow: focus.flow,
+    }));
+    expect(longer.height).toBeGreaterThan(first.height);
+
+    // A quiet room still renders a readable band, not a zero-height strip.
+    const quiet = buildRoomFocusMesh(projection({ partners: [partner('p-earth', 'Earth')] }));
+    expect(quiet.height).toBeGreaterThanOrEqual(36);
   });
 
   it('labels every edge kind for the legend', () => {

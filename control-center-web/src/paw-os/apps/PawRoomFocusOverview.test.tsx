@@ -179,6 +179,26 @@ describe('PawRoomFocusOverview', () => {
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
   });
 
+  it('reads as a top-down timeline: real event order sets the rows, owners set the lanes', () => {
+    render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
+    const mesh = screen.getByRole('group', { name: '协作网状图' });
+    const top = (element: HTMLElement) => Number.parseFloat(element.style.top);
+
+    // Sol is the origin; the two branches (t=20, t=21) precede the
+    // integration WorkItem (t=30). No circular orbit — later means lower.
+    const sol = within(mesh).getByRole('img', { name: 'Sol，等待复核' });
+    const earthWork = within(mesh).getByRole('button', { name: '实现任务图交互，已完成' });
+    const marsWork = within(mesh).getByRole('button', { name: '实现依赖数据投影，进行中' });
+    const rootWork = within(mesh).getByRole('button', { name: '整合 Room 任务图，等待复核' });
+    expect(top(sol)).toBeLessThan(top(earthWork));
+    expect(top(earthWork)).toBeLessThan(top(marsWork));
+    expect(top(marsWork)).toBeLessThan(top(rootWork));
+
+    // A WorkItem shares its owner's identity lane.
+    expect(marsWork.style.left).toBe(within(mesh).getByRole('button', { name: /^Mars，/ }).style.left);
+    expect(rootWork.style.left).toBe(within(mesh).getByRole('button', { name: /^Venus，/ }).style.left);
+  });
+
   it('selects a planet with pointer or keyboard and opens only its real participant target', async () => {
     const user = userEvent.setup();
     const onOpenParticipant = vi.fn();
