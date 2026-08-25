@@ -51,6 +51,7 @@ import {
   nextEnabledCommandIndex,
   type ComposerCommand,
 } from './command-catalog';
+import { ComposerShell } from './ComposerShell';
 import { ModelPicker } from './ModelPicker';
 import { PermissionPicker } from './PermissionPicker';
 import { ToolPicker } from './ToolPicker';
@@ -256,7 +257,7 @@ export function AgentComposer({
         : modelChanging
           ? '正在切换模型'
           : !(composerDraft.trim() || attachments.length)
-            ? '先输入内容或添加图片'
+            ? '先输入内容或添加附件'
             : '';
   const sendActionLabel = busy
     ? (busyDelivery === 'steer' ? '干预当前执行' : '当前执行完成后接续')
@@ -390,35 +391,26 @@ export function AgentComposer({
     }
   }
   function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    // Any pasted File — image, PDF, audio, or text document — rides the same
+    // managed attach path as the paperclip; the owner surfaces a truthful
+    // error for types the Runtime media store refuses.
     const files = [...event.clipboardData.files];
-    const items = event.clipboardData.items;
-    let hasImageFileItem = files.some((file) => file.type.toLowerCase().startsWith('image/'));
-    if (!files.length && items) {
-      for (const item of items) {
+    if (!files.length) {
+      for (const item of event.clipboardData.items ?? []) {
         if (item.kind !== 'file') continue;
-        if (String(item.type || '').toLowerCase().startsWith('image/')) hasImageFileItem = true;
         const file = item.getAsFile();
         if (file) files.push(file);
       }
     }
-    if (!files.length && !hasImageFileItem) {
-      const pastedText = event.clipboardData.getData?.('text/plain') ?? '';
-      if (pastedText || !onPasteFromClipboard) return;
+    if (files.length) {
       event.preventDefault();
-      onPasteFromClipboard();
+      onPasteImages(files);
       return;
     }
+    const pastedText = event.clipboardData.getData?.('text/plain') ?? '';
+    if (pastedText || !onPasteFromClipboard) return;
     event.preventDefault();
-    if (imageSupport !== 'supported') {
-      if (files.length) onPasteImages(files);
-      else onPasteFromClipboard?.();
-      return;
-    }
-    if (!files.length) {
-      onPasteFromClipboard?.();
-      return;
-    }
-    onPasteImages(files);
+    onPasteFromClipboard();
   }
   return (
     <div className="agent-composer-wrap">
@@ -457,79 +449,32 @@ export function AgentComposer({
           <span>回到最新</span>
         </button>
       ) : null}
-      {/* The dock is taller than its text line — the toolbar band and the
-          padding around it are dead space, and clicking there did nothing even
-          though the whole surface looks like one input. Clicks that land on
-          chrome rather than on a real control put the caret back in the
-          message, which is what the surface appears to promise. */}
-      <div
-        className="agent-composer paw-unified-composer"
-        data-busy={busy || undefined}
-        data-jump-latest={showJumpLatest || undefined}
-        onMouseDown={(event) => {
-          if (event.button !== 0) return;
-          const target = event.target as HTMLElement;
-          if (target.closest('button, a, input, textarea, select, [role="radiogroup"], [contenteditable]')) return;
-          event.preventDefault();
-          textareaRef.current?.focus();
-        }}
-      >
-        {editState ? (
+      <ComposerShell
+        attachments={attachments.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          preview: <ComposerAttachmentPreview attachment={attachment} sessionId={session?.id ?? ''} />,
+        }))}
+        attachmentsLabel="待发送附件"
+        banner={editState ? (
           <div className="agent-composer__edit" role="status">
             <PencilLine size={15} aria-hidden="true" />
             <span><strong>正在修改这条消息</strong><small>{editState.resolving ? '正在定位历史锚点；内容现在就可以编辑' : '发送后将从这里重新生成后续对话'}</small></span>
             <IconButton label="取消修改" icon={<X size={15} />} size="small" onClick={onCancelEdit} tooltip />
           </div>
-        ) : null}
-        {attachments.length ? (
-          <div className="agent-composer__attachments" aria-label="待发送图片" role="list">
-            {attachments.map((attachment) => (
-              <span className="agent-composer__attachment-chip" key={attachment.id} role="listitem">
-                <ComposerAttachmentPreview attachment={attachment} sessionId={session?.id ?? ''} />
-                <b title={attachment.name}>{attachment.name}</b>
-                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => onAttachmentsChange(attachments.filter((item) => item.id !== attachment.id))}><X size={12} /></button>
-              </span>
-            ))}
-          </div>
-        ) : null}
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={composerDraft}
-          onChange={changeDraft}
-          onCompositionStart={startComposition}
-          onCompositionEnd={endComposition}
-          onKeyDown={keyDown}
-          onPaste={paste}
-          onFocus={() => setCommandInputFocused(true)}
-          onBlur={() => {
-            setCommandInputFocused(false);
-            setPaletteOpen(false);
-            setHelpOpen(false);
-            setDismissedDraft(composerDraft);
-          }}
-          autoCapitalize="none"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder={composerPlaceholder(persona?.displayName ?? 'Agent', imageSupport)}
-          aria-label="消息"
-          aria-autocomplete="list"
-          aria-expanded={commandPanelVisible}
-          aria-controls={commandPanelVisible ? 'agent-command-palette' : undefined}
-          aria-describedby={commandPanelVisible && !helpOpen ? 'agent-command-palette-hint' : undefined}
-          aria-activedescendant={commandPanelVisible && commands[activeCommandIndex]
-            ? `agent-command-option-${activeCommandIndex}`
-            : undefined}
-        />
-        <div className="agent-composer__toolbar">
-          <div className="agent-composer__controls">
+        ) : undefined}
+        busy={busy}
+        focusRef={textareaRef}
+        jumpLatest={showJumpLatest}
+        onRemoveAttachment={(id) => onAttachmentsChange(attachments.filter((item) => item.id !== id))}
+        controls={(
+          <>
             <IconButton
               className="agent-composer__attachment"
-              label={imageSupport === 'supported' ? '添加图片' : imageSupport === 'unsupported' ? '当前模型不支持图片' : '正在确认图片能力'}
+              label={attachmentButtonLabel(imageSupport)}
               icon={<Plus size={18} />}
               onClick={onPickAttachments}
-              disabled={!session || sending || imageSupport !== 'supported'}
+              disabled={!session || sending}
               tooltip
             />
             <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
@@ -561,8 +506,10 @@ export function AgentComposer({
                 <button type="button" role="radio" aria-checked={busyDelivery === 'followUp'} data-active={busyDelivery === 'followUp' || undefined} onClick={() => setBusyDelivery('followUp')} disabled={sending}>接续</button>
               </div>
             ) : null}
-          </div>
-          <div className="agent-composer__actions">
+          </>
+        )}
+        actions={(
+          <>
             {busy ? (
               <IconButton
                 className="agent-composer__stop"
@@ -582,9 +529,40 @@ export function AgentComposer({
               disabled={stopping || !canSend}
               tooltip
             />
-          </div>
-        </div>
-      </div>
+          </>
+        )}
+      >
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={composerDraft}
+          onChange={changeDraft}
+          onCompositionStart={startComposition}
+          onCompositionEnd={endComposition}
+          onKeyDown={keyDown}
+          onPaste={paste}
+          onFocus={() => setCommandInputFocused(true)}
+          onBlur={() => {
+            setCommandInputFocused(false);
+            setPaletteOpen(false);
+            setHelpOpen(false);
+            setDismissedDraft(composerDraft);
+          }}
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder={composerPlaceholder(persona?.displayName ?? 'Agent', imageSupport)}
+          aria-label="消息"
+          aria-autocomplete="list"
+          aria-expanded={commandPanelVisible}
+          aria-controls={commandPanelVisible ? 'agent-command-palette' : undefined}
+          aria-describedby={commandPanelVisible && !helpOpen ? 'agent-command-palette-hint' : undefined}
+          aria-activedescendant={commandPanelVisible && commands[activeCommandIndex]
+            ? `agent-command-option-${activeCommandIndex}`
+            : undefined}
+        />
+      </ComposerShell>
     </div>
   );
 }
@@ -651,7 +629,15 @@ function ComposerAttachmentPreview({
 }
 
 function composerPlaceholder(name: string, support: 'supported' | 'unsupported' | 'unknown'): string {
-  if (support === 'supported') return `给${name}发消息，输入 / 查看命令，或粘贴图片…`;
-  if (support === 'unsupported') return `给${name}发消息，输入 / 查看命令；当前模型不支持图片…`;
-  return `给${name}发消息，输入 / 查看命令；当前模型图片能力未知…`;
+  if (support === 'supported') return `给${name}发消息，输入 / 查看命令，或粘贴图片与文件…`;
+  if (support === 'unsupported') return `给${name}发消息，输入 / 查看命令；可粘贴文件，当前模型不支持图片…`;
+  return `给${name}发消息，输入 / 查看命令；可粘贴文件，当前模型图片能力未知…`;
+}
+
+/** Attach stays available for PDF/audio/text even when the model cannot see
+ * images; the label keeps the image capability state truthful (PF-CM-009). */
+function attachmentButtonLabel(support: 'supported' | 'unsupported' | 'unknown'): string {
+  if (support === 'supported') return '添加附件';
+  if (support === 'unsupported') return '添加附件；当前模型不支持图片';
+  return '添加附件；当前模型图片能力未知';
 }

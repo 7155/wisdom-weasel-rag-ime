@@ -6,6 +6,10 @@ import {
 } from '@/contracts/validators';
 
 import {
+  agentMediaMaxBytes,
+  normalizeAgentMediaFile,
+} from './agent-media-mime';
+import {
   controlRoute,
   resolveControlPath,
   type ControlPathId,
@@ -484,14 +488,6 @@ function isSnapshotRequired(event: unknown): boolean {
   );
 }
 
-const HTTP_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-]);
-const MAX_HTTP_IMAGE_BYTES = 20 * 1024 * 1024;
-
 function assertHttpImagePasteOptions(options: AgentImagePasteOptions): {
   files: File[];
   maxFiles: number;
@@ -505,27 +501,35 @@ function assertHttpImagePasteOptions(options: AgentImagePasteOptions): {
     || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(ownerId)
     || (options.roomId !== undefined && options.sessionId !== undefined)
   ) {
-    throw new TypeError('HTTP image paste requires exactly one bounded sessionId or roomId');
+    throw new TypeError('HTTP attachment paste requires exactly one bounded sessionId or roomId');
   }
-  const files = Array.from(options.files ?? []);
+  // Re-type Files whose extension names a Runtime-supported MIME the browser
+  // omitted (.md, .log, .patch often paste with an empty type).
+  const files = Array.from(options.files ?? []).map((file) => (
+    file instanceof File ? normalizeAgentMediaFile(file) : file
+  ));
   if (!files.length) {
-    throw new TypeError('Browser image paste requires clipboard File objects; use the native app when WebKit hides clipboard files');
+    throw new TypeError('Browser attachment paste requires clipboard File objects; use the native app when WebKit hides clipboard files');
   }
   const maxFiles = options.maxFiles ?? files.length;
   if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 8 || files.length > maxFiles) {
-    throw new TypeError('HTTP image paste requires between 1 and 8 files within maxFiles');
+    throw new TypeError('HTTP attachment paste requires between 1 and 8 files within maxFiles');
   }
   for (const file of files) {
+    // Mirrors the Runtime media store: PNG/JPEG/GIF/WebP images, PDF,
+    // MP3/M4A/WAV audio, and plain/markdown/HTML/diff/patch text, each within
+    // its own byte cap. Anything else is refused here rather than uploaded.
+    const maxBytes = file instanceof File ? agentMediaMaxBytes(file.type) : 0;
     if (
       !(file instanceof File)
       || !file.name
       || file.name.length > 512
       || file.name.includes('\u0000')
-      || !HTTP_IMAGE_MIME_TYPES.has(file.type.toLowerCase())
+      || !maxBytes
       || file.size <= 0
-      || file.size > MAX_HTTP_IMAGE_BYTES
+      || file.size > maxBytes
     ) {
-      throw new TypeError('HTTP image paste received an invalid PNG, JPEG, GIF, or WebP file');
+      throw new TypeError('HTTP attachment paste received a file the Runtime media store does not accept (supported: PNG/JPEG/GIF/WebP, PDF, MP3/M4A/WAV, TXT/MD/HTML/DIFF/PATCH within per-type byte limits)');
     }
   }
   return { files, maxFiles, ownerKey, ownerId };

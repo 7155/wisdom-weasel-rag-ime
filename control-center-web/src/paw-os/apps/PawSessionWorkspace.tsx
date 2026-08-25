@@ -77,6 +77,13 @@ import {
   type CapabilityMutationOutcome,
   type CapabilityPreference,
 } from '@/features/plugins/capability-policy';
+import {
+  AGENT_MEDIA_KINDS_TEXT,
+  agentMediaPickAccept,
+  attachmentSplitErrorText,
+  pickBrowserAttachmentFiles,
+  splitAttachmentFiles,
+} from '@/platform/agent-media-mime';
 import '@/features/agent/agent.css';
 
 type WorkbenchPanel = 'none' | 'files' | 'subagents' | 'status';
@@ -608,7 +615,14 @@ export function PawSessionWorkspace({
   }
 
   async function pickAttachments(): Promise<void> {
-    if (!transport.pickFiles) { setError('当前环境不能选择附件。'); return; }
+    if (!transport.pickFiles) {
+      // Browser transport has no native picker: a DOM file input feeds the
+      // same managed pasteImages import path, so receipts stay identical.
+      if (!transport.pasteImages) { setError('当前环境不能选择附件。'); return; }
+      const picked = await pickBrowserAttachmentFiles({ accept: agentMediaPickAccept() });
+      if (picked.length) await pasteImages(picked);
+      return;
+    }
     try {
       const imported = await transport.pickFiles({
         multiple: true,
@@ -621,9 +635,19 @@ export function PawSessionWorkspace({
   }
 
   async function pasteImages(files?: File[]): Promise<void> {
-    if (!transport.pasteImages) { setError('当前环境不能导入剪贴板图片。'); return; }
+    if (!transport.pasteImages) { setError('当前环境不能导入剪贴板附件。'); return; }
+    let selected: File[] | undefined;
+    if (files?.length) {
+      // Truthful pre-flight against the Runtime media allowlist: refused
+      // files are named in the error and never uploaded; supported ones in
+      // the same paste still import.
+      const split = splitAttachmentFiles(files);
+      setError(attachmentSplitErrorText(split, AGENT_MEDIA_KINDS_TEXT));
+      if (!split.accepted.length) return;
+      selected = split.accepted.slice(0, Math.max(1, 8 - attachments.length));
+    }
     try {
-      const imported = await transport.pasteImages({ sessionId: recordId, ...(files?.length ? { files } : {}), maxFiles: Math.max(1, 8 - attachments.length) });
+      const imported = await transport.pasteImages({ sessionId: recordId, ...(selected?.length ? { files: selected } : {}), maxFiles: Math.max(1, 8 - attachments.length) });
       setAttachments((current) => mergeAttachments(current, imported.map((item) => ({ ...item, source: 'clipboard' as const }))));
     } catch (reason) { setError(errorText(reason)); }
   }

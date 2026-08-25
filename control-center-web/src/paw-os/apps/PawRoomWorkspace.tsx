@@ -42,6 +42,14 @@ import {
 } from '@/features/agent/timeline/disclosure-anchor';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { publicErrorText } from '@/features/overview/management-ui';
+import {
+  ROOM_ATTACHMENT_KINDS_TEXT,
+  ROOM_ATTACHMENT_MIME_TYPES,
+  agentMediaPickAccept,
+  attachmentSplitErrorText,
+  pickBrowserAttachmentFiles,
+  splitAttachmentFiles,
+} from '@/platform/agent-media-mime';
 import { RoomComposer, roomMentionedParticipants } from '@/features/rooms/composer/RoomComposer';
 import { roomCollaborationRoleLabel } from '@/features/rooms/room-copy';
 import { latestPendingGroupedRoomInput, type PendingRoomQuestion } from '@/features/rooms/room-question';
@@ -94,8 +102,6 @@ const roomToolPanelIcons: Record<RoomToolPanel, LucideIcon> = {
   focus: Focus,
   governance: Settings2,
 };
-
-const imageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export function PawRoomWorkspace({
   initialDraft,
@@ -314,12 +320,21 @@ export function PawRoomWorkspace({
   }
 
   async function pickImages(): Promise<void> {
-    if (!transport.pickFiles) { setError('当前环境不能选择图片。'); return; }
+    if (!transport.pickFiles) {
+      // Browser transport has no native picker: a DOM file input feeds the
+      // same managed pasteImages import path, so receipts stay identical.
+      if (!transport.pasteImages) { setError('当前环境不能选择图片。'); return; }
+      const picked = await pickBrowserAttachmentFiles({
+        accept: agentMediaPickAccept(ROOM_ATTACHMENT_MIME_TYPES),
+      });
+      if (picked.length) await pasteImages(picked);
+      return;
+    }
     try {
       const imported = await transport.pickFiles({
         purpose: 'attachment',
         roomId: recordId,
-        accepts: [...imageTypes],
+        accepts: [...ROOM_ATTACHMENT_MIME_TYPES],
         multiple: true,
         maxFiles: Math.max(1, 8 - attachments.length),
       });
@@ -329,11 +344,20 @@ export function PawRoomWorkspace({
 
   async function pasteImages(files?: File[]): Promise<void> {
     if (!transport.pasteImages) { setError('当前环境不能导入剪贴板图片。'); return; }
+    let selected: File[] | undefined;
+    if (files?.length) {
+      // room-post.v2 与 _resolve_room_attachments 目前只接受图片附件：其余
+      // 类型在导入之前如实拒绝并点名，绝不伪装成上传成功。
+      const split = splitAttachmentFiles(files, ROOM_ATTACHMENT_MIME_TYPES);
+      setError(attachmentSplitErrorText(split, ROOM_ATTACHMENT_KINDS_TEXT));
+      if (!split.accepted.length) return;
+      selected = split.accepted.slice(0, Math.max(1, 8 - attachments.length));
+    }
     try {
       const imported = await transport.pasteImages({
         roomId: recordId,
-        ...(files?.length ? { files } : {}),
-        maxFiles: files?.length || Math.max(1, 8 - attachments.length),
+        ...(selected?.length ? { files: selected } : {}),
+        maxFiles: selected?.length || Math.max(1, 8 - attachments.length),
       });
       mergePickedImages(imported);
     } catch (reason) { setError(publicErrorText(reason, '图片没有导入，请重试。')); }
@@ -1177,7 +1201,7 @@ function PawRoomGovernanceInner({
 }
 
 function roomAttachment(file: PickedFile, roomId: string): RoomAttachmentReceipt {
-  if (file.roomId !== roomId || !imageTypes.has(file.mimeType) || !file.sha256) throw new TypeError('Room 图片回执无效。');
+  if (file.roomId !== roomId || !ROOM_ATTACHMENT_MIME_TYPES.has(file.mimeType) || !file.sha256) throw new TypeError('Room 图片回执无效。');
   return { mediaId: file.id, roomId, fileName: file.name.slice(0, 160) || '图片', mimeType: file.mimeType as RoomAttachmentReceipt['mimeType'], byteSize: file.byteSize, sha256: file.sha256 };
 }
 

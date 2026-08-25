@@ -1,4 +1,4 @@
-import { AtSign, Paperclip, Send, X } from 'lucide-react';
+import { AtSign, Plus, Send } from 'lucide-react';
 import {
   startTransition,
   useCallback,
@@ -12,6 +12,7 @@ import {
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
+import { ComposerShell } from '@/features/agent/composer/ComposerShell';
 import { roomCollaborationRoleLabel } from '../room-copy';
 
 interface ComposerParticipant {
@@ -174,26 +175,26 @@ export function RoomComposer({
   }
 
   function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    // Same skeleton as the Session composer: every pasted File takes the
+    // attach path; the Room workspace truthfully rejects what the Runtime's
+    // Room message contract does not accept (images only, today).
     const files = [...event.clipboardData.files];
-    let hasImageItem = files.some((file) => file.type.toLowerCase().startsWith('image/'));
     if (!files.length) {
       for (const item of event.clipboardData.items ?? []) {
         if (item.kind !== 'file') continue;
-        hasImageItem = hasImageItem || item.type.toLowerCase().startsWith('image/');
         const file = item.getAsFile();
         if (file) files.push(file);
       }
     }
-    if (!files.length && !hasImageItem) {
-      const text = event.clipboardData.getData?.('text/plain') ?? '';
-      if (text) return;
+    if (files.length) {
       event.preventDefault();
-      onPasteFromClipboard();
+      onPasteImages(files);
       return;
     }
+    const text = event.clipboardData.getData?.('text/plain') ?? '';
+    if (text) return;
     event.preventDefault();
-    if (files.length) onPasteImages(files);
-    else onPasteFromClipboard();
+    onPasteFromClipboard();
   }
 
   function submit(): void {
@@ -237,19 +238,6 @@ export function RoomComposer({
         </button>;
         })}
       </div> : null}
-      {attachments.length ? <div className="room-composer__attachments" aria-label="待发送图片">
-        {attachments.map((attachment) => <span key={attachment.mediaId}>
-          <Paperclip size={13} aria-hidden="true" />
-          <span title={attachment.fileName}>{attachment.fileName}</span>
-          <button
-            type="button"
-            aria-label={`移除图片：${attachment.fileName}`}
-            onClick={() => onAttachmentsChange(
-              attachments.filter((item) => item.mediaId !== attachment.mediaId),
-            )}
-          ><X size={12} /></button>
-        </span>)}
-      </div> : null}
       {taskBusyState || pendingAnswerMode ? <p className="room-composer__task-lock" role="status">
         {pendingAnswerMode
           ? '当前任务正在等待你的回答。这里只发送文字回答；点名和附件不会随回答发送。'
@@ -257,7 +245,55 @@ export function RoomComposer({
             ? '当前任务已暂停。发送文字可以告诉主持伙伴怎样继续，停止按钮会终止整条协作。'
             : '当前任务仍在执行。现在发送文字会立即干预主持伙伴的当前回合。'}
       </p> : null}
-      <div className="room-composer paw-unified-composer">
+      <ComposerShell
+        className="room-composer"
+        attachments={attachments.map((attachment) => ({
+          id: attachment.mediaId,
+          name: attachment.fileName,
+          removeLabel: `移除图片：${attachment.fileName}`,
+        }))}
+        attachmentsLabel="待发送图片"
+        focusRef={textareaRef}
+        onRemoveAttachment={(id) => onAttachmentsChange(
+          attachments.filter((item) => item.mediaId !== id),
+        )}
+        controls={(
+          <>
+            <IconButton
+              className="agent-composer__attachment room-composer__attachment"
+              label="添加图片"
+              icon={<Plus size={18} />}
+              disabled={!roomCanCompose || sending || pendingAnswerMode || Boolean(taskBusyState) || attachments.length >= 8}
+              onClick={onPickAttachments}
+              tooltip
+            />
+            {roomCanCompose && participants.length && !pendingAnswerMode ? <IconButton
+              className="room-composer__mention"
+              label="点名一位伙伴"
+              icon={<AtSign size={16} />}
+              aria-pressed={Boolean(addressedParticipantId)}
+              onClick={openMentionMenu}
+              tooltip
+            /> : null}
+          </>
+        )}
+        actions={(
+          <IconButton
+            className="agent-composer__send room-composer__send"
+            label={pendingAnswerMode
+              ? '发送问题回答'
+              : taskBusyState === 'blocked'
+                ? '告诉伙伴怎样继续'
+                : taskBusyState
+                  ? '立即干预当前回合'
+                  : '发送消息'}
+            icon={<Send size={18} />}
+            disabled={!canSend}
+            onClick={submit}
+            tooltip
+          />
+        )}
+      >
         <textarea
           ref={setTextareaRef}
           rows={1}
@@ -328,41 +364,7 @@ export function RoomComposer({
             ? `room-mention-${mentionCandidates[activeIndex]?.id}`
             : undefined}
         />
-        <div className="room-composer__toolbar">
-          <div className="room-composer__controls">
-            <IconButton
-              className="room-composer__attachment"
-              label="添加图片"
-              icon={<Paperclip size={16} />}
-              disabled={!roomCanCompose || sending || pendingAnswerMode || Boolean(taskBusyState) || attachments.length >= 8}
-              onClick={onPickAttachments}
-              tooltip
-            />
-            {roomCanCompose && participants.length && !pendingAnswerMode ? <IconButton
-              className="room-composer__mention"
-              label="点名一位伙伴"
-              icon={<AtSign size={16} />}
-              aria-pressed={Boolean(addressedParticipantId)}
-              onClick={openMentionMenu}
-              tooltip
-            /> : null}
-          </div>
-          <IconButton
-            className="room-composer__send"
-            label={pendingAnswerMode
-              ? '发送问题回答'
-              : taskBusyState === 'blocked'
-                ? '告诉伙伴怎样继续'
-                : taskBusyState
-                  ? '立即干预当前回合'
-                  : '发送消息'}
-            icon={<Send size={17} />}
-            disabled={!canSend}
-            onClick={submit}
-            tooltip
-          />
-        </div>
-      </div>
+      </ComposerShell>
     </div>
   </div>;
 }

@@ -6,6 +6,10 @@ import {
 } from '@/contracts/validators';
 
 import {
+  agentMediaMaxBytes,
+  agentMediaMimeForFile,
+} from './agent-media-mime';
+import {
   controlRoute,
   isControlPathId,
   type ControlPathId,
@@ -533,16 +537,19 @@ function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
     throw new NativeBridgeCallError('pickFiles returned an invalid byte size');
   }
   if (options.purpose === 'attachment') {
+    // Managed attachment receipts mirror the Runtime media store: images,
+    // PDF, audio, and text within per-type byte caps — not images alone.
+    const maxBytes = agentMediaMaxBytes(value.mimeType);
     if (
-      MANAGED_AGENT_IMAGE_MIME_TYPES[value.mimeType] !== true ||
-      value.byteSize > MAX_MANAGED_AGENT_IMAGE_BYTES ||
+      !maxBytes ||
+      value.byteSize > maxBytes ||
       !managedReceiptMatchesOwner(value, options) ||
       typeof value.sha256 !== 'string' ||
       !/^[a-f0-9]{64}$/.test(value.sha256) ||
       !/^media_[A-Za-z0-9_-]{12,80}$/.test(value.id) ||
       'path' in value
     ) {
-      throw new NativeBridgeCallError('pickFiles returned an invalid managed image receipt');
+      throw new NativeBridgeCallError('pickFiles returned an invalid managed media receipt');
     }
   } else if (
     typeof value.path !== 'string'
@@ -685,13 +692,6 @@ function isSafeKnowledgeId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value);
 }
 
-const MANAGED_AGENT_IMAGE_MIME_TYPES: Record<string, true> = {
-  'image/png': true,
-  'image/jpeg': true,
-  'image/gif': true,
-  'image/webp': true,
-};
-const MAX_MANAGED_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
 
 function hasExactlyOneManagedOwner(
   options: { sessionId?: unknown; roomId?: unknown },
@@ -733,17 +733,23 @@ function assertAgentImagePasteOptions(options: AgentImagePasteOptions): number {
     throw new TypeError('Agent image paste files exceed maxFiles');
   }
   for (const file of files ?? []) {
+    // Native paste treats these Files as evidence only (the trusted system
+    // pasteboard is read instead), but the evidence must still name a MIME
+    // type the Runtime media store accepts, within its byte cap.
+    const maxBytes = typeof file?.name === 'string'
+      ? agentMediaMaxBytes(agentMediaMimeForFile({ name: file.name, type: String(file.type) }))
+      : 0;
     if (
       typeof file?.name !== 'string' ||
       !file.name ||
       file.name.length > 512 ||
       file.name.includes('\u0000') ||
-      MANAGED_AGENT_IMAGE_MIME_TYPES[String(file.type).toLowerCase()] !== true ||
+      !maxBytes ||
       !Number.isSafeInteger(file.size) ||
       file.size <= 0 ||
-      file.size > MAX_MANAGED_AGENT_IMAGE_BYTES
+      file.size > maxBytes
     ) {
-      throw new TypeError('Agent image paste received an invalid image file');
+      throw new TypeError('Agent attachment paste received a file the Runtime media store does not accept');
     }
   }
   return maxFiles;
