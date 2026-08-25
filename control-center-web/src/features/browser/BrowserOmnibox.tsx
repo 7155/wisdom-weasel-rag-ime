@@ -61,7 +61,9 @@ export function committedUrlParts(url: string): CommittedUrlParts | null {
  * the committed URL or nothing is committed yet. While editing, one action
  * row previews the exact URL or search Enter commits; Escape restores the
  * committed address. At rest the committed URL is shown with the host
- * emphasized, without changing the underlying field value.
+ * emphasized, without changing the underlying field value. When a tab with no
+ * committed page becomes current the caret lands here automatically, the same
+ * hand-off a desktop browser makes on a new tab.
  */
 export function BrowserOmnibox({
   committedUrl,
@@ -92,6 +94,27 @@ export function BrowserOmnibox({
   useEffect(() => {
     if (!focused && draft !== null && draft === committed) setDraft(null);
   }, [committed, draft, focused]);
+
+  // Real-browser caret hand-off: whenever a tab with no committed page becomes
+  // current — first open or a fresh new tab — typing starts here immediately.
+  // Tabs already showing a page keep focus on the page, and focus is never
+  // pulled out of another window or a field the person is typing in.
+  const autoFocusedTabKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (autoFocusedTabKey.current === tabKey) return;
+    autoFocusedTabKey.current = tabKey;
+    if (committed) return;
+    const input = inputRef.current;
+    if (!input) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) {
+      const ownShell = input.closest('.paw-window-shell');
+      const activeShell = active.closest('.paw-window-shell');
+      if (activeShell && activeShell !== ownShell) return;
+      if (active.matches('input, textarea, select, [contenteditable="true"]')) return;
+    }
+    input.focus();
+  }, [committed, tabKey]);
 
   const commit = () => {
     onNavigate(value);
