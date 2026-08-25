@@ -21,7 +21,13 @@
   --paw-browser-muted: #64737d;
   --paw-browser-accent: var(--paw-app-accent, #146f7b);
   --paw-browser-glow: rgb(20 143 158 / 26%);
-  grid-template-rows: 42px 1fr;
+  /* App window skeleton. Each chrome row is sized by the control it actually
+     carries and floored by its own min-height, and exactly one track absorbs
+     whatever height the window has left. Pinning the toolbar to a fixed pixel
+     row clipped the omnibox into the strip above and the page below as soon as
+     the toolbar's real padding exceeded it, and a bare `1fr` guest track let a
+     tall page push the chrome out of the window instead of scrolling. */
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--paw-app-surface, #fff);
   color: var(--paw-browser-ink);
   font-family: var(--font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
@@ -29,7 +35,7 @@
 }
 
 .paw-desktop-root .paw-direct-browser:not([data-tabs-in-window-chrome]) {
-  grid-template-rows: 38px 42px minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 /* Window titlebar carrying the live tab deck. */
@@ -57,6 +63,7 @@
 }
 
 .paw-desktop-root .paw-direct-browser:not([data-tabs-in-window-chrome]) .paw-browser-tabstrip {
+  min-height: 38px;
   padding: 0 8px;
   border-bottom: 1px solid var(--paw-browser-line);
   background: var(--paw-browser-chrome);
@@ -126,17 +133,25 @@
   margin-bottom: 0;
 }
 
-/* Navigation deck: satin gradient with one machined hairline. */
+/* Navigation deck: satin gradient with one machined hairline. The row keeps a
+   floor rather than a fixed height so the omnibox capsule and its padding
+   always fit inside the deck instead of bleeding over the strip and page. */
 .paw-desktop-root .paw-browser-toolbar {
+  min-height: 44px;
+  flex-wrap: nowrap;
   gap: 7px;
-  padding: 5px 10px 6px;
+  padding: 5px 10px;
   border-bottom-color: var(--paw-browser-line);
   background: linear-gradient(180deg, color-mix(in srgb, var(--paw-browser-chrome) 42%, #fff), var(--paw-browser-chrome));
   box-shadow: 0 1px 0 rgb(255 255 255 / 88%) inset;
 }
 
+/* Primary navigation is the last thing a narrow window may give up: the two
+   control clusters keep their measured width and the address capsule is the
+   only toolbar child that yields. */
 .paw-desktop-root .paw-nav-buttons,
 .paw-desktop-root .paw-toolbar-actions {
+  flex: 0 0 auto;
   gap: 3px;
 }
 
@@ -144,6 +159,7 @@
 .paw-desktop-root .paw-toolbar-actions > button {
   width: 29px;
   height: 29px;
+  flex: 0 0 auto;
   border-radius: 9px;
   color: #5c6a73;
 }
@@ -154,9 +170,12 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-browser-accent) 24%, transparent);
 }
 
-/* Omnibox: one floating capsule that lights up under the hand. */
+/* Omnibox: one floating capsule that lights up under the hand. It absorbs the
+   toolbar's spare width in both directions but never collapses to a sliver. */
 .paw-desktop-root .paw-omnibox-form {
   height: 34px;
+  min-width: 96px;
+  flex: 1 1 auto;
   gap: 7px;
   padding-inline: 12px;
   border: 1px solid var(--paw-browser-line);
@@ -199,18 +218,40 @@
   color: #1f9d4d;
 }
 
-/* Page-first workspace. */
+/* Page-first workspace: one column and one row at every size, so opening the
+   trace panel or a sheet can never re-flow the guest into a second track. */
 .paw-desktop-root .paw-browser-workspace,
 .paw-desktop-root .paw-browser-workspace[data-show-agent] {
   position: relative;
+  min-width: 0;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
   isolation: isolate;
   background: #fff;
 }
 
 .paw-desktop-root .paw-browser-viewport {
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
   background: #fff;
+}
+
+/* Every page surface — the real guest, the CDP projection, the blank sheet,
+   the reload prompt, and the transport failure card — shares the single guest
+   cell. Letting any of them open an implicit second row would size the guest
+   by its siblings and push the bottom of the page out of the window. */
+.paw-desktop-root .paw-browser-native-webview,
+.paw-desktop-root .paw-browser-blank-page,
+.paw-desktop-root .paw-browser-live-view,
+.paw-desktop-root .paw-browser-awaiting,
+.paw-desktop-root .paw-browser-error {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 .paw-desktop-root .paw-browser-error {
@@ -269,7 +310,10 @@
   justify-items: center;
   gap: 6px;
   overflow: hidden;
-  padding-bottom: 6vh;
+  /* Optical lift measured against the Browser window, not the screen: a `vh`
+     inset ignored the App frame entirely and pushed the start block off a
+     short window while leaving a maximized one barely lifted. */
+  padding-bottom: min(5cqw, 34px);
   background: #fff;
   color: #5f6368;
   text-align: center;
@@ -593,7 +637,13 @@
    white-on-cobalt selection; this owner keeps only placement and width. */
 .paw-desktop-root .paw-browser-menu {
   top: 35px;
-  width: 220px;
+  width: min(220px, calc(100cqw - 12px));
+  /* The App window clips its own overflow, so a short Browser window must be
+     able to reach every menu item by scrolling the popover rather than losing
+     the rows below the window edge. */
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-color: var(--paw-menu-line);
   border-radius: var(--paw-menu-radius);
   background: var(--paw-menu-bg);
@@ -666,7 +716,10 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   place-items: start center;
-  padding: clamp(28px, 7vh, 58px) 14px 14px;
+  /* Sheet inset follows the Browser window width, so a narrow App window keeps
+     its History and Settings cards readable instead of inheriting a screen
+     inset that only ever fitted a maximized window. */
+  padding: clamp(16px, 6cqw, 52px) 14px 14px;
   overflow: hidden;
   border: 0;
   border-radius: 0;
@@ -1118,6 +1171,31 @@
   .paw-desktop-root .paw-browser-menu-narrow-only { display: flex; }
   .paw-desktop-root .paw-browser-start-halo { width: 62px; height: 62px; }
   .paw-desktop-root .paw-browser-start > strong { font-size: 17px; }
+}
+
+/* At the App window's minimum width the toolbar has already dropped Home,
+   History, and Settings into the menu. What is left — back, forward, reload,
+   the address, the trace toggle, and the menu — is the primary navigation and
+   must all stay on one unwrapped row, so the remaining controls tighten
+   instead of the address collapsing or a control leaving the deck. */
+@container paw-browser (max-width: 420px) {
+  .paw-desktop-root .paw-browser-toolbar { gap: 3px; padding-inline: 5px; }
+  .paw-desktop-root .paw-nav-buttons,
+  .paw-desktop-root .paw-toolbar-actions { gap: 2px; }
+  .paw-desktop-root .paw-nav-buttons button,
+  .paw-desktop-root .paw-toolbar-actions > button { width: 26px; height: 26px; }
+  .paw-desktop-root .paw-omnibox-form { min-width: 84px; gap: 5px; padding-inline: 9px; }
+  .paw-desktop-root .paw-browser-agent-stream { width: calc(100% - 10px); top: 5px; right: 5px; max-height: calc(100% - 10px); }
+  .paw-desktop-root .paw-browser-menu { width: calc(100cqw - 10px); }
+}
+
+/* The tab deck is portalled into the window titlebar, which lives outside the
+   Browser App container, so its narrow behaviour has to be asked of the window
+   container. Without this the desktop tab floor stayed at its wide 104px and
+   overrode the shared strip's narrow floor by specificity alone. */
+@container paw-window (max-width: 620px) {
+  .paw-desktop-root .paw-browser-tab { min-width: 92px; flex-basis: 132px; }
+  .paw-desktop-root .paw-browser-tab-main { padding: 0 28px 0 8px; gap: 6px; }
 }
 
 @media (hover: hover) and (pointer: fine) {

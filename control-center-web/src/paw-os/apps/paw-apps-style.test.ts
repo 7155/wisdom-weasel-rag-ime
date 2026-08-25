@@ -115,6 +115,46 @@ describe('PAWOS semantic type roles', () => {
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-error\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
   });
 
+  it('builds Browser as an App window skeleton whose guest owns the leftover height', () => {
+    // Tab deck, address deck, and guest are three tracks of one window-filling
+    // grid: the chrome rows are sized by the controls they carry and only the
+    // guest track absorbs the remaining height.
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\);/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser:not\(\[data-tabs-in-window-chrome\]\)\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\);/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser:not\(\[data-tabs-in-window-chrome\]\) \.paw-browser-tabstrip\s*\{[^}]*min-height:\s*38px;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-toolbar\s*\{[^}]*min-height:\s*44px;[^}]*flex-wrap:\s*nowrap;/s);
+
+    // The guest never inherits a second track, and every page surface — real
+    // guest, CDP projection, blank sheet, reload prompt, failure card — shares
+    // the one guest cell instead of stacking into implicit rows.
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-workspace,\s*\.paw-desktop-root \.paw-browser-workspace\[data-show-agent\]\s*\{[^}]*min-height:\s*0;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);\s*grid-template-rows:\s*minmax\(0, 1fr\);/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-viewport\s*\{[^}]*min-height:\s*0;[^}]*grid-template-rows:\s*minmax\(0, 1fr\);/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-native-webview,[\s\S]*?\.paw-desktop-root \.paw-browser-error\s*\{[^}]*grid-area:\s*1 \/ 1;/s);
+
+    // Nothing inside an App window may be measured against the screen.
+    expect(toolsMigratedCss).not.toMatch(/\d(?:\.\d+)?v(?:h|w|min|max)\b/);
+  });
+
+  it('keeps Browser tabs and primary navigation intact while the window resizes', () => {
+    // The address capsule is the only toolbar child that yields width, and it
+    // still refuses to collapse into a sliver.
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-nav-buttons,\s*\.paw-desktop-root \.paw-toolbar-actions\s*\{[^}]*flex:\s*0 0 auto;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-nav-buttons button,\s*\.paw-desktop-root \.paw-toolbar-actions > button\s*\{[^}]*flex:\s*0 0 auto;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-omnibox-form\s*\{[^}]*min-width:\s*96px;\s*flex:\s*1 1 auto;/s);
+
+    // Below the 620px menu fold the remaining controls tighten once more.
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*420px\)[\s\S]*?\.paw-desktop-root \.paw-omnibox-form\s*\{[^}]*min-width:\s*84px;/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*420px\)[\s\S]*?\.paw-desktop-root \.paw-browser-agent-stream\s*\{/s);
+
+    // The tab deck is portalled into the window titlebar, outside the Browser
+    // container, so its narrow floor has to be asked of the window container.
+    expect(toolsMigratedCss).toMatch(/@container paw-window \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-tab\s*\{[^}]*min-width:\s*92px;/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-window \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-tab-main\s*\{[^}]*padding:\s*0 28px 0 8px;/s);
+
+    // Every menu row stays reachable inside a short window that clips overflow.
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-menu\s*\{[^}]*max-height:\s*320px;\s*overflow-y:\s*auto;/s);
+  });
+
   it('keeps installed Agent raw, code, and terminal readers on a readable code colour pair', () => {
     const paperRule = agentMigratedCss.indexOf("pre:not(.agent-code-block__content)");
     const codeSurfaceRule = agentMigratedCss.indexOf('Installed Agent code surfaces keep their text/background pair');
