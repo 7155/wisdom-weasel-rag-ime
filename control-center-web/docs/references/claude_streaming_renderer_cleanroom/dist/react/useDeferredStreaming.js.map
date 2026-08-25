@@ -1,0 +1,1 @@
+{"version":3,"file":"useDeferredStreaming.js","sourceRoot":"","sources":["../../src/react/useDeferredStreaming.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,gBAAgB,EAAE,MAAM,OAAO,CAAC;AAEzC;;;;GAIG;AACH,MAAM,UAAU,oBAAoB,CAAC,WAAoB;IACvD,MAAM,QAAQ,GAAG,gBAAgB,CAAC,WAAW,CAAC,CAAC;IAC/C,OAAO,WAAW,IAAI,QAAQ,CAAC;AACjC,CAAC"}

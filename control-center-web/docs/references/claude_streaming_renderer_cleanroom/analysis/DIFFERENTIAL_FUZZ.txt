@@ -1,0 +1,3 @@
+scanner differential fuzz: 20,000 randomly generated Markdown documents matched the reconstructed bundle scanner state and chunk boundaries.
+
+The private reference harness was used only for behavioral comparison and is not distributed because the deliverable is a clean-room implementation.

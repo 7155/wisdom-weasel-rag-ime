@@ -1,0 +1,31 @@
+{
+  "uploaded_zip": {
+    "path": "/mnt/data/c679f1d1-081c-4c40-b1f8-6046cb0f1753.zip",
+    "bytes": 62438180,
+    "sha256": "d3ef57aad1acd7aa399b758fa2acc40cf46531e136da9499589be50a0a3d045a"
+  },
+  "index_html": {
+    "path": "/mnt/data/claude_ion_analysis/ion-dist/index.html",
+    "bytes": 33119,
+    "sha256": "f18a5abd342773775c687026ae7459a38209cd043a91f41616028b6982e677bb"
+  },
+  "shared_10": {
+    "path": "/mnt/data/claude_ion_analysis/ion-dist/assets/v1/shared-10-Dndtc5mJ.js",
+    "bytes": 205272,
+    "sha256": "879ab3d72b1aff93c37482dfc158ef03d87b4450157d86ee0655907ace216f28"
+  },
+  "shared_5": {
+    "path": "/mnt/data/claude_ion_analysis/ion-dist/assets/v1/shared-5-CykGk_Dj.js",
+    "bytes": 413737,
+    "sha256": "9f07b0df7f5630bf67b811e4263610c098d15030bbac618d3cad18a69a7bdde5"
+  },
+  "c3e2391e3": {
+    "path": "/mnt/data/claude_ion_analysis/ion-dist/assets/v1/c3e2391e3-BQJuX05U.js",
+    "bytes": 220610,
+    "sha256": "452c34ca282f15038ef61febe26c92e3cb15e65521da0f18f41ae2390837c63b"
+  },
+  "data-build-id": "spa-dev",
+  "data-git-hash": "local",
+  "data-build-timestamp": "1787278227",
+  "build_timestamp_utc": "2026-08-21T02:10:27+00:00"
+}

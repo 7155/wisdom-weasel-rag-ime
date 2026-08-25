@@ -1,0 +1,44 @@
+{
+  "name": "claude-progressive-markdown-cleanroom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Clean-room progressive Markdown renderer based on observable behavior in a Claude desktop web build.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./core": "./dist/core/index.js",
+    "./react": "./dist/react/index.js",
+    "./react-markdown": "./dist/react/ReactMarkdownAdapter.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "analysis",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:core": "tsc -p tsconfig.core.json",
+    "verify:react-syntax": "node tools/verify-react-syntax.mjs",
+    "test": "npm run test:core && npm run verify:react-syntax",
+    "test:core": "npm run build:core && node --test tests/*.test.mjs",
+    "inspect": "node tools/inspect-ion-dist.mjs",
+    "bench": "npm run build:core && node bench/scan-benchmark.mjs"
+  },
+  "peerDependencies": {
+    "react": ">=18.3",
+    "react-dom": ">=18.3"
+  },
+  "optionalDependencies": {
+    "react-markdown": ">=9",
+    "remark-gfm": ">=4"
+  },
+  "devDependencies": {
+    "@types/react": ">=18",
+    "@types/react-dom": ">=18",
+    "typescript": ">=5.5"
+  }
+}

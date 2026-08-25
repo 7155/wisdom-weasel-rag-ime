@@ -1,0 +1,25 @@
+[data-progressive-markdown] {
+  overflow-wrap: anywhere;
+}
+
+.pm-code-line {
+  display: block;
+  min-height: 1lh;
+}
+
+.pm-code-line-number {
+  display: inline-block;
+  width: 3.5em;
+  padding-right: 1em;
+  text-align: right;
+  user-select: none;
+  opacity: 0.45;
+}
+
+.pm-code-line-content {
+  white-space: pre;
+}
+
+.progressive-markdown > :last-child {
+  contain: layout style;
+}
