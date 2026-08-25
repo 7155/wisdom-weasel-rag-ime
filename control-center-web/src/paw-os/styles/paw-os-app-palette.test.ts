@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import appRegistrySource from '@/features/paw-os/model/app-registry.ts?raw';
 import agentAppSource from '../apps/PawAgentApp.tsx?raw';
 import contextTraceSource from '../apps/PawContextTrace.tsx?raw';
 import appCss from '../apps/paw-apps.css?raw';
@@ -51,6 +52,18 @@ describe('UR-104 PAWOS App color identities', () => {
     expect(new Set(palettes.map(({ family }) => family)).size).toBeGreaterThanOrEqual(5);
     for (const materialToken of ['canvas', 'nav', 'surface', 'selection'] as const) {
       expect(new Set(palettes.map((palette) => palette[materialToken])).size).toBe(appIds.length);
+    }
+  });
+
+  it('keeps the App record out of the colour conversation', () => {
+    /* The registry used to name a second hue per App. Nothing read it, so it
+       drifted: App Center was recorded `violet` while its window rendered the
+       `#b95028` palette, and Terminal was recorded `slate` while its window
+       rendered `#79c56e`. One owner or the identity is whatever the reader
+       happens to look at. */
+    expect(appRegistrySource).not.toMatch(/^\s*accent[?]?:/m);
+    for (const hue of ['cyan', 'violet', 'amber', 'rose', 'slate']) {
+      expect(appRegistrySource, `registry names the hue ${hue}`).not.toContain(`'${hue}'`);
     }
   });
 
