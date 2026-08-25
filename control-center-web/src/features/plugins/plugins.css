@@ -249,6 +249,27 @@ main[data-route-id='plugins'] .plugins-count {
   line-height: 1.4;
 }
 
+/* One sentence, not a three-box strip repeating one count. It names the
+   total once and only speaks about a state that actually differs from it. */
+.plugins-capability-lead {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.plugins-capability-lead > strong {
+  margin-right: 2px;
+  color: var(--color-text);
+  font-size: 22px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.plugins-capability-lead [data-tone='attention'] { color: var(--color-warning); font-weight: var(--font-weight-medium); }
+.plugins-capability-lead [data-tone='hidden'] { color: var(--color-text); font-weight: var(--font-weight-medium); }
+
 .capability-policy-notices {
   display: grid;
   gap: var(--space-2);

@@ -131,6 +131,14 @@ describe('PluginsFeature', () => {
     expect(screen.queryByRole('button', { name: '管理扩展与自动整理' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看安装内容' })).not.toBeInTheDocument();
     expect(screen.queryByText('Session Review')).not.toBeInTheDocument();
+
+    // 可查看 / 当前可用 / Agent 可见 are the same number whenever nothing is
+    // wrong, so the first band of the window used to hold three boxes around
+    // one count. One sentence names the total and stays quiet about states
+    // that do not differ from it.
+    expect(document.querySelector('.mgmt-metrics')).not.toBeInTheDocument();
+    expect(capabilities.querySelector('.plugins-capability-lead'))
+      .toHaveTextContent('4 项能力，其中 1 项需要处理。');
   });
 
   it('offers a guarded update on an installed Package when the catalog reports a newer version', async () => {
