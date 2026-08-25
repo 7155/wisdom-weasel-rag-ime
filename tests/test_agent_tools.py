@@ -16,7 +16,11 @@ from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tool_artifacts import AgentToolArtifactProjector
 from rag_ime.agent_tools import ControlToolGateway, _runtime_tool_parameter_schema
-from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
+from rag_ime.agent_workspace import (
+    WorkspaceHarness,
+    WorkspaceHarnessError,
+    WorkspaceSnapshotError,
+)
 from rag_ime.contracts.json_schema import validate_contract
 from rag_ime.work_documents import WorkDocumentService
 
@@ -2294,6 +2298,75 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in listed["items"]], ["src", "README.md"])
         self.assertEqual(read["schemaVersion"], "rag-ime.agent-workspace-read.v1")
         self.assertEqual(read["content"], "# Browser\n")
+
+    def test_native_workspace_save_applies_the_edit_without_minting_an_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "editable-workspace"
+        workspace.mkdir(parents=True)
+        target = workspace / "NOTES.md"
+        target.write_text("# Notes\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="workspace editor",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+
+        read = self.gateway.workspace_read(
+            str(coordinator["id"]),
+            {"path": str(target), "limit": 65_536},
+        )
+        saved = self.gateway.workspace_write(
+            str(coordinator["id"]),
+            {
+                "path": str(target),
+                "resourceRevision": read["resourceRevision"],
+                "content": "# Notes\n\n第二行。\n",
+            },
+        )
+
+        self.assertEqual(saved["schemaVersion"], "rag-ime.agent-workspace-write.v1")
+        self.assertIs(saved["created"], False)
+        self.assertEqual(target.read_text(encoding="utf-8"), "# Notes\n\n第二行。\n")
+        # The receipt hands back the revision a follow-up save must present.
+        reread = self.gateway.workspace_read(
+            str(coordinator["id"]),
+            {"path": str(target), "limit": 65_536},
+        )
+        self.assertEqual(saved["resourceRevision"], reread["resourceRevision"])
+
+    def test_native_workspace_save_refuses_a_stale_revision(self) -> None:
+        workspace = Path(self.tmp.name) / "raced-workspace"
+        workspace.mkdir(parents=True)
+        target = workspace / "NOTES.md"
+        target.write_text("# Notes\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="workspace editor",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+        read = self.gateway.workspace_read(
+            str(coordinator["id"]),
+            {"path": str(target), "limit": 65_536},
+        )
+        target.write_text("# Notes changed elsewhere\n", encoding="utf-8")
+
+        with self.assertRaises(WorkspaceSnapshotError) as stale:
+            self.gateway.workspace_write(
+                str(coordinator["id"]),
+                {
+                    "path": str(target),
+                    "resourceRevision": read["resourceRevision"],
+                    "content": "# Notes from the stale reader\n",
+                },
+            )
+
+        self.assertEqual(stale.exception.code, "stale_snapshot")
+        self.assertIs(stale.exception.retryable, True)
+        self.assertEqual(
+            target.read_text(encoding="utf-8"),
+            "# Notes changed elsewhere\n",
+        )
 
     def test_workspace_read_routes_managed_resource_refs_to_authoritative_owners(self) -> None:
         coordinator = self.store.create(

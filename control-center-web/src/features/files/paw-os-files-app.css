@@ -311,7 +311,8 @@
 .paw-native-app__error button,
 .paw-files-tree__state button,
 .paw-files-preview__state button,
-.paw-files-preview__more > button {
+.paw-files-preview__more > button,
+.paw-files-preview__save > button {
   display: inline-flex;
   min-height: var(--paw-files-control-h);
   align-items: center;
@@ -346,6 +347,7 @@
 .paw-files-tree__state button:active,
 .paw-files-preview__state button:active,
 .paw-files-preview__more > button:active:not(:disabled),
+.paw-files-preview__save > button:active:not(:disabled),
 .paw-files-preview__back:active {
   transform: scale(.97);
 }
@@ -1055,8 +1057,34 @@ i.paw-files-tree__disclosure {
 .paw-files-preview__body:has(> .agent-diff-preview),
 .paw-files-preview__body:has(> .agent-file-preview__plain),
 .paw-files-preview__body:has(> .agent-rich-html-preview),
+.paw-files-preview__body:has(> .paw-files-editor),
 .paw-files-preview__body:has(> .paw-files-svg) {
   overflow: hidden;
+}
+
+/* The editor takes the reading row whole and scrolls inside it, so switching
+   between reading and editing never changes the App's band layout. It keeps
+   the shared code surface pair rather than inventing a second one. */
+.paw-files-editor {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: auto;
+  border: 0;
+  padding: 16px;
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
+  resize: none;
+  font: 13px/1.6 var(--font-mono);
+  tab-size: 2;
+}
+
+.paw-files-editor:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .paw-files-preview__body > .agent-file-code,
@@ -1497,6 +1525,62 @@ i.paw-files-tree__disclosure {
   opacity: .62;
 }
 
+/* -------------------------------------------------------------------------
+   Editing band. It replaces the bounded-read receipt in the same fixed
+   footer row, because a file can only be edited once it is fully loaded.
+   ------------------------------------------------------------------------- */
+.paw-files-preview__save {
+  display: flex;
+  min-width: 0;
+  min-height: 42px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 18px;
+  border-top: 1px solid var(--paw-files-hairline);
+  background: color-mix(in srgb, var(--color-chrome) 72%, var(--color-paper));
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-files-preview__save-state,
+.paw-files-preview__save > em {
+  min-width: 0;
+  flex: 1 1 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-files-preview__save > em {
+  color: var(--color-danger);
+  font-style: normal;
+}
+
+.paw-files-preview__save > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.paw-files-preview__save > button[data-primary] {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  background: var(--paw-files-tint);
+  color: var(--color-accent);
+}
+
+.paw-files-preview__save > button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.paw-files-preview__action[data-editing] {
+  border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
+  background: var(--paw-files-tint);
+  color: var(--color-accent);
+}
+
 .paw-files-tree li > ul {
   animation: paw-files-branch-enter 180ms var(--paw-files-ease) both;
   transform-origin: top;
@@ -1626,7 +1710,8 @@ i.paw-files-tree__disclosure {
 }
 
 @container paw-files (max-width: 460px) {
-  .paw-files-preview__more {
+  .paw-files-preview__more,
+  .paw-files-preview__save {
     padding-inline: 12px;
   }
 
@@ -1720,6 +1805,7 @@ i.paw-files-tree__disclosure {
   .paw-files-tree__state button:hover,
   .paw-files-preview__state button:hover,
   .paw-files-preview__more > button:hover:not(:disabled),
+  .paw-files-preview__save > button:hover:not(:disabled),
   .paw-files-preview__back:hover,
   .paw-files-preview__action:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
@@ -1804,6 +1890,7 @@ i.paw-files-tree__disclosure {
   .paw-files-tree__state button,
   .paw-files-preview__state button,
   .paw-files-preview__more > button,
+  .paw-files-preview__save > button,
   .paw-files-preview__back,
   .paw-files-preview__action,
   .paw-files-svg__bar button,
@@ -1827,6 +1914,7 @@ i.paw-files-tree__disclosure {
   .paw-files-tree__state button:active,
   .paw-files-preview__state button:active,
   .paw-files-preview__more > button:active:not(:disabled),
+  .paw-files-preview__save > button:active:not(:disabled),
   .paw-files-preview__back:active,
   .paw-files-preview__action:active:not(:disabled) {
     transform: none;

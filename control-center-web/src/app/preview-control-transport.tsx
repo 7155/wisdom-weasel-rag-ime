@@ -1455,6 +1455,11 @@ function previewResponse(pathId: ControlPathId): unknown {
       return (request: ControlRequest) => previewWorkspaceRead(
         stringValue(record(request.query).path) || '/Volumes/work/wisdom-weasel-rag-ime/README.md',
       );
+    case 'agent.session.workspace.write':
+      return (request: ControlRequest) => previewWorkspaceWrite(
+        stringValue(record(request.body).path) || '/Volumes/work/wisdom-weasel-rag-ime/README.md',
+        stringValue(record(request.body).content),
+      );
     case 'agent.rooms.list':
       return { ok: true, rooms: [previewRoomSnapshot('room-preview').room] };
     case 'agent.room.snapshot':
@@ -3467,10 +3472,14 @@ function previewWorkspaceList(path: string): Record<string, unknown> {
   };
 }
 
+/** Saves made in the preview stay in memory so a re-read shows what was
+    written, the way the real route does. */
+const previewWorkspaceSaves = new Map<string, string>();
+
 function previewWorkspaceRead(path: string): Record<string, unknown> {
-  const content = path.endsWith('.md')
+  const content = previewWorkspaceSaves.get(path) ?? (path.endsWith('.md')
     ? '# Personal Agent Workbench\n\n这是工作区文件预览。\n'
-    : 'export function previewWorkspace() {\n  return "ready";\n}\n';
+    : 'export function previewWorkspace() {\n  return "ready";\n}\n');
   return {
     schemaVersion: 'rag-ime.agent-workspace-read.v1',
     ok: true,
@@ -3484,7 +3493,33 @@ function previewWorkspaceRead(path: string): Record<string, unknown> {
     contentBytes: new TextEncoder().encode(content).byteLength,
     truncated: false,
     nextOffset: new TextEncoder().encode(content).byteLength,
+    resourceRevision: previewWorkspaceRevision(content),
   };
+}
+
+function previewWorkspaceWrite(path: string, content: string): Record<string, unknown> {
+  previewWorkspaceSaves.set(path, content);
+  return {
+    schemaVersion: 'rag-ime.agent-workspace-write.v1',
+    ok: true,
+    sessionId: 'session-preview',
+    summary: `已覆盖 ${path.split('/').at(-1)}`,
+    path,
+    root: '/Users/example/Projects/personal-agent-workbench',
+    created: false,
+    byteSize: new TextEncoder().encode(content).byteLength,
+    resourceRevision: previewWorkspaceRevision(content),
+  };
+}
+
+/** Preview-only stand-in for the server digest: it only has to change with
+    the content so a stale save can be demonstrated without a real hash. */
+function previewWorkspaceRevision(content: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < content.length; index += 1) {
+    hash = Math.imul(hash ^ content.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return `sha256:${hash.toString(16).padStart(8, '0').repeat(8)}`;
 }
 
 function record(value: unknown): Record<string, unknown> {

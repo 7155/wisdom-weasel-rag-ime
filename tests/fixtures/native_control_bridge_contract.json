@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 232,
+  "routeCount": 233,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -28,6 +28,7 @@
     "agent.session.snapshot",
     "agent.session.workspace.list",
     "agent.session.workspace.read",
+    "agent.session.workspace.write",
     "agent.session.rename",
     "agent.session.archive",
     "agent.session.mode.update",

@@ -205,7 +205,7 @@ PAWOS frontend + Electron/native host
 
 - **用户任务：** 选择 Session，在授权 workspace roots 内浏览目录、选择文件并预览真实内容。
 - **读：** `agent.sessions.list`, `agent.session.workspace.list/read`；当前最多读取 64 KB 片段。
-- **写：** 当前 Files 页面没有文件写路由。picker/reveal/media 是共享 transport 或 Agent 工作流，未接通前不要画成 Files 功能。
+- **写：** `agent.session.workspace.write` 覆盖整份文件，需要读到的 `resourceRevision`；只对完整读入、非二进制、不超过 2 MiB 的 UTF-8 文本开放，快照过期会返回可重试的 `stale_snapshot`。picker/reveal/media 是共享 transport 或 Agent 工作流，未接通前不要画成 Files 功能。
 - **owner：** `features/files/PawOsFilesApp.tsx`, `features/agent/file-preview`, `features/agent/workspace`; backend `agent_workspace.py`。
 - **必须设计：** 无 Session、未授权 root、空目录、逐路径 loading/error/retry、truncated、binary unsupported。
 - **不要：** 假文件树；“本机磁盘”越权入口；编造 tags/snapshot/provenance mutation。
@@ -277,7 +277,7 @@ PAWOS frontend + Electron/native host
 
 当前源码已经迁移候选中兼容的默认明亮 Shell、11 个全彩身份图标、App 识别色、Browser 多标签/窄窗修正和 Room Focus 层次；真实 owner 没有被 HTML 替换。请在此基线上逐 App 深化，不要重新起静态 demo。
 
-完整 233 条 typed route 的 path/method/allowlist/response/binary/stream catalog 与最新前端源码将一起放在 `PAWOS_FRONTEND_MODEL_BUNDLE.md`；逐 App 的脱敏、源码一致渲染样例在 `PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`。本文件负责愿景、功能和纠偏，数据样例负责正确渲染状态，代码包负责精确实现上下文。
+完整 234 条 typed route 的 path/method/allowlist/response/binary/stream catalog 与最新前端源码将一起放在 `PAWOS_FRONTEND_MODEL_BUNDLE.md`；逐 App 的脱敏、源码一致渲染样例在 `PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`。本文件负责愿景、功能和纠偏，数据样例负责正确渲染状态，代码包负责精确实现上下文。
 
 交给下一模型时按此顺序上传：
 

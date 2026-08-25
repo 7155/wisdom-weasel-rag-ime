@@ -2673,6 +2673,47 @@ class ControlToolGateway:
             **result,
         }
 
+    def workspace_write(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Save a whole UTF-8 workspace file edited by the person in Files.
+
+        This is a first-party human action, so it does not mint a model
+        approval. It still runs the same harness prepare/preview/apply path as
+        the ``workspace_write`` Tool, so path confinement, the 2 MiB cap, the
+        ``resourceRevision`` snapshot check, and the atomic rename all apply.
+        """
+        session = self.sessions.get(session_id)
+        if read_only_policy_active(session):
+            raise ValueError(
+                "workspace mutation is blocked by the active read-only policy"
+            )
+        request = dict(payload or {})
+        prepared = self.workspace_harness.prepare_write(session, request)
+        preview = self.workspace_harness.write_preview(prepared)
+        base_state = preview.get("baseState")
+        receipt = self.workspace_harness.apply_write(
+            session,
+            request,
+            base_state if isinstance(base_state, Mapping) else {},
+        )
+        content = str(request.get("content") or "")
+        return {
+            "schemaVersion": "rag-ime.agent-workspace-write.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "path": receipt["path"],
+            "root": str(prepared.root),
+            "created": receipt["created"],
+            "byteSize": len(content.encode("utf-8")),
+            "resourceRevision": f"sha256:{receipt['postimageSha256']}",
+            "preimageSha256": receipt["preimageSha256"],
+            "postimageSha256": receipt["postimageSha256"],
+            "summary": receipt["summary"],
+        }
+
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
         # The runtime callback may retain a Prompt-time Session mapping. Reload
         # the durable policy immediately before disclosure so a Room workspace

@@ -14,7 +14,7 @@ PAWOS 是一个明亮、轻透、年轻、精致、真正可日常使用的个�
 1. `docs/pawos/PAWOS_REQUIREMENTS.md`：用户原始需求与最新纠正，当前到 `UR-125`。
 2. `docs/handoffs/pawos/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`：11 个 App 的真实用户流程。
 3. `docs/handoffs/pawos/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`：生产采样与完整渲染场景。
-4. `docs/handoffs/pawos/PAWOS_FUNCTION_INTERFACE_GUIDE.md`：233 条 typed route 与前端能力地图。
+4. `docs/handoffs/pawos/PAWOS_FUNCTION_INTERFACE_GUIDE.md`：234 条 typed route 与前端能力地图。
 5. `docs/pawos/PAWOS_FRONTEND_HANDOFF.md`：已迁移内容、验证证据和仍未闭环边界。
 6. `docs/project/DESIGN.md`、`docs/project/PRODUCT.md`、`docs/project/ARCHITECTURE.md`：视觉、产品和权威边界。
 7. 再读并修改 `control-center-web/`；`rag_ime/` 是后端合同参考，不要在纯前端优化中重写它。

@@ -7974,6 +7974,42 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             work_document_id, work_document_action = agent_work_document_route(path)
             if path == "/api/agent/runtime/ensure":
                 self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
+            elif agent_session_id and agent_action == "workspace-file":
+                try:
+                    response = self.service.agent_tools.workspace_write(
+                        agent_session_id,
+                        {
+                            "path": payload.get("path"),
+                            "resourceRevision": payload.get("resourceRevision"),
+                            "content": payload.get("content"),
+                        },
+                    )
+                except WorkspaceSnapshotError as exc:
+                    # The person read one revision and someone else moved the
+                    # file underneath them; retrying after a fresh read is the
+                    # whole recovery, so it must stay distinguishable.
+                    self._write_json(
+                        HTTPStatus.CONFLICT,
+                        {
+                            "ok": False,
+                            "error": str(exc),
+                            "errorCode": exc.code,
+                            "retryable": exc.retryable,
+                        },
+                    )
+                    return
+                except WorkspaceHarnessError as exc:
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "ok": False,
+                            "error": _safe_debug_error(exc),
+                            "errorCode": "invalid_workspace_request",
+                            "retryable": False,
+                        },
+                    )
+                    return
+                self._write_json(HTTPStatus.OK, response)
             elif agent_session_id and agent_action in {"knowledge-search", "knowledge-read"}:
                 response = (
                     self.service.agent.room_knowledge_search(
