@@ -7,11 +7,14 @@ import {
   Sparkles,
   Tags,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { Button } from '@/components/primitives';
 import { asRecord, numberValue, stringValue } from '@/features/overview/management-ui';
 
 type MemoryLayer = 'evidence' | 'atoms' | 'books';
 type MemoryPipelineState = 'ready' | 'pending' | 'error';
+
+const PIPELINE_GUARANTEE = '主题不会替代原始记录；每条结论都能沿这条链路回到来源。';
 
 interface MemoryPipelineProps {
   /** The catalog layer that currently owns the workspace, or '' outside the catalog. */
@@ -22,14 +25,17 @@ interface MemoryPipelineProps {
   onRetry: () => void;
   summary: Record<string, unknown>;
   summaryState: MemoryPipelineState;
+  /** Window-level controls (mode readout, refresh) that live in the strip when
+      the surrounding shell has no separate actions bar. */
+  trailing?: ReactNode;
 }
 
 /**
- * The Memory App's spine: the governed pipeline 来源 -> 整理 -> 记忆 -> 主题,
- * always visible with live counts and flow state. Every stage is a real
- * navigation target; the connectors carry the actual quantity waiting to move
- * to the next stage, so "what happens to my data" is legible without opening
- * a status page.
+ * The Memory App's spine: the governed pipeline 来源 -> 整理 -> 记忆 -> 主题
+ * rendered as one desktop instrument strip. Every stage stays a real
+ * navigation target with its live count; per-stage breakdowns and the
+ * governance guarantee move to hover disclosure so the strip never pushes
+ * the working catalog below the fold.
  */
 export function MemoryPipeline({
   activeLayer,
@@ -39,6 +45,7 @@ export function MemoryPipeline({
   organizeActive,
   summary,
   summaryState,
+  trailing,
 }: MemoryPipelineProps) {
   const projection = asRecord(summary.projection);
   const timelineCounts = asRecord(summary.activityTimelineCounts);
@@ -87,7 +94,6 @@ export function MemoryPipeline({
           count={evidenceCount}
           detail={`输入法 ${numberValue(summary.inputMethodEvidenceCount)} · 语音 ${numberValue(summary.voiceEvidenceCount)} · 伙伴主动记录 ${agentCapturedEvidenceCount}`}
           icon={Archive}
-          index="01"
           label="来源记录"
           onClick={() => onOpenLayer('evidence')}
           stage="evidence"
@@ -104,7 +110,6 @@ export function MemoryPipeline({
           count={pendingSourceCount}
           detail={caughtUp ? '已到今天 · 新输入出现后继续' : '分批处理，形成草案后等你审核'}
           icon={Sparkles}
-          index="02"
           label="分批审核"
           onClick={onOpenOrganize}
           stage="organize"
@@ -119,7 +124,6 @@ export function MemoryPipeline({
           count={currentAtomCount}
           detail={`全部 ${atomTotalCount} · 历史 ${historicalAtomCount}`}
           icon={Tags}
-          index="03"
           label="已整理记忆"
           onClick={() => onOpenLayer('atoms')}
           stage="atoms"
@@ -133,7 +137,6 @@ export function MemoryPipeline({
           count={numberValue(summary.memoryBookCount)}
           detail="按主题持续查找"
           icon={BookOpen}
-          index="04"
           label="长期主题"
           onClick={() => onOpenLayer('books')}
           stage="books"
@@ -161,10 +164,11 @@ export function MemoryPipeline({
             />
           </div>
         )}
-        <p className="memory-pipeline__note">
+        <p className="memory-pipeline__note" title={PIPELINE_GUARANTEE}>
           <ShieldCheck aria-hidden="true" size={14} />
-          <span>主题不会替代原始记录；每条结论都能沿这条链路回到来源。</span>
+          <span>{PIPELINE_GUARANTEE}</span>
         </p>
+        {trailing ? <div className="memory-pipeline__console">{trailing}</div> : null}
       </div>
     </section>
   );
@@ -177,7 +181,6 @@ function PipelineStage({
   count,
   detail,
   icon: Icon,
-  index,
   label,
   onClick,
   stage,
@@ -190,27 +193,32 @@ function PipelineStage({
   count: number;
   detail: string;
   icon: typeof Archive;
-  index: string;
   label: string;
   onClick: () => void;
   stage: 'evidence' | 'organize' | 'atoms' | 'books';
   state: MemoryPipelineState;
   unit?: string;
 }) {
+  const detailText = state === 'error' ? '状态暂不可用' : detail;
   return (
     <li className="memory-pipeline__stage" data-active={active || undefined} data-stage={stage}>
-      <button aria-current={active ? 'step' : undefined} aria-label={ariaLabel} onClick={onClick} type="button">
-        <span aria-hidden="true" className="memory-pipeline__stage-index">{index}</span>
-        <span aria-hidden="true" className="memory-pipeline__stage-icon"><Icon size={15} /></span>
+      <button
+        aria-current={active ? 'step' : undefined}
+        aria-label={ariaLabel}
+        onClick={onClick}
+        title={`${label} · ${detailText}`}
+        type="button"
+      >
+        <span aria-hidden="true" className="memory-pipeline__stage-icon"><Icon size={13} /></span>
         <span className="memory-pipeline__stage-copy">
-          <small>{label}</small>
           <strong>{code}</strong>
+          <small>{label}</small>
         </span>
         <span className="memory-pipeline__stage-count" data-unknown={state !== 'ready' || undefined}>
           {state === 'ready' ? count : '—'}
           <small>{unit}</small>
         </span>
-        <em className="memory-pipeline__stage-detail">{state === 'error' ? '状态暂不可用' : detail}</em>
+        <em className="memory-pipeline__stage-detail">{detailText}</em>
       </button>
     </li>
   );
@@ -235,7 +243,7 @@ function PipelineSignal({
   tone: 'success' | 'warning' | 'info';
 }) {
   return (
-    <div className="memory-pipeline__signal" data-tone={tone}>
+    <div className="memory-pipeline__signal" data-tone={tone} title={`${label} · ${detail}`}>
       <i aria-hidden="true" />
       <span><strong>{label}</strong><small>{detail}</small></span>
     </div>

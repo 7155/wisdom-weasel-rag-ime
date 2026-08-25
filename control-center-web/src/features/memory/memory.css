@@ -148,10 +148,18 @@ main[data-route-id='memory'] {
 .memory-second-brain__mode strong { font-size: 14px; line-height: 18px; }
 .memory-second-brain__mode small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ============================== the pipeline ============================== */
+/* ============================== the pipeline ==============================
+   One desktop instrument strip: the four stages with live counts sit on the
+   left, the health signals on the right. Per-stage breakdowns, flow captions,
+   and the provenance guarantee are hover disclosures first and only surface
+   inline when the container is wide enough, so the strip never grows into a
+   dashboard that pushes the working catalog below the fold. */
 
 .memory-pipeline {
+  display: flex;
   min-width: 0;
+  flex-wrap: wrap;
+  align-items: stretch;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-3);
   background: var(--color-paper);
@@ -159,13 +167,13 @@ main[data-route-id='memory'] {
 }
 
 .memory-pipeline__stages {
-  display: grid;
+  display: flex;
   min-width: 0;
-  margin: 0;
-  padding: 6px 8px;
-  list-style: none;
+  flex: 1 1 auto;
   align-items: stretch;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  margin: 0;
+  padding: 4px 6px;
+  list-style: none;
 }
 
 .memory-pipeline__stage { min-width: 0; display: grid; }
@@ -200,11 +208,13 @@ main[data-route-id='memory'] {
 
 .memory-pipeline__stage > button {
   position: relative;
-  display: grid;
+  display: flex;
   width: 100%;
   min-width: 0;
+  min-height: 38px;
   align-items: center;
-  padding: 12px 12px 10px;
+  gap: 8px;
+  padding: 0 10px;
   border: 0;
   border-radius: var(--radius-2);
   background: transparent;
@@ -212,9 +222,6 @@ main[data-route-id='memory'] {
   font: inherit;
   text-align: left;
   cursor: pointer;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
-  gap: 5px 11px;
   transition: background var(--duration-enter) var(--ease-standard);
 }
 
@@ -226,75 +233,66 @@ main[data-route-id='memory'] {
 
 .memory-pipeline__stage-icon {
   display: grid;
-  grid-area: 1 / 1;
-  width: 30px;
-  height: 30px;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
   border: 1px solid color-mix(in srgb, var(--stage-signal, var(--memory-signal)) 26%, var(--color-border));
-  border-radius: 9px;
+  border-radius: 6px;
   background: var(--stage-signal-soft, var(--memory-signal-soft));
   color: var(--stage-signal-strong, var(--memory-signal-strong));
   place-items: center;
   transition: background var(--duration-enter) var(--ease-standard), border-color var(--duration-enter) var(--ease-standard);
 }
 
-.memory-pipeline__stage-index {
-  grid-area: 2 / 1;
-  align-self: start;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
 .memory-pipeline__stage-copy {
-  display: grid;
-  grid-area: 1 / 2;
+  display: inline-flex;
   min-width: 0;
-  gap: 1px;
-}
-
-.memory-pipeline__stage-copy small {
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-  letter-spacing: .02em;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .memory-pipeline__stage-copy strong {
   font-family: var(--font-ui);
-  font-size: 15px;
-  line-height: 1.3;
+  font-size: 13px;
+  line-height: 1.4;
   letter-spacing: -.01em;
+  white-space: nowrap;
+}
+
+/* The descriptive stage name is a wide-strip refinement; code + count carry
+   the meaning on their own and the button title repeats the full wording. */
+.memory-pipeline__stage-copy small {
+  display: none;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: .02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .memory-pipeline__stage-count {
   display: inline-flex;
-  grid-area: 1 / 3;
   align-items: baseline;
   gap: 3px;
   color: var(--color-text-primary);
   font-family: var(--font-ui);
-  font-size: 20px;
-  line-height: 1.15;
+  font-size: 14px;
+  line-height: 1.2;
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-.memory-pipeline__stage-count small {
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  line-height: 1.4;
-  font-weight: var(--font-weight-medium);
-}
-
+.memory-pipeline__stage-count small { display: none; }
 .memory-pipeline__stage-count[data-unknown] { color: var(--color-text-tertiary); }
 
-/* Truncate the tail instead of wrapping: the detail is a scent, not a table. */
+/* The per-stage breakdown lives in the button title; it only surfaces inline
+   for the active stage when the strip is wide enough to keep one row. */
 .memory-pipeline__stage-detail {
-  grid-area: 2 / 2 / 2 / -1;
+  display: none;
   min-width: 0;
+  max-width: 230px;
   overflow: hidden;
   color: var(--color-text-tertiary);
   font-size: 12px;
@@ -317,15 +315,15 @@ main[data-route-id='memory'] {
 
 /* Connectors carry the real quantity waiting to move to the next stage. */
 .memory-pipeline__flow {
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  padding-inline: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-inline: 4px;
   color: var(--color-text-tertiary);
 }
 
 .memory-pipeline__flow span {
+  display: none;
   max-width: 110px;
   overflow: hidden;
   font-size: 12px;
@@ -334,12 +332,12 @@ main[data-route-id='memory'] {
   white-space: nowrap;
 }
 
-.memory-pipeline__flow svg { opacity: .7; }
+.memory-pipeline__flow svg { flex: 0 0 auto; opacity: .55; }
 
 /* Work waiting to move belongs to the organize stage, whichever layer owns
-   the workspace right now. */
+   the workspace right now — that caption stays visible at every width. */
 .memory-pipeline__flow[data-tone='active'] { color: var(--memory-organize-strong); }
-.memory-pipeline__flow[data-tone='active'] span { font-weight: 650; }
+.memory-pipeline__flow[data-tone='active'] span { display: block; font-weight: 650; }
 .memory-pipeline__flow[data-tone='active'] svg { opacity: 1; }
 
 .memory-pipeline[data-state='pending'] .memory-pipeline__stage-count,
@@ -348,11 +346,12 @@ main[data-route-id='memory'] {
 .memory-pipeline__meta {
   display: flex;
   min-width: 0;
+  flex: 1 1 100%;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 22px;
-  padding: 9px 16px 10px;
+  gap: 6px 18px;
+  padding: 6px 12px;
   border-top: 1px solid var(--color-border-soft);
   background: color-mix(in srgb, var(--color-surface-subtle) 44%, var(--color-paper));
 }
@@ -362,23 +361,22 @@ main[data-route-id='memory'] {
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 7px 20px;
+  gap: 5px 16px;
 }
 
 .memory-pipeline__signal {
-  display: grid;
+  display: inline-flex;
   min-width: 0;
   align-items: center;
-  grid-template-columns: 8px minmax(0, auto);
-  gap: 8px;
+  gap: 6px;
 }
 
-.memory-pipeline__signal > i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-info); }
+.memory-pipeline__signal > i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--color-info); }
 .memory-pipeline__signal[data-tone='success'] > i { background: var(--color-success); }
 .memory-pipeline__signal[data-tone='warning'] > i { background: var(--color-warning); }
-.memory-pipeline__signal > span { display: grid; min-width: 0; gap: 0; }
-.memory-pipeline__signal strong { font-size: 13px; line-height: 1.4; }
-.memory-pipeline__signal small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.memory-pipeline__signal > span { display: inline-flex; min-width: 0; align-items: baseline; gap: 5px; }
+.memory-pipeline__signal strong { font-size: 13px; line-height: 1.4; white-space: nowrap; }
+.memory-pipeline__signal small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 
 .memory-pipeline__fault {
   display: inline-flex;
@@ -394,14 +392,26 @@ main[data-route-id='memory'] {
 .memory-pipeline__note {
   display: inline-flex;
   min-width: 0;
-  align-items: flex-start;
+  align-items: center;
   gap: 7px;
   margin: 0;
   color: var(--color-text-secondary);
 }
 
-.memory-pipeline__note svg { flex: 0 0 auto; margin-top: 2px; color: var(--color-success); }
-.memory-pipeline__note span { font-size: 14px; line-height: 1.5; }
+.memory-pipeline__note svg { flex: 0 0 auto; color: var(--color-success); }
+.memory-pipeline__note span { overflow: hidden; font-size: 14px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Window-level controls (mode readout + refresh) share the strip when the
+   surrounding shell has no separate actions bar. */
+.memory-pipeline__console {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.memory-pipeline__console .memory-second-brain__mode small { max-width: 220px; }
 
 /* ============================== view tabs ============================== */
 
@@ -412,26 +422,73 @@ main[data-route-id='memory'] {
   overflow-x: auto;
 }
 
-/* ============================== catalog ============================== */
+/* ============================== catalog ==============================
+   The catalog is one fixed composition: a single toolbar row that owns
+   identity, search, and filters over the list/detail workspace, so the
+   records themselves start inside the first viewport. */
+
+.memory-catalog {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-paper);
+}
+
+.memory-catalog__toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: 47px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 16px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
+  background: color-mix(in srgb, var(--color-surface-subtle) 40%, var(--color-paper));
+}
+
+.memory-catalog__heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.memory-catalog__heading h2 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  letter-spacing: -.008em;
+  white-space: nowrap;
+}
+
+.memory-catalog__heading p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .memory-catalog-filters {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  align-items: end;
-  justify-content: start;
-  gap: 7px 10px;
+  flex: 1 1 340px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
 }
-
-.memory-catalog-filters .ui-field { min-width: 116px; }
-.memory-catalog-filters__query { min-width: 190px; flex: 1; }
 
 /* The search runs live while typing, so it reads as a search box, not a
    query form waiting for a submit button. */
 .memory-catalog-filters__query-box {
   position: relative;
   display: flex;
-  min-width: 0;
+  min-width: 150px;
+  max-width: 320px;
+  flex: 1 1 210px;
   align-items: center;
 }
 
@@ -444,6 +501,15 @@ main[data-route-id='memory'] {
 }
 
 .memory-catalog-filters__query-box .ui-input { padding-left: 32px; }
+
+.memory-catalog-filters .ui-select__trigger { flex: 0 0 auto; }
+.memory-catalog-filters__status { min-width: 104px; }
+.memory-catalog-filters__owner { min-width: 118px; max-width: 230px; }
+
+.memory-catalog .memory-layer-workspace {
+  margin-top: 0;
+  border-block: 0;
+}
 
 .memory-layer-workspace {
   display: grid;
@@ -2119,32 +2185,19 @@ main[data-route-id='memory'] {
 }
 
 /* ============================== PAWOS native frame ==============================
-   The native window is already the Memory surface. The management page shell
-   and the Radix Tabs root stay structural; the pipeline band, the filter band,
-   and the workspace panes provide all visible structure. */
+   The native window is already the Memory surface: one instrument strip
+   (pipeline + signals + mode + refresh) under the titlebar, one catalog
+   toolbar, then the list/detail workspace. Only the panes scroll. */
 
 main[data-route-id='memory'][data-paw-os-app='memory'] {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   color: #202631;
   background: #f5f7fa;
   font-family: var(--font-body, "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif);
-}
-
-main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__native-actions {
-  position: relative;
-  min-height: 52px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  padding: 7px 14px 7px 16px;
-  border-bottom: 1px solid var(--memory-line);
-  background: rgb(255 255 255 / .94);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
-  backdrop-filter: blur(18px) saturate(125%);
 }
 
 main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
@@ -2163,22 +2216,42 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
   background: #f5f7fa;
 }
 
-/* The pipeline becomes a full-bleed band under the window chrome. */
+/* The pipeline is the single chrome strip under the window titlebar:
+   stages left, signals + mode + refresh right, one hairline below. */
 main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline {
+  flex-wrap: nowrap;
+  min-height: 45px;
   border: 0;
   border-bottom: 1px solid var(--memory-line);
   border-radius: 0;
   background: #fff;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__meta {
-  background: #fafbfd;
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__stages {
+  flex: 0 1 auto;
+  padding: 4px 4px 4px 8px;
 }
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__meta {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 0 12px 0 14px;
+  border-top: 0;
+  border-left: 1px solid var(--memory-line-soft);
+  background: #fff;
+}
+
+/* The provenance guarantee collapses to its shield mark inside the strip;
+   the full sentence stays on hover. */
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-pipeline__note span { display: none; }
 
 /* Structural resets: no stacked frames around the same catalog. */
 main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs,
 main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs > [role='tabpanel'],
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .mgmt-section {
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .mgmt-section,
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .memory-catalog {
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -2204,32 +2277,20 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
 
 .memory-second-brain[data-view='catalog'] > .memory-view-tabs > [role='tabpanel'] { overflow: hidden; }
 
-.memory-second-brain[data-view='catalog'] .mgmt-section {
+.memory-second-brain[data-view='catalog'] .memory-catalog {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
 }
 
-.memory-second-brain[data-view='catalog'] .mgmt-section__header {
-  min-height: 54px;
-  margin: 0;
-  padding: 9px 16px;
+.memory-second-brain[data-view='catalog'] .memory-catalog__toolbar { flex-wrap: nowrap; }
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-catalog__toolbar {
+  padding: 7px 14px;
   border-bottom: 1px solid var(--memory-line);
   background: #fff;
-}
-
-.memory-second-brain[data-view='catalog'] .mgmt-section__header h2 { margin: 0; font-size: 15px; letter-spacing: -.008em; }
-.memory-second-brain[data-view='catalog'] .mgmt-section__header p { margin-top: 2px; color: #7a8493; font-size: 14px; line-height: 1.45; }
-
-.memory-second-brain[data-view='catalog'] .memory-catalog-filters {
-  min-width: 0;
-  flex-wrap: nowrap;
-  gap: 7px;
-  padding: 9px 16px 11px;
-  border-bottom: 1px solid var(--memory-line);
-  background: #fafbfd;
 }
 
 .memory-second-brain[data-view='catalog'] .memory-layer-workspace {
@@ -2293,9 +2354,9 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
   margin-inline: auto;
 }
 
-.memory-second-brain .memory-preferences > .mgmt-section { padding: 24px 0 36px; }
-.memory-second-brain .memory-preferences .mgmt-section__header { padding-bottom: 14px; border-bottom: 1px solid var(--memory-line); }
-.memory-second-brain .memory-preferences .mgmt-section__header h2 { font-size: 21px; letter-spacing: -.018em; }
+.memory-second-brain .memory-preferences > .mgmt-section { padding: 18px 0 32px; }
+.memory-second-brain .memory-preferences .mgmt-section__header { padding-bottom: 12px; border-bottom: 1px solid var(--memory-line); }
+.memory-second-brain .memory-preferences .mgmt-section__header h2 { font-size: 18px; letter-spacing: -.014em; }
 
 /* Selection, focus, and scrollbars all follow the layer identity. */
 main[data-route-id='memory'] ::selection { background: color-mix(in srgb, var(--memory-signal) 24%, transparent); }
@@ -2305,9 +2366,24 @@ main[data-route-id='memory'][data-paw-os-app='memory'] :where(.memory-layer-list
 /* UR-102 memory semantic typography */
 main[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span { font-size: 13px; }
 main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__signal strong { font-size: 13px; }
-main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__stage-copy strong { font-size: 15px; }
-main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong { font-size: 14px; }
+main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__stage-copy strong { font-size: 13px; }
+main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong { font-size: 13px; }
 /* UR-102 memory semantic typography end */
+
+/* Secondary views open at working density inside the fixed window: same
+   content, flat opaque surfaces, less hero spacing before the first record. */
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-layer-heading { padding: 14px 0 10px; }
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-layer-heading h3 { font-size: 17px; }
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-curation { padding-top: 12px; gap: 14px; }
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-curation__progress-card {
+  padding: 12px 14px;
+  border-color: var(--memory-line);
+  box-shadow: none;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-curation__progress-copy > strong { font-size: 17px; }
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-preferences__intro { padding: 14px 0; }
 
 /* ============================== interaction states ============================== */
 
@@ -2425,6 +2501,30 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
    drives every in-flow surface in both the PAWOS window and the web page.
    Only portalled dialogs and touch targets use viewport media queries. */
 
+/* The instrument strip discloses progressively: flow captions, stage names,
+   and the active breakdown surface as the container widens, and collapse
+   back to codes + counts without ever wrapping into a dashboard. */
+@container memory-second-brain (min-width: 1120px) {
+  .memory-pipeline__flow span { display: block; }
+}
+
+@container memory-second-brain (min-width: 1240px) {
+  .memory-pipeline__stage-copy small { display: inline; }
+  .memory-pipeline__stage[data-active] .memory-pipeline__stage-detail { display: block; }
+}
+
+@container memory-second-brain (max-width: 980px) {
+  .memory-pipeline__signal small { display: none; }
+  .memory-pipeline__console .memory-second-brain__mode small { display: none; }
+}
+
+@container memory-second-brain (max-width: 840px) {
+  main[data-route-id='memory'][data-paw-os-app='memory'] .memory-pipeline__signals,
+  main[data-route-id='memory'][data-paw-os-app='memory'] .memory-pipeline__note { display: none; }
+
+  .memory-catalog__heading p { display: none; }
+}
+
 @container memory-second-brain (max-width: 1120px) {
   .memory-entity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .memory-entity__summary { grid-column: 1 / -1; }
@@ -2433,14 +2533,6 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 }
 
 @container memory-second-brain (max-width: 920px) {
-  .memory-pipeline__stages {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px;
-  }
-
-  .memory-pipeline__flow { display: none; }
-  .memory-pipeline__stage:nth-child(n + 4) > button { border-top: 1px solid var(--color-border-soft); border-radius: 0; }
-
   .memory-explorer { grid-template-columns: 210px minmax(0, 1fr); }
   .memory-curation__backlog-grid { grid-template-columns: minmax(0, 1fr); }
   .memory-second-brain[data-view='catalog'] .memory-layer-workspace { grid-template-columns: minmax(280px, .8fr) minmax(360px, 1.2fr); }
@@ -2453,10 +2545,11 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 }
 
 @container memory-second-brain (max-width: 680px) {
-  .memory-pipeline__stages { grid-template-columns: minmax(0, 1fr); padding-block: 4px; }
-  .memory-pipeline__stage > button { padding-block: 9px 8px; border-radius: 0; }
-  .memory-pipeline__stage:not(:first-child) > button { border-top: 1px solid var(--color-border-soft); }
-  .memory-pipeline__meta { padding-inline: 14px; }
+  /* The strip stays one row on narrow windows: codes + counts scroll
+     sideways instead of stacking into a tall block. */
+  .memory-pipeline__stages { overflow-x: auto; }
+  .memory-pipeline__flow[data-tone='active'] span { display: none; }
+  .memory-pipeline__note span { display: none; }
 
   .memory-second-brain[data-view='catalog'] .memory-layer-workspace { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
   .memory-second-brain[data-view='catalog'] .memory-layer-list { height: 100%; max-height: none; border-bottom: 0; }
@@ -2464,7 +2557,7 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
   .memory-second-brain[data-view='catalog'] .memory-layer-workspace[data-detail-open='true'] .memory-layer-list { display: none; }
   .memory-second-brain[data-view='catalog'] .memory-layer-workspace[data-detail-open='true'] .memory-layer-detail { display: block; overflow: auto; }
   .memory-second-brain[data-view='catalog'] .memory-layer-detail__back { display: inline-flex; }
-  .memory-second-brain[data-view='catalog'] .memory-catalog-filters { flex-wrap: wrap; }
+  .memory-second-brain[data-view='catalog'] .memory-catalog__toolbar { flex-wrap: wrap; }
   .memory-layer-workspace { min-height: 0; }
   .memory-layer-detail { padding-inline: 0; }
   .memory-layer-detail > .ui-empty-state { min-height: 152px; padding-block: var(--space-5); }

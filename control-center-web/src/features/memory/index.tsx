@@ -59,7 +59,6 @@ import {
 import {
   InlineNotice,
   ManagementPage,
-  ManagementSection,
   OperationalList,
   PaginationBar,
   QueryState,
@@ -183,15 +182,21 @@ export function MemoryFeature() {
     if (detailRef.current) detailRef.current.scrollTop = 0;
   }, [selectedId]);
 
+  const modeChip = (
+    <span className="memory-second-brain__mode" data-view={view}>
+      <i aria-hidden="true" />
+      <span><strong>{memoryViewLabel(view)}</strong><small>{memoryViewStatus(view, rows.length, summaryPayload, summaryState)}</small></span>
+    </span>
+  );
+  const refreshButton = (
+    <Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>
+  );
+
   return (
     <ManagementPage
-      actions={<>
-        <span className="memory-second-brain__mode" data-view={view}>
-          <i aria-hidden="true" />
-          <span><strong>{memoryViewLabel(view)}</strong><small>{memoryViewStatus(view, rows.length, summaryPayload, summaryState)}</small></span>
-        </span>
-        <Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>
-      </>}
+      // Inside the PAWOS window the pipeline strip is the only chrome row;
+      // the mode readout and refresh live there instead of a second toolbar.
+      actions={appSurface ? undefined : <>{modeChip}{refreshButton}</>}
       description="查看已整理的记忆、它们的来源和主题；需要时可以回到原始记录核对。"
       eyebrow="关于我"
       routeId="memory"
@@ -208,6 +213,7 @@ export function MemoryFeature() {
           organizeActive={view === 'organize'}
           summary={summaryPayload}
           summaryState={summaryState}
+          trailing={appSurface ? <>{modeChip}{refreshButton}</> : undefined}
         />
         <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ViewTabs
@@ -226,19 +232,22 @@ export function MemoryFeature() {
             </TabsList>
           ) : null}
           <TabsContent value="catalog">
-            <ManagementSection
-              title={`${kindLabel(kind)} 目录`}
-              description={memoryLayerDescription(kind)}
-            >
-              <div className="mgmt-filter-row memory-catalog-filters">
-                <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
+            {/* One toolbar row owns identity, search, and filters so the
+                list/detail workspace starts inside the first viewport. */}
+            <section aria-label={`${kindLabel(kind)} 目录`} className="memory-catalog">
+              <header className="memory-catalog__toolbar">
+                <div className="memory-catalog__heading" title={memoryLayerDescription(kind)}>
+                  <h2>{`${kindLabel(kind)} 目录`}</h2>
+                  <p>{memoryLayerDescription(kind)}</p>
+                </div>
+                <div className="memory-catalog-filters">
                   <span className="memory-catalog-filters__query-box">
                     <Search aria-hidden="true" size={14} />
-                    <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="标题、正文或标签，输入即筛选" value={draftQuery} />
+                    <Input aria-label="搜索" id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="搜索标题、正文或标签" value={draftQuery} />
                   </span>
-                </Field>
-                <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
                   <Select
+                    aria-label="状态"
+                    className="memory-catalog-filters__status"
                     id="memory-status-filter"
                     onValueChange={(value) => {
                       setStatus(value);
@@ -248,10 +257,10 @@ export function MemoryFeature() {
                     options={memoryStatusOptions(kind)}
                     value={status}
                   />
-                </Field>
-                {ownerAwareKind(kind) ? (
-                  <Field className="memory-catalog-filters__owner" htmlFor="memory-owner-filter" label="归属">
+                  {ownerAwareKind(kind) ? (
                     <Select
+                      aria-label="归属"
+                      className="memory-catalog-filters__owner"
                       id="memory-owner-filter"
                       onValueChange={(value) => {
                         setOwnerKey(value);
@@ -261,9 +270,9 @@ export function MemoryFeature() {
                       options={ownerOptions}
                       value={ownerKey}
                     />
-                  </Field>
-                ) : null}
-              </div>
+                  ) : null}
+                </div>
+              </header>
               <div className="memory-layer-workspace" data-detail-open={selected ? true : undefined}>
                 <aside className="memory-layer-list" aria-label={`${kindLabel(kind)}目录`}>
                   {rows.length ? (
@@ -388,7 +397,7 @@ export function MemoryFeature() {
                   )}
                 </div>
               </div>
-            </ManagementSection>
+            </section>
           </TabsContent>
           <TabsContent value="roleBooks">
             <RoleBookLayer
