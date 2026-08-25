@@ -35,6 +35,19 @@ export function starfieldPixelRatio(devicePixelRatio: number, width: number, hei
   return round2(Math.max(1, Math.sqrt(MAX_RENDER_PIXELS / area)));
 }
 
+/**
+ * Whether the WebGL context should allocate a multisampled buffer.
+ *
+ * MSAA and supersampling solve the same problem twice. On a retina display
+ * the stage already renders above 1 device pixel per CSS pixel, which smooths
+ * the thin orbit lines MSAA was there for — so the extra samples buy almost
+ * nothing while costing real bandwidth on the largest surface in the app. A
+ * 1× display has no such headroom and keeps its multisampling.
+ */
+export function starfieldAntialias(devicePixelRatio: number): boolean {
+  return (devicePixelRatio || 1) < 1.5;
+}
+
 export type SphereDetail = 'high' | 'medium' | 'low';
 
 /** Width/height segment pairs for the three shared unit-sphere geometries. */
