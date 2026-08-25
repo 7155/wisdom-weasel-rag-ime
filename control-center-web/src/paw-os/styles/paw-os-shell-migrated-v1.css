@@ -616,7 +616,7 @@
  * the depth, content sits directly on it, and every text block keeps an
  * opaque or near-white ground. There is no second glass layer. */
 .paw-desktop-root .paw-launchpad {
-  padding: clamp(20px, 6vh, 56px) 24px;
+  padding: clamp(16px, 3.4vh, 34px) 24px;
   background: rgb(240 243 248 / .86);
   /* The aurora triad drifts into the veil as three static low-alpha washes;
      the pinned veil colour above still owns contrast for every ink. */
@@ -629,7 +629,7 @@
   animation: paw-shell-launchpad-backdrop 180ms ease-out both;
 }
 .paw-desktop-root .paw-launchpad > section {
-  width: min(960px, 100%);
+  width: min(1140px, 100%);
   max-height: 100%;
   overflow: auto;
   border: 0;
@@ -640,8 +640,8 @@
 }
 .paw-desktop-root .paw-launchpad section > header {
   gap: 14px;
-  min-height: 56px;
-  padding: 4px 6px 18px;
+  min-height: 52px;
+  padding: 2px 6px 12px;
   border-bottom: 0;
 }
 .paw-desktop-root .paw-launchpad-title { display: inline-flex; align-items: baseline; gap: 10px; }
@@ -680,15 +680,15 @@
   background: #f4f7ff;
 }
 .paw-desktop-root .paw-launchpad section > div {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  padding: 12px 4px 20px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  padding: 8px 4px 6px;
 }
 .paw-desktop-root .paw-launchpad section > div > button {
-  min-height: 146px;
+  min-height: 118px;
   align-content: center;
-  gap: 8px;
-  padding: 18px 12px 14px;
+  gap: 6px;
+  padding: 12px 10px 10px;
   border: 1px solid transparent;
   border-radius: 16px;
   background: transparent;
@@ -734,7 +734,7 @@
 }
 .paw-desktop-root .paw-launchpad-group {
   grid-column: 1 / -1;
-  margin: 10px 6px 0;
+  margin: 4px 6px 0;
   color: #525b6a;
   font-size: 13px;
   line-height: 1.4;
