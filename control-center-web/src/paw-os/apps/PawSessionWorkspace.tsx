@@ -30,6 +30,7 @@ import {
   type AgentMessageDelivery,
 } from '@/features/agent/composer/AgentComposer';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
+import { PermissionMark, WorkspaceMark } from '@/features/agent/marks/ConversationMarks';
 import { publicAgentErrorText } from '@/features/agent/public-error';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { pulsePawCompositionForRuntimeEvent } from '../runtime/composition-pulse';
@@ -870,16 +871,31 @@ export function PawSessionWorkspace({
   /* Conversation lead-in: the two facts a reader needs before the first turn —
      which workspace this Session can touch and under which permission mode.
      Both come from the durable session record, never from prose. */
+  /* Each chip leads with its mark so a narrow window can drop the words and
+     still say which workspace and which permission mode this Session runs
+     under; the text stays in the accessibility tree rather than unmounting. */
   const conversationLead = record ? (
     <div aria-label="Session 上下文" className="fx-context-chips" role="note">
-      <span className="fx-context-chip" data-tone={record.workspaceRoots?.length ? 'bound' : 'neutral'}>
-        <i aria-hidden="true" />
-        {record.workspaceRoots?.length ? `${projectName(record.workspaceRoots)} · 工作区` : '未绑定工作区'}
+      <span
+        className="fx-context-chip"
+        data-tone={record.workspaceRoots?.length ? 'bound' : 'neutral'}
+        title={record.workspaceRoots?.length ? record.workspaceRoots.join('\n') : '未绑定工作区'}
+      >
+        <WorkspaceMark bound={Boolean(record.workspaceRoots?.length)} size={14} />
+        <span className="fx-context-chip__text">
+          {record.workspaceRoots?.length ? `${projectName(record.workspaceRoots)} · 工作区` : '未绑定工作区'}
+        </span>
       </span>
       {record.executionMode ? (
-        <span className="fx-context-chip" data-tone="permission">
-          <i aria-hidden="true" />
-          权限 · {executionModeLabel(record.executionMode)}
+        <span
+          className="fx-context-chip"
+          data-tone="permission"
+          title={`权限 · ${executionModeLabel(record.executionMode)}`}
+        >
+          <PermissionMark mode={record.executionMode} size={14} />
+          <span className="fx-context-chip__text">
+            权限 · {executionModeLabel(record.executionMode)}
+          </span>
         </span>
       ) : null}
     </div>

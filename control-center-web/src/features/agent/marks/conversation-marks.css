@@ -1,0 +1,46 @@
+/* Conversation chrome marks — the identity layer that survives label collapse.
+   One geometry grammar, two colour policies: permission and capability marks
+   inherit the control's own colour so a danger or disabled control keeps
+   speaking through its tone, while provider marks carry a restrained identity
+   hue because the hue is what makes a nameless 16px mark recognisable. */
+
+.paw-mark {
+  --paw-mark-accent: color-mix(in srgb, currentColor 38%, transparent);
+  display: block;
+  flex: 0 0 auto;
+}
+
+.paw-mark[data-mark^='provider-'] {
+  --paw-mark-accent: color-mix(in srgb, var(--paw-mark-ink) 42%, transparent);
+  color: var(--paw-mark-ink, #64748b);
+}
+
+.paw-mark[data-mark='provider-openai'] { --paw-mark-ink: #0f9d8f; }
+.paw-mark[data-mark='provider-anthropic'] { --paw-mark-ink: #c2643f; }
+.paw-mark[data-mark='provider-google'] { --paw-mark-ink: #2f6fe0; }
+.paw-mark[data-mark='provider-deepseek'] { --paw-mark-ink: #4f46e5; }
+.paw-mark[data-mark='provider-qwen'] { --paw-mark-ink: #d24aa0; }
+.paw-mark[data-mark='provider-moonshot'] { --paw-mark-ink: #2f3e6b; }
+.paw-mark[data-mark='provider-zhipu'] { --paw-mark-ink: #0e9ab8; }
+.paw-mark[data-mark='provider-xai'] { --paw-mark-ink: #3a3f47; }
+.paw-mark[data-mark='provider-mistral'] { --paw-mark-ink: #e08a1f; }
+.paw-mark[data-mark='provider-local'] { --paw-mark-ink: #1fa54a; }
+.paw-mark[data-mark='provider-router'] { --paw-mark-ink: #8b5cf6; }
+.paw-mark[data-mark='provider-generic'] { --paw-mark-ink: #64748b; }
+
+/* A disabled or busy control owns the whole row's tone; an identity hue that
+   stayed saturated there would read as still actionable. */
+.ui-button:disabled .paw-mark[data-mark^='provider-'],
+.ui-button[aria-busy='true'] .paw-mark[data-mark^='provider-'] {
+  --paw-mark-ink: currentColor;
+  color: inherit;
+}
+
+/* Forced-colours users get system ink; the identity hues would be dropped
+   anyway, and the silhouettes still separate the marks. */
+@media (forced-colors: active) {
+  .paw-mark[data-mark^='provider-'] {
+    --paw-mark-ink: CanvasText;
+    color: CanvasText;
+  }
+}

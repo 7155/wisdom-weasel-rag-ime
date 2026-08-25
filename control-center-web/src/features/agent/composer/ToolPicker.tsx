@@ -1,4 +1,4 @@
-import { Wrench, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import {
@@ -13,6 +13,7 @@ import {
   type CapabilityCatalog,
   type CapabilityPreference,
 } from '@/features/plugins/capability-policy';
+import { CapabilityMark } from '../marks/ConversationMarks';
 import type { SessionSummary, ToolManifest } from '../types';
 import { riskLabel, toolAvailableForCurrentSession } from './tool-policy';
 
@@ -52,11 +53,11 @@ export function ToolPicker({
     : status === 'failed'
       ? '能力列表暂不可用'
       : `这段对话可用工具：${availableCount} 个`;
-  const text = status === 'loading'
-    ? '能力 · 加载中'
+  const detail = status === 'loading'
+    ? ' · 加载中'
     : status === 'failed'
-      ? '能力 · 未加载'
-      : `能力 · ${availableCount}`;
+      ? ' · 未加载'
+      : ` · ${availableCount}`;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -69,9 +70,10 @@ export function ToolPicker({
           title={label}
           variant="quiet"
           disabled={status !== 'ready' || !tools.length || disabled}
-          leadingIcon={<Wrench size={15} />}
+          leadingIcon={<CapabilityMark size={16} />}
         >
-          {text}
+          <span className="agent-composer__picker-text">能力</span>
+          <span className="agent-composer__picker-detail">{detail}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent

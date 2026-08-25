@@ -1,5 +1,4 @@
 import {
-  BrainCircuit,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -20,6 +19,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/primitives';
+import { ProviderMark } from '../marks/ConversationMarks';
 import { modelSelectionFromCatalog } from '../model-selection';
 import type { ModelCatalog, ThinkingLevel } from '../types';
 
@@ -50,8 +50,9 @@ export function ModelPicker({
     (item) => item.id === selection?.modelId,
   );
   const thinking = selection?.level ?? catalog?.thinkingLevel ?? 'off';
+  const providerName = selectedProvider?.displayName || selectedModel?.provider || '';
   const selectedLabel = selectedModel
-    ? `${selectedModel.name} · ${selectedProvider?.displayName || selectedModel.provider}`
+    ? `${selectedModel.name} · ${providerName}`
     : '未选择';
   const defaultProviderId = selectedProvider?.id ?? catalog?.providers[0]?.id ?? '';
   const activeProvider = catalog?.providers.find(
@@ -103,9 +104,24 @@ export function ModelPicker({
           disabled={!catalog || disabled}
           leadingIcon={pending
             ? <LoaderCircle className="ui-spin" size={15} />
-            : <BrainCircuit size={15} />}
+            : (
+              <ProviderMark
+                displayName={selectedProvider?.displayName}
+                providerId={selectedProvider?.id ?? selection?.provider}
+                size={16}
+              />
+            )}
         >
-          {selectedModel ? selectedLabel : '选择模型'} · {thinkingLabel(thinking)}
+          {/* The provider name and the reasoning level fold away before the
+              model name does; the mark keeps the provider legible after the
+              text is gone. */}
+          <span className="agent-composer__picker-text">
+            {selectedModel ? selectedModel.name : '选择模型'}
+          </span>
+          {selectedModel && providerName ? (
+            <span className="agent-composer__picker-detail"> · {providerName}</span>
+          ) : null}
+          <span className="agent-composer__picker-detail"> · {thinkingLabel(thinking)}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -147,6 +163,11 @@ export function ModelPicker({
                     aria-label={`查看 ${providerItem.displayName} 的 ${providerItem.models.length} 个模型`}
                     onClick={() => setActiveProviderId(providerItem.id)}
                   >
+                    <ProviderMark
+                      displayName={providerItem.displayName}
+                      providerId={providerItem.id}
+                      size={16}
+                    />
                     <span>{providerItem.displayName}</span>
                     <small>{providerItem.models.length}</small>
                   </button>
