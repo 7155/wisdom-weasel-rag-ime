@@ -788,6 +788,9 @@ export function PawSessionStarfield({
 /* Room: the whole solar system                                        */
 /* ------------------------------------------------------------------ */
 
+/** The card names the work a partner owns; the Room App owns the full list. */
+const ROOM_CARD_WORK_LIMIT = 4;
+
 export function PawRoomStarfield({
   focus,
   roomId,
@@ -829,6 +832,10 @@ export function PawRoomStarfield({
     const planet = model.planets.find((candidate) => candidate.participantId === bodyId);
     if (!planet) return null;
     const partner = focus.partners.find((candidate) => candidate.participantId === bodyId);
+    // The planet's real work, straight from the Room WorkItems it owns.
+    const ownedWork = focus.workItems
+      .filter((item) => partner?.ownedWorkItemIds.includes(item.id))
+      .slice(0, ROOM_CARD_WORK_LIMIT);
     return (
       <>
         <header className="paw-sf__card-head">
@@ -836,6 +843,16 @@ export function PawRoomStarfield({
           <span data-tone={planet.attention ? 'attention' : planet.state === 'running' ? 'working' : 'done'}>{planet.stateLabel}</span>
         </header>
         <p className="paw-sf__card-task">{planet.currentAction}</p>
+        {ownedWork.length ? (
+          <ul aria-label="负责的工作项" className="paw-sf__card-work">
+            {ownedWork.map((item) => (
+              <li key={item.id}>
+                <strong>{item.objective}</strong>
+                <small>{roomFocusStateLabel(item.state)}{item.blocker ? ` · ${item.blocker.reason}` : ''}</small>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <dl className="paw-sf__card-rows">
           {planet.collaborationRole ? <div><dt>职责</dt><dd>{planet.collaborationRole}</dd></div> : null}
           <div><dt>负责工作项</dt><dd>{planet.ownedWorkCount} 项</dd></div>
