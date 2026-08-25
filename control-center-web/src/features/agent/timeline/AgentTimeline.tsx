@@ -22,6 +22,7 @@ import {
 import { AgentBlocks } from './BlockRenderer';
 import { conversationMarkerIndexes } from './conversation-markers';
 import { AgentTurnWorkDisclosure } from './AgentTurnWorkDisclosure';
+import { ConversationPlanetMark } from './ConversationPlanetMark';
 import {
   buildAgentTurnWorkModel,
   type AgentTurnSequenceEntry,
@@ -1048,7 +1049,7 @@ function AssistantWorkingState({
   const detail = useMemo(() => workingDetail(activities), [activities]);
   return (
     <div className="agent-assistant-pending" role="status" aria-live="polite">
-      <CircleDashed aria-hidden="true" size={17} />
+      <ConversationPlanetMark size="lg" state={stopping ? 'waiting' : 'thinking'} />
       <span>
         <strong>{stopping ? '正在停止' : '思考中'} <time>{formatElapsed(nowMs - startedAtMs)}</time></strong>
         <small>{stopping ? '正在取消当前模型与工具执行。' : detail}</small>

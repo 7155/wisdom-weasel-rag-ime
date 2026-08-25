@@ -603,6 +603,50 @@
   50% { opacity: .35; }
 }
 
+/* Conversation planet marks on the cold-white conversation face.
+   The mark itself is declared once in agent.css; here it only inherits the
+   Session palette (cobalt accent, warm wait, cold red) so a Tool pill and a
+   thinking bar read as the same body under the same light. */
+.paw-desktop-root .paw-chatfx .paw-conv-planet {
+  --paw-planet-core: var(--paw-chat-accent);
+  --paw-planet-shade: color-mix(in srgb, var(--paw-planet-core) 50%, #0b1220);
+}
+
+.paw-desktop-root .paw-chatfx .paw-conv-planet[data-state='waiting'] { --paw-planet-core: var(--paw-chat-warn); }
+.paw-desktop-root .paw-chatfx .paw-conv-planet[data-state='failed'] { --paw-planet-core: var(--paw-chat-danger); }
+.paw-desktop-root .paw-chatfx .paw-conv-planet[data-state='done'] { --paw-planet-core: var(--paw-chat-ok); }
+
+.paw-desktop-root .paw-chatfx .paw-conv-planet[data-state='idle'] {
+  --paw-planet-core: color-mix(in srgb, var(--paw-chat-text-tertiary) 70%, var(--paw-chat-surface));
+  --paw-planet-shade: color-mix(in srgb, var(--paw-chat-text-tertiary) 92%, #0b1220);
+}
+
+/* A live mark carries its own halo on this surface: the pill stays a quiet
+   capsule while the planet inside it is the only thing that moves. */
+.paw-desktop-root .paw-chatfx .paw-conv-planet[data-live='true'] .paw-conv-planet__body {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--paw-planet-core) 26%, transparent),
+    0 0 8px color-mix(in srgb, var(--paw-planet-core) 22%, transparent);
+}
+
+/* The pill already reserves 5px for its settled dot; a live planet needs the
+   orbit clearance instead of eating the label. */
+.paw-desktop-root .paw-chatfx .fx-pill .paw-conv-planet { margin-inline-end: 2px; }
+
+/* 思考/执行条上的行星是这条胶囊里唯一的动源，给它一点呼吸边距。 */
+.paw-desktop-root .paw-chatfx .agent-assistant-pending > .paw-conv-planet { margin-inline: 3px 1px; }
+.paw-desktop-root .paw-chatfx .agent-reasoning-feed > .paw-conv-planet { margin-inline-end: 1px; }
+
+/* 轨迹树的节点圆点本身就是一颗小球：跑起来的那颗换上受光渐变并呼吸，
+   停下来的节点保持原来的空心圆环，读者一眼能找到「现在在哪」。 */
+.paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after {
+  border-color: color-mix(in srgb, var(--paw-chat-accent) 70%, transparent);
+  background:
+    radial-gradient(circle at 32% 27%, rgb(255 255 255 / 86%) 0 14%, rgb(255 255 255 / 0%) 46%),
+    radial-gradient(circle at 76% 82%, rgb(8 16 34 / 30%) 0 16%, rgb(8 16 34 / 0%) 60%),
+    radial-gradient(circle at 42% 38%, var(--paw-chat-accent) 0 54%, color-mix(in srgb, var(--paw-chat-accent) 50%, #0b1220) 100%);
+}
+
 @keyframes paw-agent-fx-text-sweep {
   0%, 18% { background-position: 100% 50%; }
   82%, 100% { background-position: -100% 50%; }
@@ -1072,6 +1116,8 @@
 
   .paw-desktop-root .paw-chatfx .fx-pill.run i,
   .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after,
+  .paw-desktop-root .paw-chatfx .paw-conv-planet__body,
+  .paw-desktop-root .paw-chatfx .paw-conv-planet__orbit,
   .paw-desktop-root .paw-chatfx .fx-approval[data-state='pending']::before {
     animation: none;
   }
@@ -1120,6 +1166,8 @@
 }
 
 :root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-activity-node[data-state='running']::after,
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-conv-planet__body,
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-conv-planet__orbit,
 :root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .fx-approval[data-state='pending']::before {
   animation: none;
 }
