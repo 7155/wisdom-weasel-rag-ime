@@ -66,7 +66,7 @@ import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/ro
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 /* 星空按钮按下之前，星空代码不进入 Room 默认对话的 bundle 路径。 */
 import { LazyPawRoomStarfield } from './PawStarfieldLazy';
-import { buildRoomFocusProjection, roomFocusCelestialName, type RoomFocusProjection } from './room-focus-projection';
+import { buildRoomFocusProjection, roomFocusCelestialName, roomFocusHasCoordinator, type RoomFocusProjection } from './room-focus-projection';
 import {
   roomDispatchPlanFromActivity,
   roomDispatchSourceParticipantId,
@@ -402,8 +402,9 @@ export function PawRoomWorkspace({
     ['blocked', focusProjection?.counts.blocked ?? 0, '受阻'],
     ['complete', focusProjection?.counts.completed ?? 0, '完成'],
   ] as const).filter(([, count]) => count > 0);
-  const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
-    <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span>
+  const coordinatorActive = focusProjection ? roomFocusHasCoordinator(focusProjection.partners) : false;
+  const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
+    {coordinatorActive ? <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span> : null}
     <nav aria-label="Room 工作台视图">
       <button aria-pressed={panel === 'none' && view === 'conversation'} onClick={() => { setView('conversation'); setPanel('none'); }} type="button"><MessageCircle size={14} /><span>公开对话</span></button>
       <button aria-pressed={panel !== 'none'} onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : current); }} type="button"><Focus size={14} /><span>协作态势</span></button>

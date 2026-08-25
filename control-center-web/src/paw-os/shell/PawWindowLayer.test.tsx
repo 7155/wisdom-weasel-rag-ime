@@ -142,9 +142,9 @@ describe('PAWOS compositor window frame', () => {
       const shell = await screen.findByLabelText('伙伴 1窗口');
       expect(shell).not.toHaveAttribute('data-focus-locked');
       expect(shell).toHaveAttribute('data-frame-mode', 'focus-card');
-      expect(shell.querySelector('.paw-traffic-lights')).not.toBeInTheDocument();
+      expect(shell.querySelector('.paw-traffic-lights')).toBeInTheDocument();
       expect(within(shell).queryByRole('button', { name: '最小化窗口' })).not.toBeInTheDocument();
-      expect(within(shell).getByRole('button', { name: '关闭伙伴窗口：伙伴 1' })).toBeInTheDocument();
+      expect(within(shell).getByRole('button', { name: '关闭窗口' })).toBeInTheDocument();
       expect((await screen.findByLabelText('Room A窗口')).querySelectorAll('.paw-traffic-lights')).toHaveLength(1);
       expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(8);
 
@@ -172,7 +172,7 @@ describe('PAWOS compositor window frame', () => {
       fireEvent.pointerUp(window, { clientX: 228, clientY: 500, pointerId: 43 });
       await waitFor(() => expect(transformCoordinate(lastShell.style.transform, 'x')).toBe(lastInitialX + 8));
 
-      fireEvent.click(within(shell).getByRole('button', { name: '关闭伙伴窗口：伙伴 1' }));
+      fireEvent.click(within(shell).getByRole('button', { name: '关闭窗口' }));
       await waitFor(() => expect(screen.queryByLabelText('伙伴 1窗口')).not.toBeInTheDocument());
       await waitFor(() => expect(screen.queryByRole('region', { name: 'Sol 行星窗口，横向滚动查看全部 5 个窗口' })).not.toBeInTheDocument());
       expect(screen.getByLabelText('伙伴 2窗口')).toBeInTheDocument();

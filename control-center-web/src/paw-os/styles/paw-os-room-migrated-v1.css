@@ -756,10 +756,15 @@
 }
 
 .paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-titlebar {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 76px minmax(0, 1fr);
   gap: 8px;
   height: 34px;
-  padding: 0 9px 0 12px;
+  padding: 0 12px;
+}
+
+.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-titlebar .paw-traffic-lights button:nth-child(2),
+.paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-titlebar .paw-traffic-lights button:nth-child(3) {
+  display: none;
 }
 
 .paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-chrome-slot:empty {

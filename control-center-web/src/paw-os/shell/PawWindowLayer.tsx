@@ -987,6 +987,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   zIndex: number;
 }) {
   const shellRef = useRef<HTMLElement>(null);
+  const [windowLeadingChromeTarget, setWindowLeadingChromeTarget] = useState<HTMLElement | null>(null);
   const [windowChromeTarget, setWindowChromeTarget] = useState<HTMLElement | null>(null);
   const maximized = placement === 'maximized';
   const identityIconId = targetKind === 'room' ? 'room' : appId;
@@ -1010,14 +1011,20 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
     } : {}),
   } as CSSProperties;
   return (
-    <PawWindowChromeProvider target={windowChromeTarget}>
+    <PawWindowChromeProvider leading={windowLeadingChromeTarget} trailing={windowChromeTarget}>
       <section aria-label={`${title}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-flow-tracked={flowTracked || undefined} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle}>
         <div className="paw-window">
           <header className="paw-window-titlebar" data-window-chrome={windowChrome} onDoubleClick={overview || focusFrame ? undefined : onToggleMaximize} onPointerDown={overview ? undefined : drag}>
-            {frameMode === 'focus-card' ? null : <div className="paw-traffic-lights" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}><button aria-label="关闭窗口" data-action="close" onClick={() => exit('close', onClose)} title="关闭" type="button"><X size={9} /></button><button aria-label="最小化窗口" data-action="minimize" onClick={() => exit('minimize', onMinimize)} title="最小化" type="button"><Minus size={9} /></button><button aria-label={maximized ? '还原窗口' : '最大化窗口'} data-action={maximized ? 'restore' : 'maximize'} onClick={onToggleMaximize} title={maximized ? '还原' : '最大化'} type="button">{maximized ? <Minimize2 size={8} /> : <Maximize2 size={8} />}</button></div>}
+            <div className="paw-traffic-lights" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+              {windowChrome ? <div className="paw-window-leading-slot" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} ref={setWindowLeadingChromeTarget} /> : null}
+              <button aria-label="关闭窗口" data-action="close" onClick={() => exit('close', onClose)} title="关闭" type="button"><X size={9} /></button>
+              {frameMode === 'focus-card' ? null : <>
+                <button aria-label="最小化窗口" data-action="minimize" onClick={() => exit('minimize', onMinimize)} title="最小化" type="button"><Minus size={9} /></button>
+                <button aria-label={maximized ? '还原窗口' : '最大化窗口'} data-action={maximized ? 'restore' : 'maximize'} onClick={onToggleMaximize} title={maximized ? '还原' : '最大化'} type="button">{maximized ? <Minimize2 size={8} /> : <Maximize2 size={8} />}</button>
+              </>}
+            </div>
             <div className="paw-window-title"><PawAppIcon appId={identityIconId} size={16} /><strong>{title}</strong></div>
             {windowChrome ? <div className="paw-window-chrome-slot" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} ref={setWindowChromeTarget} /> : null}
-            {frameMode === 'focus-card' ? <button aria-label={`关闭伙伴窗口：${title}`} className="paw-focus-card-close" onClick={() => exit('close', onClose)} onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} title="关闭伙伴窗口" type="button"><X size={13} /></button> : null}
           </header>
           <MemoizedWindowBody>{children}</MemoizedWindowBody>
         </div>

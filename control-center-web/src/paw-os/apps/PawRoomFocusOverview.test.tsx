@@ -88,6 +88,7 @@ const focus: RoomFocusProjection = {
       sessionId: 'session-venus',
       displayName: 'Agent 3',
       celestialName: 'Venus',
+      collaborationRole: 'coordinator',
       state: 'review',
       ownedWorkItemIds: ['work-root'],
       currentAction: '等待独立复核',

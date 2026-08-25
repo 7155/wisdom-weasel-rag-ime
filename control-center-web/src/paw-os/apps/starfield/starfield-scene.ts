@@ -484,9 +484,9 @@ export class StarfieldStage {
     // far layers cannot read as two different skies.
     const pickSpectral = () => spectralStarColor(random());
     const shells: Array<{ count: number; radius: [number, number]; size: number; opacity: number }> = [
-      { count: 1100, radius: [64, 96], size: 0.5, opacity: 0.62 },
-      { count: 520, radius: [44, 64], size: 0.78, opacity: 0.78 },
-      { count: 240, radius: [28, 44], size: 1.12, opacity: 0.96 },
+      { count: 900, radius: [64, 96], size: 0.46, opacity: 0.38 },
+      { count: 420, radius: [44, 64], size: 0.72, opacity: 0.48 },
+      { count: 180, radius: [28, 44], size: 1.02, opacity: 0.62 },
     ];
     for (const shell of shells) {
       const positions = new Float32Array(shell.count * 3);
@@ -536,7 +536,7 @@ export class StarfieldStage {
         map: this.glowTexture,
         color: tint,
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.16,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });

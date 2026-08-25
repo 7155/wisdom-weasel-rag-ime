@@ -685,6 +685,21 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 /* chrome 槽位是真实网格列：App 级控件右对齐、永不再压标题与信号灯 */
 .paw-window-chrome-slot { min-width: 0; height: 100%; display: flex; align-items: center; justify-content: flex-end; overflow: hidden; }
 .paw-window-chrome-slot:empty { display: none; }
+.paw-window-leading-slot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.paw-window-leading-slot:empty { display: none; }
+.paw-traffic-lights .paw-window-leading-slot .paw-agent-rail-toggle {
+  position: static;
+  z-index: auto;
+  flex: 0 0 30px;
+}
+.paw-traffic-lights:has(.paw-window-leading-slot:not(:empty)) {
+  width: auto;
+  min-width: 76px;
+}
 .paw-window-body {
   width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden;
   padding-top: var(--paw-titlebar-h);
