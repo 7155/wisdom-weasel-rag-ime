@@ -599,7 +599,7 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
         item.style.setProperty('--paw-dock-shift', shift[index].toFixed(2));
       });
     };
-    const windowGestureOwnsPointer = () => Boolean(dock.closest('.paw-desktop-root')?.dataset.windowInteraction);
+    const windowGestureOwnsPointer = () => Boolean(dock.closest<HTMLElement>('.paw-desktop-root')?.dataset.windowInteraction);
     const conducting = () => {
       if (!finePointer.matches || !wideShelf.matches || reducedMotion.matches) return false;
       if (windowGestureOwnsPointer()) return false;
