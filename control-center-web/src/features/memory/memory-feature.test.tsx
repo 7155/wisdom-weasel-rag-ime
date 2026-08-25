@@ -767,8 +767,9 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
+    const pipeline = await screen.findByRole('list', { name: '记忆内容分类' });
+    await user.click(screen.getByRole('button', { name: '整理状态摘要' }));
     expect(await screen.findByText('全部 8 · 历史 4')).toBeInTheDocument();
-    const pipeline = screen.getByRole('list', { name: '记忆内容分类' });
     expect(within(pipeline).queryByRole('button', { name: /应用/ })).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.params?.kind === 'apps')).toBe(false);
   });
@@ -801,6 +802,7 @@ describe('MemoryFeature relations', () => {
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'books'
     ));
     expect(bookRequest?.request.params?.status).toBeUndefined();
+    await user.click(screen.getByRole('button', { name: '整理状态摘要' }));
     expect(screen.getByText('按主题持续查找')).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '伙伴记忆' }));

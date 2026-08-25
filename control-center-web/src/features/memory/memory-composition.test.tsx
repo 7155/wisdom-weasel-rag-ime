@@ -29,6 +29,24 @@ describe('MemoryFeature composition', () => {
     expect(screen.getByRole('list', { name: '记忆内容分类' })).toBeInTheDocument();
   });
 
+  it('keeps the pipeline a compact spine with the status detail behind a disclosure', async () => {
+    const user = userEvent.setup();
+    renderMemory(catalogTransport());
+
+    await screen.findByRole('list', { name: '记忆内容分类' });
+    const toggle = screen.getByRole('button', { name: '整理状态摘要' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('检索索引')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('检索索引')).toBeInTheDocument();
+    expect(screen.getByText('主题不会替代原始记录；每条结论都能沿这条链路回到来源。')).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.queryByText('检索索引')).not.toBeInTheDocument();
+  });
+
   it('routes between memory layers from the pipeline spine', async () => {
     const user = userEvent.setup();
     const transport = catalogTransport();

@@ -2,11 +2,13 @@ import {
   Archive,
   ArrowRight,
   BookOpen,
+  ChevronDown,
   RefreshCw,
   ShieldCheck,
   Sparkles,
   Tags,
 } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/primitives';
 import { asRecord, numberValue, stringValue } from '@/features/overview/management-ui';
 
@@ -25,11 +27,11 @@ interface MemoryPipelineProps {
 }
 
 /**
- * The Memory App's spine: the governed pipeline 来源 -> 整理 -> 记忆 -> 主题,
- * always visible with live counts and flow state. Every stage is a real
- * navigation target; the connectors carry the actual quantity waiting to move
- * to the next stage, so "what happens to my data" is legible without opening
- * a status page.
+ * The Memory App's spine: the governed pipeline 来源 -> 整理 -> 记忆 -> 主题 as
+ * one compact rail. Every stage is a real navigation target with its live
+ * count; everything beyond name + count (per-source breakdowns, index and
+ * governance signals, the provenance promise) lives behind the 整理状态
+ * disclosure so the workspace below owns the first screen.
  */
 export function MemoryPipeline({
   activeLayer,
@@ -40,6 +42,7 @@ export function MemoryPipeline({
   summary,
   summaryState,
 }: MemoryPipelineProps) {
+  const [expanded, setExpanded] = useState(false);
   const projection = asRecord(summary.projection);
   const timelineCounts = asRecord(summary.activityTimelineCounts);
   const governanceCounts = asRecord(summary.governanceProposalCounts);
@@ -76,96 +79,130 @@ export function MemoryPipeline({
     + numberValue(timelineCounts.draft);
   const projectionSignal = describeProjection(projection);
   const caughtUp = summaryState === 'ready' && pendingSourceCount === 0;
+  const brief = pipelineBrief(summaryState, pendingSourceCount, pendingGovernance);
 
   return (
-    <section aria-label="记忆整理链路" className="memory-pipeline" data-state={summaryState}>
-      <ol aria-label="记忆内容分类" className="memory-pipeline__stages">
-        <PipelineStage
-          active={activeLayer === 'evidence'}
-          ariaLabel={`来源 · 来源记录 · ${evidenceCount} 项`}
-          code="来源"
-          count={evidenceCount}
-          detail={`输入法 ${numberValue(summary.inputMethodEvidenceCount)} · 语音 ${numberValue(summary.voiceEvidenceCount)} · 伙伴主动记录 ${agentCapturedEvidenceCount}`}
-          icon={Archive}
-          index="01"
-          label="来源记录"
-          onClick={() => onOpenLayer('evidence')}
-          stage="evidence"
-          state={summaryState}
-        />
-        <PipelineFlow
-          label={caughtUp ? '暂无待整理' : `待整理 ${pendingSourceCount}`}
-          tone={caughtUp ? 'idle' : 'active'}
-        />
-        <PipelineStage
-          active={organizeActive}
-          ariaLabel={`整理 · ${caughtUp ? '已到今天' : `${pendingSourceCount} 条等待处理`}`}
-          code="整理"
-          count={pendingSourceCount}
-          detail={caughtUp ? '已到今天 · 新输入出现后继续' : '分批处理，形成草案后等你审核'}
-          icon={Sparkles}
-          index="02"
-          label="分批审核"
-          onClick={onOpenOrganize}
-          stage="organize"
-          state={summaryState}
-          unit="条"
-        />
-        <PipelineFlow label="审核后写入" tone="idle" />
-        <PipelineStage
-          active={activeLayer === 'atoms'}
-          ariaLabel={`记忆 · 已整理记忆 · ${currentAtomCount} 项`}
-          code="记忆"
-          count={currentAtomCount}
-          detail={`全部 ${atomTotalCount} · 历史 ${historicalAtomCount}`}
-          icon={Tags}
-          index="03"
-          label="已整理记忆"
-          onClick={() => onOpenLayer('atoms')}
-          stage="atoms"
-          state={summaryState}
-        />
-        <PipelineFlow label="按主题归类" tone="idle" />
-        <PipelineStage
-          active={activeLayer === 'books'}
-          ariaLabel={`主题 · 长期主题 · ${numberValue(summary.memoryBookCount)} 项`}
-          code="主题"
-          count={numberValue(summary.memoryBookCount)}
-          detail="按主题持续查找"
-          icon={BookOpen}
-          index="04"
-          label="长期主题"
-          onClick={() => onOpenLayer('books')}
-          stage="books"
-          state={summaryState}
-        />
-      </ol>
-      <div className="memory-pipeline__meta">
-        {summaryState === 'error' ? (
-          <div className="memory-pipeline__fault" role="status">
-            <span>记忆状态读取失败，计数暂不可用。</span>
-            <Button leadingIcon={<RefreshCw size={13} />} onClick={onRetry} size="small" variant="quiet">重试</Button>
-          </div>
-        ) : (
-          <div aria-label="记忆整理状态" className="memory-pipeline__signals">
-            <PipelineSignal detail={projectionSignal.detail} label="检索索引" tone={projectionSignal.tone} />
-            <PipelineSignal
-              detail={pendingGovernance ? `${pendingGovernance} 项等待处理` : '没有待处理草案'}
-              label="待确认"
-              tone={pendingGovernance ? 'warning' : 'success'}
-            />
-            <PipelineSignal
-              detail={latestTimelineStatus(latestTimeline)}
-              label="最近整理"
-              tone={stringValue(latestTimeline.status) === 'draft' ? 'warning' : 'info'}
-            />
-          </div>
-        )}
-        <p className="memory-pipeline__note">
-          <ShieldCheck aria-hidden="true" size={14} />
-          <span>主题不会替代原始记录；每条结论都能沿这条链路回到来源。</span>
-        </p>
+    <section aria-label="记忆整理链路" className="memory-pipeline" data-expanded={expanded || undefined} data-state={summaryState}>
+      <div className="memory-pipeline__rail">
+        <ol aria-label="记忆内容分类" className="memory-pipeline__stages">
+          <PipelineStage
+            active={activeLayer === 'evidence'}
+            ariaLabel={`来源 · 来源记录 · ${evidenceCount} 项`}
+            code="来源"
+            count={evidenceCount}
+            icon={Archive}
+            label="来源记录"
+            onClick={() => onOpenLayer('evidence')}
+            stage="evidence"
+            state={summaryState}
+          />
+          <PipelineFlow tone={summaryState === 'ready' && pendingSourceCount > 0 ? 'active' : 'idle'} />
+          <PipelineStage
+            active={organizeActive}
+            ariaLabel={`整理 · ${caughtUp ? '已到今天' : `${pendingSourceCount} 条等待处理`}`}
+            code="整理"
+            count={pendingSourceCount}
+            icon={Sparkles}
+            label="分批审核"
+            onClick={onOpenOrganize}
+            stage="organize"
+            state={summaryState}
+            unit="条"
+          />
+          <PipelineFlow tone="idle" />
+          <PipelineStage
+            active={activeLayer === 'atoms'}
+            ariaLabel={`记忆 · 已整理记忆 · ${currentAtomCount} 项`}
+            code="记忆"
+            count={currentAtomCount}
+            icon={Tags}
+            label="已整理记忆"
+            onClick={() => onOpenLayer('atoms')}
+            stage="atoms"
+            state={summaryState}
+          />
+          <PipelineFlow tone="idle" />
+          <PipelineStage
+            active={activeLayer === 'books'}
+            ariaLabel={`主题 · 长期主题 · ${numberValue(summary.memoryBookCount)} 项`}
+            code="主题"
+            count={numberValue(summary.memoryBookCount)}
+            icon={BookOpen}
+            label="长期主题"
+            onClick={() => onOpenLayer('books')}
+            stage="books"
+            state={summaryState}
+          />
+        </ol>
+        <button
+          aria-controls="memory-pipeline-summary"
+          aria-expanded={expanded}
+          aria-label="整理状态摘要"
+          className="memory-pipeline__toggle"
+          onClick={() => setExpanded((open) => !open)}
+          type="button"
+        >
+          <i aria-hidden="true" data-tone={brief.tone} />
+          <span>{brief.label}</span>
+          <ChevronDown aria-hidden="true" size={14} />
+        </button>
       </div>
+      {expanded ? (
+        <div className="memory-pipeline__summary" id="memory-pipeline-summary">
+          {summaryState === 'error' ? (
+            <div className="memory-pipeline__fault" role="status">
+              <span>记忆状态读取失败，计数暂不可用。</span>
+              <Button leadingIcon={<RefreshCw size={13} />} onClick={onRetry} size="small" variant="quiet">重试</Button>
+            </div>
+          ) : (
+            <>
+              <dl className="memory-pipeline__facts">
+                <PipelineFact
+                  detail={`输入法 ${numberValue(summary.inputMethodEvidenceCount)} · 语音 ${numberValue(summary.voiceEvidenceCount)} · 伙伴主动记录 ${agentCapturedEvidenceCount}`}
+                  label="来源记录"
+                  stage="evidence"
+                  state={summaryState}
+                />
+                <PipelineFact
+                  detail={caughtUp ? '已到今天 · 新输入出现后继续' : '分批处理，形成草案后等你审核'}
+                  label="分批审核"
+                  stage="organize"
+                  state={summaryState}
+                />
+                <PipelineFact
+                  detail={`全部 ${atomTotalCount} · 历史 ${historicalAtomCount}`}
+                  label="已整理记忆"
+                  stage="atoms"
+                  state={summaryState}
+                />
+                <PipelineFact
+                  detail="按主题持续查找"
+                  label="长期主题"
+                  stage="books"
+                  state={summaryState}
+                />
+              </dl>
+              <div aria-label="记忆整理状态" className="memory-pipeline__signals">
+                <PipelineSignal detail={projectionSignal.detail} label="检索索引" tone={projectionSignal.tone} />
+                <PipelineSignal
+                  detail={pendingGovernance ? `${pendingGovernance} 项等待处理` : '没有待处理草案'}
+                  label="待确认"
+                  tone={pendingGovernance ? 'warning' : 'success'}
+                />
+                <PipelineSignal
+                  detail={latestTimelineStatus(latestTimeline)}
+                  label="最近整理"
+                  tone={stringValue(latestTimeline.status) === 'draft' ? 'warning' : 'info'}
+                />
+              </div>
+            </>
+          )}
+          <p className="memory-pipeline__note">
+            <ShieldCheck aria-hidden="true" size={14} />
+            <span>主题不会替代原始记录；每条结论都能沿这条链路回到来源。</span>
+          </p>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -175,9 +212,7 @@ function PipelineStage({
   ariaLabel,
   code,
   count,
-  detail,
   icon: Icon,
-  index,
   label,
   onClick,
   stage,
@@ -188,9 +223,7 @@ function PipelineStage({
   ariaLabel: string;
   code: string;
   count: number;
-  detail: string;
   icon: typeof Archive;
-  index: string;
   label: string;
   onClick: () => void;
   stage: 'evidence' | 'organize' | 'atoms' | 'books';
@@ -200,28 +233,44 @@ function PipelineStage({
   return (
     <li className="memory-pipeline__stage" data-active={active || undefined} data-stage={stage}>
       <button aria-current={active ? 'step' : undefined} aria-label={ariaLabel} onClick={onClick} type="button">
-        <span aria-hidden="true" className="memory-pipeline__stage-index">{index}</span>
-        <span aria-hidden="true" className="memory-pipeline__stage-icon"><Icon size={15} /></span>
+        <span aria-hidden="true" className="memory-pipeline__stage-icon"><Icon size={14} /></span>
         <span className="memory-pipeline__stage-copy">
-          <small>{label}</small>
           <strong>{code}</strong>
+          <small>{label}</small>
         </span>
         <span className="memory-pipeline__stage-count" data-unknown={state !== 'ready' || undefined}>
           {state === 'ready' ? count : '—'}
           <small>{unit}</small>
         </span>
-        <em className="memory-pipeline__stage-detail">{state === 'error' ? '状态暂不可用' : detail}</em>
       </button>
     </li>
   );
 }
 
-function PipelineFlow({ label, tone }: { label: string; tone: 'active' | 'idle' }) {
+function PipelineFlow({ tone }: { tone: 'active' | 'idle' }) {
   return (
     <li aria-hidden="true" className="memory-pipeline__flow" data-tone={tone}>
-      <span>{label}</span>
       <ArrowRight size={13} />
     </li>
+  );
+}
+
+function PipelineFact({
+  detail,
+  label,
+  stage,
+  state,
+}: {
+  detail: string;
+  label: string;
+  stage: 'evidence' | 'organize' | 'atoms' | 'books';
+  state: MemoryPipelineState;
+}) {
+  return (
+    <div data-stage={stage}>
+      <dt>{label}</dt>
+      <dd>{state === 'ready' ? detail : '—'}</dd>
+    </div>
   );
 }
 
@@ -240,6 +289,18 @@ function PipelineSignal({
       <span><strong>{label}</strong><small>{detail}</small></span>
     </div>
   );
+}
+
+function pipelineBrief(
+  state: MemoryPipelineState,
+  pendingSourceCount: number,
+  pendingGovernance: number,
+): { label: string; tone: 'success' | 'warning' | 'info' } {
+  if (state === 'error') return { label: '状态读取失败', tone: 'warning' };
+  if (state === 'pending') return { label: '正在读取整理状态', tone: 'info' };
+  if (pendingSourceCount) return { label: `待整理 ${pendingSourceCount} 条`, tone: 'warning' };
+  if (pendingGovernance) return { label: `${pendingGovernance} 项待确认`, tone: 'warning' };
+  return { label: '整理已到今天', tone: 'success' };
 }
 
 function latestTimelineStatus(value: Record<string, unknown>): string {
