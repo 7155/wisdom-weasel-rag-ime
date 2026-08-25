@@ -920,11 +920,13 @@ export class StarfieldStage {
       group.add(chromosphere);
       const light = new THREE.PointLight(0xffc37a, 150, 0, 2);
       group.add(light);
+      // Sol still leads the Room, but its bloom is the one thing bright
+      // enough to swallow a task label that drifts across it.
       const corona = new THREE.Sprite(new THREE.SpriteMaterial({
         map: this.glowTexture,
         color: 0xffc46a,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.76,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }));
@@ -934,7 +936,7 @@ export class StarfieldStage {
         map: this.glowTexture,
         color: 0xff8a3a,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.3,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }));
@@ -1441,7 +1443,7 @@ export class StarfieldStage {
             const pulse = 1 + wave * 0.18;
             this.center.outerCorona.scale.setScalar(this.center.size * 9.2 * pulse);
             (this.center.outerCorona.material as THREE.SpriteMaterial).opacity =
-              0.28 + (wave * 0.5 + 0.5) * 0.2;
+              0.22 + (wave * 0.5 + 0.5) * 0.16;
           }
           animated = true;
         }
