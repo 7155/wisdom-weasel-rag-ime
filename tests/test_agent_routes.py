@@ -16,6 +16,7 @@ from rag_ime.agent_routes import (
     agent_session_route,
     agent_wake_schedule_route,
 )
+from rag_ime.agent_workspace import WorkspaceSnapshotError
 from rag_ime.debug_server import DebugRequestHandler
 
 
@@ -139,6 +140,89 @@ class AgentRouteTests(unittest.TestCase):
                 (HTTPStatus.OK, {"ok": True, "content": "hello"}),
             ],
         )
+
+    def test_workspace_file_post_saves_the_edited_text_for_that_session(self) -> None:
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        class WorkspaceRecorder:
+            def workspace_write(
+                self,
+                session_id: str,
+                request: dict[str, object],
+            ) -> dict[str, object]:
+                calls.append((session_id, request))
+                return {"ok": True, "resourceRevision": f"sha256:{'a' * 64}"}
+
+        written: list[tuple[HTTPStatus, dict[str, object]]] = []
+        handler = DebugRequestHandler.__new__(DebugRequestHandler)
+        handler.service = SimpleNamespace(agent_tools=WorkspaceRecorder())
+        handler._authorize_gateway_request = lambda _method, _parsed: True
+        handler._management_post_security_error = (
+            lambda _path, require_json=True: None
+        )
+        handler._read_json = lambda: {
+            "path": "/work/README.md",
+            "resourceRevision": f"sha256:{'b' * 64}",
+            "content": "# edited\n",
+        }
+        handler._write_json = lambda status, body: written.append((status, body))
+
+        handler.path = "/api/agent/sessions/agent%3A123/workspace-file"
+        handler.do_POST()
+
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "agent:123",
+                    {
+                        "path": "/work/README.md",
+                        "resourceRevision": f"sha256:{'b' * 64}",
+                        "content": "# edited\n",
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(
+            written,
+            [(HTTPStatus.OK, {"ok": True, "resourceRevision": f"sha256:{'a' * 64}"})],
+        )
+
+    def test_workspace_file_post_reports_a_stale_snapshot_as_retryable_conflict(self) -> None:
+        class StaleWorkspace:
+            def workspace_write(
+                self,
+                _session_id: str,
+                _request: dict[str, object],
+            ) -> dict[str, object]:
+                raise WorkspaceSnapshotError(
+                    "stale_snapshot",
+                    "workspace_write snapshot is stale",
+                    retryable=True,
+                )
+
+        written: list[tuple[HTTPStatus, dict[str, object]]] = []
+        handler = DebugRequestHandler.__new__(DebugRequestHandler)
+        handler.service = SimpleNamespace(agent_tools=StaleWorkspace())
+        handler._authorize_gateway_request = lambda _method, _parsed: True
+        handler._management_post_security_error = (
+            lambda _path, require_json=True: None
+        )
+        handler._read_json = lambda: {
+            "path": "/work/README.md",
+            "resourceRevision": f"sha256:{'b' * 64}",
+            "content": "# edited\n",
+        }
+        handler._write_json = lambda status, body: written.append((status, body))
+
+        handler.path = "/api/agent/sessions/agent%3A123/workspace-file"
+        handler.do_POST()
+
+        self.assertEqual(len(written), 1)
+        status, body = written[0]
+        self.assertEqual(status, HTTPStatus.CONFLICT)
+        self.assertEqual(body["errorCode"], "stale_snapshot")
+        self.assertIs(body["retryable"], True)
 
     def test_ui_response_handler_receives_decoded_session_id_and_payload(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []

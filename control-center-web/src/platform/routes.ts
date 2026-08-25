@@ -164,6 +164,13 @@ export const CONTROL_ROUTES = {
     query: ['path', 'offset', 'limit'],
     requiredQuery: ['path'],
   },
+  'agent.session.workspace.write': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/workspace-file',
+    params: { sessionId: null },
+    body: ['path', 'resourceRevision', 'content'],
+    requiredBody: ['path', 'resourceRevision', 'content'],
+  },
   'agent.session.rename': {
     method: 'PATCH',
     path: '/api/agent/sessions/:sessionId',

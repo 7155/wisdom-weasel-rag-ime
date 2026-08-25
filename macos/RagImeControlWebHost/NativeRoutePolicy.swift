@@ -114,6 +114,7 @@ final class NativeRoutePolicy {
             "agent.session.snapshot": route("GET", "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", remoteSafe: true),
             "agent.session.workspace.list": route("GET", "/api/agent/sessions/{sessionId}/workspace", nil, query: ["path", "depth", "limit"]),
             "agent.session.workspace.read": route("GET", "/api/agent/sessions/{sessionId}/workspace-file", nil, query: ["path", "offset", "limit"], requiredQuery: ["path"]),
+            "agent.session.workspace.write": route("POST", "/api/agent/sessions/{sessionId}/workspace-file", nil, bodyKeys: ["path", "resourceRevision", "content"], requiredBodyKeys: ["path", "resourceRevision", "content"]),
             "agent.session.rename": route("PATCH", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", remoteSafe: true, bodyKeys: ["title"], requiredBodyKeys: ["title"]),
             "agent.session.archive": route("PATCH", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", remoteSafe: true, bodyKeys: ["archived"], requiredBodyKeys: ["archived"]),
             "agent.session.mode.update": route("PATCH", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", bodyKeys: ["mode", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "toolProfileVersion", "toolAllowlistMode", "allowedTools", "dangerousModeConfirmation", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled"], requiredBodyKeys: ["mode"]),
