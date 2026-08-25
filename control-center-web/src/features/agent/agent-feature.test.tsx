@@ -4079,7 +4079,6 @@ describe('Agent experience', () => {
       { timeout: 5_000 },
     ));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
     for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
       expect(within(picker).getByRole('radio', { name: level })).toBeInTheDocument();
     }
@@ -4095,7 +4094,7 @@ describe('Agent experience', () => {
     ))).toBe(true));
   });
 
-  it('keeps a large model catalog compact by showing one Provider at a time', async () => {
+  it('lists every Provider group in one flat panel without a second page', async () => {
     const transport = featureTransport(previewModelCatalog('session-preview'));
     const user = userEvent.setup();
     renderAgent(transport);
@@ -4107,29 +4106,16 @@ describe('Agent experience', () => {
     ));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
 
-    expect(within(picker).getByRole('tab', {
-      name: '查看 OpenAI 的 2 个模型',
-    })).toHaveAttribute('aria-selected', 'true');
+    expect(within(picker).getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
+    expect(within(picker).getByRole('group', { name: 'DeepSeek' })).toBeInTheDocument();
     expect(within(picker).getByRole('option', {
       name: '选择模型 GPT-5.4',
     })).toBeInTheDocument();
-    expect(within(picker).queryByRole('option', {
-      name: '选择模型 DeepSeek V4',
-    })).not.toBeInTheDocument();
-
-    await user.click(within(picker).getByRole('tab', {
-      name: '查看 DeepSeek 的 1 个模型',
-    }));
-
-    expect(within(picker).getByRole('tab', {
-      name: '查看 DeepSeek 的 1 个模型',
-    })).toHaveAttribute('aria-selected', 'true');
     expect(within(picker).getByRole('option', {
       name: '选择模型 DeepSeek V4',
     })).toBeInTheDocument();
-    expect(within(picker).queryByRole('option', {
-      name: '选择模型 GPT-5.4',
-    })).not.toBeInTheDocument();
+    expect(within(picker).getByRole('radiogroup', { name: '推理强度' })).toBeInTheDocument();
+    expect(within(picker).queryByRole('tab')).not.toBeInTheDocument();
   });
 
   it('supports arrow-key reasoning selection, Enter, Escape, and trigger focus return', async () => {
@@ -4150,8 +4136,13 @@ describe('Agent experience', () => {
     );
     await user.click(trigger);
     let picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
+    // The panel opens on the current model, and one Tab reaches the reasoning
+    // rail: model and reasoning are one gesture apart, not one page apart.
+    await waitFor(() => expect(
+      within(picker).getByRole('option', { name: '选择模型 GPT-5.6 Luna' }),
+    ).toHaveFocus());
     const medium = within(picker).getByRole('radio', { name: '中' });
+    await user.tab();
     await waitFor(() => expect(medium).toHaveFocus());
     await user.keyboard('{ArrowRight}{Enter}');
 
@@ -4256,7 +4247,6 @@ describe('Agent experience', () => {
       { timeout: 5_000 },
     ));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
     expect(within(picker).queryByRole('radio', { name: 'Max' })).not.toBeInTheDocument();
   });
 
@@ -4390,7 +4380,6 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('option', { name: '选择模型 GPT-5.6 Luna' }));
     await user.click(screen.getByRole('button', { name: '模型：GPT-5.6 Luna · GPT，思考强度：中' }));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
     await user.click(within(picker).getByRole('radio', { name: '高' }));
     expect(screen.getByRole('button', {
       name: '模型：GPT-5.6 Luna · GPT，思考强度：高',

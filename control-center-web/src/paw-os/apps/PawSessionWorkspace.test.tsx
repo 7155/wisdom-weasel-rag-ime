@@ -1,3 +1,4 @@
+import { forwardRef, type Key, type ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,38 @@ import { StubControlTransport } from '@/test/stub-control-transport';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 import { PawSessionWorkspace } from './PawSessionWorkspace';
+
+/* jsdom gives every row zero height, so the real virtualizer would keep the
+   transcript empty and no timeline assertion here would mean anything. */
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: forwardRef(function MockVirtuoso({
+    components,
+    computeItemKey,
+    context,
+    data,
+    itemContent,
+    scrollerRef,
+  }: {
+    components?: { Header?: (props: { context?: unknown }) => ReactNode; Footer?: () => ReactNode };
+    computeItemKey?: (index: number, item: string) => Key;
+    context?: unknown;
+    data: string[];
+    itemContent: (index: number, item: string) => ReactNode;
+    scrollerRef?: (scroller: HTMLElement | Window | null) => void;
+  }) {
+    const Header = components?.Header;
+    const Footer = components?.Footer;
+    return (
+      <div data-testid="virtuoso-list" ref={(node) => scrollerRef?.(node)}>
+        {Header ? <Header context={context} /> : null}
+        {data.map((item, index) => (
+          <div key={computeItemKey?.(index, item) ?? index}>{itemContent(index, item)}</div>
+        ))}
+        {Footer ? <Footer /> : null}
+      </div>
+    );
+  }),
+}));
 
 afterEach(cleanup);
 
@@ -523,6 +556,45 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
+  it('gives a failed prompt exactly one failure surface with its own recovery', async () => {
+    const sessionId = 'session-prompt-failure';
+    const transport = idleSessionTransport();
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '请开始这轮实现');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    // FailOptimistic owns the turn. This file does not mock Virtuoso geometry,
+    // so the turn card itself is covered in agent-feature tests; here we lock
+    // the PAWOS-specific bug: no second 重新同步 banner for the same failure.
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections[sessionId];
+      expect(projection?.turnOrder.some((turnId) => (
+        projection.turnsById[turnId]?.status === 'failed'
+      ))).toBe(true);
+    });
+    expect(transport.requests.some((request) => request.pathId === 'agent.session.prompt')).toBe(true);
+    expect(document.querySelector('.paw-session-workspace__error')).toBeNull();
+    expect(screen.queryByRole('button', { name: '重新同步' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('请开始这轮实现');
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('uses one compact on-demand row when the Session has no subagents', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const transport = new StubControlTransport('mock', {
@@ -586,6 +658,27 @@ function busySessionTransport(sessionId: string): StubControlTransport {
     'agent.runtime.get': {},
     'agent.session.prompt': { ok: true },
     'agent.session.abort': { ok: true },
+  });
+}
+
+/** An idle Session whose Runtime rejects the prompt, so submitting produces one
+ *  real failed turn instead of a stub acknowledgement. */
+function idleSessionTransport(): StubControlTransport {
+  return new StubControlTransport('mock', {
+    'agent.session.snapshot': {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'active',
+    },
+    'agent.session.models': {},
+    'agent.session.commands': {},
+    'agent.tools.list': {},
+    'agent.runtime.get': {},
+    'agent.session.prompt': () => {
+      throw new Error('provider_request_failed');
+    },
   });
 }
 

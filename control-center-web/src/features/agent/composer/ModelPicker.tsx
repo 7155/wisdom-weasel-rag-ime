@@ -1,11 +1,5 @@
+import { Check, LoaderCircle } from 'lucide-react';
 import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  LoaderCircle,
-} from 'lucide-react';
-import {
-  forwardRef,
   useEffect,
   useRef,
   useState,
@@ -23,8 +17,17 @@ import { ProviderMark } from '../marks/ConversationMarks';
 import { modelSelectionFromCatalog } from '../model-selection';
 import type { ModelCatalog, ThinkingLevel } from '../types';
 
-type PickerView = 'models' | 'reasoning';
-
+/**
+ * Model + reasoning is one decision, so it is one flat panel: every Provider's
+ * models are listed at once under quiet group headings, and the reasoning rail
+ * for the current model stays docked at the foot of the same surface. Nothing
+ * navigates — picking a model and dialling its reasoning are both a single
+ * gesture from the moment the panel opens.
+ *
+ * Provider identity rides on the mark plus the grouping heading rather than a
+ * row of pill tabs, so a large catalog stays scannable without hiding the rest
+ * of it behind a filter the user has to discover.
+ */
 export function ModelPicker({
   catalog,
   disabled,
@@ -39,9 +42,7 @@ export function ModelPicker({
   onChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<PickerView>('models');
-  const [activeProviderId, setActiveProviderId] = useState('');
-  const reasoningRailRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const selection = catalog ? modelSelectionFromCatalog(catalog) : undefined;
   const selectedProvider = catalog?.providers.find(
     (item) => item.id === selection?.provider,
@@ -54,45 +55,35 @@ export function ModelPicker({
   const selectedLabel = selectedModel
     ? `${selectedModel.name} · ${providerName}`
     : '未选择';
-  const defaultProviderId = selectedProvider?.id ?? catalog?.providers[0]?.id ?? '';
-  const activeProvider = catalog?.providers.find(
-    (provider) => provider.id === activeProviderId,
-  ) ?? selectedProvider ?? catalog?.providers[0];
-  const models = activeProvider?.models ?? [];
+  const levels = selectedModel?.thinkingLevels ?? [];
+  const firstOptionKey = firstModelKey(catalog);
 
   useEffect(() => {
-    if (requestOpen > 0 && catalog && !disabled) {
-      setView('models');
-      setActiveProviderId(defaultProviderId);
-      setOpen(true);
-    }
-  }, [catalog, defaultProviderId, disabled, requestOpen]);
+    if (requestOpen > 0 && catalog && !disabled) setOpen(true);
+  }, [catalog, disabled, requestOpen]);
 
+  // The trigger already names the current model; the panel opens with the
+  // keyboard on that same row so arrow keys continue the sentence instead of
+  // restarting at the top of the catalog.
   useEffect(() => {
-    if (!open || view !== 'reasoning') return undefined;
+    if (!open) return undefined;
     const frame = window.requestAnimationFrame(() => {
-      reasoningRailRef.current
-        ?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')
-        ?.focus();
+      const list = listRef.current;
+      const target = list?.querySelector<HTMLButtonElement>(
+        '[role="option"][aria-selected="true"]',
+      ) ?? list?.querySelector<HTMLButtonElement>('[role="option"]');
+      target?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [open, thinking, view]);
+  }, [open]);
 
   function choose(provider: string, modelId: string, level: ThinkingLevel): void {
     setOpen(false);
     onChange(provider, modelId, level);
   }
 
-  function handleOpenChange(nextOpen: boolean): void {
-    if (nextOpen) {
-      setView('models');
-      setActiveProviderId(defaultProviderId);
-    }
-    setOpen(nextOpen);
-  }
-
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           aria-busy={pending || undefined}
@@ -129,158 +120,137 @@ export function ModelPicker({
         aria-label="模型与推理强度"
         className="agent-model-picker"
       >
-        {view === 'models' ? (
-          <div className="agent-model-picker__pane" data-view="models">
-            <header className="agent-model-picker__header">
-              <span>
-                <strong>模型与推理强度</strong>
-                <small>{pending ? '正在核对 Pi 返回的状态' : selectedLabel}</small>
-              </span>
-              <button
-                type="button"
-                className="agent-model-picker__reasoning-link"
-                disabled={!selectedModel}
-                onClick={() => setView('reasoning')}
-              >
-                <span>推理</span>
-                <strong>{thinkingLabel(thinking)}</strong>
-                <ChevronRight size={14} />
-              </button>
-            </header>
-            <div className="agent-model-picker__browser">
-              <div
-                className="agent-model-picker__providers"
-                role="tablist"
-                aria-label="模型服务"
-              >
-                {catalog?.providers.map((providerItem) => (
-                  <button
-                    type="button"
-                    role="tab"
-                    key={providerItem.id}
-                    aria-selected={providerItem.id === activeProvider?.id}
-                    aria-controls={`agent-model-provider-${safeId(providerItem.id)}`}
-                    aria-label={`查看 ${providerItem.displayName} 的 ${providerItem.models.length} 个模型`}
-                    onClick={() => setActiveProviderId(providerItem.id)}
-                  >
-                    <ProviderMark
-                      displayName={providerItem.displayName}
-                      providerId={providerItem.id}
-                      size={16}
-                    />
-                    <span>{providerItem.displayName}</span>
-                    <small>{providerItem.models.length}</small>
-                  </button>
-                ))}
-              </div>
-              <section
-                key={activeProvider?.id ?? 'empty'}
-                id={`agent-model-provider-${safeId(activeProvider?.id ?? 'empty')}`}
-                className="agent-model-picker__provider-panel"
-                role="tabpanel"
-                aria-label={activeProvider?.displayName ?? '当前模型服务'}
-              >
-                <header>
-                  <strong>{activeProvider?.displayName ?? '模型'}</strong>
-                  <small>{models.length} 个模型</small>
-                </header>
-                <div
-                  className="agent-model-picker__models"
-                  role="listbox"
-                  aria-label={`${activeProvider?.displayName ?? ''} 模型`}
-                  onKeyDown={moveModelFocus}
-                >
-                  {models.map((modelItem) => {
-                    const selected = (
-                      activeProvider?.id === selection?.provider
-                      && modelItem.id === selection?.modelId
-                    );
-                    return (
-                      <button
-                        type="button"
-                        role="option"
-                        id={modelOptionId(
-                          activeProvider?.id ?? modelItem.provider,
-                          modelItem.id,
-                        )}
-                        key={modelItem.id}
-                        aria-selected={selected}
-                        aria-label={`选择模型 ${modelItem.name}`}
-                        onClick={() => {
-                          if (selected) {
-                            setView('reasoning');
-                            return;
-                          }
-                          choose(
-                            activeProvider?.id ?? modelItem.provider,
-                            modelItem.id,
-                            preferredThinkingLevel(modelItem.thinkingLevels, thinking),
-                          );
-                        }}
-                      >
-                        <span>
-                          <strong>{modelItem.name}</strong>
-                          <small>
-                            {modelItem.reasoning
-                              ? `${modelItem.thinkingLevels.length} 档推理`
-                              : '直接生成'}
-                          </small>
-                        </span>
-                        {selected ? <Check size={14} /> : <ChevronRight size={14} />}
-                      </button>
-                    );
-                  })}
-                  {models.length === 0 ? <p>当前 Provider 没有可用模型</p> : null}
-                </div>
-              </section>
-            </div>
-          </div>
-        ) : (
-          <div className="agent-model-picker__pane" data-view="reasoning">
-            <header className="agent-model-picker__header">
-              <button
-                type="button"
-                className="agent-model-picker__back"
-                aria-label="返回模型列表"
-                onClick={() => setView('models')}
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span>
-                <strong>推理强度</strong>
-                <small>{selectedModel?.name ?? '当前模型'}</small>
-              </span>
-              {pending ? <LoaderCircle className="ui-spin" size={15} aria-label="正在核对模型状态" /> : null}
-            </header>
-            <div className="agent-model-picker__reasoning-copy">
-              <strong>{thinkingLabel(thinking)}</strong>
-              <small>选择后立即用于当前对话，并以实际返回状态为准</small>
-            </div>
-            <ReasoningRail
-              ref={reasoningRailRef}
-              levels={selectedModel?.thinkingLevels ?? []}
-              selected={thinking}
-              onChoose={(level) => {
-                if (!selection) return;
-                choose(selection.provider, selection.modelId, level);
-              }}
+        <div className="agent-model-picker__panel">
+          <header className="agent-model-picker__header">
+            <ProviderMark
+              displayName={selectedProvider?.displayName}
+              providerId={selectedProvider?.id ?? selection?.provider}
+              size={20}
             />
+            <span>
+              <small>模型与推理强度</small>
+              <strong>{selectedLabel}</strong>
+            </span>
+            {pending ? (
+              <LoaderCircle
+                aria-label="正在核对 Pi 返回的状态"
+                className="ui-spin"
+                size={15}
+              />
+            ) : null}
+          </header>
+          <div
+            ref={listRef}
+            className="agent-model-picker__list"
+            role="listbox"
+            aria-label="可用模型"
+            onKeyDown={moveModelFocus}
+          >
+            {catalog?.providers.map((providerItem) => (
+              <div
+                key={providerItem.id}
+                className="agent-model-picker__group"
+                role="group"
+                aria-label={providerItem.displayName}
+              >
+                <p className="agent-model-picker__group-name" aria-hidden="true">
+                  <span>{providerItem.displayName}</span>
+                  <small>{providerItem.models.length}</small>
+                </p>
+                {providerItem.models.map((modelItem) => {
+                  const selected = (
+                    providerItem.id === selection?.provider
+                    && modelItem.id === selection?.modelId
+                  );
+                  const key = `${providerItem.id}::${modelItem.id}`;
+                  return (
+                    <button
+                      type="button"
+                      role="option"
+                      id={modelOptionId(providerItem.id, modelItem.id)}
+                      key={modelItem.id}
+                      aria-selected={selected}
+                      aria-label={`选择模型 ${modelItem.name}`}
+                      tabIndex={(selectedModel ? selected : key === firstOptionKey) ? 0 : -1}
+                      onClick={() => {
+                        // Re-picking the current model is a confirmation, not a
+                        // second request: close and leave Pi's state untouched.
+                        if (selected) {
+                          setOpen(false);
+                          return;
+                        }
+                        choose(
+                          providerItem.id,
+                          modelItem.id,
+                          preferredThinkingLevel(modelItem.thinkingLevels, thinking),
+                        );
+                      }}
+                    >
+                      <ProviderMark
+                        displayName={providerItem.displayName}
+                        providerId={providerItem.id}
+                        size={17}
+                      />
+                      <span>
+                        <strong>{modelItem.name}</strong>
+                        <small>
+                          {modelItem.reasoning
+                            ? `${modelItem.thinkingLevels.length} 档推理`
+                            : '直接生成'}
+                        </small>
+                      </span>
+                      <Check
+                        aria-hidden="true"
+                        className="agent-model-picker__check"
+                        size={15}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {firstOptionKey ? null : (
+              <p className="agent-model-picker__empty">当前没有可用模型</p>
+            )}
           </div>
-        )}
+          <footer className="agent-model-picker__reasoning-bar">
+            <p className="agent-model-picker__reasoning-copy">
+              <span>推理强度</span>
+              <strong>{thinkingLabel(thinking)}</strong>
+            </p>
+            {levels.length > 0 ? (
+              <ReasoningRail
+                levels={levels}
+                selected={thinking}
+                onChoose={(level) => {
+                  if (!selection || level === thinking) {
+                    setOpen(false);
+                    return;
+                  }
+                  choose(selection.provider, selection.modelId, level);
+                }}
+              />
+            ) : (
+              <small className="agent-model-picker__reasoning-empty">
+                {selectedModel ? '当前模型不提供推理档位' : '先选择一个模型'}
+              </small>
+            )}
+          </footer>
+        </div>
       </PopoverContent>
     </Popover>
   );
 }
 
-const ReasoningRail = forwardRef<HTMLDivElement, {
-  levels: ThinkingLevel[];
-  selected: ThinkingLevel;
-  onChoose: (level: ThinkingLevel) => void;
-}>(function ReasoningRail({
+function ReasoningRail({
   levels,
   selected,
   onChoose,
-}, ref) {
+}: {
+  levels: ThinkingLevel[];
+  selected: ThinkingLevel;
+  onChoose: (level: ThinkingLevel) => void;
+}) {
   const selectedIndex = Math.max(0, levels.indexOf(selected));
   const style = {
     '--level-count': Math.max(1, levels.length),
@@ -288,7 +258,6 @@ const ReasoningRail = forwardRef<HTMLDivElement, {
   } as ReasoningRailStyle;
   return (
     <div
-      ref={ref}
       className="agent-model-picker__reasoning"
       role="radiogroup"
       aria-label="推理强度"
@@ -316,7 +285,7 @@ const ReasoningRail = forwardRef<HTMLDivElement, {
       ))}
     </div>
   );
-});
+}
 
 function thinkingLabel(value: string): string {
   return ({
@@ -342,6 +311,14 @@ function preferredThinkingLevel(
   if (levels.includes('medium')) return 'medium';
   if (levels.includes('off')) return 'off';
   return levels[0] ?? 'off';
+}
+
+function firstModelKey(catalog: ModelCatalog | undefined): string {
+  for (const provider of catalog?.providers ?? []) {
+    const model = provider.models[0];
+    if (model) return `${provider.id}::${model.id}`;
+  }
+  return '';
 }
 
 function modelOptionId(provider: string, modelId: string): string {

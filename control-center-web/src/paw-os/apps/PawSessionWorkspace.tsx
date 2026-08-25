@@ -325,6 +325,16 @@ export function PawSessionWorkspace({
     };
   }, [desktop, loadControlCatalog, loadSnapshot, onSessionActivity, recordId, runtimeToolWindow, transport]);
 
+  /* A prompt that failOptimistic just marked failed already has one recovery
+     surface: the timeline's failed-turn card, carrying the same reason plus
+     重试本轮 and 切换模型. Adding the workspace alert on top of it gave one
+     failure two banners. The alert stays for everything no turn owns, and for
+     a failure the reader cannot see because another view is on screen. */
+  function turnFailureIsVisible(clientMessageId: string): boolean {
+    return workspaceView === 'conversation'
+      && timelineOwnsTurnFailure(agentProjection(recordId), clientMessageId);
+  }
+
   async function send(delivery: AgentMessageDelivery, rawDraft: string): Promise<void> {
     if (!record || sending || modelChanging) return;
     const value = rawDraft.trim();
@@ -447,7 +457,9 @@ export function PawSessionWorkspace({
       useAgentLiveStore.getState().failOptimistic(recordId, clientMessageId, errorText(reason), Date.now());
       setDraft(value);
       setAttachments(selectedAttachments);
-      setError(errorText(reason));
+      if (!turnFailureIsVisible(clientMessageId)) {
+        setError(errorText(reason));
+      }
     } finally {
       setSending(false);
     }
@@ -535,7 +547,9 @@ export function PawSessionWorkspace({
     } catch (reason) {
       useAgentLiveStore.getState().failOptimistic(recordId, clientMessageId, errorText(reason), Date.now(), replayAmbiguousAdmission ? 'ambiguous' : undefined);
       onAdmissionRolledBack?.();
-      setError(errorText(reason));
+      if (!turnFailureIsVisible(clientMessageId)) {
+        setError(errorText(reason));
+      }
     } finally {
       setSending(false);
     }
@@ -1211,6 +1225,19 @@ function conversationText(blocks: Array<{ type: string; data: Record<string, unk
     const candidates = [block.data.text, block.data.markdown, block.data.code, block.data.message, block.data.summary];
     return candidates.find((item): item is string => typeof item === 'string' && item.trim().length > 0) ?? '';
   }).filter(Boolean).join('\n').replace(/\s+/gu, ' ').trim().slice(0, 480);
+}
+
+/** True when the latest turn is the one this optimistic message failed, so the
+ *  timeline renders its failed-turn card for exactly this failure. */
+function timelineOwnsTurnFailure(
+  projection: AgentProjectionState,
+  clientMessageId: string,
+): boolean {
+  const messageId = projection.optimisticByClientMessageId[clientMessageId] ?? '';
+  const message = projection.messagesById[messageId];
+  if (message?.status !== 'failed') return false;
+  if (projection.turnOrder.at(-1) !== message.turnId) return false;
+  return projection.turnsById[message.turnId]?.status === 'failed';
 }
 
 function latestActiveTurnId(projection?: AgentProjectionState): string {
