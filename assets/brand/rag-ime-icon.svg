@@ -1,49 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Product mark: silver-tail crescent around an emerald working spark.
-       Vector companion to assets/brand/rag-ime-icon.png (icns / release source). -->
-  <defs>
-    <linearGradient id="plate" x1="140" y1="40" x2="880" y2="980" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#13464F"/>
-      <stop offset="0.5" stop-color="#0C333C"/>
-      <stop offset="1" stop-color="#071F28"/>
-    </linearGradient>
-    <linearGradient id="tail" x1="220" y1="160" x2="820" y2="880" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="0.4" stop-color="#EAF4F6"/>
-      <stop offset="1" stop-color="#AFC6CE"/>
-    </linearGradient>
-    <radialGradient id="sparkGlow" cx="512" cy="460" r="210" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#5CFFC8" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#5CFFC8" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="spark" x1="430" y1="320" x2="600" y2="620" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#B8FFE6"/>
-      <stop offset="0.45" stop-color="#2EE6B0"/>
-      <stop offset="1" stop-color="#0FAE8C"/>
-    </linearGradient>
-  </defs>
-  <rect width="1024" height="1024" rx="230" fill="url(#plate)"/>
-  <!-- Crescent formed by even-odd outer body minus inner bowl -->
-  <path fill="url(#tail)" fill-rule="evenodd" d="
-    M690 150
-    C520 70 300 120 210 280
-    C110 460 140 680 280 800
-    C340 850 410 870 480 870
-    C430 760 430 640 490 540
-    C560 420 680 360 820 360
-    C800 280 760 200 690 150
-    Z
-    M560 300
-    C470 310 400 370 370 450
-    C330 560 370 680 460 740
-    C520 700 590 680 660 690
-    C680 560 650 410 560 300
-    Z"/>
-  <!-- Feathered tip layers on the descending tail -->
-  <path fill="#D7E8ED" d="M700 620c48 56 64 128 52 196-58-22-122-24-182-4 28-68 64-136 130-192z"/>
-  <path fill="#F7FCFD" d="M742 670c28 42 40 94 32 144-42-12-86-12-128 2 18-52 42-102 96-146z"/>
-  <!-- Emerald working spark -->
-  <circle cx="512" cy="460" r="190" fill="url(#sparkGlow)"/>
-  <path fill="url(#spark)" d="M512 300l34 126 126 34-126 34-34 126-34-126-126-34 126-34z"/>
-  <circle cx="512" cy="460" r="26" fill="#F2FFFB"/>
+  <!-- Product mark: a silver crescent holding one emerald working spark.
+       This is the vector source of the same mark assets/brand/rag-ime-icon.png
+       ships to the macOS .icns builds, so both files carry one identity: same
+       ground (#022D3E), same full-bleed square, same composition. Flat by
+       intent — the mark has to survive a 16px menu bar and a Dock tile, where
+       gradient plates, glows and feathered tips turn to mud. -->
+  <rect width="1024" height="1024" fill="#022D3E"/>
+  <path fill="#F4F8F9" fill-rule="evenodd" d="M168 512A322 322 0 1 0 812 512 322 322 0 1 0 168 512ZM322 500A268 268 0 1 0 858 500 268 268 0 1 0 322 500Z"/>
+  <path fill="#2EE6B0" d="M560 312l26 160 160 26-160 26-26 160-26-160-160-26 160-26z"/>
 </svg>

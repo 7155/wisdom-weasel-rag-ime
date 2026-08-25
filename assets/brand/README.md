@@ -14,6 +14,11 @@ collaboration surfaces.
   retained so existing release scripts do not need a path migration. The image
   is a product mark rather than a document glyph or role portrait, keeping app
   identity and companion identity visually distinct.
+- `rag-ime-icon.svg`: the flat vector of that same mark — one crescent, one
+  spark, the same `#022D3E` ground and the same full-bleed square as the PNG.
+  It is the editable source; the PNG stays the release input the `.icns` build
+  reads. Both files have to keep denoting one mark, so a change to either is a
+  change to both.
 - `macos/Shared/Assets/CompanionStates/`: tight UI crops for idle, listening,
   thinking, success, and warning states.
 - `macos/Shared/Assets/CompanionStatesFull/`: matching full-body art retained as
