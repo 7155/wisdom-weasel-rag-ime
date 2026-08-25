@@ -16,11 +16,15 @@ export type ComposerBlockedReason =
   | 'sending'
   | 'model-changing'
   | 'empty-draft'
+  | 'queue-needs-text'
   | null;
 
 export interface ComposerActionModelInput {
   hasSession: boolean;
   draftHasContent: boolean;
+  /** Text alone, without attachments. The client-side queue holds a string;
+   *  the Runtime deliveries carry the whole draft. */
+  draftHasText: boolean;
   sending: boolean;
   stopping: boolean;
   modelChanging: boolean;
@@ -113,12 +117,17 @@ export function projectComposerActionModel(
   }
 
   if (input.busy) {
+    /* 排队 holds a draft in the client as a string, so an attachment-only
+       draft has nothing for it to hold. Offering the button anyway made the
+       press a silent no-op; 干预 and 接续 hand the whole draft to Runtime and
+       still carry the attachment. */
+    const queueWithoutText = effectiveBusyDelivery === 'queue' && !input.draftHasText;
     return {
       primary: effectiveBusyDelivery,
-      primaryDisabled: false,
+      primaryDisabled: queueWithoutText,
       effectiveBusyDelivery,
       busyDeliveries,
-      blockedReason: null,
+      blockedReason: queueWithoutText ? 'queue-needs-text' : null,
       mode: 'busy',
     };
   }
@@ -147,6 +156,7 @@ export function composerBlockedReasonLabel(reason: ComposerBlockedReason): strin
   if (reason === 'sending') return '正在发送上一条消息';
   if (reason === 'model-changing') return '正在切换模型';
   if (reason === 'empty-draft') return '先输入内容或添加附件';
+  if (reason === 'queue-needs-text') return '排队只保留文字，附件请用干预或接续直接发送';
   return '';
 }
 
@@ -158,7 +168,14 @@ export function composerSubmitMode(
   model: ComposerActionModel,
   options: { alternate?: boolean } = {},
 ): ComposerSubmitMode | null {
+  if (model.mode === 'busy' && options.alternate) {
+    // The only block Alt+Enter escapes is the one it removes by naming a
+    // different delivery: followUp carries what the queue could not hold.
+    if (!model.primaryDisabled || model.blockedReason === 'queue-needs-text') {
+      return 'followUp';
+    }
+    return null;
+  }
   if (model.primaryDisabled || model.primary === 'none') return null;
-  if (model.mode === 'busy' && options.alternate) return 'followUp';
   return model.primary;
 }

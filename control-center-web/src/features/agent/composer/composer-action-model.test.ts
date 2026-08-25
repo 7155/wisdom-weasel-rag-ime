@@ -9,6 +9,7 @@ import {
 const ready = {
   hasSession: true,
   draftHasContent: true,
+  draftHasText: true,
   sending: false,
   stopping: false,
   modelChanging: false,
@@ -87,6 +88,38 @@ describe('projectComposerActionModel', () => {
     expect(model.primary).toBe('none');
     expect(composerActionLabel(model.primary)).toBe('发送');
     expect(composerSubmitMode(model)).toBeNull();
+  });
+
+  it('refuses to queue an attachment-only draft, and says why', () => {
+    const model = projectComposerActionModel({
+      ...ready,
+      busy: true,
+      draftHasText: false,
+      preferredBusyDelivery: 'queue',
+    });
+
+    expect(model.primary).toBe('queue');
+    expect(model.primaryDisabled).toBe(true);
+    expect(composerBlockedReasonLabel(model.blockedReason))
+      .toBe('排队只保留文字，附件请用干预或接续直接发送');
+    expect(composerSubmitMode(model)).toBeNull();
+    // Alt+Enter names followUp, which does carry the attachment.
+    expect(composerSubmitMode(model, { alternate: true })).toBe('followUp');
+  });
+
+  it('lets an attachment-only draft through the deliveries that carry it', () => {
+    for (const delivery of ['steer', 'followUp'] as const) {
+      const model = projectComposerActionModel({
+        ...ready,
+        busy: true,
+        draftHasText: false,
+        preferredBusyDelivery: delivery,
+      });
+      expect(model.primaryDisabled).toBe(false);
+      expect(composerSubmitMode(model)).toBe(delivery);
+    }
+    expect(projectComposerActionModel({ ...ready, draftHasText: false }).primaryDisabled)
+      .toBe(false);
   });
 
   it('keeps Alt+Enter as followUp while busy without changing the radio', () => {

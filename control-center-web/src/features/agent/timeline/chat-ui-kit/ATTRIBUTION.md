@@ -49,7 +49,17 @@ adapts `projectComposerActionModel` only — never `buildComposerCommand`.
   Session already owns those and drives `transcript-follow.ts` from them.
 - `queue.ts`, `operation.ts`, `runtime.ts`, `sideChat.ts`, `draft.ts`,
   `timeline.ts` — the PAW Engine owns canonical send/queue/steer lifecycle, and
-  the gap analysis rules out rewriting the queue engine.
+  the gap analysis rules out rewriting the queue engine. Each of these questions
+  already has a PAW owner: `features/conversation-ui/model/queue.ts` plus
+  `QueueTray` for the held-draft queue and its one-line next-item preview,
+  `SteerReceipt` for delivery state, `contracts/batching.ts` for transport
+  delta coalescing (`performance/rafBuffer.ts`), `state/use-session-composer-inputs.ts`
+  for per-Session drafts, and `AgentTurn`'s per-turn store selectors for the
+  stable-history memo boundary `timeline.ts` reaches with a revision string.
+  One thing `queue.ts` did surface: its `previewFallback: 'attachment'` names a
+  queued item with no text. PAW's queue holds a string, so instead of modelling
+  that row, `../../composer/composer-action-model.ts` refuses to offer 排队 for
+  an attachment-only draft and says which delivery does carry it.
 - `composer.ts` is adapted in part only. `projectComposerActionModel` is a pure
   projection over composer state, so it moved to
   `../../composer/composer-action-model.ts` in PAW's own delivery vocabulary.

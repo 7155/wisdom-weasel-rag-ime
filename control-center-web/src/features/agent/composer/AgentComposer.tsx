@@ -266,6 +266,7 @@ export function AgentComposer({
   const actionModel = projectComposerActionModel({
     hasSession: Boolean(session),
     draftHasContent: Boolean(composerDraft.trim() || attachments.length),
+    draftHasText: Boolean(composerDraft.trim()),
     busy,
     sending,
     stopping,
