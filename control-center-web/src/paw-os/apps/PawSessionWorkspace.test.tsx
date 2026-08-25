@@ -1,11 +1,14 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
+import type { AgentProjectionState } from '@/contracts/agent-reducer';
+import { parseAgentEvent } from '@/contracts/validators';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
+import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import type { SessionSummary } from '@/features/agent/types';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
@@ -329,6 +332,114 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(empty).toHaveTextContent('当前没有文件；选择工作区目录后即可浏览。');
     expect(within(empty).getByRole('button', { name: '选择目录' })).toBeInTheDocument();
     expect(within(sidebar).queryByText('还没有工作区目录')).not.toBeInTheDocument();
+  });
+
+  it('coalesces a live streaming burst into bounded store commits without reordering events', async () => {
+    const sessionId = 'session-stream';
+    const transport = new StubControlTransport('mock', {
+      'agent.session.snapshot': {
+        messages: [{
+          schemaVersion: 'rag-ime.agent-message.v1',
+          id: 'user-stream',
+          sessionId,
+          turnId: 'turn-stream',
+          role: 'user',
+          status: 'completed',
+          blocks: [{
+            id: 'user-stream:text',
+            type: 'text',
+            status: 'completed',
+            presentationKind: 'markdown',
+            data: { text: '请流式生成一段较长的回答' },
+          }],
+          attachments: [],
+          citations: [],
+          createdAtMs: 1,
+          completedAtMs: 1,
+        }],
+        liveEvents: [],
+        lastSequence: 0,
+        resumeToken: '',
+        status: 'busy',
+      },
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+
+    const streamedText = (projection: AgentProjectionState | undefined): string => {
+      const block = projection?.messagesById['turn-stream:assistant']?.blocks
+        .find((candidate) => candidate.id === 'turn-stream:assistant:text');
+      return typeof block?.data.text === 'string' ? block.data.text : '';
+    };
+    const commits: Array<{ text: string; hasTool: boolean }> = [];
+    const unsubscribe = useAgentLiveStore.subscribe((state, previous) => {
+      const current = state.projections[sessionId];
+      if (current === previous.projections[sessionId]) return;
+      commits.push({
+        text: streamedText(current),
+        hasTool: Object.keys(current?.activitiesById ?? {}).length > 0,
+      });
+    });
+
+    const leadingDeltas = Array.from({ length: 20 }, (_, index) => `前段${index};`);
+    const trailingDeltas = Array.from({ length: 20 }, (_, index) => `后段${index};`);
+    act(() => {
+      let sequence = 0;
+      const emit = (eventType: string, payload: Record<string, unknown>) => {
+        sequence += 1;
+        transport.emit('agent.session.events', parseAgentEvent({
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: `${sessionId}:${sequence}`,
+          sessionId,
+          turnId: 'turn-stream',
+          sequence,
+          createdAtMs: sequence * 5,
+          eventType,
+          payload: {
+            messageId: 'turn-stream:assistant',
+            blockId: 'turn-stream:assistant:text',
+            ...payload,
+          },
+          resumeToken: `${sessionId}:${sequence}`,
+        }));
+      };
+      for (const delta of leadingDeltas) emit('text_delta', { delta });
+      emit('tool_started', { toolCallId: 'call-stream-tool', toolName: 'overview' });
+      for (const delta of trailingDeltas) emit('text_delta', { delta });
+      emit('turn_completed', { status: 'completed' });
+    });
+    unsubscribe();
+
+    // 42 Runtime events reach the store as exactly 4 commits: the tool event
+    // flushes the 20 leading deltas before its own commit, and the terminal
+    // event flushes the 20 trailing deltas the same way. Per-token React
+    // render and layout passes are gone; the visible order never changes.
+    expect(commits).toHaveLength(4);
+    const toolCommit = commits.find((commit) => commit.hasTool);
+    expect(toolCommit?.text).toBe(leadingDeltas.join(''));
+    expect(streamedText(useAgentLiveStore.getState().projections[sessionId]))
+      .toBe([...leadingDeltas, ...trailingDeltas].join(''));
+    expect(useAgentLiveStore.getState().projections[sessionId]?.turnsById['turn-stream']?.status)
+      .toBe('completed');
+    useAgentLiveStore.getState().clear(sessionId);
   });
 
   it('uses one compact on-demand row when the Session has no subagents', async () => {

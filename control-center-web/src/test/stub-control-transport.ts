@@ -82,4 +82,12 @@ export class StubControlTransport implements ControlTransport {
     }
     return delivered;
   }
+
+  subscriptionCount(pathId: ControlSubscription['pathId']): number {
+    let count = 0;
+    for (const subscription of this.subscriptions.values()) {
+      if (subscription.request.pathId === pathId) count += 1;
+    }
+    return count;
+  }
 }

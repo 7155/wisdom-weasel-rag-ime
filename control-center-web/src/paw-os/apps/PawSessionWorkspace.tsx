@@ -22,6 +22,7 @@ import {
 import { useControlTransport } from '@/app/control-transport';
 import type { AgentActivityProjection, AgentMessageProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
+import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { UiAgentEvent } from '@/contracts/ui-events';
 import {
@@ -260,6 +261,16 @@ export function PawSessionWorkspace({
     let active = true;
     let unsubscribe: () => void = () => {};
     useAgentLiveStore.getState().ensure(recordId);
+    // Streaming text_delta bursts coalesce into one store commit per batching
+    // interval (same contract as the standalone Agent feature). Every
+    // non-delta event flushes pending deltas before its own commit, so the
+    // visible timeline order never changes — only the per-token React render
+    // and layout passes collapse to at most one per frame.
+    const batcher = createAgentDeltaBatcher((events) => {
+      if (!active) return;
+      const needsSnapshot = useAgentLiveStore.getState().applyEvents(recordId, events);
+      if (needsSnapshot) void loadSnapshot(true);
+    });
     void loadControlCatalog();
     void (async () => {
       const loaded = await loadSnapshot();
@@ -274,12 +285,17 @@ export function PawSessionWorkspace({
           next: (event) => {
             if (!active) return;
             pulsePawCompositionForRuntimeEvent('agent', event.eventType);
-            const needsSnapshot = useAgentLiveStore.getState().applyEvents(recordId, [event]);
+            if (event.eventType === 'snapshot_required') {
+              batcher.flush();
+              useAgentLiveStore.getState().applyEvents(recordId, [event]);
+              void loadSnapshot(true);
+              return;
+            }
+            batcher.push(event);
             const runtimeWindow = runtimeToolWindow(event);
             if (runtimeWindow && shouldAutoOpenRuntimeToolWindow(runtimeWindow)) {
               desktop?.openWindow(runtimeWindow);
             }
-            if (needsSnapshot || event.eventType === 'snapshot_required') void loadSnapshot(true);
             if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') onSessionActivity?.();
           },
           error: (reason) => {
@@ -292,6 +308,7 @@ export function PawSessionWorkspace({
     })();
     return () => {
       active = false;
+      batcher.clear();
       unsubscribe();
     };
   }, [desktop, loadControlCatalog, loadSnapshot, onSessionActivity, recordId, runtimeToolWindow, transport]);

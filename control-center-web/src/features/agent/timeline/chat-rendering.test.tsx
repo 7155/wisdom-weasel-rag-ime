@@ -87,6 +87,83 @@ describe('Agent chat rendering', () => {
     expect(screen.getByLabelText(/前端估算生成速度 .* tokens 每秒/)).toHaveTextContent(/t\/s/);
   });
 
+  it('derives the visible turn order once per projection commit and shares it across selectors', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'text_delta', { delta: '第一批流式增量。', replaceBlock: true }),
+    ]);
+
+    const projection = useAgentLiveStore.getState().projections[sessionId]!;
+    const firstRead = visibleAgentTurnIds(projection);
+    // A projection is immutable per commit: every store selector that runs on
+    // the same commit (turn order, markers, previews) must reuse one derived
+    // view instead of rebuilding retry maps per selector per token batch.
+    expect(visibleAgentTurnIds(projection)).toBe(firstRead);
+
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(2, 'text_delta', { delta: '第二批流式增量。' }),
+    ]);
+    const nextProjection = useAgentLiveStore.getState().projections[sessionId]!;
+    expect(nextProjection).not.toBe(projection);
+    const nextRead = visibleAgentTurnIds(nextProjection);
+    expect(nextRead).not.toBe(firstRead);
+    expect(nextRead).toEqual(firstRead);
+  });
+
+  it('keeps settled markdown fragments on their original DOM nodes while the stream tail grows', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'busy',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'text_delta', {
+        delta: '稳定的第一段结论。\n\n第二段正在生成',
+        replaceBlock: true,
+      }),
+    ]);
+    render(<AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+
+    const settledParagraph = screen.getByText('稳定的第一段结论。');
+    expect(document.querySelector('.agent-assistant-message .agent-blocks'))
+      .toHaveAttribute('data-has-stream-tail');
+
+    act(() => void useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(2, 'text_delta', { delta: '，补充更多细节' }),
+    ]));
+    // The settled fragment must not remount while the active tail re-parses:
+    // a replaced DOM node repaints settled prose and makes the reader's
+    // anchor flicker on every token batch.
+    expect(screen.getByText('稳定的第一段结论。')).toBe(settledParagraph);
+
+    act(() => void useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(3, 'text_delta', { delta: '。\n\n第三段总结开始' }),
+    ]));
+    expect(screen.getByText('稳定的第一段结论。')).toBe(settledParagraph);
+    const promotedParagraph = screen.getByText('第二段正在生成，补充更多细节。');
+
+    act(() => void useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(4, 'text_delta', { delta: '，仍在流式续写' }),
+    ]));
+    // Boundary advancement promotes paragraph two into its own stable
+    // fragment exactly once; later tail growth may not remount it again.
+    expect(screen.getByText('稳定的第一段结论。')).toBe(settledParagraph);
+    expect(screen.getByText('第二段正在生成，补充更多细节。')).toBe(promotedParagraph);
+    expect(document.querySelector('.agent-markdown [data-stream-tail]')).not.toBeNull();
+  });
+
   it('shows the observable Steer delivery lifecycle instead of a static badge', () => {
     expect(agentDeliveryFeedback('steer', 'sending', 'queued')).toBe('正在发送干预');
     expect(agentDeliveryFeedback('steer', 'accepted', 'queued')).toBe('已接收，正在切换当前执行');

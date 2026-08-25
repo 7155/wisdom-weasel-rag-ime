@@ -68,13 +68,39 @@ export function agentTurnMarkerKind(
   return hasAssistant || turn.activityIds.length > 0 ? 'complete' : 'user';
 }
 
+/** A projection is immutable per store commit, so derived turn views (retry
+ * chains, visible turn order, retry-root user rows) are cached against the
+ * projection object itself. During streaming, the timeline reads these views
+ * from several store selectors per commit (turn order, markers, previews,
+ * per-turn user rows); one shared O(messages) pass replaces each selector
+ * rebuilding its own maps on every batched token commit. */
+type ProjectionDerivedViews = {
+  visibleTurnIds?: string[];
+  retrySuccessors?: Map<string, string>;
+  userMessagesByClientId?: Map<string, AgentMessageProjection>;
+  retryRootUserIdsByTurn: Map<string, string[]>;
+};
+
+const projectionDerivedViews = new WeakMap<AgentProjectionState, ProjectionDerivedViews>();
+
+function derivedViews(projection: AgentProjectionState): ProjectionDerivedViews {
+  let views = projectionDerivedViews.get(projection);
+  if (!views) {
+    views = { retryRootUserIdsByTurn: new Map() };
+    projectionDerivedViews.set(projection, views);
+  }
+  return views;
+}
+
 /** Room Posts remain in the durable transcript for audit/recovery, but their
  * public rendering belongs to the Room task card. A Session timeline only
  * owns direct user/assistant turns and their Runtime activities. */
 export function visibleAgentTurnIds(projection: AgentProjectionState): string[] {
+  const views = derivedViews(projection);
+  if (views.visibleTurnIds) return views.visibleTurnIds;
   const retrySuccessors = retrySuccessorTurnIds(projection);
   const retryChildren = new Set(retrySuccessors.values());
-  return projection.turnOrder.flatMap((turnId) => {
+  views.visibleTurnIds = projection.turnOrder.flatMap((turnId) => {
     // A retry is a new idempotent Runtime attempt, but it remains the same
     // logical conversation turn. Keep the durable attempts for audit, replace
     // the root with its latest attempt, and preserve the root's visual slot.
@@ -88,9 +114,12 @@ export function visibleAgentTurnIds(projection: AgentProjectionState): string[] 
     });
     return hasVisibleMessage || turn.activityIds.length > 0 ? [visibleTurnId] : [];
   });
+  return views.visibleTurnIds;
 }
 
 function retrySuccessorTurnIds(projection: AgentProjectionState): Map<string, string> {
+  const views = derivedViews(projection);
+  if (views.retrySuccessors) return views.retrySuccessors;
   const turnByClientMessageId = new Map<string, string>();
   for (const turnId of projection.turnOrder) {
     const turn = projection.turnsById[turnId];
@@ -114,6 +143,7 @@ function retrySuccessorTurnIds(projection: AgentProjectionState): Map<string, st
       }
     }
   }
+  views.retrySuccessors = successors;
   return successors;
 }
 
@@ -134,11 +164,11 @@ function logicalRetryLeafTurnId(
   return current;
 }
 
-function logicalRetryRootUserIds(
-  projection: AgentProjectionState | undefined,
-  turnId: string,
-): string[] {
-  if (!projection) return [];
+function userMessagesByClientId(
+  projection: AgentProjectionState,
+): Map<string, AgentMessageProjection> {
+  const views = derivedViews(projection);
+  if (views.userMessagesByClientId) return views.userMessagesByClientId;
   const messageByClientMessageId = new Map<string, AgentMessageProjection>();
   for (const messageId of projection.messageOrder) {
     const message = projection.messagesById[messageId];
@@ -146,6 +176,28 @@ function logicalRetryRootUserIds(
       messageByClientMessageId.set(message.clientMessageId, message);
     }
   }
+  views.userMessagesByClientId = messageByClientMessageId;
+  return messageByClientMessageId;
+}
+
+function logicalRetryRootUserIds(
+  projection: AgentProjectionState | undefined,
+  turnId: string,
+): string[] {
+  if (!projection) return [];
+  const views = derivedViews(projection);
+  const cached = views.retryRootUserIdsByTurn.get(turnId);
+  if (cached) return cached;
+  const result = computeLogicalRetryRootUserIds(projection, turnId);
+  views.retryRootUserIdsByTurn.set(turnId, result);
+  return result;
+}
+
+function computeLogicalRetryRootUserIds(
+  projection: AgentProjectionState,
+  turnId: string,
+): string[] {
+  const messageByClientMessageId = userMessagesByClientId(projection);
   const currentUser = (projection.turnsById[turnId]?.messageIds ?? [])
     .map((messageId) => projection.messagesById[messageId])
     .find((message) => message?.role === 'user');
@@ -1198,20 +1250,24 @@ function MessageView({
 }
 
 function EstimatedStreamingRate({ blocks }: { blocks: AgentMessageProjection['blocks'] }) {
-  const tokens = estimatedStreamingTokens(blocks);
-  const latestTokens = useRef(tokens);
+  // The token estimate scans the full streamed text. Reading blocks through a
+  // ref inside the display interval keeps that scan at the 300ms display
+  // cadence instead of running once per batched store commit.
+  const latestBlocks = useRef(blocks);
+  latestBlocks.current = blocks;
   const startedAtMs = useRef(0);
   const [rate, setRate] = useState<number | null>(null);
   useEffect(() => {
-    latestTokens.current = tokens;
-    if (tokens > 0 && startedAtMs.current === 0) startedAtMs.current = Date.now();
-  }, [tokens]);
-  useEffect(() => {
     const timer = window.setInterval(() => {
-      if (!startedAtMs.current || latestTokens.current <= 0) return;
+      const tokens = estimatedStreamingTokens(latestBlocks.current);
+      if (tokens <= 0) return;
+      if (startedAtMs.current === 0) {
+        startedAtMs.current = Date.now();
+        return;
+      }
       const elapsedSeconds = (Date.now() - startedAtMs.current) / 1_000;
       if (elapsedSeconds < 0.6) return;
-      setRate(latestTokens.current / elapsedSeconds);
+      setRate(tokens / elapsedSeconds);
     }, 300);
     return () => window.clearInterval(timer);
   }, []);
