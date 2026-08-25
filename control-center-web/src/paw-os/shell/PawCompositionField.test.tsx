@@ -25,8 +25,7 @@ describe('PAWOS Wayfinder fog terrain', () => {
       'paw-field__mist--far',
       'paw-field__mist--mid',
       'paw-field__mist--near',
-      'paw-field__grain--dark',
-      'paw-field__grain--light',
+      'paw-field__grain',
     ]) {
       expect(compositionSource).toContain(layer);
     }
@@ -34,7 +33,6 @@ describe('PAWOS Wayfinder fog terrain', () => {
     expect(compositionSource).toContain('feGaussianBlur');
     expect(compositionSource).toContain('feTurbulence');
     expect(compositionSource).toContain('seed="7"');
-    expect(compositionSource).toContain('seed="23"');
     expect(compositionSource).toMatch(/stitchTiles="stitch"/);
     // Every ridge dissolves into fog through its own atmospheric gradient.
     for (const ramp of ['ridge-veil', 'ridge-far', 'ridge-midfar', 'ridge-mid', 'ridge-close', 'ridge-near']) {
@@ -85,5 +83,41 @@ describe('PAWOS Wayfinder fog terrain', () => {
     expect(shellCss).toMatch(/\.paw-field__warmth\s*\{[^}]*opacity:\s*\.64/s);
     // Ambient drift is minutes-long weather, not UI motion.
     expect(shellCss).toMatch(/paw-field-mist-drift 2[0-9]{2}s/);
+  });
+
+  it('stays fully quiet while collaboration focus owns the desktop', () => {
+    // The pulse driver skips choreography behind the focus plane, and CSS
+    // pauses the ambient drift/breathe so nothing animates under focused work.
+    expect(compositionSource).toContain("field.closest('[data-collaboration-focus]')");
+    expect(desktopCss).toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-composition-field \*\s*\{[^}]*animation-play-state:\s*paused/s);
+  });
+
+  it('keeps ambient motion off the filter path and inside a bounded raster budget', () => {
+    // The forever-animated drift groups may never carry an SVG filter: a
+    // filtered drift re-runs its Gaussian blur every frame. The fog banks are
+    // pre-blurred radial gradients instead.
+    expect(compositionSource).not.toContain('paw-field-mist-soften');
+    expect(compositionSource).not.toMatch(/paw-field__mist-drift"\s+filter=/);
+    expect(compositionSource).toContain('url(#paw-field-mist-ball)');
+    // Both grain speckle passes resolve from one feTurbulence evaluation on
+    // one full-bleed surface (dark keys off red noise, light off green).
+    expect(compositionSource.match(/<feTurbulence/g)).toHaveLength(1);
+    expect(compositionSource.match(/<feColorMatrix/g)).toHaveLength(2);
+    // Depth-of-field blur exists only where it reads: the three far ranges.
+    expect(compositionSource).toContain('url(#paw-field-dof-veil)');
+    expect(compositionSource).toContain('url(#paw-field-dof-far)');
+    expect(compositionSource).toContain('url(#paw-field-dof-midfar)');
+    expect(compositionSource).not.toMatch(/paw-field-dof-mid\)/);
+    expect(compositionSource).not.toMatch(/paw-field-dof-close\)/);
+    // The two always-on animated layers own compositor promotion, and both
+    // reduced-motion signals release it again since nothing moves.
+    expect(shellCss).toMatch(/\.paw-field__mist-drift\s*\{[^}]*will-change:\s*transform/s);
+    expect(shellCss).toMatch(/\.paw-field__warmth\s*\{[^}]*will-change:\s*opacity/s);
+    expect(desktopCss.match(/will-change:\s*auto\s*!important/g)?.length).toBeGreaterThanOrEqual(2);
+    // Mode dims spend opacity, never a held full-viewport filter raster of
+    // the wallpaper: no filter under overview or collaboration focus.
+    expect(desktopCss).not.toMatch(/\.paw-desktop\[data-overview\] \.paw-wayfinder\s*\{[^}]*filter:/s);
+    expect(desktopCss).not.toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-composition-field\s*\{[^}]*filter:/s);
+    expect(desktopCss).not.toMatch(/\.paw-desktop\[data-collaboration-focus\] \.paw-wayfinder,\s*\.paw-desktop\[data-collaboration-focus\] \.paw-dock\s*\{[^}]*filter:/s);
   });
 });

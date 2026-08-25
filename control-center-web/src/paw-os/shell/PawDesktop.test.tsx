@@ -6,6 +6,7 @@ import { MockControlTransport } from '@/test/mock-transport';
 import { PawDesktopProvider } from '../runtime/desktop-context';
 import { pawApps, type PawAppId } from '../runtime/app-registry';
 import { PawDesktop } from './PawDesktop';
+import desktopSource from './PawDesktop.tsx?raw';
 
 const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate');
 const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, 'getAnimations');
@@ -295,6 +296,25 @@ describe('PAWOS desktop', () => {
       commandId: 'command-1',
       url: 'https://inside.example',
     });
+  });
+
+  it('never subscribes shell chrome to the whole windows record', () => {
+    // Bounds commits after every drag/resize/viewport refit and runtime
+    // title/target binds replace state.windows; menu bar, Wayfinder, Dock and
+    // Launchpad must not re-render on that churn. Menus subscribe to the
+    // structural signature (id, App, placement) instead.
+    expect(desktopSource).not.toMatch(/usePawDesktopStore\(\(state\) => state\.windows\)/);
+    expect(desktopSource).toContain('const menuSignature = usePawDesktopStore');
+  });
+
+  it('still reflects placement changes in the window menu through the structural signature', () => {
+    renderDesktop('agent');
+    const windowShell = document.querySelector('[data-paw-window-id="agent"]') as HTMLElement;
+    fireEvent.contextMenu(windowShell, { clientX: 300, clientY: 200 });
+    fireEvent.click(screen.getByRole('menuitem', { name: '最大化' }));
+
+    fireEvent.contextMenu(windowShell, { clientX: 300, clientY: 200 });
+    expect(screen.getByRole('menuitem', { name: '还原窗口' })).toBeInTheDocument();
   });
 
   it('selects desktop Apps with a lasso instead of webpage text selection', () => {

@@ -37,7 +37,19 @@ export function PawDesktop() {
   ));
   const launchpadOpen = usePawDesktopStore((state) => state.launchpadOpen);
   const overviewOpen = usePawDesktopStore((state) => state.overviewOpen);
-  const windows = usePawDesktopStore((state) => state.windows);
+  /* Menus and their disabled states need only structural window facts:
+   * identity, owning App and placement. Subscribing to that sorted signature
+   * instead of the windows record keeps the whole shell (menu bar, Wayfinder,
+   * Dock, Launchpad) from re-rendering on bounds commits after every drag,
+   * resize or viewport refit, and on runtime title/target binds. */
+  const menuSignature = usePawDesktopStore((state) => Object.values(state.windows)
+    .map((node) => `${node.id}\u0001${node.appId}\u0001${node.placement ?? ''}`)
+    .sort()
+    .join('\u0000'));
+  const menuWindows = useMemo(() => menuSignature.split('\u0000').filter(Boolean).map((item) => {
+    const [id, appId, placement] = item.split('\u0001') as [string, PawAppId, string];
+    return { id, appId, placement };
+  }), [menuSignature]);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
   const collaborationFocus = Boolean(collaborationFocusGroup);
   const [clock, setClock] = useState(() => timeLabel());
@@ -155,7 +167,7 @@ export function PawDesktop() {
     const windowElement = target.closest<HTMLElement>('[data-paw-window-id]');
     if (windowElement) {
       const windowId = windowElement.dataset.pawWindowId ?? '';
-      const node = windows[windowId];
+      const node = api.getState().windows[windowId];
       if (node) {
         setContextMenu({ kind: 'window', windowId, label: node.title, x: event.clientX, y: event.clientY });
         return;
@@ -163,7 +175,7 @@ export function PawDesktop() {
     }
     setSelectedApps(new Set());
     setContextMenu({ kind: 'desktop', x: event.clientX, y: event.clientY });
-  }, [selectedApps, windows]);
+  }, [api, selectedApps]);
 
   const startLasso = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
@@ -224,7 +236,7 @@ export function PawDesktop() {
           icon: <X size={15} />,
           danger: true,
           separatorBefore: true,
-          disabled: Object.keys(windows).length === 0,
+          disabled: menuWindows.length === 0,
           action: () => api.getState().closeAllWindows(),
         },
       ];
@@ -251,7 +263,7 @@ export function PawDesktop() {
       ];
     }
     if (contextMenu.kind === 'apps') {
-      const openWindowCount = Object.values(windows).filter((node) => contextMenu.appIds.includes(node.appId)).length;
+      const openWindowCount = menuWindows.filter((node) => contextMenu.appIds.includes(node.appId)).length;
       return [
         {
           id: 'open-apps',
@@ -272,7 +284,7 @@ export function PawDesktop() {
         },
       ];
     }
-    const node = windows[contextMenu.windowId];
+    const node = menuWindows.find((candidate) => candidate.id === contextMenu.windowId);
     return [
       { id: 'minimize', label: '最小化', icon: <Minus size={15} />, disabled: !node, action: () => api.getState().minimizeWindow(contextMenu.windowId) },
       { id: 'maximize', label: node?.placement === 'maximized' ? '还原窗口' : '最大化', icon: <Maximize2 size={15} />, disabled: !node, action: () => api.getState().toggleMaximize(contextMenu.windowId) },
@@ -300,7 +312,7 @@ export function PawDesktop() {
         },
       },
     ];
-  }, [activeAppId, activeWindowId, api, contextMenu, windows]);
+  }, [activeAppId, activeWindowId, api, contextMenu, menuWindows]);
   const menuBarLabel = activeAppId ? pawApp(activeAppId).label : '桌面';
   const openMenuBarMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();

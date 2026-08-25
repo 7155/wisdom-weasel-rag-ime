@@ -143,8 +143,11 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   height: 0;
   display: none;
 }
-.paw-wayfinder { position: absolute; inset: 0; overflow: hidden; color: var(--paw-desktop-ink); user-select: none; transition: opacity 220ms var(--paw-ease-out), filter 220ms var(--paw-ease-out), transform 220ms var(--paw-ease-out); }
-.paw-desktop[data-overview] .paw-wayfinder { opacity: .55; filter: saturate(.78); }
+/* Overview and focus dim the Wayfinder with opacity plus the shared quiet
+   plane only — never a filter, which would hold a full-viewport re-raster of
+   the wallpaper for as long as the mode stays open. */
+.paw-wayfinder { position: absolute; inset: 0; overflow: hidden; color: var(--paw-desktop-ink); user-select: none; transition: opacity 220ms var(--paw-ease-out), transform 220ms var(--paw-ease-out); }
+.paw-desktop[data-overview] .paw-wayfinder { opacity: .55; }
 
 .paw-field-media {
   position: absolute;
@@ -163,20 +166,24 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   min-height: 100%;
   display: block;
   opacity: 1;
-  transition: opacity 220ms var(--paw-ease-out), filter 220ms var(--paw-ease-out);
+  transition: opacity 220ms var(--paw-ease-out);
 }
 /* The pulse bloom rests invisible; the field JS animates it only on real
    Runtime signals, so a quiet desktop stays a quiet picture. */
 .paw-field__signal { opacity: 0; transform-box: fill-box; transform-origin: center; }
+/* Collaboration focus recedes the wallpaper with opacity alone (the focus
+   plane above supplies the darkness) and pauses every ambient wallpaper
+   animation, so nothing drifts or breathes behind focused work. */
 .paw-desktop[data-collaboration-focus] .paw-composition-field {
   opacity: .7;
-  filter: brightness(.76) saturate(.58);
+}
+.paw-desktop[data-collaboration-focus] .paw-composition-field * {
+  animation-play-state: paused;
 }
 .paw-desktop[data-collaboration-focus] .paw-wayfinder,
 .paw-desktop[data-collaboration-focus] .paw-dock {
   opacity: .14;
   pointer-events: none;
-  filter: brightness(.72) saturate(.38);
 }
 .paw-collaboration-focus-exit {
   position: absolute;
@@ -997,14 +1004,17 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-composition-field * {
     animation: none !important;
     transform: none !important;
+    will-change: auto !important;
   }
 }
 /* The explicit reduce-motion setting quiets the wallpaper exactly like the
-   system preference: no ambient drift, no pulse choreography. */
+   system preference: no ambient drift, no pulse choreography, and the drift
+   layers release their compositor promotion since nothing moves. */
 :root[data-reduce-motion='true'] .paw-composition-field,
 :root[data-reduce-motion='true'] .paw-composition-field * {
   animation: none !important;
   transform: none !important;
+  will-change: auto !important;
 }
 @keyframes paw-window-flow-reduced-fade { from { opacity: 0; } to { opacity: 1; } }
 

@@ -185,11 +185,15 @@
   opacity: calc(.66 + var(--paw-composition-energy, 0) * .3);
   transition: opacity 640ms var(--paw-ease-out);
 }
-.paw-desktop-root .paw-field__warmth { opacity: .64; animation: paw-field-breathe 26s ease-in-out infinite alternate; }
+.paw-desktop-root .paw-field__warmth { opacity: .64; animation: paw-field-breathe 26s ease-in-out infinite alternate; will-change: opacity; }
 /* Mist banks rest at their own densities; the drift cycle is minutes long,
-   so the landscape moves like weather, never like an animation. */
+   so the landscape moves like weather, never like an animation. The drift
+   groups and the breathing warmth core are the field's only always-on
+   animations; they carry no SVG filter and own their compositor layers, so
+   ambient motion never repaints the landscape beneath them. */
 .paw-desktop-root .paw-field__mist { opacity: .85; }
 .paw-desktop-root .paw-field__mist--near { opacity: .7; }
+.paw-desktop-root .paw-field__mist-drift { will-change: transform; }
 .paw-desktop-root .paw-field__mist--far .paw-field__mist-drift { animation: paw-field-mist-drift 210s ease-in-out infinite alternate; }
 .paw-desktop-root .paw-field__mist--mid .paw-field__mist-drift { animation: paw-field-mist-drift 240s ease-in-out infinite alternate-reverse; }
 .paw-desktop-root .paw-field__mist--near .paw-field__mist-drift { animation: paw-field-mist-drift 260s ease-in-out infinite alternate; }
