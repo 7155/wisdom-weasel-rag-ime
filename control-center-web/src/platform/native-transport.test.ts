@@ -385,7 +385,7 @@ describe('NativeControlTransport', () => {
       purpose: 'attachment',
       sessionId: 'agent:session-1',
       maxFiles: 1,
-    })).rejects.toThrow(/invalid managed image receipt/);
+    })).rejects.toThrow(/invalid managed attachment receipt/);
     transport.dispose();
   });
 
@@ -538,7 +538,7 @@ describe('NativeControlTransport', () => {
     await expect(transport.pasteImages({
       sessionId: 'agent:session-1',
       maxFiles: 1,
-    })).rejects.toThrow(/invalid managed image receipt/);
+    })).rejects.toThrow(/invalid managed attachment receipt/);
     transport.dispose();
   });
 

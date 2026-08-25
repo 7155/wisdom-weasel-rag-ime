@@ -173,8 +173,48 @@ describe('RoomComposer macOS input methods', () => {
         />
       </TooltipProvider>,
     );
-    fireEvent.click(screen.getByRole('button', { name: '移除图片：diagram.png' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除 diagram.png' }));
     expect(onAttachmentsChange).toHaveBeenCalledWith([]);
+  });
+
+  it('forwards pasted non-image files and badges non-image receipts instead of faking thumbnails', () => {
+    const onPasteImages = vi.fn();
+    const { container } = render(
+      <TooltipProvider>
+        <RoomComposer
+          room={{ id: 'room-1', status: 'active', participants: [] }}
+          personas={[]}
+          draft=""
+          attachments={[{
+            mediaId: 'media_room_attachment02',
+            roomId: 'room-1',
+            fileName: 'release-notes.zip',
+            mimeType: 'application/zip',
+            byteSize: 4096,
+            sha256: 'b'.repeat(64),
+          }]}
+          sending={false}
+          onDraftChange={vi.fn()}
+          onAttachmentsChange={vi.fn()}
+          onPasteImages={onPasteImages}
+          onPasteFromClipboard={vi.fn()}
+          onPickAttachments={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+
+    const chip = container.querySelector('.agent-composer__attachment-chip');
+    expect(chip).toHaveAttribute('data-attachment-kind', 'file');
+    expect(chip?.querySelector('img')).toBeNull();
+    expect(chip?.querySelector('.agent-composer__attachment-badge')).toHaveTextContent('ZIP');
+    expect(screen.getByRole('button', { name: '移除 release-notes.zip' })).toBeInTheDocument();
+
+    const pdf = new File(['%PDF-1.7'], 'spec.pdf', { type: 'application/pdf' });
+    fireEvent.paste(screen.getByRole('textbox', { name: '协作消息' }), {
+      clipboardData: { files: [pdf], items: [], getData: () => '' },
+    });
+    expect(onPasteImages).toHaveBeenCalledWith([pdf]);
   });
 
   it('offers native steer while a task is busy and keeps pending answers constrained', () => {
@@ -218,7 +258,7 @@ describe('RoomComposer macOS input methods', () => {
 
     const answer = screen.getByRole('button', { name: '发送问题回答' });
     expect(answer).toBeEnabled();
-    expect(screen.getByRole('button', { name: '添加图片' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '添加附件' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '点名一位伙伴' })).not.toBeInTheDocument();
     fireEvent.click(answer);
     expect(onSend).toHaveBeenCalledTimes(1);

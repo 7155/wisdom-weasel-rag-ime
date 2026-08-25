@@ -198,7 +198,7 @@ describe('AgentComposer macOS input methods', () => {
     const controls = container.querySelector('.agent-composer__controls');
     const view = within(container);
     const send = view.getByRole('button', { name: '发送' });
-    expect(controls).toContainElement(view.getByRole('button', { name: '添加图片' }));
+    expect(controls).toContainElement(view.getByRole('button', { name: '添加附件' }));
     expect(controls).toContainElement(view.getByRole('button', { name: /对话权限/ }));
     expect(controls).toContainElement(view.getByRole('button', { name: /这段对话可用工具/ }));
     expect(controls).not.toContainElement(send);
@@ -243,7 +243,7 @@ describe('AgentComposer macOS input methods', () => {
 
     const { container, rerender } = render(harness());
     const view = within(container);
-    expect(view.getByRole('button', { name: '发送（先输入内容或添加图片）' })).toBeDisabled();
+    expect(view.getByRole('button', { name: '发送（先输入内容或添加附件）' })).toBeDisabled();
 
     rerender(harness({ draft: '已有内容', modelChanging: true }));
     expect(view.getByRole('button', { name: '发送（正在切换模型）' })).toBeDisabled();
@@ -335,6 +335,54 @@ describe('AgentComposer macOS input methods', () => {
     expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
     fireEvent.click(view.getByRole('button', { name: '停止本轮' }));
     expect(onStop).toHaveBeenCalledTimes(1);
-    expect(view.getByRole('button', { name: '添加图片' })).toBeEnabled();
+    expect(view.getByRole('button', { name: '添加附件' })).toBeEnabled();
+  });
+
+  it('accepts pasted non-image files and shows a type badge instead of a broken thumbnail', () => {
+    const onPasteImages = vi.fn();
+    const { container } = render(
+      <TooltipProvider>
+        <AgentComposer
+          draft=""
+          attachments={[{
+            id: 'media_pdf01',
+            name: '发布说明.pdf',
+            mimeType: 'application/pdf',
+            byteSize: 2048,
+            source: 'clipboard',
+          }]}
+          session={previewSessions[0]}
+          commands={[]}
+          tools={[]}
+          toolCatalogStatus="ready"
+          busy={false}
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={onPasteImages}
+          onToolSelect={() => {}}
+          onProductCommand={() => {}}
+          onSend={() => {}}
+          onStop={() => {}}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
+          onModelChange={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    const view = within(container);
+    const chip = container.querySelector('.agent-composer__attachment-chip');
+    expect(chip).toHaveAttribute('data-attachment-kind', 'file');
+    expect(chip?.querySelector('img')).toBeNull();
+    expect(chip?.querySelector('.agent-composer__attachment-badge')).toHaveTextContent('PDF');
+    expect(view.getByRole('button', { name: '移除 发布说明.pdf' })).toBeInTheDocument();
+
+    const pdf = new File(['%PDF-1.7'], '发布说明.pdf', { type: 'application/pdf' });
+    fireEvent.paste(view.getByRole('textbox', { name: '消息' }), {
+      clipboardData: { files: [pdf], items: [], getData: () => '' },
+    });
+    expect(onPasteImages).toHaveBeenCalledWith([pdf]);
   });
 });
