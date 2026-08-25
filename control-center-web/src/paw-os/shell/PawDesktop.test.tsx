@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { GlobalFeedbackProvider } from '@/components/feedback';
@@ -274,7 +274,7 @@ describe('PAWOS desktop', () => {
     expect(document.querySelectorAll('[data-paw-window-id]')).toHaveLength(0);
   });
 
-  it('routes a Browser host command into PAWOS before the Browser App is mounted', () => {
+  it('routes a Browser host command into PAWOS before the Browser App is mounted', async () => {
     let commandListener: ((command: { action: 'new_tab'; commandId: string; url: string }) => void) | undefined;
     window.pawBrowserHost = desktopBrowserHost((listener) => {
       commandListener = listener;
@@ -289,12 +289,15 @@ describe('PAWOS desktop', () => {
     }));
 
     expect(document.querySelector('[data-paw-window-id="browser"]')).toBeInTheDocument();
-    const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
-      windows?: Record<string, { target?: { commandId?: string; url?: string } }>;
-    };
-    expect(snapshot.windows?.browser?.target).toMatchObject({
-      commandId: 'command-1',
-      url: 'https://inside.example',
+    // Persistence lands one debounce beat after the interaction.
+    await waitFor(() => {
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        windows?: Record<string, { target?: { commandId?: string; url?: string } }>;
+      };
+      expect(snapshot.windows?.browser?.target).toMatchObject({
+        commandId: 'command-1',
+        url: 'https://inside.example',
+      });
     });
   });
 
@@ -302,9 +305,12 @@ describe('PAWOS desktop', () => {
     // Bounds commits after every drag/resize/viewport refit and runtime
     // title/target binds replace state.windows; menu bar, Wayfinder, Dock and
     // Launchpad must not re-render on that churn. Menus subscribe to the
-    // structural signature (id, App, placement) instead.
+    // structural signature (id, App, placement) instead, and the half-minute
+    // clock tick owns its own leaf so it re-renders one <span>.
     expect(desktopSource).not.toMatch(/usePawDesktopStore\(\(state\) => state\.windows\)/);
     expect(desktopSource).toContain('const menuSignature = usePawDesktopStore');
+    expect(desktopSource).toContain('function PawMenuClock()');
+    expect(desktopSource).toMatch(/<PawMenuClock \/>/);
   });
 
   it('still reflects placement changes in the window menu through the structural signature', () => {
@@ -315,6 +321,30 @@ describe('PAWOS desktop', () => {
 
     fireEvent.contextMenu(windowShell, { clientX: 300, clientY: 200 });
     expect(screen.getByRole('menuitem', { name: '还原窗口' })).toBeInTheDocument();
+  });
+
+  it('coalesces desktop persistence into one trailing write instead of one per mutation', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    renderDesktop();
+
+    // A burst of desktop mutations: open two Apps back to back.
+    fireEvent.keyDown(window, { key: ',', metaKey: true });
+    fireEvent.contextMenu(screen.getByRole('main'), { clientX: 120, clientY: 90 });
+    fireEvent.click(screen.getByRole('menuitem', { name: '新建 Agent 工作' }));
+
+    // Nothing serializes on the interaction path itself…
+    const writesBefore = setItem.mock.calls.filter(([key]) => key === 'pawos.desktop.v1');
+    expect(writesBefore).toHaveLength(0);
+
+    // …and the whole burst lands as one trailing snapshot.
+    await waitFor(() => {
+      expect(setItem.mock.calls.filter(([key]) => key === 'pawos.desktop.v1')).toHaveLength(1);
+    });
+    const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+      windows?: Record<string, unknown>;
+    };
+    expect(Object.keys(snapshot.windows ?? {})).toEqual(expect.arrayContaining(['system-settings', 'agent']));
+    setItem.mockRestore();
   });
 
   it('selects desktop Apps with a lasso instead of webpage text selection', () => {

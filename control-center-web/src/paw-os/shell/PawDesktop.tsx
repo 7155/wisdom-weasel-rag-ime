@@ -52,16 +52,11 @@ export function PawDesktop() {
   }), [menuSignature]);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
   const collaborationFocus = Boolean(collaborationFocusGroup);
-  const [clock, setClock] = useState(() => timeLabel());
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const menuAppRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(timeLabel()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -347,7 +342,7 @@ export function PawDesktop() {
           {activeAppId ? <PawAppIcon appId={activeAppId} size={14} /> : null}
           <span>{menuBarLabel}</span>
         </button>
-        <div className="paw-menu-status"><ConnectionIndicator /><span>{clock}</span></div>
+        <div className="paw-menu-status"><ConnectionIndicator /><PawMenuClock /></div>
       </header>
 
       <main className="paw-desktop-viewport" onPointerDown={startLasso} ref={viewportRef}>
@@ -383,6 +378,17 @@ export function PawDesktop() {
       ) : null}
     </div>
   );
+}
+
+/* The half-minute clock tick lives in its own leaf so it re-renders one
+ * <span>, never the whole desktop chrome. */
+function PawMenuClock() {
+  const [clock, setClock] = useState(() => timeLabel());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(timeLabel()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <span>{clock}</span>;
 }
 
 function Wayfinder({ onOpen, onSelect, selectedApps }: {

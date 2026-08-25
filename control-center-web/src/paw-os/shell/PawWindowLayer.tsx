@@ -719,7 +719,12 @@ function windowFlowStatusLabel(status?: string): string {
 
 function stringValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
 
-function PawWindow({ collaborationFocusGroup, flowState, flowTracked, focusFrame, onFocusFrameCommit, overview, overviewFrame, windowId }: {
+/* One window's geometry commit replaces the store's windows map, which
+ * re-renders the layer — but it must not re-render every other window's App
+ * tree. memo bails untouched windows out at the frame boundary; each window's
+ * own store slice (its node, stack position, active flag) still re-renders
+ * exactly the window that changed. */
+const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, flowTracked, focusFrame, onFocusFrameCommit, overview, overviewFrame, windowId }: {
   collaborationFocusGroup: string | null;
   flowState?: 'source' | 'arrival';
   flowTracked?: boolean;
@@ -810,7 +815,7 @@ function PawWindow({ collaborationFocusGroup, flowState, flowTracked, focusFrame
       </div>
     </PawWindowFrame>
   );
-}
+});
 
 function openDesktopRoute(api: ReturnType<typeof usePawDesktopApi>, route: string): void {
   const normalized = route.replace(/^#/, '');
@@ -1067,6 +1072,7 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
     const desktopRoot = shell.closest<HTMLElement>('.paw-desktop-root');
     event.currentTarget.setPointerCapture(event.pointerId);
     shell.dataset.interaction = 'dragging';
+    setWindowInteraction(desktopRoot, true);
     const origin = { x: event.clientX, y: event.clientY };
     let next = bounds;
     let frame = 0;
@@ -1085,6 +1091,7 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       render();
       delete shell.dataset.interaction;
       setSnapPreview(desktopRoot);
+      setWindowInteraction(desktopRoot, false);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
@@ -1101,6 +1108,7 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       if (frame) window.cancelAnimationFrame(frame);
       delete shell.dataset.interaction;
       setSnapPreview(desktopRoot);
+      setWindowInteraction(desktopRoot, false);
       shell.style.transform = `translate3d(${bounds.x}px, ${bounds.y}px, 0)`;
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
@@ -1125,6 +1133,15 @@ function setSnapPreview(root: HTMLElement | null, placement?: PawWindowPlacement
   else delete root.dataset.snapPreview;
 }
 
+/* Exactly one attribute write per gesture edge (start and finish), never per
+ * move event. The wallpaper reads this to pause weather animation while a
+ * window drag/resize owns the frame budget. */
+function setWindowInteraction(root: HTMLElement | null, active: boolean): void {
+  if (!root) return;
+  if (active) root.dataset.windowInteraction = 'true';
+  else delete root.dataset.windowInteraction;
+}
+
 function snapPlacement(clientX: number, clientY: number): PawWindowPlacement | undefined {
   if (clientY <= 14) return 'maximized';
   if (clientX <= 14) return 'left';
@@ -1143,8 +1160,10 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
     }
     const shell = ref.current;
     if (!shell) return;
+    const desktopRoot = shell.closest<HTMLElement>('.paw-desktop-root');
     event.currentTarget.setPointerCapture(event.pointerId);
     shell.dataset.interaction = 'resizing';
+    setWindowInteraction(desktopRoot, true);
     const origin = { x: event.clientX, y: event.clientY };
     let next = bounds;
     let frame = 0;
@@ -1163,6 +1182,7 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
       if (frame) window.cancelAnimationFrame(frame);
       render();
       delete shell.dataset.interaction;
+      setWindowInteraction(desktopRoot, false);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
