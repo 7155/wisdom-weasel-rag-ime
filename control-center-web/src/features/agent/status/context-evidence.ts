@@ -1,16 +1,30 @@
 /**
- * context-evidence — 装配阶段到具体捕获原文的共享映射。
+ * context-evidence — 装配阶段到具体捕获原文的共享映射，以及装配顺序。
  *
  * PF-CM-010：上下文检查的每个摘要节点都必须能打开真实内容，而不是停在
  * token 汇总条。Agent 轨迹（PawContextTrace）与上下文管线对话框
  * （ContextRuntimePanel）共用这份映射，保证两个入口对同一装配阶段给出
- * 同一份 debugContext 捕获证据。
+ * 同一份 debugContext 捕获证据，并按同一个权威顺序排列节点。
  */
 
+import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
 import type {
   DebugContextRecord,
   DebugModelCall,
 } from '@/features/context-debug/model';
+
+/**
+ * 装配顺序的权威来源是 contextRuntime 写入的 node.ordinal（1 起、单调递增），
+ * createdAtMs 只在 ordinal 相同时决定先后。传输层可能重排数组，因此任何
+ * 声称「按装配顺序」的视图都要先过这里，而不是直接用 trace.nodes 的下标。
+ */
+export function orderContextTraceNodes(
+  nodes: AgentContextTraceV1['nodes'] | undefined,
+): AgentContextTraceV1['nodes'] {
+  return [...nodes ?? []].sort((left, right) => (
+    left.ordinal - right.ordinal || left.createdAtMs - right.createdAtMs
+  ));
+}
 
 export type AssemblyEvidenceValue = {
   label: string;

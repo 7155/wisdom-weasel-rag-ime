@@ -46,6 +46,37 @@ describe('PawContextTrace evidence access', () => {
     await expect(navigator.clipboard.readText()).resolves.toContain('"stage": "memory"');
   });
 
+  it('lists context assembly nodes in the authoritative ordinal order', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': debugContextResponse(),
+        'agent.session.contextTraces.list': {
+          ok: true,
+          items: [{ traceId: 'trace-a', sessionId: 'session-a', turnId: 'turn-a' }],
+        },
+        'agent.session.contextTrace.get': contextTraceResponse(),
+      },
+    });
+    const user = userEvent.setup();
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawContextTrace active sessionId="session-a" />
+      </ControlTransportProvider>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: '上下文装配' }));
+    await screen.findByText('项目约束', { selector: '.n-label' });
+
+    const nodes = [...document.querySelectorAll('.an-node')];
+    expect(nodes.map((node) => node.querySelector('.n-ord')?.textContent)).toEqual(['1', '2', '3']);
+    expect(nodes.map((node) => node.querySelector('.n-label')?.textContent))
+      .toEqual(['项目约束', '记忆注入', '当前输入']);
+    // The token bar reads as the same assembly sequence as the node list.
+    expect([...document.querySelectorAll('.an-tokenbar > span')].map((segment) => segment.getAttribute('title')))
+      .toEqual(['project 300', 'memory 105', 'input 40']);
+  });
+
   it('shows line and character counts with a copy action on captured assembly evidence', async () => {
     const transport = new MockControlTransport({
       routes: {
@@ -632,22 +663,9 @@ function contextTraceResponse() {
     sourceKind: 'user',
     status: 'accepted',
     finalFingerprint: 'sha256:abcdef0123456789',
+    /* Deliberately out of assembly order: the authoritative sequence is
+       node.ordinal, not the order this payload happens to arrive in. */
     nodes: [{
-      nodeId: 'node-project',
-      ordinal: 1,
-      stage: 'project',
-      label: '项目约束',
-      sourceKind: 'project',
-      disposition: 'included',
-      summary: 'AGENTS.md',
-      charCount: 1200,
-      tokenEstimate: 300,
-      durationMs: 2,
-      fingerprint: 'sha256:0123456789abcdef',
-      reason: '',
-      metadata: {},
-      createdAtMs: 102,
-    }, {
       nodeId: 'node-memory',
       ordinal: 2,
       stage: 'memory',
@@ -662,6 +680,36 @@ function contextTraceResponse() {
       reason: '',
       metadata: { itemCount: 3 },
       createdAtMs: 103,
+    }, {
+      nodeId: 'node-input',
+      ordinal: 3,
+      stage: 'input',
+      label: '当前输入',
+      sourceKind: 'user',
+      disposition: 'included',
+      summary: '本轮用户输入',
+      charCount: 160,
+      tokenEstimate: 40,
+      durationMs: 0,
+      fingerprint: 'sha256:abcd0123abcd0123',
+      reason: '',
+      metadata: {},
+      createdAtMs: 104,
+    }, {
+      nodeId: 'node-project',
+      ordinal: 1,
+      stage: 'project',
+      label: '项目约束',
+      sourceKind: 'project',
+      disposition: 'included',
+      summary: 'AGENTS.md',
+      charCount: 1200,
+      tokenEstimate: 300,
+      durationMs: 2,
+      fingerprint: 'sha256:0123456789abcdef',
+      reason: '',
+      metadata: {},
+      createdAtMs: 102,
     }],
     edges: [],
     createdAtMs: 100,

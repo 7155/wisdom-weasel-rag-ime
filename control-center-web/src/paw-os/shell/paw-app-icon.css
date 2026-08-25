@@ -84,14 +84,10 @@
 .paw-overview-window-target { gap: 9px; }
 .paw-overview-window-target > .paw-app-icon { flex: 0 0 auto; }
 
-.paw-app-boot.paw-app-boot {
-  grid-template-columns: auto minmax(0, max-content);
-  align-content: center;
-  justify-content: center;
-  gap: 13px;
-}
-.paw-app-boot.paw-app-boot > .paw-app-icon { grid-column: 1; grid-row: 1; }
-.paw-app-boot.paw-app-boot > span { grid-column: 2; grid-row: 1; margin-left: 0; }
+/* The boot state's own layout, including its icon slot, lives in
+   paw-app-boot.css beside the module that renders it. A doubled-class patch
+   here only ever existed to undo a fork in paw-apps.css that could not load
+   in time. */
 .paw-app-loading > .paw-app-icon { flex: 0 0 auto; }
 
 :is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:hover .paw-app-icon {

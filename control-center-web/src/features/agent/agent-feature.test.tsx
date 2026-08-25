@@ -28,7 +28,10 @@ import type { UiAgentMessage } from '@/contracts/ui-events';
 const virtuosoMock = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
   atBottomStateChange: undefined as ((atBottom: boolean) => void) | undefined,
+  components: undefined as Record<string, unknown> | undefined,
   followOutput: undefined as ((isAtBottom: boolean) => 'auto' | 'smooth' | false) | undefined,
+  isScrolling: undefined as ((scrolling: boolean) => void) | undefined,
+  scrollSeekConfiguration: undefined as unknown,
   scroller: undefined as HTMLDivElement | undefined,
 }));
 
@@ -38,18 +41,24 @@ vi.mock('react-virtuoso', async () => {
     Virtuoso: React.forwardRef(({
     alignToBottom,
     atBottomStateChange,
+    components,
     data,
     followOutput,
     initialTopMostItemIndex,
+    isScrolling,
     itemContent,
+    scrollSeekConfiguration,
     scrollerRef,
   }: {
     alignToBottom?: boolean;
     atBottomStateChange?: (atBottom: boolean) => void;
+    components?: Record<string, unknown>;
     data: string[];
     followOutput?: (isAtBottom: boolean) => 'auto' | 'smooth' | false;
     initialTopMostItemIndex?: { index: string | number; align?: string };
+    isScrolling?: (scrolling: boolean) => void;
     itemContent: (index: number, item: string) => ReactNode;
+    scrollSeekConfiguration?: unknown;
     scrollerRef?: (scroller: HTMLElement | Window | null) => void;
   }, ref) => {
     const localScrollerRef = React.useRef<HTMLDivElement>(null);
@@ -65,7 +74,10 @@ vi.mock('react-virtuoso', async () => {
       };
     }, [scrollerRef]);
     virtuosoMock.atBottomStateChange = atBottomStateChange;
+    virtuosoMock.components = components;
     virtuosoMock.followOutput = followOutput;
+    virtuosoMock.isScrolling = isScrolling;
+    virtuosoMock.scrollSeekConfiguration = scrollSeekConfiguration;
     return (
       <div
         ref={localScrollerRef}
@@ -86,7 +98,10 @@ afterEach(() => {
   setDocumentVisibility('visible');
   virtuosoMock.scrollToIndex.mockReset();
   virtuosoMock.atBottomStateChange = undefined;
+  virtuosoMock.components = undefined;
   virtuosoMock.followOutput = undefined;
+  virtuosoMock.isScrolling = undefined;
+  virtuosoMock.scrollSeekConfiguration = undefined;
   virtuosoMock.scroller = undefined;
   for (const session of previewSessions) useAgentLiveStore.getState().clear(session.id);
   useAgentLiveStore.getState().clear('session-history');
@@ -461,6 +476,24 @@ describe('Agent experience', () => {
     expect(markers[0]).toHaveTextContent('第 1 轮');
     expect(navigator).toHaveTextContent('读取输入法工具书');
     expect(navigator).toHaveTextContent('Agent');
+  });
+
+  it('keeps every mounted turn rendered and stops answering hover while the transcript scrolls', async () => {
+    renderAgent(featureTransport());
+    await screen.findByRole('textbox', { name: '消息' });
+    const timeline = screen.getByRole('log', { name: '对话时间线' });
+
+    // Scroll-seek swapped whole screens of conversation for empty measured
+    // boxes above a velocity threshold and swapped them back on deceleration,
+    // which is what made repeated up/down scrolling flicker.
+    expect(virtuosoMock.scrollSeekConfiguration).toBeUndefined();
+    expect(virtuosoMock.components).not.toHaveProperty('ScrollSeekPlaceholder');
+
+    expect(timeline).not.toHaveAttribute('data-scrolling');
+    act(() => virtuosoMock.isScrolling?.(true));
+    expect(timeline).toHaveAttribute('data-scrolling', 'true');
+    act(() => virtuosoMock.isScrolling?.(false));
+    expect(timeline).not.toHaveAttribute('data-scrolling');
   });
 
   it('preserves bottom-follow through layout growth and restores it after the reader returns', async () => {
@@ -4079,7 +4112,6 @@ describe('Agent experience', () => {
       { timeout: 5_000 },
     ));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
     for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
       expect(within(picker).getByRole('radio', { name: level })).toBeInTheDocument();
     }
@@ -4095,7 +4127,7 @@ describe('Agent experience', () => {
     ))).toBe(true));
   });
 
-  it('keeps a large model catalog compact by showing one Provider at a time', async () => {
+  it('lists every Provider group in one flat panel without a second page', async () => {
     const transport = featureTransport(previewModelCatalog('session-preview'));
     const user = userEvent.setup();
     renderAgent(transport);
@@ -4107,29 +4139,16 @@ describe('Agent experience', () => {
     ));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
 
-    expect(within(picker).getByRole('tab', {
-      name: '查看 OpenAI 的 2 个模型',
-    })).toHaveAttribute('aria-selected', 'true');
+    expect(within(picker).getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
+    expect(within(picker).getByRole('group', { name: 'DeepSeek' })).toBeInTheDocument();
     expect(within(picker).getByRole('option', {
       name: '选择模型 GPT-5.4',
     })).toBeInTheDocument();
-    expect(within(picker).queryByRole('option', {
-      name: '选择模型 DeepSeek V4',
-    })).not.toBeInTheDocument();
-
-    await user.click(within(picker).getByRole('tab', {
-      name: '查看 DeepSeek 的 1 个模型',
-    }));
-
-    expect(within(picker).getByRole('tab', {
-      name: '查看 DeepSeek 的 1 个模型',
-    })).toHaveAttribute('aria-selected', 'true');
     expect(within(picker).getByRole('option', {
       name: '选择模型 DeepSeek V4',
     })).toBeInTheDocument();
-    expect(within(picker).queryByRole('option', {
-      name: '选择模型 GPT-5.4',
-    })).not.toBeInTheDocument();
+    expect(within(picker).getByRole('radiogroup', { name: '推理强度' })).toBeInTheDocument();
+    expect(within(picker).queryByRole('tab')).not.toBeInTheDocument();
   });
 
   it('supports arrow-key reasoning selection, Enter, Escape, and trigger focus return', async () => {
@@ -4150,8 +4169,13 @@ describe('Agent experience', () => {
     );
     await user.click(trigger);
     let picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
+    // The panel opens on the current model, and one Tab reaches the reasoning
+    // rail: model and reasoning are one gesture apart, not one page apart.
+    await waitFor(() => expect(
+      within(picker).getByRole('option', { name: '选择模型 GPT-5.6 Luna' }),
+    ).toHaveFocus());
     const medium = within(picker).getByRole('radio', { name: '中' });
+    await user.tab();
     await waitFor(() => expect(medium).toHaveFocus());
     await user.keyboard('{ArrowRight}{Enter}');
 
@@ -4256,7 +4280,6 @@ describe('Agent experience', () => {
       { timeout: 5_000 },
     ));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
     expect(within(picker).queryByRole('radio', { name: 'Max' })).not.toBeInTheDocument();
   });
 
@@ -4390,7 +4413,6 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('option', { name: '选择模型 GPT-5.6 Luna' }));
     await user.click(screen.getByRole('button', { name: '模型：GPT-5.6 Luna · GPT，思考强度：中' }));
     const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
-    await user.click(within(picker).getByRole('button', { name: /推理/ }));
     await user.click(within(picker).getByRole('radio', { name: '高' }));
     expect(screen.getByRole('button', {
       name: '模型：GPT-5.6 Luna · GPT，思考强度：高',

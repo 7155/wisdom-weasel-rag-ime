@@ -370,8 +370,12 @@
   background: var(--paw-chat-danger);
 }
 
+/* One lane per step, not a plate per step. `fit-content` shrink-wrapped the
+   row to its shortest child, so the object of a call ("ego-browser …") was
+   ellipsised long before the lane ran out; the row now claims the full width
+   and spends it on the hint. */
 .paw-desktop-root .paw-chatfx .paw-activity {
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   overflow: hidden;
   padding: 0;
@@ -385,9 +389,10 @@
 
 .paw-desktop-root .paw-chatfx .paw-activity__row {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 5px;
-  padding: 4px;
+  padding: 3px 4px;
   font-size: 14px;
   line-height: 20px;
 }
@@ -414,43 +419,57 @@
    可访问名称仍是完整工具名（按钮 aria-label），徽标只做视觉分组。 */
 .paw-desktop-root .paw-chatfx .paw-activity__glyph {
   display: inline-grid;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 0;
   color: var(--paw-chat-text-tertiary);
-  background: color-mix(in srgb, var(--paw-chat-text-tertiary) 9%, transparent);
+  background: transparent;
 }
 
 /* 稳定的语义色族：协作、思考、委派、规划、审批在密集步骤树里靠色调分组。
+   色调只落在字形本身——每行一枚着色小方块会把步骤树变成贴纸墙，也会挤掉正文宽度。
    运行中/等待/失败的状态色在下方以更高优先级覆盖。 */
 .paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='thinking'],
 .paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='collaboration'] {
   color: var(--paw-chat-accent);
-  background: color-mix(in srgb, var(--paw-chat-accent) 11%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='delegation'] {
   color: var(--paw-chat-violet);
-  background: color-mix(in srgb, var(--paw-chat-violet) 12%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='plan'] {
   color: var(--paw-chat-ok);
-  background: color-mix(in srgb, var(--paw-chat-ok) 12%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity__glyph[data-kind='approval'] {
   color: var(--paw-chat-warn);
-  background: color-mix(in srgb, var(--paw-chat-warn) 13%, transparent);
+}
+
+/* 一行只读一行：标签在整条通道里不再收缩换行，超长工具名以省略号收口，
+   剩下的宽度全部留给提示。 */
+.paw-desktop-root .paw-chatfx .paw-activity__label {
+  overflow: hidden;
+  max-width: 28ch;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-desktop-root .paw-chatfx .fx-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 /* 步骤的具体对象（文件、消息、结果摘要）随行内提示直接可扫读，
-   不必逐行展开披露（PF-CM-007）。 */
+   不必逐行展开披露（PF-CM-007）。提示占满标签之后的整条通道：
+   固定 46ch 上限在宽窗口里白白丢掉可读字数。 */
 .paw-desktop-root .paw-chatfx .paw-activity__hint {
   overflow: hidden;
-  max-width: min(46ch, 52vw);
+  min-width: 0;
+  flex: 1 1 auto;
   color: var(--paw-chat-text-tertiary);
   font-size: 12.5px;
   text-overflow: ellipsis;
@@ -459,17 +478,14 @@
 
 .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__glyph {
   color: var(--paw-chat-accent);
-  background: color-mix(in srgb, var(--paw-chat-accent) 10%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity[data-state='waiting'] .paw-activity__glyph {
   color: var(--paw-chat-warn);
-  background: color-mix(in srgb, var(--paw-chat-warn) 12%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity[data-state='failed'] .paw-activity__glyph {
   color: var(--paw-chat-danger);
-  background: color-mix(in srgb, var(--paw-chat-danger) 10%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity__progress {
@@ -565,12 +581,16 @@
   animation: paw-agent-fx-text-sweep 1.85s ease-in-out infinite;
 }
 
+/* 状态是一个词，不是一枚徽章。填充胶囊在每一行都加了一圈边缘与 18px 内边距，
+   密集步骤树里既是卡片语汇，也直接吃掉可读宽度；颜色与行星标记已足够表达状态。 */
 .paw-desktop-root .paw-chatfx .fx-pill {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
-  padding: 2px 9px;
-  border-radius: 999px;
+  gap: 4px;
+  padding: 0 2px;
+  border-radius: 0;
+  background: transparent;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: .02em;
@@ -587,14 +607,12 @@
 
 .paw-desktop-root .paw-chatfx .fx-pill.ok {
   color: var(--paw-chat-ok);
-  background: color-mix(in srgb, var(--paw-chat-ok) 10%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .fx-pill.ok i { background: var(--paw-chat-ok); }
 
 .paw-desktop-root .paw-chatfx .fx-pill.run {
   color: var(--paw-chat-accent);
-  background: color-mix(in srgb, var(--paw-chat-accent) 10%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .fx-pill.run i {
@@ -604,14 +622,12 @@
 
 .paw-desktop-root .paw-chatfx .fx-pill.wait {
   color: var(--paw-chat-warn);
-  background: color-mix(in srgb, var(--paw-chat-warn) 10%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .fx-pill.wait i { background: var(--paw-chat-warn); }
 
 .paw-desktop-root .paw-chatfx .fx-pill.danger {
   color: var(--paw-chat-danger);
-  background: color-mix(in srgb, var(--paw-chat-danger) 10%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .fx-pill.danger i { background: var(--paw-chat-danger); }
@@ -619,7 +635,6 @@
 /* 子 Agent 回执：紫调区分「另一个 Agent 在后台替你完成」与父级自身工具调用。 */
 .paw-desktop-root .paw-chatfx .fx-pill.vio {
   color: var(--paw-chat-violet);
-  background: color-mix(in srgb, var(--paw-chat-violet) 10%, transparent);
 }
 
 .paw-desktop-root .paw-chatfx .fx-pill.vio i { background: var(--paw-chat-violet); }
@@ -935,6 +950,17 @@
 .paw-desktop-root .paw-chatfx .paw-activity__row {
   transform-origin: left center;
   transition: transform 150ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)), background-color 140ms ease, color 140ms ease;
+}
+
+/* 滚动时指针静止、行在动：每一行经过指针都会点亮再熄灭，读起来就是「疯狂闪烁」。
+   时间线停下之前不回应 hover，也不留过渡尾巴。 */
+.paw-desktop-root .paw-chatfx .agent-timeline[data-scrolling] :is(.paw-activity__row, .agent-turn-work__toggle) {
+  transition: none;
+}
+
+.paw-desktop-root .paw-chatfx .agent-timeline[data-scrolling] .paw-activity:hover .paw-activity__row,
+.paw-desktop-root .paw-chatfx .agent-timeline[data-scrolling] .agent-turn-work__toggle:hover {
+  background: transparent;
 }
 
 /* Inline diff/code disclosures inside the tree answer with the same spring

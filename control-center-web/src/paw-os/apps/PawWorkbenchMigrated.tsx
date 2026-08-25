@@ -24,8 +24,9 @@ import '../styles/paw-os-workbench-migrated-v1.css';
  * THESIS: Workbench is a live project dependency field, never a summary-card dashboard.
  * OWN-WORLD: Glacier-cool canvas, ultramarine workbench identity, white rounded plates, dotted topology, azure flow, and restrained semantic inks.
  * STORY: Answer "what is the next unresolved thing" first, then inspect task ownership and dependencies, then open the authoritative task or WorkDocument.
- * FIRST VIEWPORT: Desktop viewport logic — the command deck is one compact console band, so the working columns (tasks, documents) land inside the first
- * screen; planning keeps outline, labelled dependency lanes and selected truth; documents are a two-pane reader.
+ * WINDOW SHAPE: Every page is fixed chrome around one flexible workspace, the way a native window App behaves — command deck on top, a status ledger at the
+ * bottom, and working panes that own their own scroll in between. Nothing stacks a page of plates that pushes the work below the first viewport.
+ * FIRST VIEWPORT: The console band answers the next unresolved thing in one strip, then the task and WorkDocument panes are already on screen.
  * FORM: Archive-led Operate extension, pawos-workbench-v1.
  */
 
@@ -408,38 +409,19 @@ function ProjectOverview({
         />
       ) : null}
 
-      <section className="paw-wb-project-lead">
-        <div className="paw-wb-project-lead__mark"><FolderTree aria-hidden size={20} /></div>
-        <div className="paw-wb-project-lead__copy">
-          <h2 title={projectName}>{projectName}</h2>
-          {projectPath ? <p className="paw-wb-mono" title={projectPath}>{projectPath}</p> : <p>当前项目尚未提供工作区路径。</p>}
-        </div>
-        {repoFacts.length ? (
-          <details className="paw-wb-repo">
-            <summary>
-              <ChevronDown aria-hidden size={14} />
-              仓库与运行事实
-            </summary>
-            <dl className="paw-wb-project-facts">
-              {repoFacts.map((fact) => <Fact key={fact.label} label={fact.label} mono={fact.mono} value={fact.value} />)}
-            </dl>
-          </details>
-        ) : null}
-      </section>
-
-      {metrics.length ? <dl className="paw-wb-metrics" aria-label="项目真实指标">{metrics.map((metric) => <Fact key={metric.label} label={metric.label} value={metric.value} />)}</dl> : null}
-
-      <div className="paw-wb-overview__columns">
-        <section className="paw-wb-focus">
+      {/* The working panes are the window's flexible band: each owns its own
+          scroll so the first viewport always holds real tasks and documents. */}
+      <div className="paw-wb-overview__workspace">
+        <section className="paw-wb-pane" data-pane="tasks">
           <header>
-            <div><GitBranch aria-hidden size={17} /><h2>当前工作</h2></div>
-            <div className="paw-wb-focus__scope">
+            <div><GitBranch aria-hidden size={16} /><h2>当前工作</h2></div>
+            <div className="paw-wb-pane__scope">
               <span>{tasks.length > 8 ? `当前 ${displayedTasks.length} / 共 ${tasks.length}` : `${tasks.length} 项`}</span>
             </div>
           </header>
           <ResourceNotice label="任务" onRefresh={onRefresh ? () => onRefresh('planning') : undefined} state={planningState} />
           {tasks.length ? (
-            <ol className="paw-wb-focus__list" data-scrollable={displayedTasks.length > 8 || undefined}>
+            <ol className="paw-wb-pane__list" data-scrollable={displayedTasks.length > 8 || undefined}>
               {displayedTasks.map((task, index) => (
                 <li key={taskId(task, index)}>
                   <button onClick={() => onOpenTask(task, index)} title={`${taskTitle(task)} · ${taskMeta(task)}`} type="button">
@@ -451,43 +433,72 @@ function ProjectOverview({
               ))}
             </ol>
           ) : resourceSettled(planningState) ? <EmptyState icon={<CircleDashed size={22} />} title="暂无真实任务" copy="任务会在规划数据可用后出现在这里。" /> : null}
-          {remainingTasks ? <button className="paw-wb-focus__more" aria-label={`显示更多任务：${remainingTasks} 项`} onClick={() => setVisibleTaskCount((value) => value + 8)} type="button">显示更多 {Math.min(8, remainingTasks)} 项</button> : null}
+          {remainingTasks ? <button className="paw-wb-pane__more" aria-label={`显示更多任务：${remainingTasks} 项`} onClick={() => setVisibleTaskCount((value) => value + 8)} type="button">显示更多 {Math.min(8, remainingTasks)} 项</button> : null}
         </section>
 
-        <section className="paw-wb-focus">
-          <header>
-            <div><FileText aria-hidden size={17} /><h2>工作文档</h2></div>
-            <div className="paw-wb-focus__scope">
-              <span>{resolvedDocumentTotal > 6 ? `当前 ${displayedDocuments.length} / 已加载 ${documents.length}${remainingUnloadedDocuments ? ` · 共 ${resolvedDocumentTotal}` : ''}` : `${resolvedDocumentTotal} 份`}</span>
-            </div>
-          </header>
-          <ResourceNotice label="工作文档" onRefresh={onRefresh ? () => onRefresh('documents') : undefined} state={documentsState} />
-          {documents.length ? (
-            <ol className="paw-wb-document-rows" data-scrollable={displayedDocuments.length > 6 || undefined}>
-              {displayedDocuments.map((document, index) => (
-                <li key={documentId(document, index)}>
-                  <button onClick={() => void onOpenDocument(document)} title={`${documentTitle(document)} · ${authorityLabel(text(document.authorityKind))}`} type="button">
-                    <FileText aria-hidden size={16} />
-                    <span><strong>{documentTitle(document)}</strong><small>{authorityLabel(text(document.authorityKind))} · {updatedLabel(number(document.updatedAtMs))}</small></span>
-                    <StatusMark lane={documentLane(document)} />
-                  </button>
-                </li>
-              ))}
-            </ol>
-          ) : resourceSettled(documentsState) ? <EmptyState icon={<FileText size={22} />} title="暂无工作文档" copy="这里只显示 Runtime 已登记的 WorkDocument。" /> : null}
-          {remainingLoadedDocuments ? <button className="paw-wb-focus__more" aria-label={`显示更多工作文档：${remainingLoadedDocuments} 项`} onClick={() => setVisibleDocumentCount((value) => value + 6)} type="button">显示已加载的更多 {Math.min(6, remainingLoadedDocuments)} 项</button> : null}
-          {!remainingLoadedDocuments && remainingUnloadedDocuments ? (
-            onNavigate ? <button className="paw-wb-focus__more" aria-label={`在工作文档中查看其余 ${remainingUnloadedDocuments} 项`} onClick={() => onNavigate('documents')} type="button">在工作文档中查看其余 {remainingUnloadedDocuments} 项<ArrowRight aria-hidden size={13} /></button> : <p className="paw-wb-focus__boundary">已加载全部 {documents.length} 项；其余 {remainingUnloadedDocuments} 项尚未加载。</p>
+        <div className="paw-wb-overview__side">
+          <section className="paw-wb-pane" data-pane="documents">
+            <header>
+              <div><FileText aria-hidden size={16} /><h2>工作文档</h2></div>
+              <div className="paw-wb-pane__scope">
+                <span>{resolvedDocumentTotal > 6 ? `当前 ${displayedDocuments.length} / 已加载 ${documents.length}${remainingUnloadedDocuments ? ` · 共 ${resolvedDocumentTotal}` : ''}` : `${resolvedDocumentTotal} 份`}</span>
+              </div>
+            </header>
+            <ResourceNotice label="工作文档" onRefresh={onRefresh ? () => onRefresh('documents') : undefined} state={documentsState} />
+            {documents.length ? (
+              <ol className="paw-wb-pane__rows" data-scrollable={displayedDocuments.length > 6 || undefined}>
+                {displayedDocuments.map((document, index) => (
+                  <li key={documentId(document, index)}>
+                    <button onClick={() => void onOpenDocument(document)} title={`${documentTitle(document)} · ${authorityLabel(text(document.authorityKind))}`} type="button">
+                      <FileText aria-hidden size={15} />
+                      <span><strong>{documentTitle(document)}</strong><small>{authorityLabel(text(document.authorityKind))} · {updatedLabel(number(document.updatedAtMs))}</small></span>
+                      <StatusMark lane={documentLane(document)} />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            ) : resourceSettled(documentsState) ? <EmptyState icon={<FileText size={22} />} title="暂无工作文档" copy="这里只显示 Runtime 已登记的 WorkDocument。" /> : null}
+            {remainingLoadedDocuments ? <button className="paw-wb-pane__more" aria-label={`显示更多工作文档：${remainingLoadedDocuments} 项`} onClick={() => setVisibleDocumentCount((value) => value + 6)} type="button">显示已加载的更多 {Math.min(6, remainingLoadedDocuments)} 项</button> : null}
+            {!remainingLoadedDocuments && remainingUnloadedDocuments ? (
+              onNavigate ? <button className="paw-wb-pane__more" aria-label={`在工作文档中查看其余 ${remainingUnloadedDocuments} 项`} onClick={() => onNavigate('documents')} type="button">在工作文档中查看其余 {remainingUnloadedDocuments} 项<ArrowRight aria-hidden size={13} /></button> : <p className="paw-wb-pane__boundary">已加载全部 {documents.length} 项；其余 {remainingUnloadedDocuments} 项尚未加载。</p>
+            ) : null}
+          </section>
+
+          {goals.length ? (
+            <section className="paw-wb-pane" data-pane="goals">
+              <header>
+                <div><Network aria-hidden size={16} /><h2>目标层级</h2></div>
+                <div className="paw-wb-pane__scope"><span>{goals.length} 项</span></div>
+              </header>
+              <ol className="paw-wb-pane__goals">{goals.map((goal, index) => <li key={text(goal.id) || `goal-${index}`}><StatusMark lane={taskLane(goal)} /><span><strong title={text(goal.title) || '未命名目标'}>{text(goal.title) || '未命名目标'}</strong>{text(goal.detail) ? <small title={text(goal.detail)}>{text(goal.detail)}</small> : null}</span><em>{stateLabel(text(goal.status))}</em></li>)}</ol>
+            </section>
           ) : null}
-        </section>
+        </div>
       </div>
 
-      {goals.length ? (
-        <section className="paw-wb-goals">
-          <header><Network aria-hidden size={17} /><h2>目标层级</h2></header>
-          <ol>{goals.map((goal, index) => <li key={text(goal.id) || `goal-${index}`}><StatusMark lane={taskLane(goal)} /><span><strong title={text(goal.title) || '未命名目标'}>{text(goal.title) || '未命名目标'}</strong>{text(goal.detail) ? <small title={text(goal.detail)}>{text(goal.detail)}</small> : null}</span><em>{stateLabel(text(goal.status))}</em></li>)}</ol>
-        </section>
-      ) : null}
+      {/* Status ledger, not a project hero: workspace identity and the numbers
+          Runtime actually reported sit on the window's bottom rail. */}
+      <footer className="paw-wb-ledger">
+        <span aria-hidden className="paw-wb-ledger__mark"><FolderTree size={15} /></span>
+        <span className="paw-wb-ledger__identity">
+          <strong title={projectName}>{projectName}</strong>
+          {projectPath
+            ? <small className="paw-wb-mono" title={projectPath}>{projectPath}</small>
+            : <small>当前项目尚未提供工作区路径。</small>}
+        </span>
+        {metrics.length ? <dl className="paw-wb-metrics" aria-label="项目真实指标">{metrics.map((metric) => <Fact key={metric.label} label={metric.label} value={metric.value} />)}</dl> : null}
+        {repoFacts.length ? (
+          <details className="paw-wb-repo">
+            <summary>
+              <ChevronDown aria-hidden size={13} />
+              仓库与运行事实
+            </summary>
+            <dl className="paw-wb-project-facts">
+              {repoFacts.map((fact) => <Fact key={fact.label} label={fact.label} mono={fact.mono} value={fact.value} />)}
+            </dl>
+          </details>
+        ) : null}
+      </footer>
     </div>
   );
 }
@@ -594,6 +605,7 @@ function TaskOrchestration({
   const [taskQuery, setTaskQuery] = useState('');
   const trimmedTaskQuery = taskQuery.trim();
   const outlineTasks = trimmedTaskQuery ? tasks.filter((task) => matchesTask(task, trimmedTaskQuery)) : tasks;
+  const selectedLane = selectedTask ? taskLane(selectedTask) : null;
   return (
     <div className="paw-wb-orchestration">
       <aside className="paw-wb-outline">
@@ -639,6 +651,19 @@ function TaskOrchestration({
         {tasks.length ? (
           <div className="paw-wb-graph__viewport">
             <div className="paw-wb-graph__field" style={{ height: graph.height, width: graph.width }}>
+              {/* Lane ownership is drawn, not implied: each populated state owns a
+                  tinted column, and its header rides the vertical scroll. */}
+              <div aria-hidden className="paw-wb-graph__bands">
+                {graph.lanes.map((lane) => (
+                  <span
+                    className="paw-wb-graph__band"
+                    data-current={lane.lane === selectedLane || undefined}
+                    data-lane={lane.lane}
+                    key={lane.lane}
+                    style={{ '--paw-wb-lane-x': `${lane.x}px` } as CSSProperties}
+                  />
+                ))}
+              </div>
               <svg aria-hidden className="paw-wb-graph__edges" height={graph.height} viewBox={`0 0 ${graph.width} ${graph.height}`} width={graph.width}>
                 {graph.edges.map((edge) => <path className="paw-wb-graph__edge" d={edge.path} data-active={edge.active || undefined} key={edge.id} />)}
                 {graph.edges.filter((edge) => edge.active).map((edge) => (
@@ -647,18 +672,22 @@ function TaskOrchestration({
                   </circle>
                 ))}
               </svg>
-              {graph.lanes.map((lane) => (
-                <span
-                  className="paw-wb-graph__lane"
-                  data-lane={lane.lane}
-                  key={lane.lane}
-                  style={{ '--paw-wb-lane-x': `${lane.x}px` } as CSSProperties}
-                >
-                  <StatusMark lane={lane.lane} />
-                  {GRAPH_LANE_LABELS[lane.lane]}
-                  <em>{lane.count}</em>
-                </span>
-              ))}
+              <div className="paw-wb-graph__lanes">
+                {graph.lanes.map((lane) => (
+                  <span
+                    className="paw-wb-graph__lane"
+                    data-current={lane.lane === selectedLane || undefined}
+                    data-lane={lane.lane}
+                    key={lane.lane}
+                    style={{ '--paw-wb-lane-x': `${lane.x}px` } as CSSProperties}
+                    title={`${GRAPH_LANE_LABELS[lane.lane]}：${lane.count} 项`}
+                  >
+                    <StatusMark lane={lane.lane} />
+                    <b>{GRAPH_LANE_LABELS[lane.lane]}</b>
+                    <em>{lane.count}</em>
+                  </span>
+                ))}
+              </div>
               {graph.nodes.map((node) => (
                 <button
                   aria-label={`在依赖图中选择：${taskTitle(node.task)}`}
@@ -821,6 +850,8 @@ function WorkDocumentWorkspace({
         ) : resourceSettled(listState) ? <EmptyState icon={<FileText size={22} />} title={documentScope === 'history' ? '没有匹配的历史文档' : '暂无工作文档'} copy={documentScope === 'history' ? '调整筛选条件，或返回当前文档。' : '这里只投影 Runtime 已登记的文档。'} /> : null}
       </aside>
 
+      {/* A reader, not a scrolling page: the document header is fixed chrome and
+          only the authority body scrolls, so the title never leaves the pane. */}
       <main className="paw-wb-document-reader">
         {selectedDocument ? (
           <>
@@ -832,27 +863,33 @@ function WorkDocumentWorkspace({
                 <StateBadge lane={documentLane(selectedDocument)} label={stateLabel(text(selectedDocument.state) || 'active')} />
               </div>
             </header>
-            <ResourceNotice label="文档详情" onRefresh={onRefresh ? () => onRefresh('documentDetail') : undefined} state={detailState} />
-            <section className="paw-wb-document-reader__authority">
-              <ShieldCheck aria-hidden size={19} />
-              <p>文档承载已接受语义；运行状态、路径与 revision 由 Runtime 原样投影。</p>
-            </section>
-            <dl className="paw-wb-document-facts">
-              <Fact label="Authority" value={text(selectedDocument.authorityId) || '—'} mono />
-              <Fact label="Authority kind" value={authorityLabel(text(selectedDocument.authorityKind))} />
-              <Fact label="Authority revision" value={String(number(selectedDocument.authorityRevision))} />
-              <Fact label="Document revision" value={String(number(selectedDocument.documentRevision))} />
-              <Fact label="状态" value={stateLabel(text(selectedDocument.state) || 'active')} />
-              <Fact label="更新时间" value={updatedLabel(number(selectedDocument.updatedAtMs))} />
-              <Fact label="当前路径" value={text(selectedDocument.activePath) || text(selectedDocument.path) || '—'} mono wide />
-              <Fact label="Document ID" value={text(selectedDocument.documentId) || text(selectedDocument.id) || '—'} mono wide />
-              <Fact label="Authority key" value={text(selectedDocument.authorityKey) || '—'} mono wide />
-              {text(selectedDocument.contentSha256) ? <Fact label="内容校验" titleValue={text(selectedDocument.contentSha256)} value={shortHash(text(selectedDocument.contentSha256))} mono wide /> : null}
-            </dl>
-            {text(selectedDocument.error) ? <div className="paw-wb-document-error"><CircleAlert aria-hidden size={16} /><span>{text(selectedDocument.error)}</span></div> : null}
-            {resourceSettled(detailState) ? documentLifecycle : null}
+            <div className="paw-wb-document-reader__body">
+              <ResourceNotice label="文档详情" onRefresh={onRefresh ? () => onRefresh('documentDetail') : undefined} state={detailState} />
+              <section className="paw-wb-document-reader__authority">
+                <ShieldCheck aria-hidden size={19} />
+                <p>文档承载已接受语义；运行状态、路径与 revision 由 Runtime 原样投影。</p>
+              </section>
+              <dl className="paw-wb-document-facts">
+                <Fact label="Authority" value={text(selectedDocument.authorityId) || '—'} mono />
+                <Fact label="Authority kind" value={authorityLabel(text(selectedDocument.authorityKind))} />
+                <Fact label="Authority revision" value={String(number(selectedDocument.authorityRevision))} />
+                <Fact label="Document revision" value={String(number(selectedDocument.documentRevision))} />
+                <Fact label="状态" value={stateLabel(text(selectedDocument.state) || 'active')} />
+                <Fact label="更新时间" value={updatedLabel(number(selectedDocument.updatedAtMs))} />
+                <Fact label="当前路径" value={text(selectedDocument.activePath) || text(selectedDocument.path) || '—'} mono wide />
+                <Fact label="Document ID" value={text(selectedDocument.documentId) || text(selectedDocument.id) || '—'} mono wide />
+                <Fact label="Authority key" value={text(selectedDocument.authorityKey) || '—'} mono wide />
+                {text(selectedDocument.contentSha256) ? <Fact label="内容校验" titleValue={text(selectedDocument.contentSha256)} value={shortHash(text(selectedDocument.contentSha256))} mono wide /> : null}
+              </dl>
+              {text(selectedDocument.error) ? <div className="paw-wb-document-error"><CircleAlert aria-hidden size={16} /><span>{text(selectedDocument.error)}</span></div> : null}
+              {resourceSettled(detailState) ? documentLifecycle : null}
+            </div>
           </>
-        ) : <EmptyState icon={<ExternalLink size={25} />} title="选择一份工作文档" copy="详情只显示文档合同已有的权威、revision、路径与状态。" />}
+        ) : (
+          <div className="paw-wb-document-reader__body">
+            <EmptyState icon={<ExternalLink size={25} />} title="选择一份工作文档" copy="详情只显示文档合同已有的权威、revision、路径与状态。" />
+          </div>
+        )}
       </main>
     </div>
   );

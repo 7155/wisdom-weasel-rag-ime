@@ -1737,7 +1737,10 @@ function fxActivityHint(
     : activity.kind === 'turn_failed'
       ? publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。')
       : publicActivitySummary(publicProgressSummary(activity.summary, activity), label);
-  const hint = boundedInlineSummary(raw, 96);
+  // The row is one lane wide and ellipsises in CSS, so the bound only has to
+  // stop an unbounded receipt from riding in the DOM — not decide how much of
+  // it the reader gets to see. 96 characters was doing the latter.
+  const hint = boundedInlineSummary(raw, 200);
   return hint === label || hint === `${label}已更新` ? '' : hint;
 }
 

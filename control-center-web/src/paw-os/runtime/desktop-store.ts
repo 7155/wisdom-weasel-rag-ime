@@ -199,7 +199,8 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
         const leavingFocusedRoom = previousRoomId
           && state.collaborationFocusGroup === `room:${previousRoomId}`
           && (target?.kind !== 'room' || target.id !== previousRoomId);
-        return {
+        const rebound: PawDesktopState = {
+          ...state,
           windows: {
             ...state.windows,
             [windowId]: {
@@ -209,10 +210,25 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
               title,
             },
           },
-          ...(leavingFocusedRoom ? {
-            collaborationFocusGroup: null,
-            collaborationFocusReturnWindowId: null,
-          } : {}),
+        };
+        const leftGroup = satelliteOwnerGroup(mainWindow.target);
+        const orphaned = leftGroup && leftGroup !== satelliteOwnerGroup(target)
+          ? orphanedSatelliteIds(rebound, leftGroup, windowId)
+          : new Set<string>();
+        if (!orphaned.size) {
+          return {
+            windows: rebound.windows,
+            ...(leavingFocusedRoom ? {
+              collaborationFocusGroup: null,
+              collaborationFocusReturnWindowId: null,
+            } : {}),
+          };
+        }
+        /* 主窗离开这个 Room 就是父窗离场，卫星跟着走；但导航不是「关掉桌面
+           总览」这个动作，overview 保持用户自己留下的状态。 */
+        return {
+          ...closeWindowsWhere(rebound, (node) => orphaned.has(node.id)),
+          overviewOpen: state.overviewOpen,
         };
       });
     },
@@ -233,7 +249,13 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
       });
     },
     closeWindow(windowId) {
-      set((state) => closeWindowsWhere(state, (node) => node.id === windowId));
+      set((state) => {
+        const closing = state.windows[windowId];
+        const orphaned = closing
+          ? orphanedSatelliteIds(state, satelliteOwnerGroup(closing.target), windowId)
+          : new Set<string>();
+        return closeWindowsWhere(state, (node) => node.id === windowId || orphaned.has(node.id));
+      });
     },
     closeAppWindows(appId) {
       set((state) => closeWindowsWhere(state, (node) => node.appId === appId));
@@ -450,6 +472,35 @@ export function satelliteGroup(target?: PawOsWindowTarget): string {
   if (target?.kind === 'subagent') return `session:${target.sessionId}`;
   if ((target?.kind === 'process-terminal' || target?.kind === 'browser-target') && target.roomId) return `room:${target.roomId}`;
   return '';
+}
+
+/**
+ * 谁是这组卫星的原点：主 Room 窗与主 Session 窗自己就是恒星，卫星（伙伴、
+ * Room 面板、subagent）绕着它转，不会再拥有下一层卫星。返回值与
+ * `satelliteGroup` 同一套键，所以「父窗」和「它的卫星」永远说同一种话。
+ */
+function satelliteOwnerGroup(target?: PawOsWindowTarget): string {
+  if (target?.kind === 'room' && !target.panel) return `room:${target.id}`;
+  if (target?.kind === 'session') return `session:${target.id}`;
+  return '';
+}
+
+/**
+ * 父窗离场后会被留在桌面上的卫星窗。Designer 的合同是「关掉 Room 就顺带
+ * 关掉卫星」：恒星没了，行星不该继续飘着。同一个 Room 还开着另一扇主窗时
+ * 卫星仍有原点，这时不做级联；无关的 App 窗口从来不在这组键里。
+ */
+function orphanedSatelliteIds(state: PawDesktopState, group: string, leavingWindowId: string): Set<string> {
+  if (!group) return new Set();
+  const anotherOwner = Object.values(state.windows).some((node) => (
+    node.id !== leavingWindowId && satelliteOwnerGroup(node.target) === group
+  ));
+  if (anotherOwner) return new Set();
+  return new Set(
+    Object.values(state.windows)
+      .filter((node) => satelliteGroup(node.target) === group)
+      .map((node) => node.id),
+  );
 }
 
 function isAgentSatellite(target?: PawOsWindowTarget): boolean {

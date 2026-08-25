@@ -23,8 +23,11 @@ test.describe('PAWOS App interface audit (ops)', () => {
   });
 
   test('each registered App opens with a usable window surface', async ({ page }, testInfo) => {
-    test.setTimeout(180_000);
-    await page.goto('/#/project-field');
+    test.setTimeout(240_000);
+    // Without the preview transport every request hits a local port nothing is
+    // listening on, so the audit would grade eleven read-failure states instead
+    // of the product.
+    await page.goto('/?controlTransport=mock#/project-field');
     await expect(page.locator('.paw-desktop-root')).toBeVisible({ timeout: 30_000 });
 
     const evidence: AppAuditEvidence[] = [];
@@ -33,18 +36,10 @@ test.describe('PAWOS App interface audit (ops)', () => {
       await openAppFromLaunchpad(page, app.label);
       const shell = page.locator(`.paw-window-shell[data-app="${app.id}"]`).last();
       await expect(shell).toBeVisible({ timeout: 15_000 });
-      await page.waitForTimeout(280);
+      await settleAppWindow(page, app.id);
 
       const audit = await collectAppEvidence(page, app.id, app.label);
       evidence.push(audit);
-
-      expect(audit.windowVisible, `${app.id} window did not render`).toBe(true);
-      expect(audit.windowWidth, `${app.id} window too narrow`).toBeGreaterThan(320);
-      expect(audit.windowHeight, `${app.id} window too short`).toBeGreaterThan(240);
-      expect(audit.mainTextLength, `${app.id} rendered an empty surface`).toBeGreaterThan(6);
-      expect(audit.interactiveCount, `${app.id} exposes no controls`).toBeGreaterThan(0);
-      expect(audit.errorAlerts, `${app.id} shows error alerts`).toEqual([]);
-      expect(audit.issues, `${app.id} audit issues`).toEqual([]);
 
       await testInfo.attach(`paw-os-${app.id}.png`, {
         body: await shell.screenshot({ animations: 'disabled' }),
@@ -58,15 +53,46 @@ test.describe('PAWOS App interface audit (ops)', () => {
       body: JSON.stringify(evidence, null, 2),
       contentType: 'application/json',
     });
+
+    // One App failing must not hide the other ten: every window is graded, then
+    // the whole audit reports together.
+    expect(
+      evidence.filter((item) => item.issues.length).map((item) => `${item.appId}: ${item.issues.join('; ')}`),
+      'PAWOS App audit issues',
+    ).toEqual([]);
   });
 });
 
 async function openAppFromLaunchpad(page: Page, label: string): Promise<void> {
-  await page.getByRole('button', { name: '全部 App' }).click();
+  // The menu-bar system mark opens the same Launchpad ("打开全部 App"), so the
+  // Dock button has to be named exactly or the audit stops on an ambiguity.
+  await page.getByRole('button', { name: '全部 App', exact: true }).click();
   const launcher = page.getByRole('dialog', { name: '全部 App' });
   await expect(launcher).toBeVisible();
   await launcher.getByRole('button', { name: new RegExp(label) }).click();
   await expect(launcher).toBeHidden({ timeout: 5_000 });
+}
+
+/**
+ * A window is ready to grade once its App body has replaced the open-progress
+ * status and no read is still pending. Grading on a fixed timeout measures the
+ * machine, not the interface.
+ */
+async function settleAppWindow(page: Page, appId: PawOsAppId): Promise<void> {
+  const shell = page.locator(`.paw-window-shell[data-app="${appId}"]`).last();
+  // Two boot states, not one: `.paw-app-boot` waits for the App chunk and
+  // `.paw-app-loading` for whatever that chunk lazily loads next. Grading
+  // after only the second still grades an opening window.
+  await expect
+    .poll(() => shell.locator('.paw-app-boot, .paw-app-loading').count(), { timeout: 20_000 })
+    .toBe(0);
+  await expect
+    .poll(
+      () => shell.locator('.mgmt-loading, [aria-busy="true"], .ui-skeleton').count(),
+      { timeout: 20_000 },
+    )
+    .toBe(0);
+  await page.waitForTimeout(160);
 }
 
 async function closeTopWindow(page: Page): Promise<void> {
@@ -79,7 +105,11 @@ async function closeTopWindow(page: Page): Promise<void> {
 
 async function collectAppEvidence(page: Page, appId: PawOsAppId, label: string): Promise<AppAuditEvidence> {
   return page.locator(`.paw-window-shell[data-app="${appId}"]`).last().evaluate((shell, values) => {
-    const main = shell.querySelector('main') || shell;
+    // `main` means a different scope in every App — the whole workspace in
+    // one, only the preview pane or the page viewport in another — so grading
+    // it compares Apps against different questions. The window body is the
+    // unit the user actually opened.
+    const main = shell.querySelector('.paw-window-body') || shell.querySelector('main') || shell;
     const isVisible = (element: Element) => {
       const style = getComputedStyle(element as HTMLElement);
       const rect = (element as HTMLElement).getBoundingClientRect();

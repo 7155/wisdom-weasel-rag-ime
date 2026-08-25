@@ -1061,8 +1061,15 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
               </div>
             </div>
           ) : !electronHost ? (
-            <div className="paw-browser-awaiting">
-              <RefreshCw className={busy ? 'ui-spin' : ''} size={18} />
+            /* Outside the desktop host there is no guest to embed, so the page
+               is whatever Runtime last captured. A bare reload glyph left the
+               reader staring at a blank sheet with nothing explaining it. */
+            <div className="paw-browser-awaiting" role="status">
+              <RefreshCw aria-hidden="true" className={busy ? 'ui-spin' : ''} size={18} />
+              <span>
+                <strong>{busy ? '正在获取页面画面' : '还没有这一页的画面'}</strong>
+                <small>当前环境不能直接内嵌网页，显示的是 Runtime 抓取的页面画面。</small>
+              </span>
               <button disabled={Boolean(busy)} onClick={() => void captureSnapshot(selectedTabId)} type="button">重新载入</button>
             </div>
           ) : null}

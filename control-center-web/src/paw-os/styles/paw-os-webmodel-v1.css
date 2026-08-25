@@ -73,8 +73,7 @@
   .agent-user-message-shell,
   .agent-assistant-turn,
   .agent-activity-group,
-  .agent-turn__failure,
-  .agent-turn-tombstone
+  .agent-turn__failure
 )::before {
   display: none;
 }
@@ -165,17 +164,20 @@
   }
 }
 
+/* 「这个应该不要方框的，方框导致信息太少」：the activity group is a run of rows
+   in the transcript flow. A card here cost a border, a radius, an inset fill and
+   a 680px clamp, which is exactly the width the tool name and its object need. */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] :is(
   .agent-activity-group,
   details.agent-activity--inline
 ) {
-  width: min(100%, 680px);
+  width: 100%;
   margin: 2px 0 12px;
-  overflow: hidden;
-  border: 1px solid var(--an-hairline);
-  border-radius: 13px;
-  background: rgb(255 255 255 / .72);
-  box-shadow: 0 5px 16px rgb(24 32 43 / .035);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] details.agent-activity--inline > summary {
@@ -184,10 +186,8 @@
   background: transparent;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] details.agent-activity--inline[open] > summary {
-  border-bottom: 1px solid var(--an-hairline);
-  background: #f7f9fc;
-}
+/* No `[open]` rule follows on purpose: opening adds the disclosed rows, not a
+   header band under the summary. */
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity__inline-timeline {
   padding: 5px 10px 7px;
@@ -223,10 +223,10 @@
   line-height: 1.5;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] :is(
-  .agent-tool-request,
-  .agent-tool-result-panel
-) {
+/* One boundary around the 原文. .agent-tool-request only ever renders inside
+   .agent-tool-result-panel, so giving it its own card drew a second frame
+   around the same evidence. */
+.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-tool-result-panel {
   border: 1px solid var(--an-hairline);
   border-radius: 10px;
   background: #fff;

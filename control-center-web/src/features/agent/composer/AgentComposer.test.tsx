@@ -338,6 +338,52 @@ describe('AgentComposer macOS input methods', () => {
     expect(view.getByRole('button', { name: '添加附件' })).toBeEnabled();
   });
 
+  it('does not offer 排队 for a draft the queue cannot hold', () => {
+    const onQueue = vi.fn(() => true);
+    const onSend = vi.fn();
+    const { container } = render(
+      <TooltipProvider>
+        <AgentComposer
+          draft=""
+          attachments={[{ id: 'a1', name: '设计稿.png', mimeType: 'image/png', byteSize: 2048, source: 'picker' }]}
+          session={previewSessions[0]}
+          commands={[]}
+          tools={[]}
+          toolCatalogStatus="ready"
+          imageSupport="supported"
+          busy
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={() => {}}
+          onToolSelect={() => {}}
+          onProductCommand={() => {}}
+          onSend={onSend}
+          onStop={() => {}}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
+          onModelChange={() => {}}
+          onQueue={onQueue}
+        />
+      </TooltipProvider>,
+    );
+
+    const view = within(container);
+    fireEvent.click(view.getByRole('radio', { name: '排队' }));
+    expect(
+      view.getByRole('button', { name: '排队，当前回合结束后发送（排队只保留文字，附件请用干预或接续直接发送）' }),
+    ).toBeDisabled();
+
+    const composer = view.getByRole('textbox', { name: '消息' });
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
+    expect(onQueue).not.toHaveBeenCalled();
+
+    // 接续 does carry the attachment, so Alt+Enter still has somewhere to go.
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', altKey: true });
+    expect(onSend).toHaveBeenLastCalledWith('followUp', '');
+  });
+
   it('accepts pasted non-image files and shows a type badge instead of a broken thumbnail', () => {
     const onPasteImages = vi.fn();
     const { container } = render(

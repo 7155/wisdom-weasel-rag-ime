@@ -3,6 +3,9 @@ import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import type { PawAppId } from '../runtime/app-registry';
 import { pawApp } from '../runtime/app-registry';
 import { PawAppIcon } from '../shell/PawAppIcon';
+// Eager: the boot state below is what the window shows while the App chunk —
+// and everything it imports, including paw-apps.css — is still loading.
+import './paw-app-boot.css';
 
 const PawAppBody = lazy(async () => ({
   default: (await import('./PawAppsRuntime')).PawAppBody,

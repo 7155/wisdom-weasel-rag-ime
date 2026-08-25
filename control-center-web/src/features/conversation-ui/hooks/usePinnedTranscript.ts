@@ -1,12 +1,28 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import {
+  captureTranscriptAnchor,
+  resolveAnchorScrollTop,
+  type TranscriptAnchor,
+  type TranscriptRowGeometry,
+} from '@/features/agent/timeline/chat-ui-kit';
 
 /* Vendored clean-room scroll behaviour. See ../ATTRIBUTION.md. */
 
 export interface ScrollAnchor {
   pinned: boolean;
-  messageId?: string;
-  offsetFromViewportTop?: number;
-  fallbackScrollTop?: number;
+  /** Row anchor from the shared chat-ui-kit core; absent when pinned. */
+  row?: TranscriptAnchor;
+}
+
+function messageRowGeometry(scroller: HTMLElement): TranscriptRowGeometry[] {
+  const scrollerTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
+  return [...scroller.querySelectorAll<HTMLElement>('[data-message-id]')]
+    .flatMap((element, index) => {
+      const key = element.dataset.messageId;
+      if (!key) return [];
+      const box = element.getBoundingClientRect();
+      return [{ key, top: box.top - scrollerTop, height: box.height, index }];
+    });
 }
 
 /**
@@ -17,6 +33,7 @@ export interface ScrollAnchor {
 export function usePinnedTranscript(
   scrollRef: RefObject<HTMLElement | null>,
   contentRef: RefObject<HTMLElement | null>,
+  conversationId = '',
 ) {
   const [isPinned, setPinned] = useState(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
@@ -103,17 +120,13 @@ export function usePinnedTranscript(
   const captureAnchor = useCallback((): ScrollAnchor => {
     const scroller = scrollRef.current;
     if (!scroller || pinnedRef.current) return { pinned: pinnedRef.current };
-    const viewportTop = scroller.getBoundingClientRect().top;
-    const rows = [...scroller.querySelectorAll<HTMLElement>('[data-message-id]')];
-    const row = rows.find((element) => element.getBoundingClientRect().bottom > viewportTop);
-    if (!row?.dataset.messageId) return { pinned: false };
-    return {
-      pinned: false,
-      messageId: row.dataset.messageId,
-      offsetFromViewportTop: row.getBoundingClientRect().top - viewportTop,
-      fallbackScrollTop: scroller.scrollTop,
-    };
-  }, [scrollRef]);
+    const row = captureTranscriptAnchor({
+      conversationId,
+      rows: messageRowGeometry(scroller),
+      scrollTop: scroller.scrollTop,
+    });
+    return row ? { pinned: false, row } : { pinned: false };
+  }, [conversationId, scrollRef]);
 
   const restoreAnchor = useCallback((anchor: ScrollAnchor) => {
     const scroller = scrollRef.current;
@@ -123,16 +136,22 @@ export function usePinnedTranscript(
       return;
     }
     updatePinned(false);
-    if (anchor.fallbackScrollTop !== undefined) scroller.scrollTop = anchor.fallbackScrollTop;
-    const messageId = anchor.messageId;
-    if (!messageId) return;
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const row = scroller.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
-      if (!row) return;
-      const viewportTop = scroller.getBoundingClientRect().top;
-      const actualOffset = row.getBoundingClientRect().top - viewportTop;
-      scroller.scrollTop += actualOffset - (anchor.offsetFromViewportTop ?? 0);
-    }));
+    const row = anchor.row;
+    if (!row) return;
+    const apply = () => {
+      /* Resolved against live geometry: an anchored message that was retried,
+         forked or pruned away restores to the row that took its position
+         rather than to a pixel offset that no longer means anything. */
+      const restored = resolveAnchorScrollTop({
+        anchor: row,
+        rows: messageRowGeometry(scroller),
+        maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+      });
+      scroller.scrollTop = restored.scrollTop;
+    };
+    apply();
+    // Rows measured before the transcript settles are still estimates.
+    requestAnimationFrame(() => requestAnimationFrame(apply));
   }, [scrollRef, scrollToBottom, updatePinned]);
 
   return {

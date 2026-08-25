@@ -42,6 +42,15 @@ under MIT (see the `LICENSE` file next to the reference).
   CJK text: ideographs and kana are complete display units with no space
   delimiters, so the "do not show half a Latin word" space-seek would
   otherwise pin the reveal to the last ASCII space far behind the tail.
+- `safeInlineBoundary.ts` also carries two items adopted from
+  `paw-agent-chat-ui-kit`'s `src/core/markdown/reveal.ts`
+  (`paw-agent-chat-ui-kit-source.zip` at the repository root, MIT): the
+  adaptive catch-up step in `advanceToSafeBoundary`, which scales to a quarter
+  of the backlog instead of stepping a fixed 40 characters per tick, and
+  `remapVisibleOffsetAfterEdit`, which keeps the reveal position across a
+  retry/edit/rewrite that replaces a leading region. `useSafeTextRelease.ts`
+  previously collapsed to the common prefix on any non-append change and
+  replayed the whole reveal from there.
 
 ## Deliberately not vendored
 

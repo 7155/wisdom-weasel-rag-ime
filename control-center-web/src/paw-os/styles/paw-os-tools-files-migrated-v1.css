@@ -274,6 +274,65 @@
   color: #c51b2f;
 }
 
+/* The awaiting state kept its pre-migration dark-surface ink (#94a3b8 copy on
+   a near-white #e2e8f0 button) while the page behind it became white, leaving
+   an unreadable control floating on a blank sheet. It is the same kind of card
+   as the failure above, so it is paired the same way. */
+.paw-desktop-root .paw-browser-awaiting {
+  width: min(460px, calc(100% - 32px));
+  height: max-content;
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--paw-browser-line);
+  border-radius: 12px;
+  background: #fff;
+  color: #64737d;
+  text-align: left;
+  box-shadow: 0 12px 32px rgb(15 23 42 / 10%);
+}
+
+.paw-desktop-root .paw-browser-awaiting > svg { color: var(--paw-browser-ink); }
+
+.paw-desktop-root .paw-browser-awaiting > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.paw-desktop-root .paw-browser-awaiting strong {
+  color: var(--paw-browser-ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.paw-desktop-root .paw-browser-awaiting small {
+  color: #64737d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.paw-desktop-root .paw-browser-awaiting button {
+  min-height: 30px;
+  padding-inline: 11px;
+  border: 1px solid var(--paw-browser-line);
+  border-radius: 8px;
+  background: #f3f6f7;
+  color: var(--paw-browser-ink);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.paw-desktop-root .paw-browser-awaiting button:disabled {
+  color: #8a97a0;
+  cursor: default;
+}
+
 .paw-desktop-root .paw-browser-error strong {
   color: var(--paw-browser-ink);
   font-size: 14px;

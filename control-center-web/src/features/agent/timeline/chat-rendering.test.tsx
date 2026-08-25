@@ -12,7 +12,6 @@ import {
   AgentTurn,
   activityDisplayRuns,
   agentDeliveryFeedback,
-  agentScrollSeekConfiguration,
   agentTurnMarkerKind,
   estimatedStreamingTokens,
   interleavedTurnEntries,
@@ -1194,13 +1193,6 @@ describe('Agent chat rendering', () => {
     expect(agentRendererPolicy('html')).toBeUndefined();
     expect(agentRendererPolicy('script')).toBeUndefined();
     expect(Object.values(TRUSTED_AGENT_RENDERERS).every((item) => !item.executableContent)).toBe(true);
-  });
-
-  it('uses measured tombstones only while the user scrolls quickly', () => {
-    expect(agentScrollSeekConfiguration.enter(901)).toBe(true);
-    expect(agentScrollSeekConfiguration.enter(300)).toBe(false);
-    expect(agentScrollSeekConfiguration.exit(119)).toBe(true);
-    expect(agentScrollSeekConfiguration.exit(500)).toBe(false);
   });
 
   it('removes stale segment cursors while a turn is waiting for confirmation', () => {

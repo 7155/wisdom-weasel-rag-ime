@@ -223,11 +223,20 @@ describe('PAWOS native Apps', () => {
     renderNative('knowledge', transport);
 
     expect(await screen.findByRole('heading', { level: 1, name: '知识库' })).toBeInTheDocument();
-    expect(await screen.findByRole('combobox', { name: '当前知识库' })).toHaveTextContent('产品资料库');
-    const baseHeading = await screen.findByRole('heading', { level: 2, name: '产品资料库' });
-    const baseHeader = baseHeading.closest('header');
-    expect(baseHeader).not.toBeNull();
-    expect(within(baseHeader as HTMLElement).getByText('12')).toBeInTheDocument();
+
+    // A window this wide reads its selection from the rail, so the band states
+    // the library once and the workspace starts right below it — no second
+    // header sheet repeating the same name and counts.
+    const band = await screen.findByRole('region', { name: '切换文档知识库' });
+    expect(within(band).getByText('产品资料库')).toBeInTheDocument();
+    expect(within(band).getByLabelText('12 个文件，0 个段落')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: '产品资料库' })).toBeNull();
+
+    // The rail is the wide-window selector; its rows are virtualised, so only
+    // its index header is measurable here.
+    const rail = await screen.findByRole('complementary', { name: '文档知识库' });
+    expect(within(rail).getByText('1 个独立库')).toBeInTheDocument();
+    expect(within(rail).queryByRole('button', { name: '刷新知识库' })).toBeNull();
     expect(transport.requests.map(({ request }) => request.pathId)).toContain('knowledgeBases.get');
   });
 

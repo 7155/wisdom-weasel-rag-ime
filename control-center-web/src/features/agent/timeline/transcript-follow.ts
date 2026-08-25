@@ -11,7 +11,7 @@
 
 export type TranscriptFollowMode = 'following' | 'detached';
 
-export type TranscriptDetachReason = 'user-scroll' | 'jump-to-message';
+export type TranscriptDetachReason = 'user-scroll' | 'jump-to-message' | 'selection';
 
 export interface TranscriptFollowState {
   readonly mode: TranscriptFollowMode;
@@ -27,6 +27,24 @@ export type TranscriptFollowEvent =
   | { type: 'jump-to-latest' }
   | { type: 'prompt-submitted' }
   | { type: 'conversation-switched' };
+
+/**
+ * True when the live selection intersects the transcript root.
+ *
+ * Submitting a prompt normally claims the end of the transcript, but a reader
+ * who is mid-selection is quoting or copying an earlier turn, and jumping
+ * collapses that highlight under them. The transcript then stays where it is
+ * and the unseen count reports the new turn instead.
+ */
+export function transcriptHasLiveSelection(root: ParentNode | null | undefined): boolean {
+  if (!root || typeof document === 'undefined') return false;
+  const selection = document.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount < 1) return false;
+  const range = selection.getRangeAt(0);
+  const common = range.commonAncestorContainer;
+  const node = common.nodeType === Node.ELEMENT_NODE ? common as Element : common.parentElement;
+  return Boolean(node && root.contains(node));
+}
 
 export const FOLLOWING_TRANSCRIPT: TranscriptFollowState = Object.freeze({
   mode: 'following',

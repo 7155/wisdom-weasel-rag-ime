@@ -206,16 +206,22 @@
 
 /* 视图切换：与 Room 窗口 chrome（.paw-room-window-chrome > nav）同一枚
    分段控件语言——同槽色、同活动白片、同尺寸，portal 进标题栏后
-   「对话 / Agent 轨迹 / 星空」与 Room 的「对话 / 星图 / 治理」不再是两套 UI。 */
+   「对话 / Agent 轨迹 / 星空」与 Room 的「对话 / 星图 / 治理」不再是两套 UI。
+
+   取色来自 OS 的 chrome token，而不是 v1 基线带进来的私有暖褐色。这条
+   header 被 portal 进 .paw-window-titlebar，已经不在 .paw-session-workspace
+   的作用域里，--paw-chat-* 取不到——于是它此前退回写死的 rgb(42 28 0) 与
+   #2c2c2b，在一条冷灰蓝的标题栏里显出第二种黑。--paw-chrome-* 正是为窗口
+   furniture 准备的，且在 .paw-desktop-root 上，portal 之后依然解析得到。 */
 .paw-desktop-root .paw-session-workspace__view-switch {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border: 1px solid rgb(42 28 0 / .055);
+  border: 1px solid var(--paw-line-soft);
   border-radius: 8px;
-  background: rgb(42 28 0 / .035);
+  background: color-mix(in srgb, var(--paw-chrome-ink) 4%, transparent);
   box-shadow: none;
 }
 
@@ -233,7 +239,7 @@
   padding: 0 9px;
   border: 0;
   border-radius: 6px;
-  color: #7d7a75;
+  color: var(--paw-chrome-muted);
   background: transparent;
   font-size: 12.5px;
   font-weight: 550;
@@ -244,7 +250,7 @@
 
 .paw-desktop-root .paw-session-workspace__view-switch button:hover,
 .paw-desktop-root .paw-session-workspace__tools > button:hover {
-  color: #2c2c2b;
+  color: var(--paw-chrome-ink);
 }
 
 .paw-desktop-root .paw-session-workspace__view-switch button:active,
@@ -252,16 +258,13 @@
   transform: scale(.97);
 }
 
-.paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'] {
-  color: #2c2c2b;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(42 28 0 / .08), 0 0 0 1px rgb(42 28 0 / .04);
-}
-
+.paw-desktop-root .paw-session-workspace__view-switch button[aria-pressed='true'],
 .paw-desktop-root .paw-session-workspace__tools[data-open] > button {
-  color: #2c2c2b;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(42 28 0 / .08), 0 0 0 1px rgb(42 28 0 / .04);
+  color: var(--paw-chrome-ink);
+  background: var(--paw-panel);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--paw-chrome-ink) 8%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--paw-chrome-ink) 5%, transparent);
 }
 
 .paw-desktop-root .paw-session-workspace__tools > nav {
@@ -276,8 +279,8 @@
   padding: 6px;
   border: 1px solid var(--paw-chat-border);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 14px 36px rgb(36 31 27 / 16%);
+  background: var(--paw-panel);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--paw-chrome-ink) 16%, transparent);
 }
 
 .paw-desktop-root .paw-session-workspace__tools > nav > button {
@@ -522,26 +525,30 @@
   font-size: 13px;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity-row__details,
+/* 「这个应该不要方框的，方框导致信息太少」：an opened step is a row in the
+   document flow, not a card. Indent carries the disclosure depth, so the width
+   a plate used to spend on border, radius and inset goes back to the text. */
+.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity-row__details {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Raw Tool output keeps exactly one hairline boundary around the 原文 — the
+   same single container the fx layer draws, not a floating white card. */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-tool-result-panel {
-  margin: 6px 0 0 20px;
+  margin: 8px 0 0;
   border: 1px solid var(--paw-chat-border);
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 2px 4px rgb(0 0 0 / 4%);
+  border-radius: var(--paw-chat-radius-tool);
+  background: var(--paw-chat-surface);
+  box-shadow: none;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity--inline[open] {
-  border: 1px solid var(--paw-chat-border);
-  background: #fff;
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity--inline[open] > summary {
-  width: 100%;
-  border-bottom: 1px solid var(--paw-chat-border);
-  border-radius: 8px 8px 0 0;
-  background: var(--paw-chat-surface-subtle);
-}
+/* No `[open]` rule follows on purpose: the disclosure dressing above holds for
+   both states, so opening reveals rows instead of a card header around them. */
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity__inline-timeline {
   padding: 7px;
@@ -984,16 +991,17 @@
   outline-offset: 1px;
 }
 
+/* 选中的筛选此前用一枚暖炭灰，落在这套冷调蓝灰表面上是另一种黑。 */
 .paw-agent-trace-v1__filters button[aria-pressed='true'] {
-  border-color: #2c2c2b;
+  border-color: var(--paw-chat-text);
   color: #fff;
-  background: #2c2c2b;
+  background: var(--paw-chat-text);
 }
 
 .paw-agent-trace-v1__filters button[aria-pressed='true']:hover {
-  border-color: #3d3d3b;
+  border-color: color-mix(in srgb, var(--paw-chat-text) 84%, #fff);
   color: #fff;
-  background: #3d3d3b;
+  background: color-mix(in srgb, var(--paw-chat-text) 84%, #fff);
 }
 
 .paw-agent-trace-v1__filters button span {
@@ -1004,27 +1012,35 @@
 
 .paw-agent-trace-v1__turns {
   display: grid;
-  gap: 16px;
+  gap: 0;
   width: min(860px, 100%);
   margin: 0 auto;
 }
 
+/* 一轮是文档里的一节，不是一张卡片。外框、圆角、阴影和头部底色一共叠了四层
+   chrome 去说明「这些行属于同一轮」，而一条规则线加一个标题就说完了；省下的
+   宽度和高度全部还给事件行。 */
 .paw-agent-trace-v1__turn {
   overflow: hidden;
-  border: 1px solid var(--paw-chat-border);
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 2%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .paw-agent-trace-v1__turn > header {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-height: 38px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--paw-chat-border);
-  background: #f8f8f7;
+  min-height: 30px;
+  padding: 10px 3px 4px;
+  border-top: 1px solid var(--paw-chat-border);
+  background: transparent;
+}
+
+.paw-agent-trace-v1__turn:first-child > header {
+  padding-top: 2px;
+  border-top: 0;
 }
 
 .paw-agent-trace-v1__turn > header strong {
@@ -1045,12 +1061,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 状态是一个词，不是一枚徽章：每行一枚填充胶囊，在密集的事件树里既是卡片
+   语汇，也吃掉标题与摘要的可读宽度。颜色本身已经说清了状态。 */
 .paw-agent-trace-v1__turn > header > i,
 .paw-agent-trace-v1__event > summary > i {
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: 0;
+  border-radius: 0;
   color: var(--paw-chat-text-secondary);
-  background: var(--paw-chat-surface-subtle);
+  background: transparent;
   font-size: 12px;
   font-style: normal;
   white-space: nowrap;
@@ -1059,33 +1077,31 @@
 .paw-agent-trace-v1__turn > header > i[data-status='completed'],
 .paw-agent-trace-v1__turn li[data-status='completed'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-ok);
-  background: rgb(31 157 77 / 9%);
 }
 
 .paw-agent-trace-v1__turn > header > i[data-status='running'],
 .paw-agent-trace-v1__turn li[data-status='running'] .paw-agent-trace-v1__event > summary > i,
 .paw-agent-trace-v1__turn li[data-status='streaming'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-accent);
-  background: rgb(39 131 222 / 9%);
 }
 
 .paw-agent-trace-v1__turn > header > i[data-status='waiting'],
 .paw-agent-trace-v1__turn li[data-status='waiting'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-warn);
-  background: rgb(178 106 0 / 9%);
 }
 
 .paw-agent-trace-v1__turn > header > i[data-status='failed'],
 .paw-agent-trace-v1__turn li[data-status='failed'] .paw-agent-trace-v1__event > summary > i {
   color: var(--paw-chat-danger);
-  background: rgb(205 60 58 / 9%);
 }
 
 .paw-agent-trace-v1__turn ol {
   position: relative;
   display: grid;
   margin: 0;
-  padding: 8px 12px 10px;
+  /* Inline padding holds the tree spine's 75px offset; only the vertical
+     padding is the turn card's leftover breathing room. */
+  padding: 2px 12px 6px;
   list-style: none;
 }
 
@@ -1166,19 +1182,21 @@
   background: #fff;
 }
 
+/* 节点的填充必须由描边的那枚 token 调出来。写死的 rgb() 与它旁边的
+   token 是两种蓝、两种紫，同一枚小圆点上就能看出色板对不齐。 */
 .paw-agent-trace-v1__turn li[data-category='tool'] .paw-agent-trace-v1__node {
   border-color: var(--paw-chat-accent);
-  background: rgb(39 131 222 / 12%);
+  background: color-mix(in srgb, var(--paw-chat-accent) 12%, #fff);
 }
 
 .paw-agent-trace-v1__turn li[data-category='appr'] .paw-agent-trace-v1__node {
   border-color: var(--paw-chat-warn);
-  background: rgb(178 106 0 / 12%);
+  background: color-mix(in srgb, var(--paw-chat-warn) 12%, #fff);
 }
 
 .paw-agent-trace-v1__turn li[data-category='sub'] .paw-agent-trace-v1__node {
   border-color: var(--paw-chat-violet);
-  background: rgb(137 68 171 / 12%);
+  background: color-mix(in srgb, var(--paw-chat-violet) 12%, #fff);
 }
 
 .paw-agent-trace-v1__event-type {
@@ -1283,25 +1301,35 @@
 
 .paw-agent-trace-v1__payloads {
   display: grid;
-  gap: 6px;
+  gap: 0;
 }
 
+/* 证据卡里再套一圈卡片：调用参数、过程记录、工具返回本来就是这张卡的三段，
+   给每段再画一遍边框和底色，等于把同一条边界画了两次，也把 pre 的可读宽度
+   又收窄了一圈。分段改用一条细线，原文自己仍是有界的阅读器。 */
 .paw-agent-trace-v1__payload {
   overflow: hidden;
-  border: 1px solid var(--paw-chat-border);
-  border-radius: 7px;
-  background: var(--paw-chat-surface-subtle);
+  border: 0;
+  border-top: 1px solid var(--paw-chat-border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .paw-agent-trace-v1__payload > summary {
   display: grid;
-  min-height: 36px;
+  min-height: 30px;
   grid-template-columns: minmax(0, 1fr) auto 15px;
   align-items: center;
   gap: 8px;
-  padding: 6px 9px;
+  padding: 4px 2px;
+  border-radius: 6px;
   cursor: pointer;
   list-style: none;
+  transition: background-color 140ms ease;
+}
+
+.paw-agent-trace-v1__payload > summary:hover {
+  background: var(--paw-chat-surface-subtle);
 }
 
 .paw-agent-trace-v1__payload > summary::-webkit-details-marker {
@@ -1325,13 +1353,14 @@
 
 .paw-agent-trace-v1__payload-body > pre {
   max-height: min(38vh, 420px);
-  margin: 0;
+  margin: 0 0 8px;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 11px 12px;
-  border-top: 1px solid var(--paw-chat-border);
-  background: #fff;
+  padding: 10px 11px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 7px;
+  background: var(--paw-chat-surface-subtle);
   color: var(--paw-chat-text);
   font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
@@ -1529,7 +1558,7 @@
     border-radius: 16px 16px 0 0;
     border-top: 1px solid var(--paw-chat-border);
     border-left: 0;
-    box-shadow: 0 -12px 30px rgb(36 31 27 / 12%);
+    box-shadow: 0 -12px 30px color-mix(in srgb, var(--paw-chrome-ink) 12%, transparent);
     animation-name: paw-session-sheet-in;
   }
 

@@ -774,6 +774,19 @@ describe('PAW Browser App', () => {
     expect(localStorage.getItem('paw.browser.history.v1')).toBeNull();
   });
 
+  it('says why the page area is empty when there is no guest and no captured picture', async () => {
+    render(
+      <ControlTransportProvider transport={browserTransport({ snapshot: () => ({ ok: true }) })}>
+        <PawBrowserApp />
+      </ControlTransportProvider>,
+    );
+
+    const awaiting = await screen.findByRole('status');
+    expect(within(awaiting).getByText('还没有这一页的画面')).toBeInTheDocument();
+    expect(within(awaiting).getByText(/当前环境不能直接内嵌网页/)).toBeInTheDocument();
+    expect(within(awaiting).getByRole('button', { name: '重新载入' })).toBeEnabled();
+  });
+
 });
 
 function browserTransport(overrides: {

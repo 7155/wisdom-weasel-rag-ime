@@ -71,6 +71,20 @@ function terminalStateText(session: TerminalSession): string {
   return session.exitCode !== null ? `已退出（退出码 ${session.exitCode}）` : '已退出';
 }
 
+// Tab-sized state text. A tab that is no longer running says so in words as
+// well as colour, but it cannot afford the parenthesised long form.
+function terminalStateTag(session: TerminalSession): string {
+  if (session.status === 'running') return '';
+  if (session.status === 'closed') return '已关闭';
+  return session.exitCode !== null ? `已退出 ${session.exitCode}` : '已退出';
+}
+
+// A non-zero exit is the one state that earns the danger colour; a clean exit
+// and a deliberate close are quiet, not alarming.
+function exitFailed(session: TerminalSession): boolean {
+  return session.status === 'exited' && session.exitCode !== null && session.exitCode !== 0;
+}
+
 // The working-directory basename is the strongest per-tab identity signal the
 // backend actually knows; the full path stays in the tooltip and status bar.
 function cwdBasename(cwd: string): string {
@@ -122,6 +136,7 @@ export function PawOsTerminalApp() {
   const restoreTabFocusRef = useRef(false);
   const selectedStatusRef = useRef<TerminalState>('running');
   const createShortcutRef = useRef<() => void>(() => undefined);
+  const ordinalShortcutRef = useRef<(ordinal: number) => void>(() => undefined);
   const cwdCopyTimerRef = useRef(0);
 
   const sessionsQuery = useQuery({
@@ -174,6 +189,13 @@ export function PawOsTerminalApp() {
   // current mutation without re-creating the terminal instance.
   createShortcutRef.current = () => {
     if (!create.isPending) create.mutate({});
+  };
+
+  // The numbered chord matches the ordinal every tab shows once the strip is
+  // too narrow for labels; an ordinal with no session behind it does nothing.
+  ordinalShortcutRef.current = (ordinal: number) => {
+    const target = sessions[ordinal - 1];
+    if (target) setSelectedId(target.terminalId);
   };
 
   // A shell is created only when the very first successful load finds no
@@ -293,8 +315,9 @@ export function PawOsTerminalApp() {
     const searchSubscription = search.onDidChangeResults(setSearchResult);
     searchAddonRef.current = search;
     // Ctrl/Cmd combos that must stay in PAWOS instead of reaching the PTY:
-    // copy the current selection, open the scrollback search, and create a
-    // sibling terminal without leaving the keyboard.
+    // copy the current selection, open the scrollback search, create a
+    // sibling terminal, and jump to a numbered tab without leaving the
+    // keyboard.
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true;
       const withShell = (event.ctrlKey && event.shiftKey) || (event.metaKey && !event.ctrlKey && !event.altKey);
@@ -310,6 +333,11 @@ export function PawOsTerminalApp() {
       }
       if (event.code === 'KeyT') {
         createShortcutRef.current();
+        return false;
+      }
+      const ordinal = /^Digit([1-9])$/.exec(event.code)?.[1];
+      if (ordinal) {
+        ordinalShortcutRef.current(Number(ordinal));
         return false;
       }
       return true;
@@ -487,12 +515,26 @@ export function PawOsTerminalApp() {
           const active = terminal.terminalId === selectedId;
           const label = tabLabels.get(terminal.terminalId) ?? `终端 ${index + 1}`;
           const stateText = terminalStateText(terminal);
+          const running = terminal.status === 'running';
           const tabId = `${terminalTabsId}-tab-${terminal.terminalId}`;
-          const folder = cwdBasename(terminal.cwd);
+          // Visible text collapses to the leading ordinal once the strip is too
+          // narrow, so the accessible name carries the identity and the state
+          // instead of depending on a rendered label.
+          const tabName = running ? label : `${label} ${stateText}`;
+          // A running tab shows where it runs; an ended one shows that it ended.
+          const folder = running ? cwdBasename(terminal.cwd) : '';
           return (
-            <div className="paw-terminal-tab" data-selected={active || undefined} key={terminal.terminalId} role="presentation">
+            <div
+              className="paw-terminal-tab"
+              data-exit-failure={exitFailed(terminal) || undefined}
+              data-selected={active || undefined}
+              data-state={terminal.status}
+              key={terminal.terminalId}
+              role="presentation"
+            >
               <button
                 aria-controls={terminalPanelId}
+                aria-label={tabName}
                 aria-selected={active}
                 className="paw-terminal-tab-main"
                 id={tabId}
@@ -504,13 +546,14 @@ export function PawOsTerminalApp() {
                 }}
                 role="tab"
                 tabIndex={active ? 0 : -1}
-                title={`${label} · ${terminal.shell || '/bin/zsh'} · ${terminal.cwd}${terminal.status === 'running' ? '' : ` · ${stateText}`}`}
+                title={`${label} · ${terminal.shell || '/bin/zsh'} · ${terminal.cwd}${running ? '' : ` · ${stateText}`}`}
                 type="button"
               >
-                <span>{label}</span>
+                <i data-exit-failure={exitFailed(terminal) || undefined} data-state={terminal.status} />
+                <b aria-hidden className="paw-terminal-tab-ordinal">{index + 1}</b>
+                <span className="paw-terminal-tab-label">{label}</span>
                 {folder ? <small aria-hidden className="paw-terminal-tab-cwd">{folder}</small> : null}
-                {terminal.status === 'running' ? null : <span className="paw-terminal-tab-state">（{stateText}）</span>}
-                <i data-exit-failure={terminal.status === 'exited' && terminal.exitCode !== null && terminal.exitCode !== 0 ? true : undefined} data-state={terminal.status} />
+                {running ? null : <small aria-hidden className="paw-terminal-tab-exit">{terminalStateTag(terminal)}</small>}
               </button>
               <button
                 aria-busy={close.isPending && close.variables === terminal.terminalId ? true : undefined}
@@ -575,10 +618,9 @@ export function PawOsTerminalApp() {
   return (
     <>
       {windowChromeTarget ? <PawWindowChromePortal>{terminalTabs}</PawWindowChromePortal> : null}
-      <section className="paw-terminal-app" data-error={errorNotice ? true : undefined} data-tabs-in-window-chrome={windowChromeTarget ? true : undefined}>
+      <section className="paw-terminal-app" data-error={errorNotice ? true : undefined}>
         <h1 className="sr-only">Terminal</h1>
         {windowChromeTarget ? null : terminalTabs}
-
         <div className="paw-terminal-app__workspace">
           {errorNotice ? (
             <div className="paw-terminal-error" role="alert">
@@ -603,13 +645,14 @@ export function PawOsTerminalApp() {
             aria-labelledby={selectedTabId}
             className="paw-terminal-console"
             data-ended={selected && selected.status !== 'running' ? true : undefined}
+            data-search={selected && showSearch ? true : undefined}
             data-session={selected ? true : undefined}
             id={terminalPanelId}
             role={selected ? 'tabpanel' : undefined}
           >
             {selected && showSearch ? (
               <div className="paw-terminal-search" role="search">
-                <Search aria-hidden="true" size={13} />
+                <Search aria-hidden="true" className="paw-terminal-search__glyph" size={13} />
                 <input
                   aria-label="搜索终端输出"
                   onChange={(event) => {
@@ -691,7 +734,8 @@ export function PawOsTerminalApp() {
                           title={`${label} · ${terminal.cwd}`}
                           type="button"
                         >
-                          <i data-exit-failure={terminal.status === 'exited' && terminal.exitCode !== null && terminal.exitCode !== 0 ? true : undefined} data-state={terminal.status} />
+                          <i data-exit-failure={exitFailed(terminal) || undefined} data-state={terminal.status} />
+                          <b aria-hidden className="paw-terminal-switcher__ordinal">{index + 1}</b>
                           <span><strong>{label}</strong><small>{terminal.cwd}</small></span>
                           {terminal.status === 'running' ? null : <em>{terminalStateText(terminal)}</em>}
                         </button>
@@ -714,7 +758,7 @@ export function PawOsTerminalApp() {
               </div>
             )}
             {selected && selected.status !== 'running' ? (
-              <div className="paw-terminal-ended" role="status">
+              <div className="paw-terminal-ended" data-failure={exitFailed(selected) || undefined} role="status">
                 <span className="paw-terminal-ended__text">这个终端会话{terminalStateText(selected)}。输出仍可回看，输入不会再发送。</span>
                 <span className="paw-terminal-ended__actions">
                   <button aria-busy={create.isPending || undefined} disabled={create.isPending} onClick={() => create.mutate({})} type="button">新建终端</button>
@@ -733,7 +777,19 @@ export function PawOsTerminalApp() {
               </div>
             ) : null}
             {selected ? (
-              <footer className="paw-terminal-statusbar">
+              // The status band reads left to right in order of how much the
+              // truth costs to be wrong: live state, where the shell runs,
+              // then the process facts that only ever confirm it.
+              <footer
+                className="paw-terminal-statusbar"
+                data-failure={exitFailed(selected) || undefined}
+                data-state={selected.status}
+              >
+                <span className="paw-terminal-state-tag">
+                  {selected.status === 'running'
+                    ? <span className="paw-terminal-running-badge"><i aria-hidden="true" />运行中</span>
+                    : <span className="paw-terminal-exited-badge">{selected.status === 'closed' ? '已关闭' : `已退出${selected.exitCode !== null ? ` (${selected.exitCode})` : ''}`}</span>}
+                </span>
                 <button
                   aria-label={`复制工作目录 ${selected.cwd}`}
                   className="paw-terminal-cwd"
@@ -745,14 +801,15 @@ export function PawOsTerminalApp() {
                   <Folder size={11} />
                   <span>{cwdCopied ? '已复制路径' : selected.cwd}</span>
                 </button>
-                <i aria-hidden="true" />
-                <strong className="paw-terminal-shell" title={selected.shell || '/bin/zsh'}>{selected.shell || '/bin/zsh'}</strong>
-                <i aria-hidden="true" />
-                <span>pid {selected.pid}</span>
-                <i aria-hidden="true" />
-                <span>UTF-8</span>
-                <i aria-hidden="true" />
-                <span>{selected.cols}×{selected.rows}</span>
+                <span className="paw-terminal-statusbar__facts">
+                  <strong className="paw-terminal-shell" title={selected.shell || '/bin/zsh'}>{selected.shell || '/bin/zsh'}</strong>
+                  <i aria-hidden="true" />
+                  <span>pid {selected.pid}</span>
+                  <i aria-hidden="true" />
+                  <span>UTF-8</span>
+                  <i aria-hidden="true" />
+                  <span>{selected.cols}×{selected.rows}</span>
+                </span>
                 <button
                   aria-label="搜索终端输出"
                   className="paw-terminal-statusbar__search"
@@ -766,11 +823,6 @@ export function PawOsTerminalApp() {
                 >
                   <Search size={12} />
                 </button>
-                <span className="paw-terminal-state-tag">
-                  {selected.status === 'running'
-                    ? <span className="paw-terminal-running-badge"><i aria-hidden="true" />运行中</span>
-                    : <span className="paw-terminal-exited-badge">{selected.status === 'closed' ? '已关闭' : `已退出${selected.exitCode !== null ? ` (${selected.exitCode})` : ''}`}</span>}
-                </span>
               </footer>
             ) : null}
           </main>

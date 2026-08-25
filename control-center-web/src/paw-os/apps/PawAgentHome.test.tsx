@@ -40,6 +40,19 @@ describe('PAWOS Agent Home 首屏合同', () => {
     // 固定表面上 Composer 靠近上沿，锚定菜单必须向下展开，避免被表面上缘裁掉。
     expect(agentNextCss).toMatch(/\.an-menu\s*\{[^}]*top:\s*calc\(100% \+ 8px\);/s);
   });
+
+  it('collapses home composer chips to semantic marks before words vanish from the accessibility tree', async () => {
+    renderHome();
+
+    expect(await screen.findByRole('button', { name: /权限 · 按风险确认/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /工作目录 · work\/paw|选择工作目录|工作目录/ })).toBeInTheDocument();
+
+    // The toolbar is a named container; narrow windows shed detail then labels.
+    expect(agentNextCss).toMatch(/container:\s*an-home-composer\s*\/\s*inline-size/);
+    expect(agentNextCss).toMatch(/@container an-home-composer \(max-width: 560px\)/);
+    expect(agentNextCss).toMatch(/@container an-home-composer \(max-width: 420px\)/);
+    expect(agentNextCss).toMatch(/\.an-chip-text/);
+  });
 });
 
 function renderHome() {

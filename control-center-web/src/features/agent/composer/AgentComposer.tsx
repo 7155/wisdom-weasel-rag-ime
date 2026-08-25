@@ -49,6 +49,14 @@ import {
   nextEnabledCommandIndex,
   type ComposerCommand,
 } from './command-catalog';
+import {
+  composerActionLabel,
+  composerBlockedReasonLabel,
+  composerSubmitMode,
+  projectComposerActionModel,
+  type ComposerBusyDelivery,
+  type ComposerSubmitMode,
+} from './composer-action-model';
 import { ModelPicker } from './ModelPicker';
 import { PermissionPicker } from './PermissionPicker';
 import { ToolPicker } from './ToolPicker';
@@ -67,11 +75,6 @@ import type {
 } from '../types';
 
 export type AgentMessageDelivery = 'prompt' | 'steer' | 'followUp';
-
-/** `queue` is the composer's own hold, not a Runtime delivery: the draft never
- *  leaves the client until the running turn settles, which is what keeps it
- *  editable, reorderable and revocable. */
-type ComposerSubmitMode = AgentMessageDelivery | 'queue';
 
 export interface AgentComposerEditState {
   entryId: string;
@@ -206,7 +209,7 @@ export function AgentComposer({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [commandInputFocused, setCommandInputFocused] = useState(false);
-  const [busyDelivery, setBusyDelivery] = useState<Exclude<ComposerSubmitMode, 'prompt'>>('steer');
+  const [busyDelivery, setBusyDelivery] = useState<ComposerBusyDelivery>('steer');
   const commandCatalog = useMemo(
     () => buildCommandCatalog({ session, catalog, piCommands, tools, toolCatalogStatus, busy, sending }),
     [busy, catalog, piCommands, sending, session, toolCatalogStatus, tools],
@@ -257,37 +260,23 @@ export function AgentComposer({
     return () => window.cancelAnimationFrame(frame);
   }, [editState?.messageId]);
   useEffect(() => () => window.clearTimeout(escapeResetRef.current), []);
-  const canSend = Boolean(
-    session
-    && (composerDraft.trim() || attachments.length)
-    && !sending
-    && !modelChanging,
-  );
-  // A silently disabled send button hides the one fact the user needs; the
-  // label carries the same condition that gates `canSend`/`stopping`.
-  const sendBlockedReason = stopping
-    ? '正在停止本轮'
-    : !session
-      ? '先选择或创建对话'
-      : sending
-        ? '正在发送上一条消息'
-        : modelChanging
-          ? '正在切换模型'
-          : !(composerDraft.trim() || attachments.length)
-            ? '先输入内容或添加附件'
-            : '';
-  /* The queue only exists while the host holds one; without it the choice
-     falls back to a Runtime delivery rather than a dead button. */
-  const effectiveBusyDelivery: Exclude<ComposerSubmitMode, 'prompt'> = busyDelivery === 'queue' && !onQueue
-    ? 'followUp'
-    : busyDelivery;
-  const sendActionLabel = busy
-    ? effectiveBusyDelivery === 'steer'
-      ? '干预当前执行'
-      : effectiveBusyDelivery === 'queue'
-        ? '排队，当前回合结束后发送'
-        : '当前执行完成后接续'
-    : '发送';
+  /* One projection answers what the primary action does, whether it is
+     available and why not — the button, its label and Enter all read it, so
+     they cannot disagree. */
+  const actionModel = projectComposerActionModel({
+    hasSession: Boolean(session),
+    draftHasContent: Boolean(composerDraft.trim() || attachments.length),
+    draftHasText: Boolean(composerDraft.trim()),
+    busy,
+    sending,
+    stopping,
+    modelChanging,
+    preferredBusyDelivery: busyDelivery,
+    capabilities: { queue: Boolean(onQueue) },
+  });
+  const sendActionLabel = composerActionLabel(actionModel.primary);
+  const sendBlockedReason = composerBlockedReasonLabel(actionModel.blockedReason);
+  const effectiveBusyDelivery = actionModel.effectiveBusyDelivery;
   function publishDraft(value: string): void {
     // The textarea owns keystroke latency; the parent only needs a deferred
     // projection for navigation and recovery. Send receives the local snapshot.
@@ -351,8 +340,8 @@ export function AgentComposer({
     setComposerDraft(nextDraft);
     publishDraft(nextDraft);
   }
-  function submit(delivery: ComposerSubmitMode): void {
-    if (!canSend) return;
+  function submit(delivery: ComposerSubmitMode | null): void {
+    if (!delivery) return;
     const value = composerDraft;
     /* A refused queue never reaches Runtime, so the draft has to stay exactly
        where the writer left it rather than vanish into a full queue. */
@@ -416,7 +405,7 @@ export function AgentComposer({
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      submit(busy ? (event.altKey ? 'followUp' : effectiveBusyDelivery) : 'prompt');
+      submit(composerSubmitMode(actionModel, { alternate: event.altKey }));
     }
   }
   function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
@@ -582,12 +571,12 @@ export function AgentComposer({
             />
             {busy ? (
               <div className="agent-composer__delivery" role="radiogroup" aria-label="消息投递方式">
-                <button type="button" role="radio" aria-checked={busyDelivery === 'steer'} data-active={busyDelivery === 'steer' || undefined} onClick={() => setBusyDelivery('steer')} disabled={sending}>干预</button>
-                <button type="button" role="radio" aria-checked={busyDelivery === 'followUp'} data-active={busyDelivery === 'followUp' || undefined} onClick={() => setBusyDelivery('followUp')} disabled={sending}>接续</button>
+                <button type="button" role="radio" aria-checked={effectiveBusyDelivery === 'steer'} data-active={effectiveBusyDelivery === 'steer' || undefined} onClick={() => setBusyDelivery('steer')} disabled={sending}>干预</button>
+                <button type="button" role="radio" aria-checked={effectiveBusyDelivery === 'followUp'} data-active={effectiveBusyDelivery === 'followUp' || undefined} onClick={() => setBusyDelivery('followUp')} disabled={sending}>接续</button>
                 {/* 干预/接续 hand the message to Runtime now; 排队 keeps it here
                     until this turn settles, so it stays editable. */}
-                {onQueue ? (
-                  <button type="button" role="radio" aria-checked={busyDelivery === 'queue'} data-active={busyDelivery === 'queue' || undefined} onClick={() => setBusyDelivery('queue')} disabled={sending}>
+                {actionModel.busyDeliveries.includes('queue') ? (
+                  <button type="button" role="radio" aria-checked={effectiveBusyDelivery === 'queue'} data-active={effectiveBusyDelivery === 'queue' || undefined} onClick={() => setBusyDelivery('queue')} disabled={sending}>
                     排队{queueDepth ? ` ${queueDepth}` : ''}
                   </button>
                 ) : null}
@@ -612,8 +601,8 @@ export function AgentComposer({
               className="agent-composer__send"
               label={sendBlockedReason ? `${sendActionLabel}（${sendBlockedReason}）` : sendActionLabel}
               icon={<Send size={18} />}
-              onClick={() => submit(busy ? effectiveBusyDelivery : 'prompt')}
-              disabled={stopping || !canSend}
+              onClick={() => submit(composerSubmitMode(actionModel))}
+              disabled={actionModel.primaryDisabled}
               tooltip
             />
           </>

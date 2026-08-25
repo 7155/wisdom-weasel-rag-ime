@@ -313,7 +313,6 @@
 .agent-workflow-section > .agent-workflow-recovery { margin-inline: 0; }
 .agent-workflow-recovery > span { min-width: 0; font-size: var(--font-size-caption); line-height: var(--line-height-ui); overflow-wrap: anywhere; }
 .agent-workflow-recovery > .ui-button { flex: none; }
-.agent-turn-tombstone { box-sizing: border-box; margin-inline: 14px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); opacity: .72; contain: strict; }
 .agent-conversation-nav { position: absolute; z-index: 4; top: calc(var(--workspace-header-height) + 14px); right: 3px; bottom: calc(var(--workspace-composer-clearance) + var(--workspace-composer-gap) + 8px); width: 34px; min-height: 120px; }
 .agent-conversation-nav > span { position: absolute; top: 0; bottom: 0; left: 16px; width: 2px; border-radius: 1px; background: var(--color-border); }
 .agent-conversation-nav > button { position: absolute; top: clamp(14px, var(--agent-nav-position), calc(100% - 14px)); left: 3px; display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; transform: translateY(-50%); }
@@ -727,8 +726,13 @@
   transition:
     height 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
     opacity 150ms ease;
-  will-change: height;
 }
+/* A transcript holds hundreds of collapsed reveals. Promoting every one of
+   them for a height animation they are not running costs a compositor layer
+   each and made plain scrolling flicker; only a reveal actually in motion is
+   promoted. */
+.agent-smooth-reveal[data-state='opening'],
+.agent-smooth-reveal[data-state='closing'] { will-change: height; }
 .agent-smooth-reveal[data-state='opening'],
 .agent-smooth-reveal[data-state='open'] { opacity: 1; }
 .agent-smooth-reveal[data-state='open'] { overflow: visible; will-change: auto; }
@@ -743,30 +747,30 @@
 .agent-activity__copy { display: grid; min-width: 0; gap: 2px; }
 .agent-activity__copy strong { font-size: 14px; }
 .agent-activity__copy small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+/* Activity is supporting detail read in sequence, not a stack of cards. A
+   plate per group cost two borders, a radius and an inset fill for every row,
+   which shortened the readable measure enough that the tool name and its
+   object no longer fit on one line. The row now sits in the document flow and
+   spends the whole lane on text. */
 details.agent-activity--inline {
   display: block;
   min-height: 0;
-  margin: 3px 0 6px;
+  margin: 1px 0 2px;
   padding: 0;
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-1);
-  overflow: hidden;
-  background: var(--color-surface-subtle);
-  transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
-}
-details.agent-activity--inline:hover {
-  border-color: var(--color-border);
-  background: var(--color-surface-hover);
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
 }
 details.agent-activity--inline > summary {
   display: grid;
-  min-height: 32px;
+  min-height: 28px;
   box-sizing: border-box;
   grid-template-columns: 18px max-content minmax(0, 1fr) auto 16px;
   align-items: center;
   gap: 8px;
-  padding: 0 10px;
-  border-radius: inherit;
+  padding: 0;
+  border-radius: var(--radius-1);
   cursor: pointer;
   list-style: none;
   transition: background-color var(--duration-fast) var(--ease-standard);
@@ -783,8 +787,7 @@ details.agent-activity--inline[data-state='failed'] > summary > .agent-activity_
 details.agent-activity--inline[data-state='waiting'] > summary > .agent-activity__inline-icon { color: var(--color-warning); }
 details.agent-activity--inline > summary > svg:last-child { color: var(--color-text-tertiary); transition: transform var(--duration-enter) var(--ease-standard); }
 details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child { transform: rotate(90deg); }
-details.agent-activity--inline > summary[aria-expanded='true'] { background: var(--color-surface-subtle); border-bottom: 1px solid var(--color-border-soft); }
-.agent-activity__inline-timeline { margin: 0; padding: 4px 10px 6px 20px; }
+.agent-activity__inline-timeline { margin: 0; padding: 2px 0 4px 20px; }
 .agent-activity__inline-timeline .agent-activity-row { padding-left: 0; }
 .agent-activity__inline-timeline .agent-activity-row::before { display: none; }
 .agent-activity__inline-timeline .agent-activity-row > summary { min-height: 34px; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 6px; }
@@ -815,6 +818,13 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-activity-row[open] { grid-column: 1 / -1; }
 .agent-activity-row::before { position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--color-border); content: ''; }
 .agent-activity-row > summary { display: grid; min-height: 34px; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 6px; cursor: pointer; list-style: none; transition: background-color var(--duration-enter) var(--ease-standard); }
+/* A settled row must not run a transition it did not ask for: a scrolling
+   transcript would otherwise leave a fading tail behind the pointer. */
+.agent-timeline[data-scrolling] :is(
+  .agent-activity-row > summary,
+  details.agent-activity--inline > summary,
+  .agent-activity
+) { transition: none; }
 .agent-activity-row > summary:active { transform: translateY(1px); }
 .agent-activity-row > summary:focus-visible { border-radius: var(--radius-1); outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .agent-activity-row__icon { z-index: 1; display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-surface); color: var(--color-text-secondary); }
@@ -1440,30 +1450,37 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 .agent-dangerous-permission-dialog__check { display: flex; min-height: 42px; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border)); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-danger-soft) 62%, var(--color-surface)); color: var(--color-text); font-size: 13px; font-weight: var(--font-weight-semibold); cursor: pointer; }
 .agent-dangerous-permission-dialog__check button { display: grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid var(--color-danger); border-radius: var(--radius-1); background: var(--color-surface); color: #fff; }
 .agent-dangerous-permission-dialog__check button[data-state='checked'] { background: var(--color-danger); }
+/* ------------------------------------------------------------ model picker --
+ * Model and reasoning strength are one decision, so they share one flat
+ * surface: a header naming the current choice, every Provider's models listed
+ * at once under quiet group headings, and the reasoning rail docked at the
+ * foot. There is no provider tablist and no second page — picking a model and
+ * dialling its reasoning are each one gesture from the moment it opens.
+ *
+ * Three motions carry it, and no more: the list settles in behind the popover's
+ * own origin scale, the check on a selected row grows as selection lands, and
+ * the rail indicator glides between levels.
+ */
 .agent-model-picker {
-  width: min(326px, calc(100vw - 24px));
-  height: min(344px, calc(100dvh - 96px));
+  width: min(340px, calc(100vw - 24px));
+  height: min(400px, calc(100dvh - 96px));
   padding: 0;
   overflow: hidden;
 }
-.agent-model-picker__pane {
+.agent-model-picker__panel {
   display: grid;
   height: 100%;
-  grid-template-rows: auto minmax(0, 1fr);
-  animation: agent-model-picker-pane-from-left 180ms var(--ease-standard) both;
-}
-.agent-model-picker__pane[data-view='reasoning'] {
   grid-template-rows: auto minmax(0, 1fr) auto;
-  animation-name: agent-model-picker-pane-from-right;
+  animation: agent-model-picker-panel-enter 180ms var(--ease-standard) both;
 }
 .agent-model-picker__header {
   display: grid;
   min-width: 0;
-  min-height: 58px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 52px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
+  gap: 10px;
+  padding: 10px 12px 8px;
   border-bottom: 1px solid var(--color-border);
 }
 .agent-model-picker__header > span {
@@ -1485,234 +1502,170 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-model-picker__reasoning-link {
-  display: grid;
-  min-width: 76px;
-  min-height: 36px;
-  grid-template-columns: auto auto 14px;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-1);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color 180ms var(--ease-standard), transform 180ms var(--ease-standard);
-}
-.agent-model-picker__reasoning-link strong { color: var(--color-accent); font-size: 12px; }
-.agent-model-picker__reasoning-link:hover { background: var(--color-surface-hover); }
-.agent-model-picker__reasoning-link:focus-visible,
-.agent-model-picker__models [role='option']:focus-visible,
-.agent-model-picker__back:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 1px;
-}
-.agent-model-picker__reasoning-link:active { transform: translateY(1px); }
-.agent-model-picker__reasoning-link:disabled { cursor: default; opacity: .5; }
-.agent-model-picker__browser {
-  display: grid;
+.agent-model-picker__header > .paw-mark { color: var(--color-text-secondary); }
+.agent-model-picker__header > svg { color: var(--color-accent); }
+.agent-model-picker__list {
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-.agent-model-picker__providers {
-  display: flex;
-  gap: 4px;
-  padding: 7px 7px 5px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-}
-.agent-model-picker__providers::-webkit-scrollbar { display: none; }
-.agent-model-picker__providers [role='tab'] {
-  display: inline-flex;
-  min-width: max-content;
-  min-height: 30px;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 9px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-round);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: var(--font-weight-semibold);
-  cursor: pointer;
-  transition:
-    border-color 160ms var(--ease-standard),
-    background-color 160ms var(--ease-standard),
-    color 160ms var(--ease-standard),
-    transform 120ms var(--ease-press);
-}
-.agent-model-picker__providers [role='tab'] small {
-  display: grid;
-  min-width: 18px;
-  height: 18px;
-  place-items: center;
-  padding: 0 5px;
-  border-radius: var(--radius-round);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-}
-.agent-model-picker__providers [role='tab']:hover {
-  background: var(--color-surface-hover);
-  color: var(--color-text);
-}
-.agent-model-picker__providers [role='tab']:active { transform: scale(.97); }
-.agent-model-picker__providers [role='tab']:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 1px;
-}
-.agent-model-picker__providers [role='tab'][aria-selected='true'] {
-  border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
-  background: var(--color-accent-soft);
-  box-shadow: 0 1px 8px color-mix(in srgb, var(--color-accent) 12%, transparent);
-  color: var(--color-accent);
-}
-.agent-model-picker__providers [role='tab'][aria-selected='true'] small {
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-surface));
-  color: var(--color-accent);
-}
-.agent-model-picker__provider-panel {
-  display: grid;
-  min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  animation: agent-model-provider-enter 160ms var(--ease-standard) both;
-}
-.agent-model-picker__provider-panel > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 13px 3px;
-}
-.agent-model-picker__provider-panel > header strong {
-  color: var(--color-text-secondary);
-  font-size: 12px;
-}
-.agent-model-picker__provider-panel > header small {
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-}
-.agent-model-picker__models {
-  min-height: 0;
-  padding: 3px 6px 7px;
+  padding: 6px 6px 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
-.agent-model-picker__models [role='option'] {
+.agent-model-picker__group + .agent-model-picker__group {
+  margin-top: 6px;
+}
+/* The Provider heading is the only provider chrome left, so it sticks: the
+   identity of a long catalog never scrolls out from under the rows it names. */
+.agent-model-picker__group-name {
+  position: sticky;
+  z-index: 1;
+  top: -6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 10px 4px;
+  background: linear-gradient(var(--color-surface) 76%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.agent-model-picker__group-name small {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-medium);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.agent-model-picker__list [role='option'] {
   display: grid;
   width: 100%;
-  min-height: 42px;
-  grid-template-columns: minmax(0, 1fr) 16px;
+  min-height: 44px;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 10px;
+  padding: 7px 10px;
   border: 0;
-  border-radius: var(--radius-1);
+  border-radius: 10px;
   background: transparent;
   color: var(--color-text);
   text-align: left;
   cursor: pointer;
-  transition: background-color 180ms var(--ease-standard), transform 180ms var(--ease-standard);
+  transition:
+    background-color 160ms var(--ease-standard),
+    box-shadow 160ms var(--ease-standard),
+    transform 140ms var(--ease-standard);
 }
-.agent-model-picker__models [role='option']:hover { background: var(--color-surface-hover); }
-.agent-model-picker__models [role='option']:active { transform: translateY(1px); }
-.agent-model-picker__models [role='option'][aria-selected='true'] {
-  background: var(--color-accent-soft);
-  box-shadow: inset 2px 0 var(--color-accent);
+.agent-model-picker__list [role='option']:hover { background: var(--color-surface-hover); }
+.agent-model-picker__list [role='option']:active { transform: translateY(1px); }
+.agent-model-picker__list [role='option']:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+/* Selection reads as a cool-bright wash that fades out across the row rather
+   than a dropdown's flat highlight block. */
+.agent-model-picker__list [role='option'][aria-selected='true'] {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 13%, transparent),
+    color-mix(in srgb, var(--color-accent) 5%, transparent) 64%,
+    transparent
+  );
+  box-shadow: inset 2px 0 0 var(--color-accent);
   color: var(--color-accent);
 }
-.agent-model-picker__models [role='option'][aria-selected='true'] > svg {
-  animation: agent-model-check-enter 180ms var(--ease-standard) both;
+.agent-model-picker__list [role='option'][aria-selected='true'] small {
+  color: color-mix(in srgb, var(--color-accent) 72%, var(--color-text-tertiary));
 }
-.agent-model-picker__models [role='option'] > span {
+.agent-model-picker__list [role='option'] > span {
   display: grid;
   min-width: 0;
   gap: 1px;
 }
-.agent-model-picker__models [role='option'] strong {
+.agent-model-picker__list [role='option'] strong {
   overflow: hidden;
   font-size: 13px;
+  font-weight: var(--font-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-model-picker__models [role='option'] small {
+.agent-model-picker__list [role='option'] small {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
-.agent-model-picker__models > p {
+.agent-model-picker__check {
+  opacity: 0;
+  color: var(--color-accent);
+  transform: scale(.72);
+  transition:
+    opacity 160ms var(--ease-standard),
+    transform 180ms var(--ease-standard);
+}
+.agent-model-picker__list [role='option'][aria-selected='true'] .agent-model-picker__check {
+  opacity: 1;
+  transform: scale(1);
+  animation: agent-model-check-enter 180ms var(--ease-standard) both;
+}
+.agent-model-picker__empty {
   margin: 0;
   padding: 24px 12px;
   color: var(--color-text-tertiary);
   font-size: 13px;
   text-align: center;
 }
-.agent-model-picker__back {
+.agent-model-picker__reasoning-bar {
   display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-1);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: background-color 180ms var(--ease-standard), transform 180ms var(--ease-standard);
-}
-.agent-model-picker__back:hover { background: var(--color-surface-hover); }
-.agent-model-picker__back:active { transform: translateX(-1px); }
-.agent-model-picker__pane[data-view='reasoning'] .agent-model-picker__header {
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px 10px 12px;
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-subtle) 70%, var(--color-surface));
+  animation: agent-model-picker-panel-enter 180ms var(--ease-standard) both;
 }
 .agent-model-picker__reasoning-copy {
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 5px;
-  padding: 24px 18px 16px;
-  text-align: center;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 0 4px;
+}
+.agent-model-picker__reasoning-copy span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
 }
 .agent-model-picker__reasoning-copy strong {
   color: var(--color-text);
-  font-size: 20px;
+  font-size: 12.5px;
+  font-weight: var(--font-weight-semibold);
 }
-.agent-model-picker__reasoning-copy small {
-  max-width: 250px;
+.agent-model-picker__reasoning-empty {
+  padding: 8px 4px 2px;
   color: var(--color-text-tertiary);
   font-size: 12px;
-  line-height: 1.45;
 }
 .agent-model-picker__reasoning {
   position: relative;
   display: grid;
-  height: 48px;
+  height: 40px;
   grid-template-columns: repeat(var(--level-count), minmax(0, 1fr));
-  margin: 0 12px 16px;
-  padding: 4px;
+  padding: 3px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-round);
-  background: var(--color-surface-subtle);
+  border-radius: 999px;
+  background: var(--color-surface);
 }
 .agent-model-picker__reasoning-indicator {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
-  width: calc((100% - 8px) / var(--level-count));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
-  border-radius: var(--radius-round);
-  background: var(--color-accent-soft);
-  box-shadow: var(--shadow-control);
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--level-count));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
   transform: translateX(calc(var(--level-index) * 100%));
-  transition: transform 180ms var(--ease-standard);
+  transition: transform 260ms cubic-bezier(.34, 1.4, .64, 1);
 }
 .agent-model-picker__reasoning [role='radio'] {
   position: relative;
@@ -1720,35 +1673,54 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   min-width: 0;
   padding: 0 2px;
   border: 0;
-  border-radius: var(--radius-round);
+  border-radius: 999px;
   background: transparent;
   color: var(--color-text-tertiary);
   font: inherit;
   font-size: 12px;
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
+  transition: color 160ms var(--ease-standard);
 }
+.agent-model-picker__reasoning [role='radio']:hover { color: var(--color-text); }
 .agent-model-picker__reasoning [role='radio'][aria-checked='true'] { color: var(--color-accent); }
 .agent-model-picker__reasoning [role='radio']:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 1px;
 }
-@keyframes agent-model-picker-pane-from-left {
-  from { opacity: 0; transform: translateX(-6px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-@keyframes agent-model-picker-pane-from-right {
-  from { opacity: 0; transform: translateX(8px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-@keyframes agent-model-provider-enter {
+@keyframes agent-model-picker-panel-enter {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes agent-model-check-enter {
-  from { opacity: 0; transform: scale(.72) rotate(-8deg); }
-  to { opacity: 1; transform: scale(1) rotate(0); }
+  from { opacity: 0; transform: scale(.72); }
+  to { opacity: 1; transform: scale(1); }
 }
+/* Reduced motion keeps all three states legible and only drops the travel:
+   the panel is present, the check is present, the rail indicator still sits
+   under the chosen level. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-model-picker__panel,
+  .agent-model-picker__reasoning-bar,
+  .agent-model-picker__list [role='option'][aria-selected='true'] .agent-model-picker__check {
+    animation: none;
+  }
+
+  .agent-model-picker__list [role='option'],
+  .agent-model-picker__check,
+  .agent-model-picker__reasoning-indicator,
+  .agent-model-picker__reasoning [role='radio'] {
+    transition: none;
+  }
+}
+:root[data-reduce-motion='true'] .agent-model-picker__panel,
+:root[data-reduce-motion='true'] .agent-model-picker__reasoning-bar,
+:root[data-reduce-motion='true'] .agent-model-picker__list [role='option'][aria-selected='true'] .agent-model-picker__check { animation: none; }
+:root[data-reduce-motion='true'] .agent-model-picker__list [role='option'],
+:root[data-reduce-motion='true'] .agent-model-picker__check,
+:root[data-reduce-motion='true'] .agent-model-picker__reasoning-indicator,
+:root[data-reduce-motion='true'] .agent-model-picker__reasoning [role='radio'] { transition: none; }
+
 .agent-tool-picker > header { display: grid; align-items: center; gap: 8px; padding: 4px 4px 6px 8px; border-bottom: 1px solid var(--color-border); grid-template-columns: minmax(0, 1fr) auto; }
 .agent-tool-picker > header > span { display: grid; min-width: 0; gap: 2px; }
 .agent-tool-picker > header strong { font-size: 13px; }
@@ -2623,8 +2595,23 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
     box-shadow: var(--shadow-control-hover);
   }
 
+  /* A ring drawn on hover redraws a border as each row passes under a
+     stationary pointer during scrolling. A fill answers the same question
+     without adding an edge. */
   .agent-activity-row > summary:hover {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border-strong) 42%, transparent);
+    background: var(--color-surface-hover);
+  }
+
+  /* Hover answers a pointer that moved. During a scroll the pointer is still
+     and the rows move, so every row under it lights and unlights in turn —
+     the reported "疯狂闪烁". Suspend the answer until the transcript settles. */
+  .agent-timeline[data-scrolling] :is(
+    .agent-activity-row > summary,
+    details.agent-activity--inline > summary,
+    .agent-turn-work__toggle
+  ):hover {
+    background: transparent;
+    box-shadow: none;
   }
 
   .agent-activity:hover:not(.agent-activity--inline) {
@@ -2831,13 +2818,12 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
     opacity: 0;
   }
 
-  .agent-model-picker__pane,
-  .agent-model-picker__provider-panel,
-  .agent-model-picker__models [role='option'][aria-selected='true'] > svg {
+  .agent-model-picker__panel,
+  .agent-model-picker__reasoning-bar,
+  .agent-model-picker__list [role='option'][aria-selected='true'] .agent-model-picker__check {
     animation: none;
   }
 
-  .agent-model-picker__providers [role='tab'],
   .agent-model-picker__reasoning-indicator {
     transition: none;
   }
@@ -3092,13 +3078,12 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   opacity: .5;
 }
 
-:root[data-reduce-motion='true'] .agent-model-picker__pane,
-:root[data-reduce-motion='true'] .agent-model-picker__provider-panel,
-:root[data-reduce-motion='true'] .agent-model-picker__models [role='option'][aria-selected='true'] > svg {
+:root[data-reduce-motion='true'] .agent-model-picker__panel,
+:root[data-reduce-motion='true'] .agent-model-picker__reasoning-bar,
+:root[data-reduce-motion='true'] .agent-model-picker__list [role='option'][aria-selected='true'] .agent-model-picker__check {
   animation: none;
 }
 
-:root[data-reduce-motion='true'] .agent-model-picker__providers [role='tab'],
 :root[data-reduce-motion='true'] .agent-model-picker__reasoning-indicator {
   transition: none;
 }
@@ -3169,6 +3154,9 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 /* Steps hang off one margin rule so the list reads as a document sequence
    rather than free-floating rows. */
 .agent-activity__inline-timeline { border-left: 1px solid var(--color-border-soft); }
+/* Interleaved activity scans rather than reads, so it takes the whole
+   conversation lane instead of the prose measure. */
+.agent-activity-group[data-layout='interleaved'] { width: 100%; margin: 1px 0 6px; overflow: visible; }
 .agent-activity-row__meta,
 .agent-activity-row > summary > :last-child {
   font-variant-numeric: tabular-nums;
@@ -3176,19 +3164,16 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 }
 
 
-/* The inline activity insert belongs to the same family as every other
-   insert: identical hanging edge, radius and measure. */
+/* Interleaved activity is the one insert that is a sequence of rows rather
+   than a block of prose. It keeps the family's measure but not its hanging
+   edge or wash: a plate around each group is what starved the row of text. */
 details.agent-activity--inline {
-  width: min(100%, 620px);
+  width: 100%;
   border: 0;
-  border-left: 3px solid color-mix(in srgb, var(--color-border-strong) 55%, transparent);
-  border-radius: var(--radius-1) var(--radius-2) var(--radius-2) var(--radius-1);
-  background: color-mix(in srgb, var(--color-surface-subtle) 72%, var(--color-paper));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-border-soft) 55%, transparent);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
-details.agent-activity--inline[data-state='running'] { border-left-color: var(--color-accent); }
-details.agent-activity--inline[data-state='waiting'] { border-left-color: var(--color-warning); }
-details.agent-activity--inline[data-state='failed'] { border-left-color: var(--color-danger); }
 details.agent-activity--inline[open] > summary { background: transparent; }
 
 /* Narrow widths: the activity summary's max-content label column forced the
@@ -3747,11 +3732,10 @@ details[open] > summary > .agent-rich-collapsible__chevron { transform: rotate(9
 details.agent-activity--inline {
   --activity-color: color-mix(in srgb, var(--color-text-tertiary) 72%, var(--color-border-strong));
   --activity-soft: var(--color-surface-subtle);
-  width: min(100%, 680px);
-  border: 1px solid var(--color-border-soft);
-  border-left: 2px solid var(--activity-color);
-  border-radius: var(--radius-1);
-  background: color-mix(in srgb, var(--activity-soft) 22%, var(--color-paper));
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
 }
 details.agent-activity--inline[data-state='running'] {
@@ -3778,8 +3762,8 @@ details.agent-activity--inline > summary,
 details.agent-activity--inline[open] > summary {
   position: relative;
   overflow: hidden;
-  min-height: 36px;
-  padding-inline: 11px;
+  min-height: 28px;
+  padding-inline: 2px;
   background: transparent;
 }
 details.agent-activity--inline > summary > .agent-activity__inline-icon {
@@ -3810,12 +3794,12 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
 .agent-activity__inline-timeline {
   margin: 0;
   max-height: min(360px, 40dvh);
-  padding: 4px 10px 5px 32px;
+  padding: 2px 2px 4px 20px;
   border-top-color: color-mix(in srgb, var(--activity-color) 18%, var(--color-border-soft));
   overflow-y: auto;
   overscroll-behavior-inline: none;
   overscroll-behavior: contain;
-  background: color-mix(in srgb, var(--color-surface) 76%, var(--color-paper));
+  background: transparent;
   scrollbar-gutter: stable;
 }
 .agent-activity__inline-timeline:focus-visible {

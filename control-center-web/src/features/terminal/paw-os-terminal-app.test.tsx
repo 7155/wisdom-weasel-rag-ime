@@ -399,6 +399,21 @@ describe('PawOsTerminalApp', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(false);
     expect(tab.querySelector('i[data-state="exited"][data-exit-failure]')).not.toBeNull();
 
+    // The exit is stated in words on the tab, not only in the dot colour, and
+    // the whole tab carries the state so the strip can dim what is over.
+    expect(tab.closest('.paw-terminal-tab')).toHaveAttribute('data-state', 'exited');
+    expect(tab.closest('.paw-terminal-tab')).toHaveAttribute('data-exit-failure');
+    expect(tab.querySelector('.paw-terminal-tab-exit')).toHaveTextContent('已退出 1');
+    expect(tab.querySelector('.paw-terminal-tab-cwd')).toBeNull();
+
+    // The status band tells the same truth, and a non-zero exit is the one
+    // state that earns the danger tone.
+    const statusbar = document.querySelector('.paw-terminal-statusbar') as HTMLElement;
+    expect(statusbar).toHaveAttribute('data-state', 'exited');
+    expect(statusbar).toHaveAttribute('data-failure');
+    expect(statusbar.querySelector('.paw-terminal-exited-badge')).toHaveTextContent('已退出 (1)');
+    expect(statusbar.querySelector('.paw-terminal-running-badge')).toBeNull();
+
     const notice = screen.getByRole('status');
     expect(notice).toHaveTextContent('这个终端会话已退出（退出码 1）。输出仍可回看，输入不会再发送。');
     expect(within(notice).getByRole('button', { name: '新建终端' })).toBeInTheDocument();
@@ -501,6 +516,102 @@ describe('PawOsTerminalApp', () => {
     await user.click(screen.getByRole('button', { name: '关闭搜索' }));
     expect(screen.queryByRole('textbox', { name: '搜索终端输出' })).not.toBeInTheDocument();
     expect(searchAddonState.calls.at(-1)).toMatchObject({ kind: 'clear' });
+  });
+
+  it('opens scrollback search as a console band instead of a panel over the output it reports', async () => {
+    const user = userEvent.setup();
+    const terminal = terminalSession('terminal-one', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [terminal] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: terminal.terminalId },
+      },
+    });
+
+    const { container } = renderTerminal(transport, <PawOsTerminalApp />);
+
+    const surface = await screen.findByLabelText('终端输入输出');
+    const consoleBands = container.querySelector('.paw-terminal-console') as HTMLElement;
+    expect(consoleBands).not.toHaveAttribute('data-search');
+
+    await user.click(screen.getByRole('button', { name: '搜索终端输出' }));
+    const band = screen.getByRole('search');
+    // The band is a real console row: it is a child of the band column and it
+    // sits above the surface, so it can never cover a reported match.
+    expect(consoleBands).toHaveAttribute('data-search');
+    expect(band.parentElement).toBe(consoleBands);
+    expect(band.compareDocumentPosition(surface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Taking a row must not cost the live session: the PTY is refit, not rebuilt.
+    expect(xtermConstructorOptions).toHaveLength(1);
+    expect(screen.getByLabelText('终端输入输出')).toBe(surface);
+
+    await user.keyboard('{Escape}');
+    expect(consoleBands).not.toHaveAttribute('data-search');
+    expect(screen.queryByRole('search')).not.toBeInTheDocument();
+  });
+
+  it('keeps the status band ordered by truth and never lets it leave the frame', async () => {
+    const terminal = terminalSession('terminal-one', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [terminal] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: terminal.terminalId },
+      },
+    });
+
+    const { container } = renderTerminal(transport, <PawOsTerminalApp />);
+
+    await screen.findByLabelText('终端输入输出');
+    const statusbar = container.querySelector('.paw-terminal-statusbar') as HTMLElement;
+    // Live state leads, the working directory follows, and the process facts
+    // that only ever confirm them are the group narrow windows may retire.
+    expect(statusbar.firstElementChild).toHaveClass('paw-terminal-state-tag');
+    expect(statusbar).toHaveAttribute('data-state', 'running');
+    expect(statusbar).not.toHaveAttribute('data-failure');
+    expect(statusbar.querySelector('.paw-terminal-running-badge')).toHaveTextContent('运行中');
+    const facts = statusbar.querySelector('.paw-terminal-statusbar__facts') as HTMLElement;
+    expect(within(facts).getByText('pid 4242')).toBeInTheDocument();
+    expect(within(facts).getByText('UTF-8')).toBeInTheDocument();
+    expect(within(facts).getByText('104×30')).toBeInTheDocument();
+    // The band belongs to the console column, not to the scrolling surface.
+    expect(statusbar.parentElement).toBe(container.querySelector('.paw-terminal-console'));
+  });
+
+  it('keeps every tab addressable by ordinal when the strip collapses to icon-first', async () => {
+    const first = terminalSession('terminal-one', 'Terminal');
+    const second = terminalSession('terminal-two', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [first, second] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: second, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: second.terminalId },
+        'terminal.session.write': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: second.terminalId, bytesWritten: 0 },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    const firstTab = await screen.findByRole('tab', { name: 'Terminal 1' });
+    const secondTab = screen.getByRole('tab', { name: 'Terminal 2' });
+    expect(secondTab).toHaveAttribute('aria-selected', 'true');
+
+    // The visible ordinal survives an icon-first strip; the full identity
+    // stays in the accessible name, which no longer depends on visible text.
+    const ordinal = firstTab.querySelector('.paw-terminal-tab-ordinal');
+    expect(ordinal).toHaveTextContent('1');
+    expect(ordinal).toHaveAttribute('aria-hidden', 'true');
+    expect(firstTab).toHaveAttribute('aria-label', 'Terminal 1');
+    expect(firstTab.querySelector('.paw-terminal-tab-label')).toHaveTextContent('Terminal 1');
+
+    // The chord selects the same ordinal and never reaches the shell.
+    const ptyInput = await screen.findByRole('textbox', { name: '终端输入' });
+    fireEvent.keyDown(ptyInput, { code: 'Digit1', key: '1', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(firstTab).toHaveAttribute('aria-selected', 'true'));
+    fireEvent.keyDown(ptyInput, { code: 'Digit9', key: '9', ctrlKey: true, shiftKey: true });
+    expect(firstTab).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.write')).toBe(false));
   });
 
   it('keeps PAWOS keyboard chords out of the PTY: search opens and a sibling terminal is created', async () => {
@@ -623,9 +734,62 @@ describe('PawOsTerminalApp', () => {
 });
 
 describe('paw-os-terminal-app.css contracts', () => {
-  it('keeps the ended-session notice inside the console grid without displacing the status footer', () => {
+  it('builds the App as fixed chrome bands around one flexible surface', () => {
+    // Window skeleton, not a web page: the App is a column, the tab strip is
+    // an intrinsic band, and exactly one band absorbs the window.
+    expect(terminalCss).toMatch(/\.paw-terminal-app\s*\{[^}]*flex-direction:\s*column;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app > \.paw-terminal-app__toolbar\s*\{[^}]*flex:\s*0 0 auto;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app__workspace\s*\{[^}]*flex:\s*1 1 auto;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app__workspace\s*\{[^}]*min-height:\s*0;/s);
+  });
+
+  it('gives the console one row template per real band combination', () => {
     expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) 30px;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\[data-search\]\s*\{[\s\S]*?grid-template-rows:\s*32px minmax\(0, 1fr\) 30px;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\[data-ended\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) auto 30px;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\[data-search\]\[data-ended\]\s*\{[\s\S]*?grid-template-rows:\s*32px minmax\(0, 1fr\) auto 30px;/s);
+  });
+
+  it('keeps search a band and keeps the menus that must not resize the PTY floating', () => {
+    expect(terminalCss).not.toMatch(/\.paw-terminal-search\s*\{[^}]*position:\s*absolute;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-switcher\s*\{[^}]*position:\s*absolute;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-error\s*\{[^}]*position:\s*absolute;/s);
+  });
+
+  it('answers narrow widths with the container that owns the width, down to icon-first tabs', () => {
+    // The strip is portalled into the titlebar, so it must query its own box
+    // rather than the App body it no longer lives in.
+    expect(terminalCss).toMatch(/\.paw-terminal-app__toolbar\s*\{[^}]*container:\s*paw-terminal-bar \/ inline-size;/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-app\s*\{[^}]*container:\s*paw-terminal \/ inline-size;/s);
+    expect(terminalCss).not.toMatch(/@media[^{]*\(max-width/);
+
+    const iconFirst = terminalCss.slice(terminalCss.indexOf('@container paw-terminal-bar (max-width: 300px)'));
+    expect(iconFirst).toMatch(/\.paw-terminal-tab-label,[\s\S]*?\.paw-terminal-tab-exit\s*\{\s*display:\s*none;\s*\}/);
+    expect(iconFirst).toMatch(/\.paw-terminal-tab-ordinal\s*\{\s*display:\s*block;\s*\}/);
+
+    // The status band retires its confirming facts, never the live state or
+    // the path, and the search band never retires a hit target.
+    const narrowApp = terminalCss.slice(terminalCss.indexOf('@container paw-terminal (max-width: 560px)'));
+    expect(narrowApp).toMatch(/\.paw-terminal-statusbar__facts\s*\{\s*display:\s*none;\s*\}/);
+    expect(narrowApp).not.toMatch(/\.paw-terminal-state-tag\s*\{\s*display:\s*none;/);
+    expect(narrowApp).not.toMatch(/\.paw-terminal-cwd\s*\{\s*display:\s*none;/);
+    expect(narrowApp).not.toMatch(/\.paw-terminal-search button\s*\{\s*display:\s*none;/);
+  });
+
+  it('carries exactly the three deliberate motions and silences all of them', () => {
+    // 1: the tab-switch beam. 2: the search band unfolding. 3: the PTY focus edge.
+    expect(terminalCss).toMatch(/\.paw-terminal-tab::before\s*\{[^}]*transform:\s*scaleX\(\.3\);/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-tab\[data-selected\]::before\s*\{[^}]*transform:\s*scaleX\(1\);/s);
+    expect(terminalCss).toMatch(/\.paw-terminal-search\s*\{[^}]*animation:\s*paw-terminal-band-open/s);
+    expect(terminalCss).toMatch(/@keyframes paw-terminal-band-open/);
+    expect(terminalCss).toMatch(/\.paw-terminal-xterm:focus-within::before\s*\{[^}]*border-top-color:/s);
+
+    expect(terminalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-terminal-tab\[data-selected\]::before\s*\{\s*transform:\s*none;/);
+    expect(terminalCss).toMatch(/:root\[data-reduce-motion='true'\] \.paw-terminal-tab\[data-selected\]::before\s*\{\s*transform:\s*none;/);
+    // The focus edge is colour and shadow only, so it survives reduced motion
+    // without ever moving anything.
+    expect(terminalCss).toMatch(/\.paw-terminal-xterm::before\s*\{[^}]*transition:\s*border-color[^}]*box-shadow[^}]*\}/s);
+    expect(terminalCss).not.toMatch(/\.paw-terminal-xterm::before\s*\{[^}]*transition:[^};]*transform/s);
   });
 
   it('keeps the tab strip locally scrollable while the new-terminal action stays outside it', () => {

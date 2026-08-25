@@ -346,20 +346,28 @@ describe('PAWOS semantic type roles', () => {
     );
   });
 
-  it('collapses System App navigation from the owning PAW window width', () => {
-    expect(systemMigratedCss).not.toContain('@container paw-system-app');
+  it('collapses System App navigation from the App container, not the viewport', () => {
+    // A System App is a window App: it measures its own box, so the rail
+    // collapses the same way in a maximized window, a half-snapped one, and a
+    // satellite frame. The container therefore sits on `.paw-system-app`, and
+    // because a container can never restyle itself the reflowing rail width
+    // lives on the child frame.
+    expect(systemMigratedCss).toContain('container: paw-sysapp / size;');
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 720px\)[\s\S]*?\.paw-desktop-root \.paw-system-app\s*\{[^}]*grid-template-columns:\s*54px minmax\(0, 1fr\);/s,
+      /\.paw-desktop-root \.paw-system-app__frame\s*\{[^}]*grid-template-columns:\s*var\(--paw-system-rail-w\) minmax\(0, 1fr\);/s,
+    );
+    expect(systemMigratedCss).toMatch(
+      /@container paw-sysapp \(max-width: 560px\)[\s\S]*?\.paw-desktop-root \.paw-system-app__frame\s*\{\s*--paw-system-rail-w:\s*56px;/s,
     );
     // The rail may drop its labels, but never a live decision or health count.
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 720px\)[\s\S]*?button > span:not\(\.paw-system-app__nav-badge\)\s*\{\s*display:\s*none;/s,
+      /@container paw-sysapp \(max-width: 560px\)[\s\S]*?\.paw-system-app__nav-label\s*\{\s*display:\s*none;/s,
     );
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 720px\)[\s\S]*?\.paw-system-app__nav-badge\s*\{[^}]*position:\s*absolute;/s,
+      /@container paw-sysapp \(max-width: 560px\)[\s\S]*?\.paw-system-app__nav-badge\s*\{[^}]*position:\s*absolute;/s,
     );
     expect(systemMigratedCss).toMatch(
-      /@container paw-window \(max-width: 520px\)[\s\S]*?\.paw-system-app \.(?:mgmt-metrics)\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
+      /@container paw-sysapp \(max-width: 420px\)[\s\S]*?\.paw-system-app \.(?:mgmt-metrics)\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
     );
     expect(systemMigratedCss).not.toContain('.paw-system-app *::before');
     expect(systemMigratedCss).not.toContain('animation-duration: .001ms !important');
@@ -478,6 +486,74 @@ describe('PAWOS semantic type roles', () => {
       /\.paw-window-shell\[data-app='agent'\] \.paw-agent-rail\s*\{[^}]*background:\s*#f6f8fb;[^}]*backdrop-filter:\s*none;/s,
     );
     expect(agentCompositionCss).not.toMatch(/\[data-app='agent'\] \.paw-agent-rail[^{]*\{[^}]*rgba\([^)]*,\s*\.5\)/s);
+  });
+
+  it('reads activity as rows in the document flow rather than a stack of plates', () => {
+    // 「这个应该不要方框的，方框导致信息太少」: no owner of the interleaved
+    // activity group may re-declare a border, radius or card fill, and the row
+    // spends the reclaimed width on the tool name and its object.
+    for (const [, block] of agentFeatureCss.matchAll(
+      /(?:^|\n)details\.agent-activity--inline\s*\{([^}]*)\}/g,
+    )) {
+      expect(block).not.toMatch(/border(?:-left)?:(?!\s*0\s*;)/);
+      expect(block).not.toMatch(/border-radius:(?!\s*0\s*;)/);
+      expect(block).toMatch(/background:\s*transparent/);
+    }
+    expect(agentFeatureCss).toMatch(
+      /\.agent-activity-group\[data-layout='interleaved'\]\s*\{[^}]*width:\s*100%/s,
+    );
+    expect(agentFxCss).toMatch(/\.paw-chatfx \.paw-activity\s*\{[^}]*width:\s*100%/s);
+    expect(agentFxCss).toMatch(/\.paw-chatfx \.paw-activity__hint\s*\{[^}]*flex:\s*1 1 auto/s);
+    expect(agentFxCss).not.toMatch(/\.paw-chatfx \.paw-activity__glyph\s*\{[^}]*background:\s*color-mix/s);
+    expect(agentFxCss).not.toMatch(/\.paw-chatfx \.fx-pill\.\w+\s*\{[^}]*background:\s*color-mix/s);
+
+    // agent.css alone does not decide what the reader sees: the installed
+    // Session surface is `.paw-desktop-root … [data-message-flow='separated']`,
+    // where a PAWOS owner can out-specify the de-boxed base. Opening a group
+    // must reveal rows, not summon the plate the closed row does without.
+    for (const [owner, css] of Object.entries({
+      'paw-os-agent-migrated-v1.css': agentMigratedCss,
+      'paw-os-webmodel-v1.css': webmodelCss,
+      'paw-os-agent-fx.css': agentFxCss,
+      'paw-os-agent-next.css': agentNextCss,
+      'paw-os-agent-composition.css': agentCompositionCss,
+    })) {
+      for (const [, selector, block] of css.matchAll(
+        /([^{}]*\.agent-activity--inline\[open\][^{}]*)\{([^{}]*)\}/g,
+      )) {
+        const rule = `${owner}: ${selector.trim().replace(/\s+/g, ' ')}`;
+        expect(block, `${rule} must not border an open inline group`)
+          .not.toMatch(/border(?:-[a-z]+)*:(?!\s*(?:0|none)\s*;)/);
+        expect(block, `${rule} must not fill an open inline group`)
+          .not.toMatch(/background(?:-color)?:(?!\s*(?:transparent|none)\s*;)/);
+        expect(block, `${rule} must not lift an open inline group off the flow`)
+          .not.toMatch(/box-shadow:(?!\s*none\s*;)/);
+      }
+    }
+
+    // The disclosed body earns its depth with indent, and raw Tool output keeps
+    // exactly one boundary around the 原文 rather than a card inside a card.
+    expect(agentMigratedCss).toMatch(
+      /\[data-message-flow='separated'\] \.agent-activity-row__details \{[^}]*border:\s*0;[^}]*background:\s*transparent;/s,
+    );
+    expect(webmodelCss).not.toMatch(/\.agent-tool-request,\s*\n\s*\.agent-tool-result-panel/);
+  });
+
+  it('stops answering hover and promoting closed reveals while the transcript scrolls', () => {
+    // A still pointer over a moving list lights every row it passes; that is
+    // the reported scrolling flicker, not a response to the reader.
+    expect(agentFeatureCss).toMatch(
+      /\.agent-timeline\[data-scrolling\][^{]*\{[^}]*transition:\s*none/s,
+    );
+    expect(agentFxCss).toMatch(
+      /\.agent-timeline\[data-scrolling\][^{]*\.paw-activity__row[^{]*\{[^}]*background:\s*transparent/s,
+    );
+    // Hundreds of collapsed reveals holding will-change each cost a layer for
+    // an animation they are not running.
+    expect(agentFeatureCss).not.toMatch(/\.agent-smooth-reveal\s*\{[^}]*will-change/s);
+    expect(agentFeatureCss).toMatch(
+      /\.agent-smooth-reveal\[data-state='closing'\]\s*\{\s*will-change:\s*height/s,
+    );
   });
 
   it('uses one bounded motion contract without clipping open nested Tool evidence', () => {

@@ -9,19 +9,46 @@ describe('PawWorkbenchMigrated', () => {
   it('renders the project overview from the supplied route records without seed data', async () => {
     const task = { id: 'task-real', title: '统一 Agent 入口', status: 'in_progress', owner: '前端' };
     const onOpenTask = vi.fn();
-    renderWorkbench({
+    const { container } = renderWorkbench({
       pageId: 'overview',
       overview: { project: { name: 'personal-agent-workbench', path: '/work/paw', branch: 'main' }, metrics: { activeSessions: 3 } },
       planning: { tasks: [task], summary: { openTaskCount: 1, completedTaskCount: 0 } },
       onOpenTask,
     });
 
-    expect(screen.getByRole('heading', { level: 2, name: 'personal-agent-workbench' })).toBeInTheDocument();
+    // Workspace identity is a status rail, not a hero plate above the work.
+    const ledger = container.querySelector('.paw-wb-ledger') as HTMLElement;
+    expect(within(ledger).getByText('personal-agent-workbench')).toBeInTheDocument();
     expect(screen.getAllByText('/work/paw')).toHaveLength(2);
     expect(within(screen.getByLabelText('项目真实指标')).getByText('3')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /统一 Agent 入口/ }));
     expect(onOpenTask).toHaveBeenCalledWith(task);
     expect(screen.queryByText('今晚发布 v0.3')).not.toBeInTheDocument();
+  });
+
+  it('puts real tasks and WorkDocuments in the first viewport instead of a stack of summary plates', () => {
+    const { container } = renderWorkbench({
+      pageId: 'overview',
+      overview: { project: { name: 'personal-agent-workbench', path: '/work/paw' }, metrics: { activeSessions: 3 } },
+      planning: {
+        goals: [{ id: 'goal-1', title: '完成 Workbench', status: 'active' }],
+        tasks: [{ id: 'task-1', title: '统一 Agent 入口', status: 'active' }],
+      },
+      documents: [workDocument()],
+    });
+
+    const workspace = container.querySelector('.paw-wb-overview__workspace') as HTMLElement;
+    expect(workspace).not.toBeNull();
+    // The console band answers "next unresolved" above the working panes; the
+    // panes themselves come before the status ledger in document order.
+    const bands = [...container.querySelectorAll('.paw-wb-overview > *')].map((node) => node.className);
+    expect(bands).toEqual(['paw-wb-now', 'paw-wb-overview__workspace', 'paw-wb-ledger']);
+    expect([...workspace.querySelectorAll('[data-pane]')].map((pane) => pane.getAttribute('data-pane')))
+      .toEqual(['tasks', 'documents', 'goals']);
+    expect(within(workspace).getByRole('heading', { level: 2, name: '当前工作' })).toBeInTheDocument();
+    expect(within(workspace).getByRole('button', { name: /统一 Agent 入口/ })).toBeInTheDocument();
+    expect(within(workspace).getByRole('button', { name: /PAWOS 交互重建/ })).toBeInTheDocument();
+    expect(container.querySelector('.paw-wb-project-lead')).toBeNull();
   });
 
   it('leads the overview with the next unresolved task and truthful pulse facts', async () => {
@@ -188,6 +215,15 @@ describe('PawWorkbenchMigrated', () => {
     expect(lanes[0]).toHaveTextContent('已完成');
     expect(lanes[1]).toHaveTextContent('进行中');
     expect(lanes[1]).toHaveTextContent('1');
+
+    // Each populated lane also owns a drawn column, and the selected task's
+    // lane is the one the field marks as current.
+    const bands = [...container.querySelectorAll<HTMLElement>('.paw-wb-graph__band')];
+    expect(bands.map((band) => band.getAttribute('data-lane'))).toEqual(['done', 'active']);
+    expect(bands.map((band) => band.style.getPropertyValue('--paw-wb-lane-x')))
+      .toEqual(lanes.map((lane) => (lane as HTMLElement).style.getPropertyValue('--paw-wb-lane-x')));
+    expect(container.querySelectorAll('.paw-wb-graph__band[data-current]')).toHaveLength(1);
+    expect(container.querySelector('.paw-wb-graph__band[data-current]')).toHaveAttribute('data-lane', 'active');
   });
 
   it('filters the planning outline without hiding graph dependencies', async () => {
@@ -324,6 +360,30 @@ describe('PawWorkbenchMigrated', () => {
     const facts = screen.getByText('Document ID').closest('dl') as HTMLElement;
     expect(within(facts).getByText(`workdoc_${'a'.repeat(32)}`)).toBeInTheDocument();
     expect(within(facts).getByText('session_todo:session-1:3')).toBeInTheDocument();
+  });
+
+  it('keeps the reader title as fixed chrome above one scrolling authority body', () => {
+    const document = workDocument();
+    const { container, rerender } = renderWorkbench({
+      pageId: 'documents',
+      documents: [document],
+      documentLifecycle: <button type="button">归档到历史</button>,
+      selectedDocument: document,
+    });
+
+    const reader = container.querySelector('.paw-wb-document-reader') as HTMLElement;
+    expect([...reader.children].map((node) => node.tagName.toLowerCase())).toEqual(['header', 'div']);
+    const body = reader.querySelector('.paw-wb-document-reader__body') as HTMLElement;
+    expect(within(body).getByText('Document ID')).toBeInTheDocument();
+    expect(within(body).getByRole('button', { name: '归档到历史' })).toBeInTheDocument();
+    // The title, the close affordance and the state badge never scroll away.
+    const header = reader.querySelector('header') as HTMLElement;
+    expect(within(header).getByRole('heading', { level: 2, name: 'PAWOS 交互重建' })).toBeInTheDocument();
+    expect(within(header).getByRole('button', { name: '返回文档列表' })).toBeInTheDocument();
+
+    rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'documents', documents: [document] })} />);
+    expect(container.querySelector('.paw-wb-document-reader > header')).toBeNull();
+    expect(within(container.querySelector('.paw-wb-document-reader__body') as HTMLElement).getByText('选择一份工作文档')).toBeInTheDocument();
   });
 
   it('makes an overview WorkDocument click enter the reader with that document visible', async () => {
