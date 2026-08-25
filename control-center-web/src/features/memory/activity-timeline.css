@@ -1138,13 +1138,16 @@
   .activity-timeline__source-refs li > button:hover { color: var(--color-accent); }
 }
 
-@media (max-width: 980px) {
+/* The timeline only ever renders inside the Memory workspace, so its reflow
+   follows the memory-second-brain container and therefore the PAWOS window,
+   not the browser viewport. */
+@container memory-second-brain (max-width: 980px) {
   .daily-journal__body { grid-template-columns: minmax(0, 1fr) minmax(230px, 34%); }
   .activity-timeline__task { grid-template-columns: 106px minmax(0, 1fr) 132px 30px; }
   .activity-timeline__task-main { padding-inline: 14px; }
 }
 
-@media (max-width: 720px) {
+@container memory-second-brain (max-width: 720px) {
   .daily-journal__body { grid-template-columns: 1fr; }
   .daily-journal__story { border-right: 0; border-bottom: 1px solid var(--color-border); }
   .activity-timeline__period-header { align-items: flex-start; }
@@ -1168,7 +1171,7 @@
   .activity-timeline__task-detail-metrics > div:nth-child(-n + 2) { border-bottom: 1px solid var(--color-border); }
 }
 
-@media (max-width: 480px) {
+@container memory-second-brain (max-width: 480px) {
   .daily-journal__header { align-items: flex-start; padding-inline: 14px 12px; }
   .daily-journal__identity { align-items: flex-start; }
   .daily-journal__identity h3 { font-size: 15px; }
@@ -1288,7 +1291,7 @@
 
 .activity-timeline__dialog { width: min(520px, calc(100vw - 32px)); }
 
-@media (max-width: 680px) {
+@container memory-second-brain (max-width: 680px) {
   .activity-timeline__decision-bar > div:last-child .ui-button { flex: 1; }
   .activity-timeline__toolbar {
     display: grid;

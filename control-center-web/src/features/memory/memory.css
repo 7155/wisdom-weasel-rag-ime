@@ -14,6 +14,11 @@
    management.css; only Memory-scoped composition may override it here. */
 
 main[data-route-id='memory'] {
+  /* The App root is the responsive container. Every Memory surface — window
+     chrome included — reads the width of the PAWOS window it was given, so a
+     resize reflows the App without the browser viewport ever being asked. */
+  container: memory-app / inline-size;
+
   --memory-signal: #d94f8b;
   --memory-signal-strong: #b82d70;
   --memory-signal-soft: rgb(217 79 139 / .1);
@@ -144,6 +149,28 @@ main[data-route-id='memory'] {
   align-items: center;
   gap: 9px;
 }
+
+/* The collapsed page nav. It only exists once the window is too narrow for a
+   readable rail or tab strip, and it always names the page in words. */
+.memory-app-nav {
+  display: none;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--memory-line, var(--color-border));
+  background: var(--color-paper);
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.memory-app-nav__label {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.memory-app-nav__select { min-width: 0; }
 
 .memory-second-brain__mode > i {
   width: 8px;
@@ -2176,6 +2203,9 @@ main[data-route-id='memory'][data-paw-os-app='memory'] {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+  /* Inside a window the root has a definite height as well, so pages can size
+     against the window instead of the browser viewport. */
+  container-type: size;
   color: #202631;
   background: #f5f7fa;
   font-family: var(--font-body, "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif);
@@ -2199,14 +2229,28 @@ main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
   padding: 0;
 }
 
+/* Window layout: pipeline band, optional collapsed page nav, then one
+   scrollable page body. The rows are addressed explicitly because the nav is
+   absent from the flow whenever the window is wide enough for a real rail. */
 main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
   width: 100%;
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
   background: #f5f7fa;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline { grid-row: 1; }
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-app-nav { grid-row: 2; }
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs,
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .mgmt-loading,
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > [role='alert'] {
+  min-height: 0;
+  grid-row: 3;
+  overflow: auto;
 }
 
 /* The pipeline becomes a full-bleed band under the window chrome. */
@@ -2343,6 +2387,81 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
 .memory-second-brain .memory-preferences .mgmt-section__header { padding-bottom: 14px; border-bottom: 1px solid var(--memory-line); }
 .memory-second-brain .memory-preferences .mgmt-section__header h2 { font-size: 21px; letter-spacing: -.018em; }
 
+/* ============================== window page frames ==============================
+   The catalog owns an explicit three-row frame above. The other five pages keep
+   their natural flow, but inside a window they still read as App pages: the page
+   frame goes full-bleed, its heading is pinned to the top of the pane, and only
+   the body below it scrolls. The reading measure moves from the frame onto the
+   page blocks so a pinned heading can span the whole pane. */
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
+  --memory-page-gutter: clamp(14px, 3cqw, 28px);
+  --memory-page-measure: 1120px;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
+  .memory-preferences,
+  .memory-curation,
+  .activity-timeline,
+  .memory-relations,
+  .memory-role-book-layer
+) {
+  width: 100%;
+  min-width: 0;
+  margin-inline: 0;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
+  .memory-curation,
+  .activity-timeline,
+  .memory-relations,
+  .memory-role-book-layer
+) > *,
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-preferences > .mgmt-section > * {
+  width: min(var(--memory-page-measure), calc(100% - 2 * var(--memory-page-gutter)));
+  margin-inline: auto;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
+  .memory-curation > .memory-curation__header,
+  .activity-timeline > .activity-timeline__toolbar,
+  .memory-relations > .memory-relations__toolbar,
+  .memory-role-book-layer > .memory-layer-heading,
+  .memory-preferences > .mgmt-section > .mgmt-section__header
+) {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  width: 100%;
+  margin: 0 0 var(--space-3);
+  padding-block: 11px;
+  padding-inline: max(var(--memory-page-gutter), (100% - var(--memory-page-measure)) / 2);
+  border-bottom: 1px solid var(--memory-line);
+  /* Opaque: a PAWOS page heading never blurs the content scrolling under it. */
+  background: #fff;
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-preferences > .mgmt-section { padding: 0 0 36px; }
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-curation { padding-top: 0; }
+
+/* The relation graph is sized by the window, never by the browser viewport:
+   inside a short window the canvas shrinks instead of pushing the controls and
+   the node list out of the pane. */
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-relation-canvas { height: clamp(280px, 58cqh, 820px); }
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-explorer__visual { grid-template-rows: auto auto minmax(0, 1fr); }
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-node-list { max-height: clamp(220px, 58cqh, 590px); }
+
+/* Loading and empty states report inside the pane instead of forcing it open. */
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(.mgmt-loading, .memory-layer-loading) {
+  min-height: 0;
+  padding: var(--space-4) var(--memory-page-gutter);
+}
+
+main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .ui-empty-state {
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* Selection, focus, and scrollbars all follow the layer identity. */
 main[data-route-id='memory'] ::selection { background: color-mix(in srgb, var(--memory-signal) 24%, transparent); }
 main[data-route-id='memory'] :focus-visible { outline-color: var(--memory-signal); }
@@ -2471,9 +2590,19 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 :root[data-reduce-motion='true'] .memory-role-book-sections > section > button > svg { transition: none; }
 
 /* ============================== responsive ==============================
-   One responsive system: the .memory-second-brain inline-size container
-   drives every in-flow surface in both the PAWOS window and the web page.
-   Only portalled dialogs and touch targets use viewport media queries. */
+   One responsive system, two nested containers: memory-app is the App root and
+   drives window chrome and control sizing; memory-second-brain is the workspace
+   and drives every in-flow surface. Both react to the PAWOS window, so a resize
+   reflows the App identically to a resized browser page. Only portalled dialogs
+   still consult the viewport, because they render outside both containers. */
+
+/* Nav collapse. Below this width the PAWOS App rail has already turned into a
+   strip and the tab list no longer fits, so Memory shows a labelled page
+   selector instead of leaving the six pages behind unlabelled icons. */
+@container memory-app (max-width: 620px) {
+  .memory-app-nav { display: grid; }
+  .memory-view-tabs > .ui-tabs__list { display: none; }
+}
 
 @container memory-second-brain (max-width: 1120px) {
   .memory-entity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2575,7 +2704,7 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
   .memory-preferences__grid > :last-child { border-bottom: 0; }
 }
 
-/* Portalled dialogs live outside the container; they follow the viewport. */
+/* Portalled dialogs live outside both containers; they follow the viewport. */
 @media (max-width: 680px) {
   .memory-reference-view__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .memory-reference-view__facts > div:nth-child(3n) { border-right: 1px solid var(--memory-line, var(--color-border)); }
@@ -2584,8 +2713,9 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
   .memory-edit-form__split { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Touch targets grow to 44px on compact touch-first viewports. */
-@media (max-width: 760px) {
+/* Touch targets grow to 44px once the App itself is compact — a narrow window
+   on a large display needs the same reachable controls as a small screen. */
+@container memory-app (max-width: 760px) {
   main[data-route-id='memory'] .ui-button,
   main[data-route-id='memory'] .ui-icon-button,
   main[data-route-id='memory'] .ui-input,
@@ -2606,4 +2736,16 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
     min-height: 44px;
     align-items: center;
   }
+}
+
+/* 375px class windows. The App keeps one column everywhere: nothing may push
+   the pane wider than the window, and the pinned page headings shrink with it. */
+@container memory-app (max-width: 430px) {
+  main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain { --memory-page-gutter: 12px; }
+  main[data-route-id='memory'] .memory-app-nav { padding-inline: 12px; }
+  main[data-route-id='memory'] .memory-second-brain__mode small { display: none; }
+  main[data-route-id='memory'] .memory-catalog-filters .ui-field,
+  main[data-route-id='memory'] .memory-catalog-filters__query { min-width: 0; flex-basis: 100%; }
+  main[data-route-id='memory'] .memory-graph__scope code { max-width: 100%; }
+  main[data-route-id='memory'] .memory-relations__filters > .memory-relations__source { width: 100%; flex-basis: 100%; }
 }
