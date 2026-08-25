@@ -4,6 +4,12 @@
  * The supplied archive defines composition, hierarchy, and state grammar only.
  * Every datum and action rendered below still comes from the existing PAWOS
  * feature owners, transports, native bridges, and guarded mutation workflows.
+ *
+ * Desktop viewport logic: the rail is a compact 168px table of contents, the
+ * page chrome strip is 36px, and entering a page lands on its main form or
+ * decision desk — never on a hero header. The approvals route additionally
+ * locks its decision desk to the window height so the human queue is always
+ * inside the first viewport.
  */
 
 .paw-desktop-root .paw-system-app {
@@ -19,7 +25,7 @@
   --paw-system-ink: #0f172a;
   --paw-system-muted: #5f6c80;
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
+  grid-template-columns: 168px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -71,7 +77,7 @@
   align-content: start;
   gap: 2px;
   min-height: 0;
-  padding: 12px 10px;
+  padding: 8px;
   overflow: auto;
   scrollbar-color: rgb(15 23 42 / 20%) transparent;
   scrollbar-width: thin;
@@ -81,7 +87,7 @@
    the Monitor rail into 实时 / 排查, so the eleven-page system area reads
    as a table of contents instead of a flat list. */
 .paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group {
-  margin: 13px 10px 3px;
+  margin: 10px 9px 2px;
   color: color-mix(in srgb, var(--paw-system-muted) 78%, transparent);
   font-size: 12px;
   font-weight: 700;
@@ -98,15 +104,15 @@
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
-  min-height: 36px;
-  padding: 0 10px;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 9px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--paw-system-muted);
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.4;
   text-align: left;
   cursor: pointer;
@@ -166,17 +172,17 @@
   overflow: hidden;
 }
 
-/* Every system page reserves the same 40px chrome strip; naming the current
+/* Every system page reserves the same 36px chrome strip; naming the current
    page there removes the anonymous empty band without adding a second h1.
    The strip remounts per page, so the name settles in with the content. */
 .paw-desktop-root .paw-system-app__page-title {
   position: absolute;
   top: 0;
-  left: 24px;
+  left: 18px;
   z-index: 9;
   display: flex;
   align-items: center;
-  height: 40px;
+  height: 36px;
   color: var(--paw-system-ink);
   font-size: 14px;
   font-weight: 700;
@@ -218,8 +224,8 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  min-height: 40px;
-  padding: 4px 16px;
+  min-height: 36px;
+  padding: 2px 14px;
   background: #f5f8fb;
   border-bottom: 1px solid var(--paw-system-line);
   backdrop-filter: none;
@@ -230,7 +236,7 @@
   top: 0;
   z-index: 8;
   display: block;
-  height: 40px;
+  height: 36px;
   background: #f5f8fb;
   border-bottom: 1px solid var(--paw-system-line);
   backdrop-filter: none;
@@ -239,21 +245,21 @@
 
 .paw-desktop-root .paw-system-app .mgmt-page__body {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
   max-width: none;
-  padding: 20px 24px 28px;
+  padding: 14px 18px 24px;
 }
 
 .paw-desktop-root .paw-system-app .mgmt-section {
   min-width: 0;
   margin: 0;
-  padding: 16px 19px;
+  padding: 13px 16px;
   overflow: hidden;
   background: var(--paw-system-surface);
   border: 1px solid var(--paw-system-line);
-  border-radius: 14px;
-  animation: paw-system-arrive 340ms cubic-bezier(.16, 1, .3, 1) both;
+  border-radius: 12px;
+  animation: paw-system-arrive 300ms cubic-bezier(.16, 1, .3, 1) both;
 }
 
 .paw-desktop-root .paw-system-app .mgmt-section + .mgmt-section {
@@ -264,21 +270,23 @@
 .paw-desktop-root .paw-system-app .mgmt-page__body > :nth-child(3) { animation-delay: 70ms; }
 .paw-desktop-root .paw-system-app .mgmt-page__body > :nth-child(4) { animation-delay: 105ms; }
 
+/* Sections arrive with a short settle only — no blur, nothing that could
+   read as page-load flicker on a desktop surface. */
 @keyframes paw-system-arrive {
-  from { opacity: .72; transform: translateY(7px); filter: blur(2px); }
-  to { opacity: 1; transform: none; filter: none; }
+  from { opacity: .74; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
 }
 
 .paw-desktop-root .paw-system-app .mgmt-section__header {
   align-items: start;
-  margin: 0 0 13px;
+  margin: 0 0 10px;
 }
 
 .paw-desktop-root .paw-system-app .mgmt-section__header h2 {
-  margin: 0 0 3px;
+  margin: 0 0 2px;
   color: var(--paw-system-ink);
   font-family: var(--font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 720;
   letter-spacing: -.01em;
   line-height: 1.25;
@@ -864,10 +872,49 @@
   background: var(--paw-system-accent-soft);
 }
 
+/* Approvals is a decision desk, not a report. While the window is wide enough
+   for the two-column desk (the feature collapses it below 900px), the route
+   locks to the window height: the pulse strip and queue filters stay put and
+   only the queue list and the decision pane scroll internally, so the human
+   queue never falls below the first viewport. */
+@container paw-window (min-width: 901px) {
+  .paw-desktop-root .paw-system-app .mgmt-page[data-route-id='approvals'] {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .paw-desktop-root .paw-system-app .mgmt-page[data-route-id='approvals'] .mgmt-page__body {
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .paw-desktop-root .paw-system-app .mgmt-page[data-route-id='approvals'] .approvals-desk {
+    min-height: 0;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .paw-desktop-root .paw-system-app .mgmt-page[data-route-id='approvals'] .approvals-queue {
+    min-height: 0;
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .paw-desktop-root .paw-system-app .mgmt-page[data-route-id='approvals'] .approvals-queue__list,
+  .paw-desktop-root .paw-system-app .mgmt-page[data-route-id='approvals'] .approvals-decision {
+    min-height: 0;
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-color: rgb(15 23 42 / 22%) transparent;
+    scrollbar-width: thin;
+  }
+}
+
 /* Responsive composition -------------------------------------------------- */
 
 /* The System App fills a named PAW window. Query that parent: a container
-   cannot select and restyle itself, which previously left the 196px rail in
+   cannot select and restyle itself, which previously left the 168px rail in
    place even after its labels disappeared. */
 @container paw-window (max-width: 900px) {
   .paw-desktop-root .paw-system-package-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1,7 +1,9 @@
-/* Terminal deep rebuild: an obsidian instrument console. One dark work surface
-   owns the PTY; chrome stays hairline-thin; the App accent (terminal green)
-   marks the selected tab, the live-session signal, and every primary action.
-   Motion is short, purposeful, and fully silenced under reduced motion. */
+/* Terminal desktop-viewport rebuild: an obsidian instrument console. Opening
+   the App is opening the PTY — one dark work surface owns the viewport, the
+   tab strip is a compact 36px instrument row, and the App accent (terminal
+   green) marks the selected tab, the live-session signal, and every primary
+   action. Motion is short, purposeful, and fully silenced under reduced
+   motion. */
 .paw-terminal-app {
   --paw-terminal-bg: #101216;
   --paw-terminal-elevated: #161a21;
@@ -22,7 +24,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 40px minmax(0, 1fr);
+  grid-template-rows: 36px minmax(0, 1fr);
   background: var(--paw-terminal-bg);
   color: var(--paw-terminal-text);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
@@ -50,7 +52,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 7px;
-  padding: 0 10px;
+  padding: 0 8px;
   border-bottom: 1px solid rgb(255 255 255 / 8%);
   background: var(--paw-terminal-elevated);
   user-select: none;
@@ -99,12 +101,12 @@
 .paw-terminal-tab {
   position: relative;
   display: flex;
-  min-width: 102px;
-  max-width: 200px;
-  flex: 0 1 158px;
+  min-width: 96px;
+  max-width: 184px;
+  flex: 0 1 144px;
   align-items: center;
-  height: 33px;
-  border-radius: 10px 10px 0 0;
+  height: 28px;
+  border-radius: 8px 8px 0 0;
   border: 0;
   background: transparent;
   color: #8b929d;
@@ -117,8 +119,8 @@
 .paw-terminal-tab::before {
   position: absolute;
   top: 0;
-  right: 12px;
-  left: 12px;
+  right: 10px;
+  left: 10px;
   height: 2px;
   border-radius: 999px;
   background: linear-gradient(90deg, transparent, var(--paw-terminal-accent), transparent);
@@ -134,8 +136,8 @@
   display: grid;
   grid-template-columns: minmax(0, max-content) minmax(0, 1fr) 7px;
   align-items: center;
-  gap: 6px;
-  padding: 0 29px 0 11px;
+  gap: 5px;
+  padding: 0 26px 0 10px;
   color: inherit;
   cursor: pointer;
   font: inherit;
@@ -192,9 +194,9 @@
 }
 .paw-tab-close {
   position: absolute;
-  right: 5px;
-  width: 21px;
-  height: 21px;
+  right: 4px;
+  width: 19px;
+  height: 19px;
   display: grid;
   place-items: center;
   opacity: 0.5;
@@ -214,8 +216,8 @@
 }
 
 .paw-terminal-tab-new {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   display: grid;
   flex: 0 0 auto;
   place-items: center;
@@ -795,7 +797,7 @@
   .paw-window-titlebar[data-window-chrome='terminal-tabs'] .paw-window-title strong { display: none; }
   .paw-terminal-app__toolbar { padding-inline: 6px; }
   .paw-terminal-app__toolbar[data-window-chrome] { padding-inline: 0; }
-  .paw-terminal-tab { min-width: 92px; max-width: 124px; }
+  .paw-terminal-tab { min-width: 88px; max-width: 118px; }
   .paw-terminal-tab-cwd { display: none; }
 }
 

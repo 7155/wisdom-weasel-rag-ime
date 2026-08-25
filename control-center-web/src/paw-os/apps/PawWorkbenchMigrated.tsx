@@ -24,8 +24,8 @@ import '../styles/paw-os-workbench-migrated-v1.css';
  * THESIS: Workbench is a live project dependency field, never a summary-card dashboard.
  * OWN-WORLD: Glacier-cool canvas, ultramarine workbench identity, white rounded plates, dotted topology, azure flow, and restrained semantic inks.
  * STORY: Answer "what is the next unresolved thing" first, then inspect task ownership and dependencies, then open the authoritative task or WorkDocument.
- * FIRST VIEWPORT: A purpose-first command deck opens every page: what this page answers, then cross-page commands with truthful counts, then identity.
- *   The now-band leads the overview; planning keeps outline, labelled dependency lanes and selected truth; documents are a two-pane reader.
+ * FIRST VIEWPORT: Desktop viewport logic — the command deck is one compact console band, so the working columns (tasks, documents) land inside the first
+ * screen; planning keeps outline, labelled dependency lanes and selected truth; documents are a two-pane reader.
  * FORM: Archive-led Operate extension, pawos-workbench-v1.
  */
 
