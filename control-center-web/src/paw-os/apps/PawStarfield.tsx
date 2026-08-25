@@ -327,7 +327,6 @@ function Starfield2D({
           return orbiting ? (
             <div
               className="paw-sf2__orbiter"
-              data-idle={body.idle || undefined}
               data-working={body.motion.working || undefined}
               key={body.id}
               style={{

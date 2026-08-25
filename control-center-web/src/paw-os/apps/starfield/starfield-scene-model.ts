@@ -101,7 +101,7 @@ export interface StarfieldSceneModel {
 }
 
 /**
- * Only handoffs actually in flight earn a beam label, and only a few of them:
+ * Only handoffs actually in flight earn a beam label, and only the newest few:
  * more than three floating strings turn the work chart back into noise. Both
  * renderers read this so the 2D fallback names exactly the same beams.
  */
@@ -110,7 +110,7 @@ export const LIVE_BEAM_LABEL_LIMIT = 3;
 export function liveBeamLinks(model: StarfieldSceneModel): SceneLink[] {
   return model.links
     .filter((link) => link.live && link.label)
-    .slice(0, LIVE_BEAM_LABEL_LIMIT);
+    .slice(-LIVE_BEAM_LABEL_LIMIT);
 }
 
 /** One accessible-name convention shared by the 3D label layer and 2D sky. */
