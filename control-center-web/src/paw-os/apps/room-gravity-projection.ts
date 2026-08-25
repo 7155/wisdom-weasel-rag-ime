@@ -195,17 +195,26 @@ const roomToolLabels: Record<string, string> = {
   runtime: '运行时',
 };
 
-const roomPartnerOpLabels: Record<string, string> = {
-  list: '查看伙伴名册',
-  delegate: '委派任务',
-  delegate_batch: '批量并行委派',
-  message: '给伙伴留言',
-  status: '查看伙伴状态',
+/** Op labels are scoped to the owning tool: `status` means partner status only
+ * on `room_partner`; on `workspace_job` or `browser` it is that tool's own op
+ * and must stay the honest machine word instead of a wrong translation. */
+const roomToolOpLabels: Record<string, Record<string, string>> = {
+  room_partner: {
+    list: '查看伙伴名册',
+    delegate: '委派任务',
+    delegate_batch: '批量并行委派',
+    message: '给伙伴留言',
+    status: '查看伙伴状态',
+  },
 };
 
 export function roomGravityToolLabel(toolName: string): string {
   const key = toolName.trim();
   return roomToolLabels[key] ?? (key || '工具');
+}
+
+export function roomToolOpLabel(toolName: string, op: string): string {
+  return roomToolOpLabels[toolName.trim()]?.[op] ?? op;
 }
 
 export interface RoomToolFact {
@@ -230,7 +239,7 @@ export function roomToolEvidence(payload: Record<string, unknown>): RoomToolEvid
   const result = recordValue(payload.result);
   const op = stringValue(args.op);
   const facts: RoomToolFact[] = [];
-  if (op) facts.push({ label: '操作', value: roomPartnerOpLabels[op] ?? op });
+  if (op) facts.push({ label: '操作', value: roomToolOpLabel(toolName, op) });
   for (const [key, value] of Object.entries(args)) {
     if (key === 'op' || value == null) continue;
     const text = compactValue(value);
@@ -248,13 +257,44 @@ export function roomToolEvidence(payload: Record<string, unknown>): RoomToolEvid
     });
   }
   const operation = stringValue(result.operation);
-  if (operation && operation !== op) facts.push({ label: '结果操作', value: roomPartnerOpLabels[operation] ?? operation });
+  if (operation && operation !== op) facts.push({ label: '结果操作', value: roomToolOpLabel(toolName, operation) });
   const resultSummary = stringValue(result.summary || result.message || result.status);
   if (resultSummary) facts.push({ label: '结果', value: compactText(resultSummary) });
-  const headline = op
-    ? `${label} · ${roomPartnerOpLabels[op] ?? op}`
+  const resolvedOp = op || operation;
+  const headline = resolvedOp
+    ? `${label} · ${roomToolOpLabel(toolName, resolvedOp)}`
     : label;
   return { toolName, label, headline, facts: facts.slice(0, 8) };
+}
+
+/** True when a tool activity summary is only the machine identifier the
+ * Runtime echoed back (`agents`, `room_partner`, `skill_load`…) — never a
+ * sentence a reader should see as the row text. */
+export function roomToolSummaryIsMachine(summary: string, payload: Record<string, unknown>): boolean {
+  const source = summary.trim();
+  if (!source) return true;
+  if (source === stringValue(payload.toolName) || source === stringValue(payload.toolId)) return true;
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u.test(source);
+}
+
+/** The one reader-facing line for a tool activity. Real prose summaries pass
+ * through untouched; a machine-id summary falls back to the tool's evidence
+ * headline (label · real op) plus the honest execution state — the row is
+ * never a bare Runtime id and never an empty「工具」. */
+export function roomToolActivityLine(
+  summary: string,
+  payload: Record<string, unknown>,
+  status: string,
+): string {
+  const source = summary.trim();
+  if (source && !roomToolSummaryIsMachine(source, payload)) return source;
+  const headline = stringValue(payload.displayName)
+    || roomToolEvidence(payload)?.headline
+    || roomGravityToolLabel(stringValue(payload.toolName) || stringValue(payload.toolId));
+  if (['queued', 'running', 'waiting', 'pending'].includes(status)) return `${headline} 正在执行`;
+  if (status === 'failed') return `${headline} 执行失败`;
+  if (['aborted', 'cancelled', 'stopped'].includes(status)) return `${headline} 已停止`;
+  return `${headline} 已完成`;
 }
 
 /* --------------------------------------------------------------------------- */

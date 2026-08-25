@@ -2,15 +2,26 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ControlTransportProvider } from '@/app/control-transport';
 import { createRoomProjection, parseRoomEventSnapshot, reduceRoomEvents, type RoomProjectionState } from '@/contracts/room-reducer';
 import { parseRoomEvent } from '@/contracts/validators';
+import { PawOsSatelliteHost } from '@/features/paw-os/PawOsSatelliteHost';
 import type { RoomSummary } from '@/features/rooms/room-types';
+import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { MockControlTransport } from '@/test/mock-transport';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 import { PawRoomConversation } from './PawRoomWorkspace';
 import { buildRoomFocusProjection, type RoomFocusProjection } from './room-focus-projection';
-import { roomDispatchPlans, roomDispatchWaves } from './room-gravity-projection';
+import {
+  roomDispatchPlans,
+  roomDispatchWaves,
+  roomToolActivityLine,
+  roomToolEvidence,
+  roomToolSummaryIsMachine,
+} from './room-gravity-projection';
 
 /**
  * Sol gravity against the real minecraft-harness fixture: 3261 authoritative
@@ -30,7 +41,19 @@ const harness = (() => {
   return { events, room: snapshot.room, projection, focus };
 })() satisfies { events: unknown[]; room: RoomSummary; projection: RoomProjectionState; focus: RoomFocusProjection };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useRoomLiveStore.setState({ projections: {} });
+});
+
+const machineTokenPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
+
+function harnessToolActivities() {
+  return harness.projection.activityOrder
+    .map((id) => harness.projection.activitiesById[id])
+    .filter((activity): activity is NonNullable<typeof activity> => Boolean(activity))
+    .filter((activity) => String(activity.payload.sourceEventType ?? '').startsWith('tool'));
+}
 
 describe('room gravity projection over the minecraft harness', () => {
   it('recovers the real task counters and tree from 3261 events', () => {
@@ -173,5 +196,100 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(glyphs.length).toBeGreaterThanOrEqual(1);
     expect(glyphs.some((glyph) => (glyph.getAttribute('aria-label') ?? '').startsWith('工具'))).toBe(true);
     expect(container.textContent).not.toContain('· 工具');
+  });
+
+  it('resolves all 112 machine-id tool summaries in the 3261-event history into evidence lines', () => {
+    // The Runtime echoes only the tool id as the summary for 112 of the 290
+    // real tool activities (`room_partner`, `agents`, `tool_search`…). Every
+    // reader row must resolve to the evidence headline with the honest state.
+    const toolActivities = harnessToolActivities();
+    expect(toolActivities).toHaveLength(290);
+    const machine = toolActivities.filter((activity) => roomToolSummaryIsMachine(activity.summary, activity.payload));
+    expect(machine).toHaveLength(112);
+    for (const activity of toolActivities) {
+      const line = roomToolActivityLine(activity.summary, activity.payload, activity.status);
+      expect(line).not.toBe('');
+      expect(machineTokenPattern.test(line)).toBe(false);
+      expect(line).not.toBe(String(activity.payload.toolName ?? ''));
+    }
+
+    // The real parallel wave keeps its true op through the fallback.
+    const batch = toolActivities.find((activity) => (
+      (activity.payload.arguments as Record<string, unknown> | undefined)?.op === 'delegate_batch'
+    ));
+    expect(batch && roomToolActivityLine(batch.summary, batch.payload, batch.status))
+      .toBe('行星协调 · 批量并行委派 已完成');
+
+    // Op labels stay scoped to their owning tool: the workspace_job/browser
+    // status polls in this run are never presented as partner checks.
+    const jobStatus = toolActivities.find((activity) => (
+      activity.payload.toolName === 'workspace_job'
+      && (activity.payload.arguments as Record<string, unknown> | undefined)?.op === 'status'
+    ));
+    expect(jobStatus).toBeDefined();
+    expect(roomToolEvidence(jobStatus!.payload)?.facts.find((fact) => fact.label === '操作')?.value).toBe('status');
+  });
+
+  it('keeps every chronology tool row a readable evidence line in the opening scene', () => {
+    const slice = harness.events.filter((event) => event.sequence <= 120);
+    const projection = reduceRoomEvents(createRoomProjection(harness.room.id), slice);
+
+    const { container } = render(<PawRoomConversation
+      onApprovalDecision={async () => undefined}
+      onRetryTurn={() => undefined}
+      projection={projection}
+      retryingTurn={false}
+      room={harness.room}
+    />);
+
+    const summaries = [...container.querySelectorAll('.paw-room-chronology__activity > div > p')]
+      .map((paragraph) => paragraph.textContent?.trim() ?? '');
+    expect(summaries.length).toBeGreaterThanOrEqual(5);
+    // No row text is ever the bare Runtime id (`room_partner`, `tool_search`…).
+    expect(summaries.filter((summary) => machineTokenPattern.test(summary))).toEqual([]);
+    // The delegate_batch tool call reads as the real gravity it exerted.
+    expect(summaries).toContain('行星协调 · 批量并行委派 已完成');
+  });
+
+  it('expands the coordinator satellite to the real sent and modified evidence — no empty tool rows', async () => {
+    // The opening scene: the coordinator writes ROOT.md/AGENTS.md and pulls
+    // both partners with one delegate_batch (seq 30-110 of the real run).
+    const slice = harness.events.filter((event) => event.sequence >= 30 && event.sequence <= 110);
+    const projection = reduceRoomEvents(createRoomProjection(harness.room.id), slice);
+    useRoomLiveStore.setState({ projections: { [harness.room.id]: projection } });
+    const roomGet = JSON.parse(readFileSync(resolve(root, 'room/get.json'), 'utf8')) as Record<string, unknown>;
+    const transport = new MockControlTransport({ routes: { 'agent.room.get': roomGet } });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={queryClient}>
+          <PawOsSatelliteHost target={{
+            kind: 'participant', id: 'participant:10000000-0000-4000-8000-000000000001',
+            roomId: harness.room.id, title: 'Agent 3', subtitle: 'coordinator',
+          }} />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    const timeline = await screen.findByRole('log', { name: 'Agent 3 公开消息与运行事件' });
+    for (const group of screen.getAllByRole('button', { name: /运行活动/ })) fireEvent.click(group);
+    const messages = [...timeline.querySelectorAll('.paw-participant-chat__activity-message')]
+      .map((element) => element.textContent?.trim() ?? '');
+    expect(messages.length).toBeGreaterThanOrEqual(5);
+    // Real prose summaries survive; machine ids never surface as row text.
+    expect(messages).toContain('已创建 ROOT.md');
+    expect(messages).toContain('行星协调 · 批量并行委派 已完成');
+    expect(messages.filter((message) => machineTokenPattern.test(message))).toEqual([]);
+
+    // The write row expands to the file it really modified.
+    const writeRow = [...timeline.querySelectorAll('article[data-kind="activity"]')].find((row) => (
+      row.querySelector('.paw-participant-chat__activity-message')?.textContent?.trim() === '已创建 ROOT.md'
+    )) as HTMLElement;
+    expect(writeRow).toBeDefined();
+    fireEvent.click(within(writeRow).getByRole('button', { name: '查看执行详情' }));
+    const facts = within(writeRow).getByRole('button', { name: '查看执行详情' })
+      .closest('.paw-participant-chat__raw-detail');
+    expect(facts).toHaveTextContent('docs/agent/ROOT.md');
   });
 });

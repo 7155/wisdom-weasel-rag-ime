@@ -8,7 +8,10 @@ import {
   roomDispatchSourceParticipantId,
   roomDispatchWaves,
   roomGravityToolLabel,
+  roomToolActivityLine,
   roomToolEvidence,
+  roomToolOpLabel,
+  roomToolSummaryIsMachine,
 } from './room-gravity-projection';
 
 /** Payload shape lifted from the real minecraft-harness route_decision events. */
@@ -166,5 +169,50 @@ describe('roomToolEvidence', () => {
 
   it('returns nothing when there is no tool identity in the payload', () => {
     expect(roomToolEvidence({ sourceEventType: 'reasoning_summary' })).toBeUndefined();
+  });
+
+  it('scopes op labels to the owning tool — workspace_job/browser status is not 查看伙伴状态', () => {
+    // Real harness payloads: workspace_job and browser both use op "status"
+    // for their own state polls; only room_partner status is a partner check.
+    expect(roomToolOpLabel('room_partner', 'status')).toBe('查看伙伴状态');
+    expect(roomToolOpLabel('workspace_job', 'status')).toBe('status');
+    expect(roomToolOpLabel('browser', 'status')).toBe('status');
+
+    const evidence = roomToolEvidence({ toolName: 'workspace_job', arguments: { op: 'status', jobId: 'bg_1' } });
+    expect(evidence?.headline).toBe('后台任务 · status');
+    expect(evidence?.facts.find((fact) => fact.label === '操作')?.value).toBe('status');
+  });
+
+  it('derives the headline op from the result when a snapshot page dropped the arguments', () => {
+    // tool_finished pages in the harness carry only { result: { operation } }.
+    const evidence = roomToolEvidence({
+      toolName: 'room_partner',
+      result: { operation: 'delegate', status: 'accepted' },
+    });
+    expect(evidence?.headline).toBe('行星协调 · 委派任务');
+  });
+});
+
+describe('roomToolActivityLine', () => {
+  it('recognizes machine-id summaries the Runtime echoes for tool activities', () => {
+    expect(roomToolSummaryIsMachine('room_partner', { toolName: 'room_partner' })).toBe(true);
+    expect(roomToolSummaryIsMachine('agents', { toolName: 'agents' })).toBe(true);
+    expect(roomToolSummaryIsMachine('skill_load', { toolName: 'skill_load' })).toBe(true);
+    expect(roomToolSummaryIsMachine('', { toolName: 'read' })).toBe(true);
+    expect(roomToolSummaryIsMachine('已创建 ROOT.md', { toolName: 'write' })).toBe(false);
+    expect(roomToolSummaryIsMachine('命令执行完成，退出码 0', { toolName: 'bash' })).toBe(false);
+  });
+
+  it('keeps real prose summaries untouched', () => {
+    expect(roomToolActivityLine('已读取 ROOT.md 第 1-30 行', { toolName: 'read' }, 'completed'))
+      .toBe('已读取 ROOT.md 第 1-30 行');
+  });
+
+  it('replaces a machine-id summary with the evidence headline and honest state', () => {
+    const payload = { toolName: 'room_partner', arguments: { op: 'delegate_batch' }, result: { status: 'accepted' } };
+    expect(roomToolActivityLine('room_partner', payload, 'completed')).toBe('行星协调 · 批量并行委派 已完成');
+    expect(roomToolActivityLine('room_partner', payload, 'running')).toBe('行星协调 · 批量并行委派 正在执行');
+    expect(roomToolActivityLine('bash', { toolName: 'bash' }, 'failed')).toBe('终端命令 执行失败');
+    expect(roomToolActivityLine('browser', { toolName: 'browser' }, 'aborted')).toBe('浏览器操作 已停止');
   });
 });

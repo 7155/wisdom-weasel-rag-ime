@@ -24,6 +24,7 @@ import { buildRoomFocusProjection, roomFocusStateLabel, type RoomFocusState } fr
 import {
   roomDispatchPlanFromPayload,
   roomGravityToolLabel,
+  roomToolActivityLine,
   roomToolEvidence,
   type RoomToolFact,
 } from '@/paw-os/apps/room-gravity-projection';
@@ -827,13 +828,13 @@ function roomSatelliteActivityText(
   payload: Record<string, unknown>,
   status: string,
 ): string {
-  if (summary.trim()) return summary.trim();
-  const tool = stringValue(payload.displayName)
-    || roomGravityToolLabel(stringValue(payload.toolName));
-  if (status === 'running' || status === 'waiting') return `正在使用 ${tool}`;
-  if (status === 'failed') return `${tool} 执行失败`;
-  if (status === 'aborted') return `${tool} 已停止`;
-  return `${tool} 已返回`;
+  /* A machine-id summary (`agents`, `room_partner`) never reaches the reader:
+     the row derives from real tool evidence — label plus the actual op — so
+     the compact frame shows 行星协调 · 批量并行委派, not a bare Runtime id. */
+  if (stringValue(payload.toolName) || stringValue(payload.toolId)) {
+    return roomToolActivityLine(summary, payload, status);
+  }
+  return summary.trim();
 }
 
 
