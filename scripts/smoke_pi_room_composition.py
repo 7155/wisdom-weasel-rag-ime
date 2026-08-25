@@ -130,9 +130,25 @@ def main() -> int:
                 background_job_execution_owner=False,
             )
             try:
-                # Production personas keep their user-selected models. The
-                # offline canary pins both participants to the staged test
-                # Provider so no network model is involved in this proof.
+                # Production Room participants use the configured
+                # roomCoordinator route. Pin that route, plus the personas,
+                # to the staged deterministic Provider so this proof never
+                # reaches a network model.
+                configuration = service.configuration_store.snapshot()
+                service.update_configuration(
+                    {
+                        "expectedRevision": int(configuration["revision"]),
+                        "changes": {
+                            "modelRouting.roomCoordinator": {
+                                "modelProfile": (
+                                    "rag-ime-deterministic/room-v2-test"
+                                ),
+                                "thinkingLevel": "off",
+                            },
+                        },
+                        "updatedBy": "staged-room-smoke",
+                    }
+                )
                 for role_id in (
                     "companion-present-v1",
                     "companion-firstlight-v1",
