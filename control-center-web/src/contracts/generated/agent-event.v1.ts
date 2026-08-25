@@ -17,7 +17,6 @@ export interface AgentEventV1 {
     | 'reasoning_summary'
     | 'status_changed'
     | 'session_configuration_changed'
-    | 'session_command_invoked'
     | 'message_queue_updated'
     | 'workflow_changed'
     | 'lifecycle_cancellation_changed'

@@ -1462,8 +1462,9 @@ export const contractSchemas = {
         "required": [
           "runtime",
           "sessionDefaults",
+          "modelRouting",
           "coordination",
-          "modelRouting"
+          "capabilityDisclosure"
         ],
         "properties": {
           "runtime": {
@@ -1493,7 +1494,6 @@ export const contractSchemas = {
               "resumeLastSession",
               "roleId",
               "roleVersion",
-              "modelProfile",
               "toolProfileVersion",
               "capabilityDisclosurePreferences"
             ],
@@ -1506,10 +1506,6 @@ export const contractSchemas = {
                 "minLength": 1
               },
               "roleVersion": {
-                "type": "string",
-                "minLength": 1
-              },
-              "modelProfile": {
                 "type": "string",
                 "minLength": 1
               },
@@ -1530,6 +1526,67 @@ export const contractSchemas = {
               }
             }
           },
+          "modelRouting": {
+            "type": "object",
+            "required": [
+              "sessionModelProfile",
+              "sessionThinkingLevel",
+              "roomPartnerModelProfile",
+              "roomPartnerThinkingLevel",
+              "toolAgentModelProfile",
+              "toolAgentThinkingLevel"
+            ],
+            "properties": {
+              "sessionModelProfile": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sessionThinkingLevel": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "roomPartnerModelProfile": {
+                "type": "string",
+                "minLength": 1
+              },
+              "roomPartnerThinkingLevel": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "toolAgentModelProfile": {
+                "type": "string",
+                "minLength": 1
+              },
+              "toolAgentThinkingLevel": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              }
+            }
+          },
           "coordination": {
             "type": "object",
             "required": [
@@ -1541,29 +1598,16 @@ export const contractSchemas = {
               }
             }
           },
-          "modelRouting": {
+          "capabilityDisclosure": {
             "type": "object",
             "required": [
-              "primary",
-              "toolAgent",
-              "subagent",
-              "roomCoordinator"
+              "projectPreferences"
             ],
             "properties": {
-              "primary": {
-                "$ref": "#/$defs/modelRoute"
-              },
-              "toolAgent": {
-                "$ref": "#/$defs/modelRoute"
-              },
-              "subagent": {
-                "$ref": "#/$defs/modelRoute"
-              },
-              "roomCoordinator": {
-                "$ref": "#/$defs/modelRoute"
+              "projectPreferences": {
+                "type": "object"
               }
-            },
-            "additionalProperties": false
+            }
           }
         }
       },
@@ -1602,35 +1646,6 @@ export const contractSchemas = {
       },
       "lastEventId": {
         "type": "string"
-      }
-    },
-    "$defs": {
-      "modelRoute": {
-        "type": "object",
-        "required": [
-          "modelProfile",
-          "thinkingLevel"
-        ],
-        "properties": {
-          "modelProfile": {
-            "type": "string",
-            "minLength": 1
-          },
-          "thinkingLevel": {
-            "type": "string",
-            "enum": [
-              "inherit",
-              "off",
-              "minimal",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          }
-        },
-        "additionalProperties": false
       }
     }
   },
@@ -2225,7 +2240,6 @@ export const contractSchemas = {
           "reasoning_summary",
           "status_changed",
           "session_configuration_changed",
-          "session_command_invoked",
           "message_queue_updated",
           "workflow_changed",
           "lifecycle_cancellation_changed",
@@ -5823,7 +5837,6 @@ export const contractSchemas = {
       "resultSummary",
       "artifactRefs",
       "evidenceRefs",
-      "review",
       "blocker",
       "acceptedTurnId",
       "createdAtMs",
@@ -5943,61 +5956,6 @@ export const contractSchemas = {
           "type": "string",
           "minLength": 1,
           "maxLength": 1000
-        }
-      },
-      "review": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "operabilityVerdict",
-          "requirementVerdict",
-          "evidenceRefs",
-          "reason",
-          "reviewerParticipantId",
-          "reviewedAtMs"
-        ],
-        "properties": {
-          "operabilityVerdict": {
-            "type": "string",
-            "enum": [
-              "",
-              "passed",
-              "failed",
-              "unverified"
-            ]
-          },
-          "requirementVerdict": {
-            "type": "string",
-            "enum": [
-              "",
-              "satisfied",
-              "not_satisfied",
-              "unverified"
-            ]
-          },
-          "evidenceRefs": {
-            "type": "array",
-            "maxItems": 24,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 1000
-            }
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000
-          },
-          "reviewerParticipantId": {
-            "type": "string"
-          },
-          "reviewedAtMs": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 0
-          }
         }
       },
       "blocker": {
@@ -7889,11 +7847,6 @@ export const contractSchemas = {
       "toolCallId": {
         "type": "string",
         "minLength": 1
-      },
-      "sourceLoopId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 240
       },
       "args": {
         "type": "object"
@@ -17644,8 +17597,7 @@ export const contractSchemas = {
             "enum": [
               "user",
               "room_commit",
-              "room_post",
-              "runtime_projection"
+              "room_post"
             ]
           },
           "ref": {

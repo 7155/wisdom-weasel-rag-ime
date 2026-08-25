@@ -75,6 +75,8 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
 
     await user.click(within(sky).getByRole('button', { name: /^Mars，/ }));
+    const card = within(sky).getByRole('complementary', { name: '天体详情' });
+    await user.click(within(card).getByRole('button', { name: '打开伙伴窗口' }));
 
     const foregroundCalls = openWindow.mock.calls.filter(([request]) => request.background === false);
     expect(foregroundCalls).toHaveLength(1);
