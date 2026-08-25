@@ -31,7 +31,13 @@ import {
 } from '@/features/agent/composer/AgentComposer';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
 import { PermissionMark, WorkspaceMark } from '@/features/agent/marks/ConversationMarks';
-import { publicAgentErrorText } from '@/features/agent/public-error';
+import {
+  isAgentCommandPending,
+  isAgentTurnConflict,
+  isAmbiguousAgentPromptFailure,
+  isUnresolvedAgentCommandPending,
+  publicAgentErrorText,
+} from '@/features/agent/public-error';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { pulsePawCompositionForRuntimeEvent } from '../runtime/composition-pulse';
 import {
@@ -338,6 +344,68 @@ export function PawSessionWorkspace({
       && timelineOwnsTurnFailure(agentProjection(recordId), clientMessageId);
   }
 
+  /* One settle path for every prompt admission failure, shared by send and
+     retry. It mirrors the standalone Agent feature: a pending/unresolved
+     receipt keeps the optimistic message visible in that state (the Runtime
+     may still execute it, so the input must not come back for a double send),
+     an ambiguous transport loss marks the message retriable-by-verification,
+     and a turn conflict returns the input instead of inventing a failed turn.
+     Nothing here awaits a snapshot; recovery refreshes stay quiet. */
+  function settlePromptAdmissionFailure(
+    clientMessageId: string,
+    reason: unknown,
+    options: {
+      restoreInput?: () => void;
+      onAdmissionRolledBack?: () => void;
+      replayAmbiguousAdmission?: boolean;
+    } = {},
+  ): void {
+    const store = useAgentLiveStore.getState();
+    if (isAgentCommandPending(reason)) {
+      if (agentProjection(recordId).optimisticByClientMessageId[clientMessageId]) {
+        store.failOptimistic(
+          recordId,
+          clientMessageId,
+          errorText(reason),
+          Date.now(),
+          isUnresolvedAgentCommandPending(reason) ? 'unresolved' : 'pending',
+        );
+      }
+      return;
+    }
+    if (isAmbiguousAgentPromptFailure(reason)) {
+      store.failOptimistic(
+        recordId,
+        clientMessageId,
+        '暂时无法确认是否已接收。系统不会自动重试；手动重试会核对同一条消息。',
+        Date.now(),
+        'ambiguous',
+      );
+      options.onAdmissionRolledBack?.();
+      return;
+    }
+    if (isAgentTurnConflict(reason)) {
+      store.discardOptimistic(recordId, clientMessageId);
+      void loadSnapshot(true);
+      options.restoreInput?.();
+      options.onAdmissionRolledBack?.();
+      setError('上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
+      return;
+    }
+    store.failOptimistic(
+      recordId,
+      clientMessageId,
+      errorText(reason),
+      Date.now(),
+      options.replayAmbiguousAdmission ? 'ambiguous' : undefined,
+    );
+    options.restoreInput?.();
+    options.onAdmissionRolledBack?.();
+    if (!turnFailureIsVisible(clientMessageId)) {
+      setError(errorText(reason));
+    }
+  }
+
   async function send(delivery: AgentMessageDelivery, rawDraft: string): Promise<void> {
     if (!record || sending || modelChanging) return;
     const value = rawDraft.trim();
@@ -373,7 +441,9 @@ export function PawSessionWorkspace({
             clientMessageId,
           },
         });
-        await loadSnapshot(true);
+        /* The rewrite is accepted; rebuilding the visible history is the quiet
+           snapshot's job and never holds the composer. */
+        void loadSnapshot(true);
       } catch (reason) {
         useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
         await loadSnapshot(true).catch(() => undefined);
@@ -443,29 +513,41 @@ export function PawSessionWorkspace({
         ? {}
         : { turnId: latestActiveTurnId(agentProjection(recordId)), delivery: effectiveDelivery }),
     });
-    try {
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId: recordId },
-        body: {
-          message,
-          attachments: selectedAttachments.map((item) => item.id),
-          clientMessageId,
-          ...(effectiveDelivery === 'prompt' ? {} : { delivery: effectiveDelivery }),
-        },
-      });
-      useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
-      await loadSnapshot(true);
-    } catch (reason) {
-      useAgentLiveStore.getState().failOptimistic(recordId, clientMessageId, errorText(reason), Date.now());
-      setDraft(value);
-      setAttachments(selectedAttachments);
-      if (!turnFailureIsVisible(clientMessageId)) {
-        setError(errorText(reason));
+    /* The input only comes back if the reader has not already started the next
+       thought; a fresh draft never gets clobbered by an old failure. */
+    const restoreInput = (): void => {
+      setDraft((current) => (current.trim() ? current : value));
+      setAttachments((current) => (current.length ? current : selectedAttachments));
+    };
+    // Admission and the optimistic turn are synchronous. Restoring a Pi
+    // Session, refreshing context, or starting a Provider can still make the
+    // HTTP receipt slow, but must not make the click itself feel stalled —
+    // and the quiet snapshot refresh never holds the composer at all.
+    void (async () => {
+      try {
+        const response = await transport.request<Record<string, unknown>>({
+          pathId: 'agent.session.prompt',
+          params: { sessionId: recordId },
+          body: {
+            message,
+            attachments: selectedAttachments.map((item) => item.id),
+            clientMessageId,
+            ...(effectiveDelivery === 'prompt' ? {} : { delivery: effectiveDelivery }),
+          },
+        });
+        if (isCancelledPromptAdmission(response)) {
+          useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+          void loadSnapshot(true);
+          return;
+        }
+        useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
+        void loadSnapshot(true);
+      } catch (reason) {
+        settlePromptAdmissionFailure(clientMessageId, reason, { restoreInput });
+      } finally {
+        setSending(false);
       }
-    } finally {
-      setSending(false);
-    }
+    })();
   }
 
   async function stop(): Promise<void> {
@@ -507,15 +589,15 @@ export function PawSessionWorkspace({
       setError('找不到这轮的原始输入，无法安全重试。');
       return false;
     }
-    void replayTurnMessage(userMessage, message || '请查看附件。', onAdmissionRolledBack);
+    replayTurnMessage(userMessage, message || '请查看附件。', onAdmissionRolledBack);
     return true;
   }
 
-  async function replayTurnMessage(
+  function replayTurnMessage(
     userMessage: AgentMessageProjection,
     message: string,
     onAdmissionRolledBack?: () => void,
-  ): Promise<void> {
+  ): void {
     const replayAmbiguousAdmission = userMessage.admissionState === 'ambiguous' && Boolean(userMessage.clientMessageId);
     const clientMessageId = replayAmbiguousAdmission
       ? userMessage.clientMessageId!
@@ -534,28 +616,36 @@ export function PawSessionWorkspace({
         nowMs: Date.now(),
       });
     }
-    try {
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId: recordId },
-        body: {
-          message,
-          attachments: userMessage.attachments,
-          clientMessageId,
-          ...(retryOfClientMessageId ? { retryOfClientMessageId } : {}),
-        },
-      });
-      useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
-      await loadSnapshot(true);
-    } catch (reason) {
-      useAgentLiveStore.getState().failOptimistic(recordId, clientMessageId, errorText(reason), Date.now(), replayAmbiguousAdmission ? 'ambiguous' : undefined);
-      onAdmissionRolledBack?.();
-      if (!turnFailureIsVisible(clientMessageId)) {
-        setError(errorText(reason));
+    // Same admission contract as send: the retry click settles synchronously,
+    // the HTTP receipt releases the composer, the snapshot refresh stays quiet.
+    void (async () => {
+      try {
+        const response = await transport.request<Record<string, unknown>>({
+          pathId: 'agent.session.prompt',
+          params: { sessionId: recordId },
+          body: {
+            message,
+            attachments: userMessage.attachments,
+            clientMessageId,
+            ...(retryOfClientMessageId ? { retryOfClientMessageId } : {}),
+          },
+        });
+        if (isCancelledPromptAdmission(response)) {
+          useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+          void loadSnapshot(true);
+          return;
+        }
+        useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
+        void loadSnapshot(true);
+      } catch (reason) {
+        settlePromptAdmissionFailure(clientMessageId, reason, {
+          onAdmissionRolledBack,
+          replayAmbiguousAdmission,
+        });
+      } finally {
+        setSending(false);
       }
-    } finally {
-      setSending(false);
-    }
+    })();
   }
 
   function continueTurn(turnId: string): boolean {
@@ -1229,6 +1319,15 @@ function conversationText(blocks: Array<{ type: string; data: Record<string, unk
     const candidates = [block.data.text, block.data.markdown, block.data.code, block.data.message, block.data.summary];
     return candidates.find((item): item is string => typeof item === 'string' && item.trim().length > 0) ?? '';
   }).filter(Boolean).join('\n').replace(/\s+/gu, ' ').trim().slice(0, 480);
+}
+
+/** Same receipt shape the standalone Agent feature reads: Stop raced the
+ *  admission and won, so the optimistic message must vanish, not acknowledge. */
+function isCancelledPromptAdmission(value: unknown): boolean {
+  return isRecord(value)
+    && value.accepted === false
+    && value.cancelled === true
+    && value.admissionCancelled === true;
 }
 
 /** True when the latest turn is the one this optimistic message failed, so the

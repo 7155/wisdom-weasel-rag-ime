@@ -573,6 +573,93 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
+  it('lands the optimistic message and clears the draft at the click, before admission settles', async () => {
+    const sessionId = 'session-instant-click';
+    // The admission receipt never resolves inside this test: everything
+    // asserted here must have happened synchronously with the click.
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.session.prompt': () => new Promise(() => undefined),
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '请开始这轮实现');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    const optimisticIds = Object.values(projection?.optimisticByClientMessageId ?? {});
+    expect(optimisticIds).toHaveLength(1);
+    expect(projection?.messagesById[optimisticIds[0]!]?.blocks[0]?.data.text).toBe('请开始这轮实现');
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('');
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('unlocks the composer once admission settles, without waiting for the quiet snapshot', async () => {
+    const sessionId = 'session-instant-unlock';
+    let snapshotCalls = 0;
+    // The quiet post-send snapshot never resolves in this test; if sending
+    // still gated on it (the old behavior), the composer would spin forever
+    // and the unlock assertion below would time out.
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.session.snapshot': () => {
+        snapshotCalls += 1;
+        return snapshotCalls === 1
+          ? { messages: [], liveEvents: [], lastSequence: 0, resumeToken: '', status: 'active' }
+          : new Promise(() => undefined);
+      },
+      'agent.session.prompt': { ok: true },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '请开始这轮实现');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    // The optimistic turn keeps the Session busy, so the delivery radios are
+    // the visible proof of the send lock: they are disabled exactly while
+    // `sending` is true. They must re-enable on the admission receipt alone.
+    await waitFor(() => expect(screen.getByRole('radio', { name: '干预' })).toBeEnabled());
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    const optimisticIds = Object.values(projection?.optimisticByClientMessageId ?? {});
+    expect(optimisticIds).toHaveLength(1);
+    // Admission succeeded: the optimistic message stays queued, never failed.
+    expect(projection?.messagesById[optimisticIds[0]!]?.status).toBe('queued');
+    // The background refresh was launched but is still unresolved: the unlock
+    // above therefore cannot have waited for it.
+    expect(snapshotCalls).toBe(2);
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('gives a failed prompt exactly one failure surface with its own recovery', async () => {
     const sessionId = 'session-prompt-failure';
     const transport = idleSessionTransport();
@@ -678,10 +765,9 @@ function busySessionTransport(sessionId: string): StubControlTransport {
   });
 }
 
-/** An idle Session whose Runtime rejects the prompt, so submitting produces one
- *  real failed turn instead of a stub acknowledgement. */
-function idleSessionTransport(): StubControlTransport {
-  return new StubControlTransport('mock', {
+/** Route table for an idle Session with no prompt behavior chosen yet. */
+function idleSessionRoutes(): ConstructorParameters<typeof StubControlTransport>[1] {
+  return {
     'agent.session.snapshot': {
       messages: [],
       liveEvents: [],
@@ -693,6 +779,14 @@ function idleSessionTransport(): StubControlTransport {
     'agent.session.commands': {},
     'agent.tools.list': {},
     'agent.runtime.get': {},
+  };
+}
+
+/** An idle Session whose Runtime rejects the prompt, so submitting produces one
+ *  real failed turn instead of a stub acknowledgement. */
+function idleSessionTransport(): StubControlTransport {
+  return new StubControlTransport('mock', {
+    ...idleSessionRoutes(),
     'agent.session.prompt': () => {
       throw new Error('provider_request_failed');
     },
