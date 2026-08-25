@@ -211,12 +211,15 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   padding: 6px 4px; border-radius: 10px; color: var(--paw-desktop-ink);
   cursor: pointer; transition: background-color 120ms ease;
 }
+/* Hover and selection speak the shared identity wash (paw-app-icon.css), so
+   the desktop, Dock and launcher can never drift into different plates. */
 .paw-desktop-shortcuts button:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--paw-identity-wash);
 }
 .paw-desktop-shortcuts button[aria-selected='true'] {
   color: var(--paw-ink);
-  background: color-mix(in srgb, var(--paw-accent) 13%, rgba(255, 255, 255, .38));
+  background: var(--paw-identity-wash-strong);
+  box-shadow: var(--paw-identity-ring);
 }
 .paw-desktop-shortcuts button > span {
   width: 48px; height: 48px; display: grid; place-items: center;
@@ -503,7 +506,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-dock button[data-open]::after {
   position: absolute; bottom: -5px; left: 50%; width: 14px; height: 3px;
   border-radius: 999px; translate: -50%;
-  background: var(--paw-app-accent, var(--paw-accent)); content: '';
+  background: var(--paw-identity-dot, var(--paw-accent)); content: '';
 }
 .paw-dock button[data-minimized]::after { width: 6px; }
 /* Hover/focus name label. Centering uses the separate translate property so a

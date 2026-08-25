@@ -30,6 +30,25 @@ describe('PAWOS App identity icons', () => {
     }
   });
 
+  it('speaks one flat silhouette grammar across all twelve identities', () => {
+    const { container } = render(<>{[...pawApps.map((app) => app.id), 'room' as const].map((appId) => <PawAppIcon appId={appId} key={appId} />)}</>);
+    // Flat means front-facing: no isometric faces or rotated stacks. The
+    // single permitted rotation in the whole system is Room's orbit line.
+    const rotated = [...container.querySelectorAll('[data-paw-icon-silhouette] [transform]')];
+    expect(rotated).toHaveLength(1);
+    expect(rotated[0]).toHaveClass('paw-app-icon__ring');
+    // No opacity ramps: tone comes only from the shared ink set.
+    expect(container.querySelector('[data-paw-icon-silhouette] [opacity]')).toBeNull();
+    // Every shape resolves the shared inks — no literal fills or one-off whites.
+    expect(container.querySelector('[data-paw-icon-silhouette] [fill], [data-paw-icon-silhouette] [stroke="#fff"]')).toBeNull();
+    const inks = new Set(['paw-app-icon__primary', 'paw-app-icon__secondary', 'paw-app-icon__paper', 'paw-app-icon__stroke', 'paw-app-icon__stroke-accent', 'paw-app-icon__ring', 'paw-app-icon__outlined']);
+    for (const shape of container.querySelectorAll('[data-paw-icon-silhouette] > *')) {
+      const classes = (shape.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+      expect(classes.length).toBeGreaterThanOrEqual(1);
+      for (const cls of classes) expect(inks).toContain(cls);
+    }
+  });
+
   it('gives Room a visible identity while keeping it inside the Agent App registry', () => {
     const { container } = render(<><PawAppIcon appId="agent" title="Agent" /><PawAppIcon appId="room" title="Room" /></>);
     expect(pawApps).toHaveLength(11);

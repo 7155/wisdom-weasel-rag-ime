@@ -127,6 +127,43 @@ describe('PAWOS shell visual language', () => {
     expect(contrast(hexToRgb('#171a21'), hexToRgb('#ffffff'))).toBeGreaterThanOrEqual(7);
   });
 
+  it('binds every identity placement to the one size ladder and one paper token', () => {
+    // Five steps, defined once; a placement may only resolve a ladder step,
+    // so identical surfaces can never drift apart by a stray pixel value.
+    for (const step of ['xs', 'sm', 'md', 'lg', 'xl']) {
+      expect(appIconCss, `ladder step --paw-icon-step-${step} is defined once`)
+        .toContain(`--paw-icon-step-${step}:`);
+    }
+    expect(appIconCss, 'no placement hardcodes an icon size outside the ladder')
+      .not.toMatch(/\.paw-app-icon\s*\{[^}]*width:\s*\d/);
+    expect(rule(appIconCss, '.paw-dock .paw-app-icon')).toContain('var(--paw-icon-step-lg)');
+    expect(rule(appIconCss, '.paw-launchpad .paw-app-icon')).toContain('var(--paw-icon-step-xl)');
+    // One paper white for every internal detail cut; no per-App tint overrides
+    // and no per-surface recolour of any identity.
+    expect(appIconCss.match(/--paw-icon-paper:/g)).toHaveLength(1);
+    expect(appIconCss).not.toMatch(/data-paw-app-icon='[a-z-]+'\]/);
+  });
+
+  it('speaks one selected and running language across Dock, desktop and launcher', () => {
+    // The identity wash tokens are declared exactly once, on the owning
+    // buttons, so every surface resolves the App's own colour the same way.
+    for (const token of ['--paw-identity-wash:', '--paw-identity-wash-strong:', '--paw-identity-ring:', '--paw-identity-dot:']) {
+      expect(appIconCss.split(token), `${token} declared once in the identity system`).toHaveLength(2);
+    }
+    const dockCurrent = rule(shellCss, ".paw-desktop-root .paw-dock button[aria-current='page']");
+    expect(dockCurrent).toContain('var(--paw-identity-wash-strong)');
+    expect(dockCurrent).toContain('var(--paw-identity-ring)');
+    // Never again an opaque white plate behind the current App's bare icon.
+    expect(dockCurrent).not.toContain('#fff');
+    const shortcutSelected = rule(pawOsCss, ".paw-desktop-shortcuts button[aria-selected='true']");
+    expect(shortcutSelected).toContain('var(--paw-identity-wash-strong)');
+    expect(shortcutSelected).toContain('var(--paw-identity-ring)');
+    expect(rule(pawOsCss, '.paw-desktop-shortcuts button:hover')).toContain('var(--paw-identity-wash)');
+    // The running pill is the one notification dot, in the App's own colour.
+    expect(rule(pawOsCss, '.paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
+    expect(rule(shellCss, '.paw-desktop-root .paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
+  });
+
   it('re-pairs the window title ink on the dark Terminal chrome', () => {
     expect(shellCss).toMatch(/\.paw-window-shell\[data-app='terminal'\] \.paw-window-title\s*\{\s*color:\s*#8fd08a;/);
     expect(shellCss).toMatch(/\.paw-window-shell\[data-app='terminal'\]:not\(\[data-active\]\) \.paw-window-title\s*\{\s*color:\s*#93a0ae;/);
