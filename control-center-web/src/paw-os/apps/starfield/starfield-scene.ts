@@ -13,11 +13,12 @@
  * - reduced motion stops the integrator and renders on demand only.
  *
  * Render budget: DPR capped by `starfieldPixelRatio` (hard ceiling + total
- * pixel budget), three shared unit-sphere geometries reused by every body
- * through THREE.LOD, all surface textures generated once and cached by the
- * texture factory, unchanged poll ticks skipped via `sceneModelSignature`,
- * zero per-frame allocations in the link updater, and no rAF at all while
- * the sky is hidden (`setRunning(false)` cancels the loop).
+ * pixel budget) and stepped further down by a one-way quality ladder under
+ * sustained slow frames, three shared unit-sphere geometries reused by every
+ * body through THREE.LOD, all surface textures generated once and cached by
+ * the texture factory, unchanged poll ticks skipped via
+ * `sceneModelSignature`, zero per-frame allocations in the link updater, and
+ * no rAF at all while the sky is hidden (`setRunning(false)` cancels it).
  *
  * DOM labels are positioned by projecting body anchors each frame, keeping
  * text crisp and accessible while the sky itself stays on the GPU.
@@ -44,10 +45,13 @@ import {
 import { DeferredWorkQueue } from './starfield-deferred';
 import {
   fallbackSurfaceTextureSize,
+  ladderedPixelRatio,
+  nextSlowFrameCount,
+  PIXEL_RATIO_LADDER,
+  SLOW_FRAMES_BEFORE_STEP,
   SPHERE_SEGMENTS,
   sphereLodLevels,
   starfieldAntialias,
-  starfieldPixelRatio,
   surfaceTextureSize,
   type SphereDetail,
 } from './starfield-render-quality';
@@ -255,6 +259,9 @@ export class StarfieldStage {
   private elapsedS = 0;
   private viewWidth = 1;
   private viewHeight = 1;
+  /** One-way adaptive resolution ladder position (never steps back up). */
+  private qualityStep = 0;
+  private slowFrames = 0;
   private pointerMoved = false;
   private hoveredId: string | null = null;
   private pointerDownAt: { x: number; y: number; timeMs: number } | null = null;
@@ -377,12 +384,21 @@ export class StarfieldStage {
     if (this.disposed || width < 2 || height < 2) return;
     this.viewWidth = width;
     this.viewHeight = height;
-    this.renderer.setPixelRatio(starfieldPixelRatio(window.devicePixelRatio || 1, width, height));
-    this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / height;
+    this.applyViewport();
+    if (!this.running) this.renderOnce();
+  }
+
+  private applyViewport(): void {
+    this.renderer.setPixelRatio(ladderedPixelRatio(
+      window.devicePixelRatio || 1,
+      this.viewWidth,
+      this.viewHeight,
+      this.qualityStep,
+    ));
+    this.renderer.setSize(this.viewWidth, this.viewHeight, false);
+    this.camera.aspect = this.viewWidth / this.viewHeight;
     this.camera.updateProjectionMatrix();
     this.markDirty();
-    if (!this.running) this.renderOnce();
   }
 
   dispose(): void {
@@ -1348,6 +1364,7 @@ export class StarfieldStage {
     this.frameHandle = requestAnimationFrame(this.frame);
 
     const dt = Math.min(this.clock.getDelta(), MAX_FRAME_DT);
+    this.trackFrameBudget(dt);
     const motionDt = this.reducedMotion ? 0 : dt;
     this.elapsedS += motionDt;
 
@@ -1437,6 +1454,21 @@ export class StarfieldStage {
       this.renderer.render(this.scene, this.camera);
     }
   };
+
+  /**
+   * Adaptive resolution: count sustained slow frames (ignoring clamped
+   * outliers such as tab switches) and step the quality ladder down so the
+   * sky yields GPU headroom back to the OS instead of dragging the pointer.
+   */
+  private trackFrameBudget(dt: number): void {
+    if (dt >= MAX_FRAME_DT) return;
+    this.slowFrames = nextSlowFrameCount(this.slowFrames, dt);
+    if (this.slowFrames >= SLOW_FRAMES_BEFORE_STEP && this.qualityStep < PIXEL_RATIO_LADDER.length - 1) {
+      this.qualityStep += 1;
+      this.slowFrames = 0;
+      this.applyViewport();
+    }
+  }
 
   /**
    * Advance the decorative presence layer — twinkle, nebula breathing and

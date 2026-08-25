@@ -2,18 +2,29 @@ import { useEffect, useRef } from 'react';
 import { PAW_COMPOSITION_PULSE_EVENT, type PawCompositionPulseSource } from '../runtime/composition-pulse';
 
 /**
- * PAWOS desktop wallpaper — the Wayfinder fog terrain. One coherent direction
- * pushed as far as deterministic SVG allows: a photographic landscape of six
- * ridge lines sinking into valley fog, lit by a diffuse light source that is
- * never drawn as a shape. Depth comes from real photographic technique, not
- * from line work: atmospheric perspective (each ridge fades into the fog that
- * separates it from the next), depth-of-field blur on the far ranges, airlight
- * veils that scatter around the light, resting mist banks, and a static film
- * grain pass that kills gradient banding. No sun disc, no dashed orbits, no
- * icon-like marks — nothing on the desktop asks to be read. The ridgeline
- * polylines are baked from seeded fractal noise (ridged fBm for the far
- * ranges, rolling fBm for the foothills), so the silhouettes carry real
- * terrain character while staying byte-for-byte deterministic.
+ * PAWOS desktop wallpaper — the Wayfinder fog terrain at first light. One
+ * coherent direction pushed as far as deterministic SVG allows: a photographic
+ * landscape of six ridge lines sinking into valley fog under a deep glacial
+ * sky, lit by a source that is never drawn as a shape. Depth comes from real
+ * photographic technique, not from line work: atmospheric perspective (each
+ * ridge fades into the fog that separates it from the next), depth-of-field
+ * blur on the far ranges, airlight veils that scatter around the light,
+ * resting mist banks, and a static film grain pass that kills gradient
+ * banding. No sun disc, no dashed orbits, no icon-like marks — nothing on the
+ * desktop asks to be read. The ridgeline polylines are baked from seeded
+ * fractal noise (ridged fBm for the far ranges, rolling fBm for the
+ * foothills), so the silhouettes carry real terrain character while staying
+ * byte-for-byte deterministic.
+ *
+ * Value is the whole composition. An earlier pass held the entire sky in the
+ * pale end of the range, and the result was a picture with nothing in it: six
+ * ridges resolved to the same milky grey, the horizon read as unpainted paper,
+ * and the ambient weather had no ground dark enough to register against. The
+ * ramp now runs from near-navy at the zenith to near-black in the near terrain
+ * with one narrow luminous band between them, and that band is deliberately
+ * not blown out across its full width — a skyline equally bright at every x
+ * has no light direction. The brightness at the gap comes from the bloom and
+ * daylight radials anchored on it, so the light has somewhere it comes from.
  *
  * Render budget — the rule that fixed the desktop freeze: the SVG is a
  * painting, not a stage. It rasterizes once (film grain and the three
@@ -25,14 +36,29 @@ import { PAW_COMPOSITION_PULSE_EVENT, type PawCompositionPulseSource } from '../
  * feTurbulence/blur stack under the chrome glass — on large or HiDPI screens
  * the raster pipeline never drained and the pointer starved.
  *
- * Runtime pulses (`pulsePawComposition` / playing audio) therefore live in a
- * separate HTML overlay (`.paw-field-live`): one pre-blurred radial-gradient
- * glow over the light gap, animated with compositor-only opacity/transform,
- * plus a residual `--paw-composition-energy` that keeps the horizon slightly
- * lit after activity. Pulses stay skipped while the document is hidden,
- * while collaboration focus owns the stage, and while a window drag/resize
- * gesture owns the frame budget; both reduced-motion signals drop the
- * choreography and keep only the residual light.
+ * Everything that moves therefore lives in the `.paw-field-live` HTML overlay
+ * above the painting, and every moving property is compositor-only —
+ * transform and opacity, never a filter, never layout, never paint:
+ *
+ * - Ambient weather, five layers: volumetric shafts fanning out of the horizon
+ *   gap, two cold aurora curtains crossing the upper sky, a fog bank drifting
+ *   along the valley, and a sheen breathing on the light. They loop in CSS on
+ *   174s / 132s / 96s / 118s / 34s ease-in-out alternating cycles; no script
+ *   drives a frame of it. Attribute selectors pause every loop while the
+ *   desktop is unwatched (`data-ambient-paused` covers a hidden document, a
+ *   focused App window, Launchpad and the overview plane), while collaboration
+ *   focus owns the stage, and while a window drag/resize owns the frame
+ *   budget. Where a layer needs a soft boundary it carries a static
+ *   `mask-image`, which bakes into that layer's one raster — unlike a filter,
+ *   it costs nothing per frame and cannot reach the picture underneath.
+ * - Runtime pulses (`pulsePawComposition` / playing audio): one pre-blurred
+ *   radial-gradient glow over the light gap, animated with compositor-only
+ *   opacity/scale, plus a residual `--paw-composition-energy` that keeps the
+ *   horizon slightly lit after activity. Pulses are skipped under the same
+ *   four suspension signals.
+ *
+ * Both reduced-motion signals drop all choreography and keep only the
+ * residual light and the resting veil densities.
  */
 
 /* The picture is a module constant: React reconciles it by reference, so a
@@ -45,67 +71,88 @@ const pawFieldPicture = (
     viewBox="0 0 1440 900"
   >
     <defs>
-      {/* Sky: cool zenith settling into a luminous haze band at the horizon.
-          The brightness peak sits just above the ridge lines, so the light
-          source is implied by the atmosphere rather than drawn. */}
+      {/* Sky: the picture's whole drama lives in this one ramp. A deep glacial
+          zenith falls through cold blue into a narrow luminous ice band right
+          above the ridge lines, so the light source is implied by the
+          atmosphere rather than drawn. The zenith is dark on purpose — a pale
+          sky flattens every ridge into the same milky grey and leaves the
+          aurora nothing to glow against; carrying real value from near-navy to
+          near-white is what makes the horizon read as light instead of as
+          unpainted paper, and what lets one soft layer of weather register at
+          all. */}
       <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-sky" x1="0" x2="0" y1="0" y2="900">
-        <stop offset="0" stopColor="#edf2f9" />
-        <stop offset=".36" stopColor="#e8eff7" />
-        <stop offset=".55" stopColor="#e6eef8" />
-        <stop offset=".63" stopColor="#eff4fa" />
-        <stop offset=".68" stopColor="#f5f8fc" />
-        <stop offset=".78" stopColor="#eaf0f8" />
-        <stop offset="1" stopColor="#e7edf7" />
+        <stop offset="0" stopColor="#22355c" />
+        <stop offset=".16" stopColor="#2e4470" />
+        <stop offset=".32" stopColor="#425e8f" />
+        <stop offset=".46" stopColor="#6285ae" />
+        <stop offset=".56" stopColor="#87aacb" />
+        {/* The horizon band stays a moderate value on its own. A full-width
+            blown-out band gives the picture no light direction — every point
+            along the skyline is equally lit and the scene reads flat. The
+            luminance at the gap comes from the bloom and daylight radials
+            instead, which are anchored at x=985, so the light has somewhere
+            it is actually coming from and the left horizon can stay deep. */}
+        <stop offset=".615" stopColor="#cadced" />
+        <stop offset=".66" stopColor="#bcd2e7" />
+        <stop offset=".78" stopColor="#9db8d6" />
+        <stop offset="1" stopColor="#8aa6ca" />
       </linearGradient>
       <radialGradient cx="985" cy="552" gradientUnits="userSpaceOnUse" id="paw-field-bloom" r="560">
-        <stop offset="0" stopColor="#ffffff" stopOpacity=".92" />
-        <stop offset=".34" stopColor="#fbf8f0" stopOpacity=".42" />
-        <stop offset=".62" stopColor="#f4f4f0" stopOpacity=".16" />
-        <stop offset="1" stopColor="#f4f4f0" stopOpacity="0" />
+        <stop offset="0" stopColor="#ffffff" stopOpacity=".95" />
+        <stop offset=".3" stopColor="#eef7fb" stopOpacity=".46" />
+        <stop offset=".6" stopColor="#dfeaf8" stopOpacity=".18" />
+        <stop offset="1" stopColor="#dfeaf8" stopOpacity="0" />
       </radialGradient>
+      {/* The single temperature accent in an otherwise cold world: a whisper
+          of low sun inside the gap, small enough to stay light rather than
+          turn the picture into paper. */}
       <radialGradient cx="985" cy="552" gradientUnits="userSpaceOnUse" id="paw-field-warmth" r="210">
-        <stop offset="0" stopColor="#f6e7cb" stopOpacity=".5" />
-        <stop offset=".6" stopColor="#f5ecd9" stopOpacity=".2" />
-        <stop offset="1" stopColor="#f5ecd9" stopOpacity="0" />
+        <stop offset="0" stopColor="#ffeed2" stopOpacity=".4" />
+        <stop offset=".6" stopColor="#fdf3e2" stopOpacity=".16" />
+        <stop offset="1" stopColor="#fdf3e2" stopOpacity="0" />
       </radialGradient>
       {/* Airlight: light scattered by the atmosphere in front of the far
           ranges. Shared by both veils; nearer terrain receives less. */}
       <radialGradient id="paw-field-airlight" cx="50%" cy="50%" r="50%">
-        <stop offset="0" stopColor="#ffffff" stopOpacity=".55" />
-        <stop offset=".5" stopColor="#fcf9f2" stopOpacity=".26" />
+        <stop offset="0" stopColor="#ffffff" stopOpacity=".58" />
+        <stop offset=".5" stopColor="#eef7fc" stopOpacity=".27" />
         <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
       </radialGradient>
       {/* Atmospheric perspective: every ridge is darkest at its crest and
           dissolves into the fog pooling at its base; each nearer layer
-          starts deeper and its fog is a step less bright. */}
+          starts deeper and its fog is a step less bright. The ramp now runs
+          the full way from pale ice to near-black slate, so the six
+          silhouettes separate at a glance instead of blurring into one
+          grey. The chrome that sits over the deep end — Dock, windows,
+          menu bar — carries its own bright ground. */}
       <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-veil" x1="0" x2="0" y1="545" y2="760">
-        <stop offset="0" stopColor="#d7e2f1" />
-        <stop offset="1" stopColor="#e9eff8" />
+        <stop offset="0" stopColor="#bed2ec" />
+        <stop offset="1" stopColor="#dfe9f6" />
       </linearGradient>
       <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-far" x1="0" x2="0" y1="495" y2="800">
-        <stop offset="0" stopColor="#c2d1e8" />
-        <stop offset=".55" stopColor="#dbe5f3" />
-        <stop offset="1" stopColor="#e6ecf7" />
+        <stop offset="0" stopColor="#a2b9da" />
+        <stop offset=".55" stopColor="#c9daf0" />
+        <stop offset="1" stopColor="#dee8f6" />
       </linearGradient>
       <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-midfar" x1="0" x2="0" y1="585" y2="850">
-        <stop offset="0" stopColor="#aabdd9" />
-        <stop offset=".55" stopColor="#cfdcee" />
-        <stop offset="1" stopColor="#dfe8f4" />
+        <stop offset="0" stopColor="#86a0c9" />
+        <stop offset=".55" stopColor="#b4c9e6" />
+        <stop offset="1" stopColor="#d4e2f3" />
       </linearGradient>
       <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-mid" x1="0" x2="0" y1="685" y2="910">
-        <stop offset="0" stopColor="#8da4c6" />
-        <stop offset=".6" stopColor="#bfcfe5" />
-        <stop offset="1" stopColor="#d3deee" />
+        <stop offset="0" stopColor="#5f7aa6" />
+        <stop offset=".6" stopColor="#99b1d4" />
+        <stop offset="1" stopColor="#c4d5ec" />
       </linearGradient>
       <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-close" x1="0" x2="0" y1="755" y2="960">
-        <stop offset="0" stopColor="#6a81a6" />
-        <stop offset=".62" stopColor="#a3b7d4" />
-        <stop offset="1" stopColor="#bfcde3" />
+        <stop offset="0" stopColor="#3d5075" />
+        <stop offset=".62" stopColor="#7389b2" />
+        <stop offset="1" stopColor="#a9bddb" />
       </linearGradient>
       <linearGradient gradientUnits="userSpaceOnUse" id="paw-field-ridge-near" x1="0" x2="0" y1="838" y2="980">
-        <stop offset="0" stopColor="#4c5b76" />
-        <stop offset=".65" stopColor="#7688a5" />
-        <stop offset="1" stopColor="#92a2bd" />
+        <stop offset="0" stopColor="#202c46" />
+        <stop offset=".65" stopColor="#45567a" />
+        <stop offset="1" stopColor="#7f93b6" />
       </linearGradient>
       {/* Mist banks: soft edges come from the gradient itself instead of a
           live feGaussianBlur, so the fog costs one gradient fill in the
@@ -118,8 +165,8 @@ const pawFieldPicture = (
       </radialGradient>
       {/* Early daylight resting over the light gap in the valley. */}
       <radialGradient id="paw-field-daylight" cx="50%" cy="50%" r="50%">
-        <stop offset="0" stopColor="#ffffff" stopOpacity=".66" />
-        <stop offset=".55" stopColor="#fbf8f0" stopOpacity=".3" />
+        <stop offset="0" stopColor="#ffffff" stopOpacity=".72" />
+        <stop offset=".55" stopColor="#e8f3fb" stopOpacity=".3" />
         <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
       </radialGradient>
       {/* Depth of field: only the far ranges soften into the haze — the
@@ -145,11 +192,21 @@ const pawFieldPicture = (
     <rect className="paw-field__sky" width="1440" height="900" fill="url(#paw-field-sky)" />
     <circle className="paw-field__bloom" cx="985" cy="552" r="560" fill="url(#paw-field-bloom)" />
     <circle className="paw-field__warmth" cx="985" cy="552" r="210" fill="url(#paw-field-warmth)" />
-    {/* High cirrus haze: thin bright bands crossing the sky, a second
-        weather depth resting against the valley mist. */}
+    {/* Light pillar — the cold-climate phenomenon that gives the gap a
+        vertical axis: ice crystals in the column of air above and below the
+        light bounce it back at the viewer. Both halves reuse the pre-blurred
+        mist gradient, so the whole effect costs two gradient fills in the
+        picture's single rasterization. */}
+    <ellipse className="paw-field__pillar paw-field__pillar--sky" cx="985" cy="438" rx="58" ry="164" fill="url(#paw-field-mist-ball)" opacity=".2" />
+    {/* High cirrus haze: a second weather depth resting against the valley
+        mist. Faint, tilted and deep rather than thin — over a dark zenith a
+        shallow ellipse has nowhere to fall off and draws itself as a ruled
+        line across the sky, so each band is given real vertical extent and a
+        low density instead. */}
     <g className="paw-field__cirrus">
-      <ellipse cx="430" cy="176" rx="540" ry="30" fill="url(#paw-field-mist-ball)" opacity=".17" />
-      <ellipse cx="1090" cy="238" rx="620" ry="34" fill="url(#paw-field-mist-ball)" opacity=".13" />
+      <ellipse cx="360" cy="150" rx="500" ry="52" fill="url(#paw-field-mist-ball)" opacity=".12" transform="rotate(-2.2 360 150)" />
+      <ellipse cx="900" cy="206" rx="580" ry="58" fill="url(#paw-field-mist-ball)" opacity=".1" transform="rotate(1.6 900 206)" />
+      <ellipse cx="1250" cy="104" rx="400" ry="40" fill="url(#paw-field-mist-ball)" opacity=".085" transform="rotate(-1.2 1250 104)" />
     </g>
     <path
       className="paw-field__ridge paw-field__ridge--veil"
@@ -176,6 +233,7 @@ const pawFieldPicture = (
       <ellipse cx="940" cy="604" rx="440" ry="48" fill="url(#paw-field-mist-ball)" opacity=".62" />
       <ellipse cx="1310" cy="612" rx="280" ry="40" fill="url(#paw-field-mist-ball)" opacity=".42" />
     </g>
+    <ellipse className="paw-field__pillar paw-field__pillar--valley" cx="985" cy="646" rx="74" ry="126" fill="url(#paw-field-mist-ball)" opacity=".32" />
     <path
       className="paw-field__ridge paw-field__ridge--mid"
       d="M -60 736.8 L -44 737.8 L -28 739.3 L -12 741.2 L 4 743.2 L 20 743.3 L 36 744.1 L 52 741.9 L 68 737.7 L 84 736.0 L 100 733.4 L 116 727.9 L 132 725.2 L 148 727.3 L 164 732.4 L 180 733.9 L 196 731.0 L 212 726.8 L 228 725.1 L 244 721.3 L 260 714.7 L 276 711.6 L 292 715.6 L 308 719.5 L 324 721.2 L 340 722.2 L 356 723.3 L 372 722.5 L 388 720.0 L 404 717.3 L 420 714.4 L 436 708.2 L 452 704.0 L 468 704.7 L 484 708.0 L 500 712.1 L 516 717.5 L 532 723.3 L 548 725.3 L 564 725.5 L 580 726.9 L 596 723.5 L 612 716.8 L 628 716.5 L 644 718.2 L 660 719.5 L 676 725.5 L 692 728.3 L 708 721.0 L 724 712.0 L 740 711.1 L 756 711.7 L 772 711.1 L 788 712.6 L 804 712.2 L 820 708.1 L 836 706.1 L 852 708.4 L 868 708.5 L 884 701.5 L 900 700.0 L 916 700.2 L 932 707.5 L 948 710.1 L 964 710.7 L 980 709.0 L 996 701.3 L 1012 700.5 L 1028 699.6 L 1044 699.5 L 1060 699.0 L 1076 700.8 L 1092 705.4 L 1108 709.2 L 1124 709.8 L 1140 707.5 L 1156 703.4 L 1172 698.1 L 1188 697.3 L 1204 702.0 L 1220 703.6 L 1236 705.1 L 1252 705.7 L 1268 701.8 L 1284 695.6 L 1300 687.3 L 1316 686.8 L 1332 686.6 L 1348 686.6 L 1364 687.0 L 1380 691.1 L 1396 697.6 L 1412 694.1 L 1428 693.6 L 1444 697.6 L 1460 702.7 L 1476 704.1 L 1492 703.3 L 1500 960 L -60 960 Z"
@@ -205,6 +263,24 @@ const pawFieldPicture = (
   </svg>
 );
 
+/* The ambient weather plane. Three HTML nodes, each a pre-blurred gradient
+ * (soft edges come from the gradient falloff, never from a live filter) and
+ * each looping on transform/opacity alone, so the compositor owns them from
+ * promotion onward and the painting below is never invalidated. paw-os.css
+ * owns their geometry plus the pause and reduced-motion wiring;
+ * paw-os-shell-migrated-v1.css owns paint and choreography. A module constant
+ * for the same reason as the picture: React reconciles it by reference, so a
+ * Wayfinder re-render never walks the weather. */
+const pawFieldWeather = (
+  <>
+    <i className="paw-field-live__rays" />
+    <i className="paw-field-live__veil paw-field-live__veil--high" />
+    <i className="paw-field-live__veil paw-field-live__veil--low" />
+    <i className="paw-field-live__drift" />
+    <i className="paw-field-live__sheen" />
+  </>
+);
+
 export function PawCompositionField({ effects = false }: { effects?: boolean } = {}) {
   const liveRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -219,7 +295,9 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
     // desktop whose shell reports the field unwatched (data-ambient-paused —
     // a focused App window, Launchpad or overview covers the scenery), a
     // collaboration-focused desktop and a live window drag/resize all swallow
-    // pulses entirely — no energy write, no glow transition, no WAAPI.
+    // pulses entirely — no energy write, no glow transition, no WAAPI. The
+    // same four signals pause the ambient veils through CSS attribute
+    // selectors, so the whole overlay goes quiet together.
     const pulsesSuspended = () => {
       if (document.hidden) return true;
       if (live.closest('[data-ambient-paused]')) return true;
@@ -280,6 +358,7 @@ export function PawCompositionField({ effects = false }: { effects?: boolean } =
       {pawFieldPicture}
       {effects ? (
         <div aria-hidden="true" className="paw-field-live" ref={liveRef}>
+          {pawFieldWeather}
           <i className="paw-field-live__glow" />
         </div>
       ) : null}

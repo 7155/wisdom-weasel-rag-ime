@@ -178,10 +178,11 @@
 }
 
 /* Wayfinder fog terrain. The wallpaper is one photographic landscape in the
-   shell's own glacial palette: six desaturated slate ridge lines dissolving
-   into valley fog under a diffuse horizon light that is never drawn as a
-   shape. Colour discipline: cool greys and slate blues, one pale warmth at
-   the light gap — no line work, no icons, nothing that asks to be read. */
+   shell's own glacial palette: six slate ridge lines running from pale ice to
+   near-black, dissolving into valley fog under a diffuse horizon light that is
+   never drawn as a shape, with a cold light pillar giving the gap a vertical
+   axis. Colour discipline: glacial blues and slate, one whisper of low sun
+   inside the gap — no line work, no icons, nothing that asks to be read. */
 .paw-desktop-root .paw-wayfinder .paw-composition-field {
   opacity: 1;
   filter: none;
@@ -191,41 +192,200 @@
    hold static densities so the SVG rasterizes exactly once. The earlier
    stepped weather clocks re-rastered the full-bleed grain/blur stack (and
    re-blurred the chrome glass above it) every second or two forever, which
-   starved the pointer on large screens. Live light now belongs to the
-   `.paw-field-live` HTML overlay, whose glow answers Runtime energy on the
-   compositor alone. */
-.paw-desktop-root .paw-field__bloom { opacity: .66; }
-.paw-desktop-root .paw-field__warmth { opacity: .64; }
-.paw-desktop-root .paw-field__mist { opacity: .85; }
-.paw-desktop-root .paw-field__mist--near { opacity: .7; }
-.paw-desktop-root .paw-field__daylight { opacity: .3; }
+   starved the pointer on large screens. Everything that moves now belongs to
+   the `.paw-field-live` HTML overlay below, which the compositor owns
+   outright. */
+.paw-desktop-root .paw-field__bloom { opacity: .88; }
+.paw-desktop-root .paw-field__warmth { opacity: .58; }
+/* The valley fog carries the depth between ranges, but past roughly .7 it
+   stops separating the ridges and starts erasing them: the far ranges vanish
+   and the whole middle of the picture goes to one milk grey. */
+.paw-desktop-root .paw-field__mist { opacity: .68; }
+.paw-desktop-root .paw-field__mist--near { opacity: .56; }
+.paw-desktop-root .paw-field__daylight { opacity: .42; }
+
+/* The wallpaper's idle life, in the shell's cold register throughout: glacial
+   cyan, steel blue and ice white, never violet and never warm. Each layer is a
+   single pre-blurred gradient — soft edges come from gradient falloff, never
+   from a live filter — so it costs one paint when the compositor promotes it
+   and nothing per frame after that. Every loop is slow, eased and alternating,
+   so motion registers as weather rather than as animation and no cycle ever
+   snaps back to its start.
+
+   Volumetric shafts. Light leaving the horizon gap through broken cloud is the
+   one phenomenon that makes a cold valley look genuinely lit, and it is the
+   picture's strongest gesture. The fan is a single conic gradient with
+   hand-placed irregular stops (evenly spaced shafts would read as a sunburst
+   badge, which is exactly the childish note to avoid), each shaft ramping in
+   and out over several degrees so no edge is ever hard. The radial mask opens
+   a hole at the centre — there is no visible convergence point, just light
+   already on its way — and fades the fan out long before the disc edge. The
+   mask is baked into the layer's raster; only the pivot and the density
+   breathe, and both ride the compositor. */
+.paw-desktop-root .paw-field-live__rays {
+  background: conic-gradient(
+    from 178deg at 50% 50%,
+    rgb(233 246 253 / 0) 0deg,
+    rgb(233 246 253 / .26) 5deg,
+    rgb(233 246 253 / 0) 11deg,
+    rgb(214 238 251 / 0) 19deg,
+    rgb(214 238 251 / .17) 24deg,
+    rgb(214 238 251 / 0) 27deg,
+    rgb(245 252 255 / 0) 41deg,
+    rgb(245 252 255 / .3) 48deg,
+    rgb(245 252 255 / 0) 57deg,
+    rgb(206 234 248 / 0) 74deg,
+    rgb(206 234 248 / .15) 78deg,
+    rgb(206 234 248 / 0) 84deg,
+    rgb(233 246 253 / 0) 104deg,
+    rgb(233 246 253 / .22) 112deg,
+    rgb(233 246 253 / 0) 119deg,
+    rgb(226 242 252 / 0) 143deg,
+    rgb(226 242 252 / .13) 147deg,
+    rgb(226 242 252 / 0) 152deg,
+    rgb(245 252 255 / 0) 196deg,
+    rgb(245 252 255 / .19) 203deg,
+    rgb(245 252 255 / 0) 210deg,
+    rgb(214 238 251 / 0) 236deg,
+    rgb(214 238 251 / .24) 243deg,
+    rgb(214 238 251 / 0) 252deg,
+    rgb(233 246 253 / 0) 279deg,
+    rgb(233 246 253 / .16) 283deg,
+    rgb(233 246 253 / 0) 289deg,
+    rgb(245 252 255 / 0) 307deg,
+    rgb(245 252 255 / .28) 315deg,
+    rgb(245 252 255 / 0) 323deg,
+    rgb(206 234 248 / 0) 340deg,
+    rgb(206 234 248 / .14) 345deg,
+    rgb(206 234 248 / 0) 352deg,
+    rgb(233 246 253 / 0) 360deg
+  );
+  mask-image: radial-gradient(
+    closest-side,
+    rgb(0 0 0 / 0) 6%,
+    rgb(0 0 0 / .9) 26%,
+    rgb(0 0 0 / .5) 58%,
+    rgb(0 0 0 / 0) 84%
+  );
+  animation: paw-field-rays 174s ease-in-out infinite alternate;
+}
+/* Aurora curtains. Irregular soft bands rather than one smooth blob: a
+   curtain needs internal structure to read as a curtain, and the bands are
+   spaced unevenly so the eye never finds a repeat. The radial mask keeps each
+   curtain from ending on a rectangle edge. Two of them, crossing at opposite
+   angles and breathing in opposition, so the upper sky's colour temperature
+   genuinely shifts over the cycle. */
+.paw-desktop-root .paw-field-live__veil--high {
+  background:
+    linear-gradient(
+      96deg,
+      rgb(146 236 231 / 0) 8%,
+      rgb(146 236 231 / .2) 16%,
+      rgb(146 236 231 / 0) 25%,
+      rgb(160 224 246 / 0) 33%,
+      rgb(160 224 246 / .15) 39%,
+      rgb(160 224 246 / 0) 47%,
+      rgb(146 236 231 / 0) 62%,
+      rgb(146 236 231 / .17) 69%,
+      rgb(146 236 231 / 0) 78%
+    ),
+    radial-gradient(80% 72% at 34% 42%, rgb(138 226 226 / .3), rgb(138 226 226 / 0) 74%),
+    radial-gradient(74% 64% at 70% 58%, rgb(122 168 232 / .28), rgb(122 168 232 / 0) 76%);
+  mask-image: radial-gradient(72% 66% at 44% 48%, rgb(0 0 0 / 1), rgb(0 0 0 / 0) 84%);
+  animation: paw-field-veil-high 132s ease-in-out infinite alternate;
+}
+.paw-desktop-root .paw-field-live__veil--low {
+  background:
+    linear-gradient(
+      -88deg,
+      rgb(176 226 248 / 0) 11%,
+      rgb(176 226 248 / .16) 19%,
+      rgb(176 226 248 / 0) 29%,
+      rgb(206 240 244 / 0) 44%,
+      rgb(206 240 244 / .19) 52%,
+      rgb(206 240 244 / 0) 61%,
+      rgb(150 206 236 / 0) 72%,
+      rgb(150 206 236 / .14) 79%,
+      rgb(150 206 236 / 0) 88%
+    ),
+    radial-gradient(76% 70% at 62% 42%, rgb(150 206 236 / .27), rgb(150 206 236 / 0) 74%),
+    radial-gradient(70% 62% at 30% 62%, rgb(206 236 242 / .24), rgb(206 236 242 / 0) 72%);
+  mask-image: radial-gradient(70% 68% at 56% 46%, rgb(0 0 0 / 1), rgb(0 0 0 / 0) 82%);
+  animation: paw-field-veil-low 96s ease-in-out infinite alternate;
+}
+/* The fog bank that crosses the valley. Uneven density along its length, so
+   the terrain behind it clears and thickens as it passes instead of dimming
+   uniformly, and a vertical mask that keeps it lying on the ridges rather than
+   floating as a band. */
+.paw-desktop-root .paw-field-live__drift {
+  background:
+    radial-gradient(34% 78% at 18% 52%, rgb(240 249 255 / .34), rgb(240 249 255 / 0) 76%),
+    radial-gradient(28% 92% at 47% 44%, rgb(255 255 255 / .28), rgb(255 255 255 / 0) 72%),
+    radial-gradient(38% 70% at 79% 56%, rgb(226 242 252 / .3), rgb(226 242 252 / 0) 74%);
+  mask-image: linear-gradient(rgb(0 0 0 / 0), rgb(0 0 0 / 1) 34%, rgb(0 0 0 / .82) 70%, rgb(0 0 0 / 0));
+  animation: paw-field-drift 118s ease-in-out infinite alternate;
+}
+.paw-desktop-root .paw-field-live__sheen {
+  background: radial-gradient(
+    closest-side,
+    rgb(255 252 244 / .52),
+    rgb(226 242 252 / .24) 50%,
+    rgb(255 255 255 / 0) 82%
+  );
+  animation: paw-field-sheen 34s ease-in-out infinite alternate;
+}
 .paw-desktop-root .paw-field-live__glow {
   background: radial-gradient(
     circle,
     rgb(255 255 255 / .8),
-    rgb(253 251 245 / .38) 45%,
+    rgb(233 246 252 / .38) 45%,
     rgb(255 255 255 / 0) 72%
   );
 }
 
-/* Optical depth over the field: the menu-bar aurora triad washes the top of
-   the sky and a quiet vignette settles the horizon behind Dock and windows.
-   One composited layer — no filter, no animation, nothing to re-rasterize. */
+/* Optical depth over the field: a cold wash across the top of the sky and a
+   quiet vignette settling the horizon behind Dock and windows. One composited
+   layer — no filter, no animation, nothing to re-rasterize. */
 .paw-desktop-root .paw-field-media::after {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(88rem 30rem at 14% -12%, rgb(47 107 255 / .09), transparent 60%),
-    radial-gradient(70rem 26rem at 50% -14%, rgb(112 72 232 / .06), transparent 58%),
-    radial-gradient(64rem 24rem at 88% -10%, rgb(15 139 128 / .06), transparent 56%),
-    radial-gradient(150% 108% at 50% 8%, transparent 66%, rgb(20 30 52 / .16) 100%);
+    radial-gradient(88rem 30rem at 14% -12%, rgb(41 96 232 / .12), transparent 60%),
+    radial-gradient(70rem 26rem at 50% -14%, rgb(28 148 190 / .09), transparent 58%),
+    radial-gradient(64rem 24rem at 88% -10%, rgb(18 146 138 / .08), transparent 56%),
+    radial-gradient(150% 112% at 50% 6%, transparent 58%, rgb(12 22 44 / .3) 100%);
   content: '';
 }
 
 @keyframes paw-field-arrive {
   from { opacity: .62; transform: scale(1.012); }
   to { opacity: 1; transform: scale(1); }
+}
+/* Ambient choreography: transform and opacity only, on layers the compositor
+   already owns. Nothing here can reach the picture's raster. The shafts pivot
+   a few degrees rather than sweeping a full turn — a rotating fan reads as a
+   spinning badge, while a fan that shifts as though fog were moving through it
+   reads as light. */
+@keyframes paw-field-rays {
+  from { transform: rotate(-4.2deg) scale(.97); opacity: .48; }
+  to { transform: rotate(3.8deg) scale(1.05); opacity: .94; }
+}
+@keyframes paw-field-drift {
+  from { transform: translate3d(0%, 0, 0) scale(1); opacity: .34; }
+  to { transform: translate3d(28%, 0, 0) scale(1.06); opacity: .62; }
+}
+@keyframes paw-field-veil-high {
+  from { transform: translate3d(-3%, -1.4%, 0) scale(1); opacity: .46; }
+  to { transform: translate3d(4%, 1.8%, 0) scale(1.09); opacity: .88; }
+}
+@keyframes paw-field-veil-low {
+  from { transform: translate3d(3.5%, 1.6%, 0) scale(1.07); opacity: .78; }
+  to { transform: translate3d(-4%, -1.2%, 0) scale(1); opacity: .34; }
+}
+@keyframes paw-field-sheen {
+  from { transform: scale(.96); opacity: .34; }
+  to { transform: scale(1.07); opacity: .68; }
 }
 
 /* ------------------------------------------------------- Wayfinder list
@@ -686,6 +846,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-wayfinder .paw-composition-field,
+  .paw-desktop-root .paw-field-live__rays,
+  .paw-desktop-root .paw-field-live__veil,
+  .paw-desktop-root .paw-field-live__drift,
+  .paw-desktop-root .paw-field-live__sheen,
   .paw-desktop-root .paw-field-live__glow,
   .paw-desktop-root .paw-launchpad,
   .paw-desktop-root .paw-launchpad > section,

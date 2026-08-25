@@ -172,17 +172,94 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   opacity: 1;
   transition: opacity 220ms var(--paw-ease-out);
 }
-/* Live light overlay — the only part of the wallpaper that ever moves. The
-   SVG picture below it rasterizes once and is never invalidated again; Runtime
-   pulses land here as compositor-only opacity/scale on one pre-blurred glow,
-   and the residual energy keeps the light gap slightly lit after activity.
-   The custom property lives on this two-node subtree so an energy write can
-   never trigger a style pass over the terrain. */
+/* Live overlay — the only part of the wallpaper that ever moves. The SVG
+   picture below it rasterizes once and is never invalidated again; the ambient
+   veils and the Runtime pulse both land here as compositor-only
+   transform/opacity on pre-blurred gradients, and the residual energy keeps
+   the light gap slightly lit after activity. The custom property lives on this
+   small subtree so an energy write can never trigger a style pass over the
+   terrain. */
 .paw-field-live {
   --paw-composition-energy: 0;
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+/* Ambient weather — five layers, and the whole reason the desktop reads as a
+   living sky rather than as a printed backdrop: volumetric shafts fanning out
+   of the horizon gap, two cold aurora curtains crossing the upper sky, one fog
+   bank drifting along the valley, and a sheen breathing on the light itself.
+   Each is a single pre-blurred gradient on one HTML node, so a layer costs one
+   paint when the compositor promotes it and nothing per frame after that.
+   Static placement uses the individual `rotate` and `translate` properties so
+   the reduced-motion `transform: none` reset can flatten the choreography
+   without dragging a layer off its mark. */
+.paw-field-live__rays,
+.paw-field-live__veil,
+.paw-field-live__drift,
+.paw-field-live__sheen {
+  position: absolute;
+  pointer-events: none;
+}
+/* The shafts are a disc centred on the light gap so the fan can pivot about
+   its own origin. Bounded in px as well as vw: on a very wide display an
+   unbounded full-bleed layer is real compositor memory for no extra drama. */
+.paw-field-live__rays {
+  left: 68.4%;
+  top: 61.3%;
+  width: clamp(1000px, 132vw, 2100px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  opacity: .84;
+}
+.paw-field-live__veil--high {
+  left: -16%;
+  top: -14%;
+  width: 92%;
+  height: 58%;
+  rotate: -9deg;
+  opacity: .92;
+}
+.paw-field-live__veil--low {
+  right: -22%;
+  top: -2%;
+  width: 88%;
+  height: 52%;
+  rotate: 7deg;
+  opacity: .8;
+}
+/* Valley weather: a wide, very soft bank lying along the mid ridges. It is
+   the layer that makes the terrain itself look alive, so it is the one that
+   travels furthest — but it travels slowly, and only sideways. */
+.paw-field-live__drift {
+  left: -34%;
+  top: 56%;
+  width: 104%;
+  height: 30%;
+  opacity: .5;
+}
+.paw-field-live__sheen {
+  /* Anchored to the light gap at 985,552 of the 1440x900 picture. */
+  left: 68.4%;
+  top: 61.3%;
+  width: 64%;
+  min-width: 540px;
+  aspect-ratio: 2.7;
+  border-radius: 50%;
+  translate: -50% -50%;
+  opacity: .46;
+}
+/* Ambient motion is suspended, not merely hidden, the moment nobody is
+   watching the scenery: `data-ambient-paused` covers a hidden document, a
+   focused App window, the Launchpad veil and the overview plane, and the two
+   remaining signals hand the frame budget to collaboration focus and to a
+   live window drag/resize. Pausing the loops leaves each composited layer
+   exactly where it stopped, so resuming costs nothing and no frame is ever
+   spent behind work. */
+.paw-desktop[data-ambient-paused] .paw-field-live > *,
+.paw-desktop[data-collaboration-focus] .paw-field-live > *,
+.paw-desktop-root[data-window-interaction] .paw-field-live > * {
+  animation-play-state: paused;
 }
 .paw-field-live__glow {
   position: absolute;
