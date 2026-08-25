@@ -46,6 +46,7 @@ import {
   fallbackSurfaceTextureSize,
   SPHERE_SEGMENTS,
   sphereLodLevels,
+  starfieldAntialias,
   starfieldPixelRatio,
   surfaceTextureSize,
   type SphereDetail,
@@ -267,7 +268,7 @@ export class StarfieldStage {
     this.contextLostCallback = options.onContextLost;
     this.renderer = new THREE.WebGLRenderer({
       canvas: options.canvas,
-      antialias: true,
+      antialias: starfieldAntialias(window.devicePixelRatio || 1),
       alpha: false,
       powerPreference: 'high-performance',
     });
@@ -425,8 +426,6 @@ export class StarfieldStage {
   /* ------------------------------------------------------- backdrop -- */
 
   private rebuildBackdrop(model: StarfieldSceneModel): void {
-    // An upgrade queued for the sky being replaced is now pure waste.
-    this.deferred.cancelAll();
     this.disposeSubtree(this.backdropRoot);
     this.backdropRoot.clear();
     this.shellTwinkles = [];
@@ -767,9 +766,15 @@ export class StarfieldStage {
    * Swap a body's procedural surface for its real photographic map once the
    * async load completes (q-jade/solar-system craft: texture with graceful
    * color fallback — here the fallback *is* the procedural surface, so the
-   * sky is never blank while the photo is in flight). The stale-signature
-   * guard drops deliveries that raced a scene rebuild; the shared cache makes
-   * the re-request from the rebuilt scene a synchronous hit.
+   * sky is never blank while the photo is in flight).
+   *
+   * The swap goes through the deferred queue rather than running inside the
+   * load callback: a Room with eight named planets finishes eight fetches at
+   * roughly the same moment, and uploading eight 1k maps plus recompiling
+   * eight materials in one frame is exactly the hitch this whole path exists
+   * to avoid. The stale-signature guard drops deliveries that raced a scene
+   * rebuild; the shared cache makes the rebuilt scene's re-request a
+   * synchronous hit.
    */
   private applySurfaceMap(
     key: SurfaceKey,
@@ -779,13 +784,16 @@ export class StarfieldStage {
     const signature = this.modelSignature;
     this.surfaces.load(key, (texture) => {
       if (this.disposed || signature !== this.modelSignature) return;
-      material.map = texture;
-      // Photo maps bake their own relief; the procedural normal map would
-      // fight it with mismatched detail.
-      if ('normalMap' in material) material.normalMap = null;
-      material.color.set(tint ?? 0xffffff);
-      material.needsUpdate = true;
-      this.markDirty();
+      this.deferred.push(() => {
+        if (this.disposed || signature !== this.modelSignature) return;
+        material.map = texture;
+        // Photo maps bake their own relief; the procedural normal map would
+        // fight it with mismatched detail.
+        if ('normalMap' in material) material.normalMap = null;
+        material.color.set(tint ?? 0xffffff);
+        material.needsUpdate = true;
+        this.markDirty();
+      });
     });
   }
 
@@ -801,36 +809,46 @@ export class StarfieldStage {
     const signature = this.modelSignature;
     this.surfaces.load(key, (texture) => {
       if (this.disposed || signature !== this.modelSignature || !parent.parent) return;
-      const innerR = size * 1.24;
-      const outerR = size * 2.3;
-      const geometry = new THREE.RingGeometry(innerR, outerR, 96, 1);
-      geometry.rotateX(-Math.PI / 2);
-      const positions = geometry.attributes.position as THREE.BufferAttribute;
-      const uv = geometry.attributes.uv as THREE.BufferAttribute;
-      for (let index = 0; index < positions.count; index += 1) {
-        const x = positions.getX(index);
-        const z = positions.getZ(index);
-        const radius = Math.hypot(x, z);
-        uv.setXY(
-          index,
-          (radius - innerR) / (outerR - innerR),
-          (Math.atan2(z, x) + Math.PI) / (Math.PI * 2),
-        );
-      }
-      uv.needsUpdate = true;
-      const ring = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        opacity: 0.92,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }));
-      ring.rotation.x = 0.3;
-      ring.rotation.z = 0.16;
-      ring.renderOrder = 2;
-      parent.add(ring);
-      this.markDirty();
+      this.deferred.push(() => this.buildStripRing(parent, size, texture, signature));
     });
+  }
+
+  private buildStripRing(
+    parent: THREE.Object3D,
+    size: number,
+    texture: THREE.Texture,
+    signature: string,
+  ): void {
+    if (this.disposed || signature !== this.modelSignature || !parent.parent) return;
+    const innerR = size * 1.24;
+    const outerR = size * 2.3;
+    const geometry = new THREE.RingGeometry(innerR, outerR, 96, 1);
+    geometry.rotateX(-Math.PI / 2);
+    const positions = geometry.attributes.position as THREE.BufferAttribute;
+    const uv = geometry.attributes.uv as THREE.BufferAttribute;
+    for (let index = 0; index < positions.count; index += 1) {
+      const x = positions.getX(index);
+      const z = positions.getZ(index);
+      const radius = Math.hypot(x, z);
+      uv.setXY(
+        index,
+        (radius - innerR) / (outerR - innerR),
+        (Math.atan2(z, x) + Math.PI) / (Math.PI * 2),
+      );
+    }
+    uv.needsUpdate = true;
+    const ring = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 0.92,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }));
+    ring.rotation.x = 0.3;
+    ring.rotation.z = 0.16;
+    ring.renderOrder = 2;
+    parent.add(ring);
+    this.markDirty();
   }
 
   private buildCenter(model: StarfieldSceneModel): CenterRuntime {
