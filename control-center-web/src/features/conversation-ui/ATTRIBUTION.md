@@ -56,11 +56,35 @@ imports nothing from any host repository. Its stated host boundary is a single
 - **Copy is Simplified Chinese** to match the rest of the desktop.
 - **Colour.** `conversation-ui.css` keeps the `ccui-*` class namespace but
   resolves every `--ccui-*` variable from PAWOS `--paw-*` desktop tokens.
-- **Host slots.** `renderAssistantBlock` / `renderAssistantFooter` let a host
-  keep Runtime-specific presentation (pending approvals, background process
-  links) inside the shared card without forking the card.
+- **Host slots.** `renderBlock` / `renderBlockDetail` / `renderBlockAction` /
+  `renderMessageFooter` let a host keep Runtime-specific presentation (pending
+  approvals, structured tool evidence, background process links) inside the
+  shared card without forking the card.
+- **Pinning is instant.** The package re-pins from a `ResizeObserver`
+  observation. That is right for later growth of a mounted row (streamed text,
+  an opened disclosure) but a frame late for the transcript itself, so
+  `VirtualTranscript` also pins when the message list changes, and only the
+  reader's explicit jump animates.
 - `ResizeObserver` guards were added to the two scroll hooks so the surface
   also mounts in the jsdom test environment.
+
+## Where each PAWOS surface stands
+
+- **Room main timeline** and **partner satellite** render `ConversationSurface`
+  directly, through `PawRoomConversation` and the `roomTranscript` adapter.
+- **Session** keeps `AgentTimeline`. It is not a legacy stack: it already
+  satisfies the package's reading contracts with its own mature implementation
+  — `react-virtuoso` variable-height virtualization with follow-output pinning,
+  and a Runtime-driven steer receipt (`sending → accepted → applied`) that is
+  strictly richer than the package's timed `unread → read → settling → done`.
+  Replacing it would trade real capability (approvals, per-turn recovery,
+  edit/fork/rewind, subagent links, day separators, conversation navigation)
+  for surface uniformity. What Session genuinely lacked was the *front-end*
+  queue, so it now shares `useConversationQueue` and `QueueTray`.
+- The Session queue is deliberately distinct from Runtime `followUp` delivery.
+  干预/接续 hand a message to Pi immediately and Pi owns the ordering; 排队 holds
+  the draft in the client, which is the only reason it can still be edited,
+  reordered, sent ahead of its turn, dropped, or handed back on stop.
 
 ## Deliberately not vendored
 

@@ -249,6 +249,9 @@
 
 .paw-session-workspace__composer { position: relative; z-index: 8; width: 100%; padding: 7px clamp(14px, 4vw, 44px) 13px; background: linear-gradient(transparent, var(--paw-panel-strong) 20%); }
 .paw-session-workspace__composer > .agent-composer-wrap { width: min(900px, 100%); margin: 0 auto; padding: 0; }
+/* The held follow-ups sit directly above the composer that holds them, on the
+   same measure, so the queue never reads as part of the transcript. */
+.paw-session-workspace__composer > :is(.ccui-queue-tray, .ccui-queue-panel, .ccui-queue-cap-notice) { width: min(900px, 100%); margin: 0 auto 6px; }
 /* UR-042：Session 与 Room 同一只 Composer——两个工作面的输入船坞共用
    同一组规则，Room 不再持有第二套视觉系统。 */
 .paw-session-workspace__composer .agent-composer,

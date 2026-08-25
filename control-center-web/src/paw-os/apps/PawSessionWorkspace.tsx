@@ -52,6 +52,7 @@ import {
 import { agentProjection, useAgentLiveStore } from '@/features/agent/state/live-store';
 import { AgentStatusPanel } from '@/features/agent/status/AgentStatusPanel';
 import { AgentTimeline } from '@/features/agent/timeline/AgentTimeline';
+import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { toolIntentPrompt } from '@/features/agent/tool-presentation';
 import { AgentFilesPanel } from '@/features/agent/workspace/AgentFilesPanel';
 import { PawContextTrace } from './PawContextTrace';
@@ -150,6 +151,15 @@ export function PawSessionWorkspace({
   }, [recordId]);
 
   const busy = Boolean(latestActiveTurnId(projection));
+  /* A held follow-up is the composer's own queue, not a Runtime delivery.
+     干预/接续 hand the message to Pi immediately; a queued draft never leaves
+     the client until this turn settles, which is what keeps it editable,
+     reorderable, revocable, and restorable when the turn is stopped. */
+  const queue = useConversationQueue({
+    busy: busy || sending,
+    conversationId: recordId,
+    send: (text) => { void send('prompt', text); },
+  });
   const pendingMemoryReview = latestWaitingActivity(
     projection,
     (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind === 'memory_review',
@@ -441,6 +451,10 @@ export function PawSessionWorkspace({
   async function stop(): Promise<void> {
     if (!busy || stopping) return;
     setStopping(true);
+    /* Stopping the turn cancels the intent behind everything held for it, so
+       the drafts come back to the composer instead of firing into a Session
+       the reader just interrupted. */
+    if (queue.queue.length) setDraft((current) => queue.restoreToDraft(current));
     try {
       await transport.request({ pathId: 'agent.session.abort', params: { sessionId: recordId }, body: {} });
       await loadSnapshot(true);
@@ -1022,6 +1036,7 @@ export function PawSessionWorkspace({
 
           <div className="paw-session-workspace__composer">
             {error ? <div className="paw-session-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); void loadSnapshot(); }} type="button">重新同步</button></div> : null}
+            {record ? <QueueTray busy={busy || sending} controller={queue} /> : null}
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
               <GenericUserInputCard activity={pendingGenericInput} sessionId={recordId} onError={setError} />
             ) : record ? (
@@ -1063,6 +1078,8 @@ export function PawSessionWorkspace({
                 onToolSelect={(tool) => setDraft((current) => `${current.trimEnd()}${current.trim() ? '\n' : ''}${toolIntentPrompt(tool.id, tool.displayName)}：`)}
                 onPermissionChange={(selection) => void changePermission(selection)}
                 onWorkspaceRootsChange={() => void manageWorkspaceRoots()}
+                queueDepth={queue.queue.length}
+                onQueue={queue.enqueue}
               />
             ) : null}
           </div>

@@ -197,7 +197,7 @@ describe('room gravity projection over the minecraft harness', () => {
     const texts = cards.map((card) => card.textContent ?? '');
     expect(texts.some((text) => text.includes('Earth → Venus · 任务分派'))).toBe(true);
     expect(texts.some((text) => text.includes('Earth → Jupiter · 任务分派'))).toBe(true);
-    const waveCard = cards.find((card) => card.textContent?.includes('Earth → Venus'));
+    const waveCard = cards.find((card) => card.textContent?.includes('Earth → Venus')) as HTMLElement | undefined;
     expect(waveCard).toHaveTextContent('伙伴委派');
     expect(waveCard).toHaveTextContent('并行轨道 1/2');
     expect(waveCard).toHaveTextContent('并行实现纯逻辑与界面轨道');
