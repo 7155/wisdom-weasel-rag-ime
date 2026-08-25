@@ -8,8 +8,10 @@ import type {
 import {
   roomDispatchPlanFromActivity,
   roomDispatchPlanSummary,
+  roomDispatchSourceParticipantId,
   roomToolActivityLine,
   roomToolEvidence,
+  type RoomDispatchPlan,
 } from '@/paw-os/apps/room-gravity-projection';
 import type {
   AssistantBlock,
@@ -24,6 +26,8 @@ export interface RoomTranscriptOptions {
   actorName(participantId: string | null | undefined): string;
   /** Secondary actor line — collaboration role, when the Room knows one. */
   actorRole?(participantId: string | null | undefined): string;
+  /** What a dispatched WorkItem is actually for, when the Room knows it. */
+  workItemObjective?(workItemId: string): string;
   /** Restrict the transcript to one partner's public lane (satellite view). */
   participantId?: string;
 }
@@ -58,6 +62,12 @@ export function roomTranscript(
   const activityByBlockId: Record<string, RoomActivityProjection> = {};
   const cardByKey = new Map<string, AssistantMessage>();
   let openKey = '';
+  /* Every routing decision in the projection, so a child dispatch can still
+   * name the planet whose gravity pulled it (its parent's target). */
+  const dispatchPlans = projection.activityOrder
+    .map((activityId) => projection.activitiesById[activityId])
+    .map((activity) => activity ? roomDispatchPlanFromActivity(activity) : undefined)
+    .filter((plan): plan is RoomDispatchPlan => Boolean(plan));
 
   const cardFor = (
     turnId: string,
@@ -106,7 +116,7 @@ export function roomTranscript(
     }
     if (entry.kind === 'activity') {
       const card = cardFor(entry.activity.turnId, entry.activity.participantId, entry.activity.createdAtMs);
-      const block = activityBlock(entry.activity);
+      const block = activityBlock(entry.activity, dispatchPlans, options);
       card.blocks.push(block);
       activityByBlockId[block.id] = entry.activity;
       continue;
@@ -235,7 +245,11 @@ function activityVisible(activity: RoomActivityProjection): boolean {
     || eventType.includes('dispatch');
 }
 
-function activityBlock(activity: RoomActivityProjection): AssistantBlock {
+function activityBlock(
+  activity: RoomActivityProjection,
+  dispatchPlans: RoomDispatchPlan[],
+  options: RoomTranscriptOptions,
+): AssistantBlock {
   const eventType = text(activity.payload.sourceEventType, activity.kind);
   if (roomApprovalDecision(activity) || text(activity.payload.approvalId)) {
     return {
@@ -249,17 +263,26 @@ function activityBlock(activity: RoomActivityProjection): AssistantBlock {
   }
   const plan = roomDispatchPlanFromActivity(activity);
   if (plan) {
+    /* A route decision reads as the real dispatch — which planet pulled which,
+     * and for what — never a dead「分派」label. */
+    const sourceName = options.actorName(roomDispatchSourceParticipantId(plan, dispatchPlans) || null);
+    const targetName = options.actorName(plan.targetParticipantId) || plan.targetDisplayName || '伙伴';
+    const objective = plan.workItemId ? options.workItemObjective?.(plan.workItemId) ?? '' : '';
+    const routingDetail = [
+      plan.routingPolicyLabel,
+      ...plan.candidates.map((candidate) => (
+        `${options.actorName(candidate.participantId) || candidate.displayName} · ${candidate.score.toFixed(1)}${candidate.selected ? ' · 已选择' : ''}${candidate.signals.length ? ` · ${candidate.signals.join('、')}` : ''}`
+      )),
+      plan.dispatchId ? `分派 ${plan.dispatchId}` : '',
+      plan.workItemId ? `任务 ${plan.workItemId}` : '',
+    ].filter(Boolean).join('\n');
     return {
       id: `dispatch:${activity.id}`,
       kind: 'tool',
-      name: '任务分派',
-      summary: roomDispatchPlanSummary(plan),
+      name: `${sourceName} → ${targetName} · 任务分派`,
+      summary: [roomDispatchPlanSummary(plan), objective].filter(Boolean).join(' · '),
       status: toolStatus(activity.status),
-      ...(plan.candidates.length ? {
-        output: plan.candidates
-          .map((candidate) => `${candidate.displayName} · ${candidate.score.toFixed(1)}${candidate.selected ? ' · 已选择' : ''}${candidate.signals.length ? ` · ${candidate.signals.join('、')}` : ''}`)
-          .join('\n'),
-      } : {}),
+      ...(routingDetail ? { output: routingDetail } : {}),
       startedAt: activity.createdAtMs,
     };
   }

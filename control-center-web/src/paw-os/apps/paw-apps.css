@@ -334,8 +334,11 @@
 
 .paw-room-workspace__body { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; background: color-mix(in srgb, var(--paw-panel-soft) 42%, transparent); }
 .paw-room-workspace__main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; background: var(--paw-panel-strong); }
-.paw-room-timeline { min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
-.paw-room-timeline__canvas { width: min(900px, calc(100% - 52px)); min-height: 100%; margin: 0 auto; padding: 22px 30px 30px 0; }
+/* The shared conversation surface owns its own scroller, so the Room slot is
+   only the bounded box it fills. */
+.paw-room-timeline { min-width: 0; min-height: 0; display: grid; overflow: hidden; }
+.paw-room-timeline > .ccui-conversation-surface { --ccui-reading-width: 900px; }
+.paw-room-timeline .ccui-transcript-scroll { padding: 22px 0 30px; }
 .paw-room-workspace__loading { min-height: 280px; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--paw-muted); font-size: 10px; }
 .paw-room-workspace__empty { min-height: 360px; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--paw-muted); text-align: center; }
 .paw-room-workspace__empty strong { color: var(--paw-ink); font-size: 16px; }
@@ -389,7 +392,7 @@
 @media (max-width: 760px) {
   .paw-room-workspace__runtime > span { display: none; }
   .paw-room-workspace__header nav button { width: 30px; justify-content: center; padding: 0; font-size: 0; }
-  .paw-room-timeline__canvas { width: calc(100% - 24px); padding-right: 22px; }
+  .paw-room-timeline > .ccui-conversation-surface { --ccui-reading-width: 100%; }
   .paw-room-workspace__composer { padding-inline: 9px; }
 }
 @media (prefers-reduced-motion: reduce) {

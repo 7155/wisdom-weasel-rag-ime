@@ -16,7 +16,8 @@ export function ToolCard({ action, block, detail }: {
   block: ToolCallBlock;
   /** Always-visible host action (a pending approval must never fold away). */
   action?: ReactNode;
-  /** Host-rendered body inside the disclosure. */
+  /** Host-rendered body inside the disclosure; supersedes the model output,
+   *  which exists so a host without structured evidence still shows one. */
   detail?: ReactNode;
 }) {
   const [open, setOpen] = useState(block.status === 'error');
@@ -43,8 +44,7 @@ export function ToolCard({ action, block, detail }: {
       {open && hasDetail ? (
         <div className="ccui-tool-body">
           {block.input ? <div><span className="ccui-tool-label">调用</span><pre>{block.input}</pre></div> : null}
-          {block.output ? <div><span className="ccui-tool-label">证据</span><pre>{block.output}</pre></div> : null}
-          {detail}
+          {detail ?? (block.output ? <div><span className="ccui-tool-label">证据</span><pre>{block.output}</pre></div> : null)}
         </div>
       ) : null}
       {action ? <footer className="ccui-tool-action">{action}</footer> : null}

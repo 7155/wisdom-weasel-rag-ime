@@ -503,11 +503,6 @@
   background: var(--paw-chat-surface);
 }
 
-.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline__canvas {
-  width: min(920px, calc(100% - 44px));
-  padding: 22px 12px 32px;
-}
-
 /* UR-042：Room 的输入船坞与 Session 同一只 Composer——同 dock 间距、同列宽，
    输入卡本体的白卡/聚焦/文字排印由 paw-os-agent-migrated-v1 的统一规则负责。 */
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer {
@@ -517,123 +512,56 @@
   box-shadow: none;
 }
 
-.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer > .room-composer-shell {
+.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer > .room-composer-shell,
+.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer .ccui-queue-tray,
+.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer .ccui-queue-panel {
   width: min(742px, 100%);
   margin: 0 auto;
 }
 
-/* PAWOS owns one chronological conversation DOM. Public messages are the
- * reading surface; real reducer activities remain compact inline receipts. */
 .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__main { isolation: isolate; grid-template-rows: minmax(0, 1fr) auto; }
-.paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline { overscroll-behavior: contain; }
-.paw-desktop-root .paw-room-chronology { display: grid; align-content: start; gap: 26px; }
-/* 一次真实 loop 一段安静的叙事：与 Session 一致，Turn 之间靠留白分节，
-   不再包一层白卡（UR-004 一次 loop 一段；WEB-DATA-005 中央只显示公开叙事）。 */
-.paw-desktop-root .paw-room-chronology__turn { display: grid; align-content: start; gap: 4px; }
-.paw-desktop-root .paw-room-chronology__message { display: grid; min-width: 0; gap: 4px; max-width: 76ch; padding: 4px 0; }
-.paw-desktop-root .paw-room-chronology__message > header { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
-.paw-desktop-root .paw-room-chronology__message > header strong { overflow: hidden; color: var(--paw-chat-text-secondary); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__message > header small { color: var(--paw-chat-violet); font-size: 12px; }
-.paw-desktop-root .paw-room-chronology__message > header time { margin-left: auto; color: var(--paw-chat-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
-.paw-desktop-root .paw-room-chronology__message > div { min-width: 0; color: var(--paw-chat-text); font-size: 16px; line-height: 24px; overflow-wrap: anywhere; }
-.paw-desktop-root .paw-room-chronology__message .agent-markdown { font-size: inherit; line-height: inherit; }
-.paw-desktop-root .paw-room-chronology__message .agent-markdown > :first-child { margin-top: 0; }
-.paw-desktop-root .paw-room-chronology__message .agent-markdown > :last-child { margin-bottom: 0; }
-/* 输入/输出分家：用户输入右对齐气泡，与 Session 的 paw-user-message 同一
-   张落款（冷钴微渐变 + hairline 边 + 收紧右下角）；伙伴与 Root 输出保持
-   文档级独立区域。 */
-.paw-desktop-root .paw-room-chronology__message[data-role='user'] {
-  justify-self: end;
-  max-width: min(560px, 88%);
-  padding: 8px 15px;
-  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
+
+/* PAWOS reads every conversation on one surface. The Room only tells that
+ * surface which desktop tokens the public timeline should resolve to, and how
+ * wide its reading column is; the cards themselves are the shared ones. */
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-conversation-surface {
+  --ccui-surface: var(--paw-chat-surface);
+  --ccui-surface-2: var(--paw-chat-surface-subtle);
+  --ccui-surface-3: var(--paw-chat-surface-subtle);
+  --ccui-text: var(--paw-chat-text);
+  --ccui-muted: var(--paw-chat-text-secondary);
+  --ccui-faint: var(--paw-chat-text-tertiary);
+  --ccui-border: var(--paw-chat-border);
+  --ccui-accent: var(--paw-chat-accent);
+  --ccui-danger: var(--paw-chat-danger);
+  --ccui-warning: var(--paw-chat-warn);
+  --ccui-success: var(--paw-chat-ok);
+  --ccui-reading-width: 760px;
+}
+
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-assistant-body { font-size: 16px; line-height: 24px; }
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-assistant-head small { color: var(--paw-chat-violet); }
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-user-text { font-size: 15px; }
+
+/* 输入/输出分家：用户输入保留 Session 同一张落款（冷钴微渐变 + hairline 边
+   + 收紧右下角）；伙伴与 Sol 的输出保持文档级独立区域。 */
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-user-bubble {
+  border-color: color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
   border-radius: 18px 18px 6px 18px;
+  padding: 8px 15px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
   box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
 }
-.paw-desktop-root .paw-room-chronology__message[data-role='user'] > header { justify-content: flex-end; }
-.paw-desktop-root .paw-room-chronology__message[data-role='user'] > header time { margin-left: 0; }
-.paw-desktop-root .paw-room-chronology__live { color: var(--paw-chat-accent); font-size: 12px; }
-/* 过程折叠条：摘要 chip 常驻；展开只改投影，不动事件顺序（UR-085）。
-   展开/收起动画由共享 .agent-smooth-reveal（220ms 弹簧）统一负责，
-   本文件不再声明第二套 reveal 时序。 */
-.paw-desktop-root .paw-room-chronology__fold { margin: 4px 0 2px; border-top: 1px solid var(--paw-chat-border); }
-.paw-desktop-root .paw-room-chronology__fold > summary { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 6px 2px; cursor: pointer; list-style: none; }
-.paw-desktop-root .paw-room-chronology__fold > summary::-webkit-details-marker { display: none; }
-.paw-desktop-root .paw-room-chronology__fold > summary:focus-visible { border-radius: 6px; outline: 2px solid color-mix(in srgb, var(--paw-chat-accent) 66%, transparent); outline-offset: 2px; }
-.paw-desktop-root .paw-room-chronology__fold > summary > svg { flex: 0 0 auto; color: var(--paw-chat-icon); transition: transform 220ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1)); }
-.paw-desktop-root .paw-room-chronology__fold > summary[aria-expanded='true'] > svg { transform: rotate(90deg); }
-.paw-desktop-root .paw-room-chronology__fold > summary strong { flex: 0 0 auto; color: var(--paw-chat-text-secondary); font-size: 12.5px; font-weight: 600; }
-.paw-desktop-root .paw-room-chronology__fold > summary small { min-width: 0; overflow: hidden; color: var(--paw-chat-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__fold[data-active] > summary strong { color: var(--paw-chat-accent); }
-.paw-desktop-root .paw-room-chronology__fold-content { display: grid; gap: 2px; padding: 4px 0 6px 19px; }
-.paw-desktop-root .paw-room-chronology__activity { display: grid; min-width: 0; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; gap: 7px; padding: 5px 0; }
-.paw-desktop-root .paw-room-chronology__activity > span { display: grid; width: 22px; height: 22px; place-items: center; color: var(--paw-chat-ok); }
-.paw-desktop-root .paw-room-chronology__activity[data-status='running'] > span,
-.paw-desktop-root .paw-room-chronology__activity[data-status='waiting'] > span { color: var(--paw-chat-accent); }
-.paw-desktop-root .paw-room-chronology__activity[data-status='failed'] > span { color: var(--paw-chat-danger); }
-.paw-desktop-root .paw-room-chronology__activity[data-kind='approval'] > span { color: var(--paw-chat-danger); }
-.paw-desktop-root .paw-room-chronology__activity > div { min-width: 0; display: grid; gap: 1px; }
-.paw-desktop-root .paw-room-chronology__activity > div strong { display: flex; align-items: center; gap: 5px; overflow: hidden; color: var(--paw-chat-text-secondary); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-/* 类别 logo 替代「工具/进展」等字（Joshua5 图4）；完整含义在 aria-label/title。 */
-.paw-desktop-root .paw-room-chronology__activity .paw-room-activity-glyph { display: grid; flex-shrink: 0; width: 15px; height: 15px; place-items: center; color: var(--paw-chat-icon); }
-.paw-desktop-root .paw-room-chronology__activity > div p { margin: 0; color: var(--paw-chat-text-secondary); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
-.paw-desktop-root .paw-room-chronology__activity > time { color: var(--paw-chat-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
-.paw-desktop-root .paw-room-chronology__activity-detail { min-width: 0; grid-column: 2 / -1; font-size: 13px; }
-.paw-desktop-root .paw-room-chronology__activity-detail > summary { width: fit-content; cursor: pointer; color: var(--paw-chat-text-tertiary); }
-.paw-desktop-root .paw-room-chronology__activity-detail > summary:hover { color: var(--paw-chat-text-secondary); }
-.paw-desktop-root .paw-room-chronology__activity-detail p { max-height: 160px; margin: 6px 0 0; padding: 8px; overflow: auto; border-radius: 8px; background: var(--paw-chat-surface-subtle); font: 12px/18px var(--font-mono); white-space: pre-wrap; }
-/* 展开后的共享工具面板（调用参数/变更差异/写入内容）与 Session 同源；
-   只需要一点上缘呼吸间距。 */
-.paw-desktop-root .paw-room-chronology__activity-detail .agent-tool-result-panel { margin-top: 6px; }
-/* 执行详情 — 发送了什么、修改了什么、读取了哪些，作为带标签的事实表。 */
-.paw-desktop-root .paw-room-chronology__tool-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; margin: 6px 0 0; padding: 7px 9px; border: 1px solid var(--paw-chat-border); border-radius: 8px; background: var(--paw-chat-surface-subtle); font-size: 12px; line-height: 17px; }
-.paw-desktop-root .paw-room-chronology__tool-facts > div { display: contents; }
-.paw-desktop-root .paw-room-chronology__tool-facts dt { color: var(--paw-chat-text-tertiary); white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__tool-facts dd { min-width: 0; margin: 0; color: var(--paw-chat-text-secondary); overflow-wrap: anywhere; }
-.paw-desktop-root .paw-room-chronology__tool-facts + p { margin-top: 5px; }
-.paw-desktop-root .paw-room-chronology__activity > footer { grid-column: 2 / -1; display: flex; gap: 7px; }
-.paw-desktop-root .paw-room-chronology__activity > footer button,
-.paw-desktop-root .paw-room-chronology__terminal > button { min-height: 30px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--paw-chat-accent); font-size: 14px; cursor: pointer; }
-.paw-desktop-root .paw-room-chronology__activity > footer button + button { color: var(--paw-chat-text-secondary); background: var(--paw-chat-surface-subtle); }
-.paw-desktop-root .paw-room-chronology__activity > small[role='alert'] { grid-column: 2 / -1; color: var(--paw-chat-danger); font-size: 13px; }
 
-/* Dispatch card: a route_decision reads as source → target under Sol gravity
- * with reason, routing policy, parallel track and the real task text. */
-.paw-desktop-root .paw-room-chronology__activity--dispatch { padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 20%, transparent); border-radius: var(--paw-chat-radius-tool, 10px); background: color-mix(in srgb, var(--paw-chat-accent) 4%, transparent); }
-.paw-desktop-root .paw-room-chronology__activity--dispatch > span { color: var(--paw-chat-accent); }
-.paw-desktop-root .paw-room-chronology__activity--dispatch > div strong { color: var(--paw-chat-text); }
-.paw-desktop-root .paw-room-chronology__dispatch-meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-.paw-desktop-root .paw-room-chronology__dispatch-meta em {
-  padding: 1px 7px;
-  border: 1px solid var(--paw-chat-border);
-  border-radius: 999px;
-  color: var(--paw-chat-text-secondary);
-  background: var(--paw-chat-surface);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 600;
-  line-height: 16px;
-  white-space: nowrap;
-}
-.paw-desktop-root .paw-room-chronology__dispatch-meta em[data-lane] { border-color: color-mix(in srgb, var(--paw-chat-accent) 34%, transparent); color: var(--paw-chat-accent); background: color-mix(in srgb, var(--paw-chat-accent) 10%, transparent); font-variant-numeric: tabular-nums; }
-.paw-desktop-root .paw-room-chronology__dispatch-objective { display: -webkit-box; overflow: hidden; margin-top: 3px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--paw-chat-text-secondary) !important; font-size: 13px !important; }
-.paw-desktop-root .paw-room-chronology__dispatch-detail { margin-top: 3px; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates { display: grid; gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; padding: 3px 7px; border-radius: 6px; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li[data-selected] { background: color-mix(in srgb, var(--paw-chat-accent) 10%, transparent); }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li strong { font-size: 12.5px; font-weight: 640; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li small { overflow: hidden; color: var(--paw-chat-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__dispatch-candidates li span { color: var(--paw-chat-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__dispatch-ids { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 6px 0 0; font-size: 12px; }
-.paw-desktop-root .paw-room-chronology__dispatch-ids > div { display: contents; }
-.paw-desktop-root .paw-room-chronology__dispatch-ids dt { color: var(--paw-chat-text-tertiary); }
-.paw-desktop-root .paw-room-chronology__dispatch-ids dd { min-width: 0; overflow: hidden; margin: 0; color: var(--paw-chat-text-secondary); font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-chronology__terminal { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 4px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--paw-chat-danger) 24%, var(--paw-chat-border)); border-radius: var(--paw-chat-radius-tool, 10px); background: color-mix(in srgb, var(--paw-chat-danger) 5%, #fff); color: var(--paw-chat-danger); }
-.paw-desktop-root .paw-room-chronology__terminal[data-status='aborted'] { border-color: color-mix(in srgb, var(--paw-chat-warn) 26%, var(--paw-chat-border)); background: color-mix(in srgb, var(--paw-chat-warn) 5%, #fff); color: var(--paw-chat-warn); }
-.paw-desktop-root .paw-room-chronology__terminal > span { display: grid; gap: 2px; }
-.paw-desktop-root .paw-room-chronology__terminal strong { font-size: 14px; }
-.paw-desktop-root .paw-room-chronology__terminal small { color: var(--paw-chat-text-secondary); font-size: 13px; line-height: 1.5; }
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-live-hint { color: var(--paw-chat-accent); }
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-tool-card { border-radius: var(--paw-chat-radius-tool, 10px); }
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-tool-body .agent-tool-result-panel { margin-top: 6px; }
+
+/* 执行详情 — 发送了什么、修改了什么、读取了哪些，作为带标签的事实表。 */
+.paw-desktop-root .paw-room-tool-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; margin: 0; padding: 7px 9px; border: 1px solid var(--paw-chat-border); border-radius: 8px; background: var(--paw-chat-surface-subtle); font-size: 12px; line-height: 17px; }
+.paw-desktop-root .paw-room-tool-facts > div { display: contents; }
+.paw-desktop-root .paw-room-tool-facts dt { color: var(--paw-chat-text-tertiary); white-space: nowrap; }
+.paw-desktop-root .paw-room-tool-facts dd { min-width: 0; margin: 0; color: var(--paw-chat-text-secondary); overflow-wrap: anywhere; }
 
 /* Room Focus: one light collaboration plane, a complete main window and
  * participant/tool satellites in two information rails. */
@@ -1041,13 +969,9 @@
   .paw-desktop-root .paw-room-workspace__focus { width: 30px; padding: 0; justify-content: center; }
   .paw-desktop-root .paw-room-workspace__focus { font-size: 0; }
   .paw-desktop-root .paw-room-workspace__focus svg { width: 14px; height: 14px; }
-  .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline__canvas { width: calc(100% - 12px); padding: 12px 3px 18px; }
-  .paw-desktop-root .paw-room-chronology__message[data-role='user'] { max-width: 88%; }
-  .paw-desktop-root .paw-room-chronology__message > div { font-size: 15px; line-height: 23px; }
-  .paw-desktop-root .paw-room-chronology__activity,
-  .paw-desktop-root .paw-room-chronology__terminal { grid-template-columns: 22px minmax(0, 1fr); }
-  .paw-desktop-root .paw-room-chronology__activity > time { display: none; }
-  .paw-desktop-root .paw-room-chronology__terminal > button { width: fit-content; grid-column: 2; }
+  .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline .ccui-transcript-scroll { padding: 12px 0 18px; }
+  .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-user-bubble { max-width: 88%; }
+  .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-assistant-body { font-size: 15px; line-height: 23px; }
   .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer { padding: 5px 7px 7px; }
   /* 窄窗与 Session 同一档收窄（agent-migrated 在 680px 下取 54px）。 */
   .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer .room-composer textarea { min-height: 54px; }
@@ -1089,10 +1013,7 @@
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-room-tools { animation: none; }
   .paw-desktop-root .paw-room-tools__tabs > button::after { transition: none; }
-  .paw-desktop-root .paw-room-chronology__fold > summary > svg { transition: none; }
 }
-
-:root[data-reduce-motion='true'] .paw-desktop-root .paw-room-chronology__fold > summary > svg { transition: none; }
 
 @media (max-width: 720px) {
   .paw-desktop-root .paw-window-layer[data-room-focus] .paw-window-shell[data-focus-layout] {

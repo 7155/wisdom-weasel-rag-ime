@@ -17,17 +17,11 @@ import type { PawOsWindowTarget } from './model/desktop';
 import { roomPlanetWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
 import { PawRoomFocusOverview } from '@/paw-os/apps/PawRoomFocusOverview';
 import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
+import { PawRoomConversation, roomProcessWindowRequest } from '@/paw-os/apps/PawRoomConversation';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import { toggleDisclosurePreservingAnchor } from '@/features/agent/timeline/disclosure-anchor';
 import { buildRoomFocusProjection, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
-import {
-  roomDispatchPlanFromPayload,
-  roomGravityToolLabel,
-  roomToolActivityLine,
-  roomToolEvidence,
-  type RoomToolFact,
-} from '@/paw-os/apps/room-gravity-projection';
 import { RoomActivityGlyph } from '@/paw-os/apps/room-tool-glyph';
 import './paw-os-satellite.css';
 
@@ -390,6 +384,8 @@ function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { k
 }
 
 function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'participant' }> }) {
+  const transport = useControlTransport();
+  const desktop = usePawOsDesktop();
   const roomQuery = useRoomDetail(target.roomId);
   const room = roomFromResponse(roomQuery.data, target.roomId);
   const participant = room?.participants.find((candidate) => candidate.id === target.id);
@@ -397,97 +393,48 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
   const focusPartner = useMemo(() => (
     room ? buildRoomFocusProjection(room, projection).partners.find((partner) => partner.participantId === target.id) : undefined
   ), [projection, room, target.id]);
-  const timelineRef = useRef<HTMLDivElement>(null);
-  const followLatestRef = useRef(true);
-  const fullTimeline = useMemo(() => {
-    if (!projection) return [];
-    const messages = projection.messageOrder
-      .map((messageId) => projection.messagesById[messageId])
-      .filter(Boolean)
-      .filter((message) => (
-        message.participantId === target.id
-        || message.mentionedParticipantIds?.includes(target.id)
-        || (message.answerToPostId
-          ? projection.messagesById[message.answerToPostId]?.participantId === target.id
-          : false)
-      ))
-      .map((message) => ({
-        id: message.id,
-        kind: 'message' as const,
-        participantId: message.participantId,
-        role: message.role,
-        status: message.status,
-        eventType: message.status === 'streaming' ? 'message_streaming' : 'message',
-        text: message.text || '完成了一项操作',
-        summary: conciseParticipantEntry(message.text, message.status === 'streaming' ? '正在撰写公开回复' : '公开回复已更新'),
-        time: message.createdAtMs,
-        order: message.sequence ?? message.createdAtMs,
-      }));
-    const activities = projection.activityOrder
-      .map((activityId) => projection.activitiesById[activityId])
-      .filter((activity) => activity && roomSatelliteActivityBelongsToParticipant(activity, target.id))
-      .filter((activity) => activity && roomSatelliteActivityVisible(activity.payload, activity.kind))
-      .map((activity) => {
-        const eventType = roomSatelliteActivityType(activity.payload, activity.kind);
-        const dispatch = roomSatelliteDispatchText(eventType, activity.payload);
-        const detail = dispatch || roomSatelliteActivityText(activity.summary, activity.payload, activity.status);
-        const facts = eventType === 'tool' || eventType.startsWith('tool_')
-          ? roomToolEvidence(activity.payload)?.facts ?? []
-          : [];
-        return {
-          id: activity.id,
-          kind: 'activity' as const,
-          participantId: activity.participantId,
-          role: 'assistant' as const,
-          status: activity.status,
-          eventType,
-          toolName: stringValue(activity.payload.toolName, stringValue(activity.payload.toolId)),
-          text: detail,
-          summary: dispatch || conciseParticipantActivity(eventType, activity.status, activity.payload, detail),
-          facts,
-          time: activity.createdAtMs,
-          order: activity.sequence ?? activity.createdAtMs,
-        };
+  const [error, setError] = useState('');
+
+  /* An approval raised inside a partner's lane is decided where it is read;
+     the satellite calls the same Runtime route the main Room does. */
+  const decideApproval = async (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => {
+    try {
+      await transport.request({
+        pathId: 'agent.approval.decide',
+        params: { approvalId },
+        body: { decision: decision === 'approved' ? 'approve' : 'reject', payloadSha256 },
       });
-    return [...messages, ...activities].sort((left, right) => left.order - right.order);
-  }, [projection, target.id]);
-  const [olderTimelineEntries, setOlderTimelineEntries] = useState(0);
-  useEffect(() => setOlderTimelineEntries(0), [target.id]);
-  const timelineStart = Math.max(0, fullTimeline.length - PARTICIPANT_TIMELINE_WINDOW - olderTimelineEntries);
-  const timeline = fullTimeline.slice(timelineStart);
-  /* UR-056：窗口标题栏已标识伙伴身份，内容区只保留该伙伴的真实公开
-     对话与运行轨迹；WorkItem/责任摘要留在 Room 主窗。 */
-  const timelineItems = useMemo(() => participantTimelineItems(timeline), [timeline]);
-  useEffect(() => {
-    const timeline = timelineRef.current;
-    if (timeline && followLatestRef.current) timeline.scrollTop = timeline.scrollHeight;
-  }, [timeline.at(-1)?.id]);
+      setError('');
+    } catch (reason) {
+      setError(publicErrorText(reason, '审批没有完成，请重试。'));
+      throw reason;
+    }
+  };
+
   return (
     <section className="paw-os-satellite paw-os-satellite--participant-chat">
       {roomQuery.isPending ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
       {roomQuery.error ? <SatelliteLoadError error={roomQuery.error} icon={MessageSquare} onRetry={() => void roomQuery.refetch()} title="伙伴窗口没有打开" /> : null}
       {!roomQuery.isPending && !roomQuery.error && !participant ? <SatelliteMissing copy="这位伙伴已经不在当前 Room 中。" icon={MessageSquare} route="rooms" title="找不到这位伙伴" /> : null}
-      {participant ? (
+      {participant && room ? (
         <>
-          <div aria-label={`${participant.displayName} 公开消息与运行事件`} className="paw-participant-chat__timeline" onScroll={(event) => { followLatestRef.current = timelineNearLatest(event.currentTarget); }} ref={timelineRef} role="log">
-            <ParticipantHistoryBoundary
-              hiddenBeforeCount={timelineStart}
-              loadedCount={timeline.length}
-              onLoadOlder={() => setOlderTimelineEntries((current) => current + PARTICIPANT_TIMELINE_WINDOW)}
-              totalCount={fullTimeline.length}
-            />
-            {timelineItems.map((item) => item.kind === 'activity-group' ? (
-              <SatelliteDisclosure active={item.active} className="paw-participant-chat__activity-group" contentId={`participant-activity-${item.id}`} dataActive={item.active} key={item.id} summary={(
-                <>
-                  <span><strong>运行活动 {item.entries.length} 项</strong><small>{item.entries.at(-1)?.summary}</small></span>
-                  <SatelliteRunState eventType={item.entries.at(-1)?.eventType ?? 'run'} status={item.entries.at(-1)?.status ?? 'completed'} />
-                </>
-              )}>
-                <div className="paw-participant-chat__activity-group-content">{item.entries.map((entry) => <ParticipantTimelineEntry entry={entry} key={entry.id} participantId={participant.id} room={room} />)}</div>
-              </SatelliteDisclosure>
-            ) : <ParticipantTimelineEntry entry={item} key={item.id} participantId={participant.id} room={room} />)}
-            {!timeline.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>还没有消息或执行轨迹</span></div> : null}
-          </div>
+          {/* UR-056：窗口标题栏已标识伙伴身份，内容区只保留该伙伴的真实公开
+              对话与运行轨迹；WorkItem/责任摘要留在 Room 主窗。The transcript is
+              the same shared conversation surface the Room reads, scoped to
+              this partner's public lane, so a long history stays virtualized
+              instead of windowed behind a「加载更早」boundary. */}
+          {projection ? <PawRoomConversation
+            empty={<div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>还没有消息或执行轨迹</span></div>}
+            onApprovalDecision={decideApproval}
+            onOpenProcessActivity={(activity) => {
+              const request = roomProcessWindowRequest(activity, room.id);
+              if (request) desktop?.openWindow({ ...request, background: false });
+            }}
+            participantId={participant.id}
+            projection={projection}
+            room={room}
+          /> : null}
+          {error ? <p className="paw-participant-chat__error" role="alert">{error}</p> : null}
           {/* PF-CM-013：卫星只补一条极薄状态行——当前工作一句、文字+色状态、
               去完整 Session 的入口；身份与治理留在标题栏和主 Room。 */}
           <SatelliteStatusline
@@ -527,139 +474,28 @@ function SatelliteStatusline({ currentWork, sessionId, sessionLabel, state }: {
   );
 }
 
-type ParticipantTimelineEntryData = {
-  id: string;
-  kind: 'message' | 'activity';
-  participantId?: string | null;
-  role: string;
-  status: string;
-  eventType: string;
-  /** Runtime tool identity, so the tight row can show a glyph, not a word. */
-  toolName?: string;
-  text: string;
-  summary: string;
-  /** Structured tool evidence (op, arguments, result digest) for disclosure. */
-  facts?: RoomToolFact[];
-  time: number;
-  order: number;
-};
-
-type ParticipantTimelineItem =
-  | ParticipantTimelineEntryData
-  | { id: string; kind: 'activity-group'; active: boolean; entries: ParticipantTimelineEntryData[] };
-
-const PARTICIPANT_TIMELINE_WINDOW = 48;
-
-/** PF-CM-013/UR-056: the boundary row exists only while history is truly
- *  hidden; once everything is loaded the compact satellite keeps the row of
- *  space for real dialogue instead of a redundant count. */
-function ParticipantHistoryBoundary({
-  hiddenBeforeCount,
-  loadedCount,
-  onLoadOlder,
-  totalCount,
-}: {
-  hiddenBeforeCount: number;
-  loadedCount: number;
-  onLoadOlder: () => void;
-  totalCount: number;
-}) {
-  if (!hiddenBeforeCount) return null;
-  return <div className="paw-participant-chat__history-boundary" role="status">
-    <span>最近 {loadedCount} / 共 {totalCount} 条</span>
-    <button onClick={onLoadOlder} type="button">加载更早的 {Math.min(PARTICIPANT_TIMELINE_WINDOW, hiddenBeforeCount)} 条</button>
-  </div>;
-}
-
-/** 连续工具/运行事件折叠成一条披露（UR-085）：折叠只改投影状态，不删真实
- *  trace、不改事件顺序；有进行中事件时保持展开，真实进度始终可见。 */
-function participantTimelineItems(entries: ParticipantTimelineEntryData[]): ParticipantTimelineItem[] {
-  const items: ParticipantTimelineItem[] = [];
-  for (const entry of entries) {
-    const previous = items.at(-1);
-    if (entry.kind === 'activity' && previous?.kind === 'activity-group') {
-      previous.entries.push(entry);
-      previous.active = previous.active || participantEntryActive(entry);
-    } else if (entry.kind === 'activity') {
-      items.push({ id: `activity-group:${entry.id}`, kind: 'activity-group', active: participantEntryActive(entry), entries: [entry] });
-    } else {
-      items.push(entry);
-    }
-  }
-  return items;
-}
-
-function participantEntryActive(entry: ParticipantTimelineEntryData): boolean {
-  return ['queued', 'running', 'waiting', 'pending', 'streaming'].includes(entry.status);
-}
-
-function ParticipantTimelineEntry({ entry, participantId, room }: {
-  entry: ParticipantTimelineEntryData;
-  participantId: string;
-  room?: RoomSummary;
-}) {
-  const fromParticipant = entry.participantId === participantId;
-  if (entry.kind === 'activity') {
-    return <SatelliteActivityRow
-      direction={fromParticipant ? 'out' : 'in'}
-      eventType={entry.eventType}
-      facts={entry.facts}
-      message={entry.summary}
-      rawContentId={`participant-raw-${entry.id}`}
-      rawLabel={entry.facts?.length ? '查看执行详情' : '查看公开原文'}
-      rawText={entry.text}
-      status={entry.status}
-      time={entry.time}
-      toolName={entry.toolName}
-    />;
-  }
-  const sourceLabel = fromParticipant
-    ? '公开回复'
-    : entry.role === 'user'
-      ? '你'
-      : room?.participants.find((item) => item.id === entry.participantId)?.displayName || 'Room';
-  return <article data-direction={fromParticipant ? 'out' : 'in'} data-event-type={entry.eventType} data-kind={entry.kind} data-status={entry.status}>
-    <header>
-      <strong>{sourceLabel}</strong>
-      <SatelliteRunState eventType={entry.eventType} status={entry.status} />
-      <time>{entry.time ? formatTime(entry.time) : ''}</time>
-    </header>
-    <p>{entry.summary}</p>
-    {entry.text.trim() !== entry.summary.trim() ? <SatelliteRawDetail contentId={`participant-raw-${entry.id}`} label="查看公开原文" text={entry.text} /> : null}
-  </article>;
-}
-
 /** 工具/运行事件压成一行：状态 · 类别 logo · 消息（可截断）· 时间弱化在行尾。
  *  类别用 logo 替代文字（框本来就小，图4）；完整含义留在 aria-label/title。
- *  失败沿用红色警示图标；披露展开为结构化执行详情（操作、参数、结果），
- *  超出摘要的公开原文仍折在同一披露里（共享 Agent 对话的披露工艺）。 */
-function SatelliteActivityRow({ direction, eventType, facts, message, rawContentId, rawLabel, rawText, status, time, toolName }: {
+ *  失败沿用红色警示图标；超出摘要的公开原文折在同一披露里。 */
+function SatelliteActivityRow({ direction, eventType, message, rawContentId, rawLabel, rawText, status, time }: {
   direction: 'in' | 'out';
   eventType: string;
-  facts?: RoomToolFact[];
   message: string;
   rawContentId: string;
   rawLabel: string;
   rawText: string;
   status: string;
   time: number;
-  toolName?: string;
 }) {
   const hasRaw = rawText.trim() !== message.trim();
-  const hasFacts = Boolean(facts?.length);
   return <article data-direction={direction} data-event-type={eventType} data-kind="activity" data-status={status}>
     <span className="paw-participant-chat__activity-state"><SatelliteRunState eventType={eventType} status={status} /></span>
-    <strong className="paw-participant-chat__activity-glyph"><RoomActivityGlyph eventType={eventType} toolName={toolName} /></strong>
+    <strong className="paw-participant-chat__activity-glyph"><RoomActivityGlyph eventType={eventType} /></strong>
     <span className="paw-participant-chat__activity-message" title={message}>{message}</span>
     <time>{time ? formatTime(time) : ''}</time>
-    {hasRaw || hasFacts ? (
+    {hasRaw ? (
       <SatelliteDisclosure className="paw-participant-chat__raw-detail" contentId={rawContentId} summary={<span>{rawLabel}</span>}>
-        {hasFacts ? (
-          <dl className="paw-participant-chat__tool-facts">
-            {facts!.map((fact) => <div key={`${fact.label}:${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
-          </dl>
-        ) : null}
-        {hasRaw ? <pre>{rawText}</pre> : null}
+        <pre>{rawText}</pre>
       </SatelliteDisclosure>
     ) : null}
   </article>;
@@ -713,34 +549,6 @@ function SatelliteRawDetail({ contentId, label, text }: { contentId: string; lab
   </SatelliteDisclosure>;
 }
 
-function conciseParticipantActivity(
-  eventType: string,
-  status: string,
-  payload: Record<string, unknown>,
-  detail: string,
-): string {
-  if (!participantDetailNeedsDisclosure(detail)) return conciseParticipantEntry(detail, '运行状态已更新');
-  const tool = stringValue(payload.displayName)
-    || roomGravityToolLabel(stringValue(payload.toolName, stringValue(payload.toolId)));
-  if (eventType === 'tool' || eventType.startsWith('tool_')) return `${tool} ${participantToolStatusLabel(status)}`;
-  if (eventType.includes('reasoning') || eventType.includes('thinking')) return status === 'running' ? '正在形成可公开的思考摘要' : '思考摘要已更新';
-  if (eventType.includes('route') || eventType.includes('dispatch')) return '分派状态已更新';
-  return '运行状态已更新';
-}
-
-/** A dispatch entry in the planet window names the gravity it received:
- * reason, parallel track and phase — real routing data, not a dead chip. */
-function roomSatelliteDispatchText(eventType: string, payload: Record<string, unknown>): string {
-  if (!eventType.includes('route') && !eventType.includes('dispatch')) return '';
-  const plan = roomDispatchPlanFromPayload(payload);
-  /* A bare routing receipt without reason or wave keeps its own real summary. */
-  if (!plan || (!plan.reason && !plan.waveId && !plan.phaseName)) return '';
-  const parts = [`收到任务分派 · ${plan.reasonLabel}`];
-  if (plan.parallelIndex >= 0 && plan.parallelSize > 1) parts.push(`并行轨道 ${plan.parallelIndex + 1}/${plan.parallelSize}`);
-  if (plan.phaseName) parts.push(plan.phaseName);
-  return parts.join(' · ');
-}
-
 function conciseParticipantEntry(detail: string, fallback: string): string {
   const source = detail.trim();
   if (!source || participantDetailIsRaw(source) || participantDetailIsMachineToken(source)) return fallback;
@@ -754,14 +562,6 @@ function conciseParticipantEntry(detail: string, fallback: string): string {
     .trim();
   if (!compact) return fallback;
   return compact.length > 150 ? `${compact.slice(0, 147).trimEnd()}…` : compact;
-}
-
-function participantDetailNeedsDisclosure(detail: string): boolean {
-  const source = detail.trim();
-  return source.includes('\n')
-    || participantDetailIsRaw(source)
-    || /[*_`]|^\s{0,3}#{1,6}\s+|\[[^\]]+\]\([^)]+\)/mu.test(source)
-    || source.length > 150;
 }
 
 function participantDetailIsRaw(source: string): boolean {
@@ -784,59 +584,6 @@ function satelliteStatuslineFallback(state: RoomFocusState): string {
   if (state === 'waiting' || state === 'review') return '等待下一步安排';
   return '等待新的工作项';
 }
-
-function participantToolStatusLabel(status: string): string {
-  if (['queued', 'running', 'waiting', 'pending'].includes(status)) return '工具执行中';
-  if (status === 'failed') return '工具执行失败';
-  if (['aborted', 'cancelled', 'stopped'].includes(status)) return '工具已停止';
-  return '工具已完成';
-}
-
-function roomSatelliteActivityBelongsToParticipant(
-  activity: { participantId: string | null; payload: Record<string, unknown> },
-  participantId: string,
-): boolean {
-  const targetParticipantId = stringValue(activity.payload.targetParticipantId);
-  return targetParticipantId ? targetParticipantId === participantId : activity.participantId === participantId;
-}
-
-function roomSatelliteActivityType(payload: Record<string, unknown>, kind: string): string {
-  const payloadSignals = [stringValue(payload.sourceEventType), stringValue(payload.activityKind)]
-    .map((signal) => signal.trim())
-    .filter(Boolean);
-  const signals = [...payloadSignals, kind]
-    .map((signal) => signal.trim())
-    .filter(Boolean);
-  if (payloadSignals.length && !payloadSignals.some((signal) => roomSatelliteActivitySignalSupported(signal))) return '';
-  return signals.find((signal) => (
-    roomSatelliteActivitySignalSupported(signal)
-  )) || '';
-}
-
-function roomSatelliteActivitySignalSupported(signal: string): boolean {
-  return signal === 'tool'
-    || signal.startsWith('tool_')
-    || ['reasoning', 'progress', 'route', 'route_decision', 'dispatch', 'intercom', 'status'].includes(signal);
-}
-
-function roomSatelliteActivityVisible(payload: Record<string, unknown>, kind: string): boolean {
-  return Boolean(roomSatelliteActivityType(payload, kind));
-}
-
-function roomSatelliteActivityText(
-  summary: string,
-  payload: Record<string, unknown>,
-  status: string,
-): string {
-  /* A machine-id summary (`agents`, `room_partner`) never reaches the reader:
-     the row derives from real tool evidence — label plus the actual op — so
-     the compact frame shows 行星协调 · 批量并行委派, not a bare Runtime id. */
-  if (stringValue(payload.toolName) || stringValue(payload.toolId)) {
-    return roomToolActivityLine(summary, payload, status);
-  }
-  return summary.trim();
-}
-
 
 function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'subagent' }> }) {
   const transport = useControlTransport();

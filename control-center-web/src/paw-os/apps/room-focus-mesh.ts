@@ -232,6 +232,7 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
 
   const present = new Set([...edges.values()].map((edge) => edge.kind));
   return {
+    hasOrigin: coordinatorActive,
     nodes,
     edges: [...edges.values()],
     edgeKinds: EDGE_KIND_ORDER.filter((kind) => present.has(kind)),
