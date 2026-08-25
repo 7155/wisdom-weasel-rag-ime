@@ -65,16 +65,42 @@
   text-overflow: ellipsis;
 }
 
-.paw-desktop-root .paw-chatfx .fx-context-chip i {
-  width: 5px;
-  height: 5px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--paw-chat-text-tertiary);
+.paw-desktop-root .paw-chatfx .fx-context-chip > .paw-mark {
+  margin-inline-start: -1px;
+  color: var(--paw-chat-text-tertiary);
 }
 
-.paw-desktop-root .paw-chatfx .fx-context-chip[data-tone='bound'] i { background: var(--paw-chat-ok); }
-.paw-desktop-root .paw-chatfx .fx-context-chip[data-tone='permission'] i { background: var(--paw-chat-warn); }
+.paw-desktop-root .paw-chatfx .fx-context-chip__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paw-desktop-root .paw-chatfx .fx-context-chip[data-tone='bound'] > .paw-mark { color: var(--paw-chat-ok); }
+.paw-desktop-root .paw-chatfx .fx-context-chip[data-tone='permission'] > .paw-mark { color: var(--paw-chat-warn); }
+
+/* Narrow Session window: the lead-in keeps stating the workspace binding and
+   the permission mode, but says it with marks only. The words move into the
+   accessibility tree instead of unmounting, and `title` keeps them one hover
+   away (PF-CM-009/017). */
+@container paw-session-workspace (max-width: 560px) {
+  .paw-desktop-root .paw-chatfx .fx-context-chip {
+    max-width: none;
+    padding: 5px;
+  }
+
+  .paw-desktop-root .paw-chatfx .fx-context-chip > .paw-mark {
+    margin-inline-start: 0;
+  }
+
+  .paw-desktop-root .paw-chatfx .fx-context-chip__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
 
 .paw-desktop-root .paw-chatfx .paw-user-step {
   position: relative;

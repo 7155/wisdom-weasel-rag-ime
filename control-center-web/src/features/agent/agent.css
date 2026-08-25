@@ -1229,7 +1229,46 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   to { background-position: -120% 0; }
 }
 .agent-composer__picker { max-width: 240px; flex: 0 1 auto; }
-.agent-composer__picker .ui-button__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-composer__picker .ui-button__label { display: inline-flex; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-composer__picker-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-composer__picker-detail { flex: 0 0 auto; white-space: nowrap; }
+
+/* ------------------------------------------------- composer logo collapse --
+ * PF-CM-009/017: when the toolbar runs out of room the chrome sheds words in
+ * a deliberate order — the secondary detail (provider, reasoning level, tool
+ * count) first, then the label itself — and never the control. What survives
+ * is the semantic mark, and the button's `aria-label`/`title` still carry the
+ * complete sentence, so nothing is lost to a screen reader or a hover.
+ *
+ * The ladder is keyed on the toolbar container, not the viewport, because a
+ * PAWOS window can be dragged narrow on a wide display.
+ */
+@container paw-composer-toolbar (max-width: 620px) {
+  .agent-composer__picker { max-width: 168px; }
+  .agent-composer__picker-detail { display: none; }
+}
+
+@container paw-composer-toolbar (max-width: 460px) {
+  .agent-composer__picker {
+    width: 32px;
+    min-width: 32px;
+    max-width: 32px;
+    flex: 0 0 32px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .agent-composer__picker .ui-button__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .agent-composer__delivery button { min-width: 36px; padding-inline: 5px; }
+}
 .agent-composer__attachment { flex: 0 0 auto; border: 1px solid var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-secondary); }
 .agent-composer__attachment:disabled { opacity: .62; }
 /* Stop joins the actions row to the left of Send, which stays anchored to the
@@ -2567,7 +2606,6 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
   .agent-composer textarea { min-height: 70px; padding: 10px 12px 41px; }
   .agent-composer__toolbar { grid-template-columns: minmax(0, 1fr) auto; }
   .agent-composer__controls { padding-bottom: 1px; }
-  .agent-composer__picker { max-width: 164px; flex: 0 0 auto; }
   .agent-command-palette { inset-inline-start: 9px; width: calc(100% - 18px); max-height: min(360px, calc(100dvh - 160px)); }
   .agent-command-palette > header { align-items: start; }
   .agent-command-palette > header p { display: none; }
@@ -2603,9 +2641,9 @@ details.agent-activity--inline > summary[aria-expanded='true'] { background: var
 }
 
 @media (max-width: 520px) {
+  /* Picker collapse itself is owned by the `paw-composer-toolbar` container
+     ladder above; a viewport copy here would only fight it. */
   .agent-composer__controls { overflow: visible; }
-  .agent-composer__picker { width: 34px; min-width: 34px; max-width: 34px; flex: 0 0 34px; justify-content: center; padding-inline: 0; }
-  .agent-composer__picker .ui-button__label { display: none; }
   .ui-dialog.agent-capability-dialog {
     top: var(--space-2);
     right: var(--space-2);

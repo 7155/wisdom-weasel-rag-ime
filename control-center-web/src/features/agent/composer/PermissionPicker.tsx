@@ -2,7 +2,6 @@ import {
   Check,
   FolderOpen,
   LockKeyhole,
-  Network,
   ShieldCheck,
   TriangleAlert,
 } from 'lucide-react';
@@ -23,6 +22,7 @@ import {
   PopoverTrigger,
 } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import { PermissionMark } from '../marks/ConversationMarks';
 import type {
   AgentPermissionSelection,
   SessionSummary,
@@ -31,7 +31,6 @@ import type {
 import {
   PERMISSION_PRESETS,
   permissionPreset,
-  type PermissionPreset,
 } from './permission-policy';
 import { toolAvailableForPolicy } from './tool-policy';
 
@@ -88,9 +87,9 @@ export function PermissionPicker({
               : `对话权限：${current.label}`}
             variant="quiet"
             disabled={!session || disabled}
-            leadingIcon={permissionIcon(current.icon, 15)}
+            leadingIcon={<PermissionMark mode={current.executionMode} size={16} />}
           >
-            {current.label}
+            <span className="agent-composer__picker-text">{current.label}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="agent-picker-popover">
@@ -144,7 +143,7 @@ export function PermissionPicker({
                   key={preset.id}
                   disabled={disabled || !available}
                 >
-                  {permissionIcon(preset.icon, 17)}
+                  <PermissionMark mode={preset.executionMode} size={18} />
                   <span>
                     <strong>{preset.label}</strong>
                     <small>
@@ -196,7 +195,7 @@ export function PermissionPicker({
         <DialogContent className="agent-dangerous-permission-dialog">
           <DialogHeader>
             <span className="agent-dangerous-permission-dialog__symbol">
-              <TriangleAlert size={20} />
+              <PermissionMark mode="full_trust" size={22} />
             </span>
             <DialogTitle>启用全自动模式？</DialogTitle>
             <DialogDescription>
@@ -251,13 +250,6 @@ export function PermissionPicker({
       </Dialog>
     </>
   );
-}
-
-function permissionIcon(icon: PermissionPreset['icon'], size: number) {
-  if (icon === 'network') return <Network size={size} />;
-  if (icon === 'lock') return <LockKeyhole size={size} />;
-  if (icon === 'danger') return <TriangleAlert size={size} />;
-  return <ShieldCheck size={size} />;
 }
 
 function shortPath(path: string): string {

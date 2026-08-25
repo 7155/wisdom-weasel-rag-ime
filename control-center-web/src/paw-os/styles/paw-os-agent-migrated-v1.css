@@ -1533,22 +1533,12 @@
     animation-name: paw-session-sheet-in;
   }
 
+  /* Picker label collapse moved to the `paw-composer-toolbar` container in
+     `agent.css`: it measures the toolbar the controls actually sit in, so the
+     Room composer and a dragged-narrow Session window collapse identically. */
   .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px;
-  }
-
-  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__picker {
-    width: 32px;
-    min-width: 32px;
-    max-width: 32px;
-    flex: 0 0 32px;
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__picker .ui-button__label {
-    display: none;
   }
 }
 

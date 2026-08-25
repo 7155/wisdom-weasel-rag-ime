@@ -342,6 +342,10 @@
 .agent-composer textarea::placeholder,
 .room-composer textarea::placeholder { color: var(--color-text-tertiary); }
 
+/* The toolbar is the container every composer control collapses against.
+   Its inline size comes from the composer's own edges, never from the chips
+   inside it, so a PAWOS window drag re-evaluates the collapse on the same
+   frame as the resize — a viewport media query cannot see that at all. */
 .agent-composer__toolbar,
 .room-composer__toolbar {
   position: absolute;
@@ -354,6 +358,7 @@
   align-items: center;
   gap: 7px;
   padding: 0;
+  container: paw-composer-toolbar / inline-size;
 }
 
 .agent-composer__controls,
