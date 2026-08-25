@@ -72,6 +72,23 @@ describe('projectComposerActionModel', () => {
     )).toBe('正在切换模型');
   });
 
+  it('still names the action it is blocking, so a stop does not relabel the button', () => {
+    const stoppingMidTurn = projectComposerActionModel({ ...ready, busy: true, stopping: true });
+
+    expect(composerActionLabel(stoppingMidTurn.primary)).toBe('干预当前执行');
+    expect(composerBlockedReasonLabel(stoppingMidTurn.blockedReason)).toBe('正在停止本轮');
+    expect(composerSubmitMode(stoppingMidTurn)).toBeNull();
+    expect(composerSubmitMode(stoppingMidTurn, { alternate: true })).toBeNull();
+  });
+
+  it('has no action to name when nothing is addressable', () => {
+    const model = projectComposerActionModel({ ...ready, hasSession: false });
+
+    expect(model.primary).toBe('none');
+    expect(composerActionLabel(model.primary)).toBe('发送');
+    expect(composerSubmitMode(model)).toBeNull();
+  });
+
   it('keeps Alt+Enter as followUp while busy without changing the radio', () => {
     const model = projectComposerActionModel({
       ...ready,

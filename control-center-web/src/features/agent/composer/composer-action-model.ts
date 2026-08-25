@@ -52,9 +52,14 @@ export function projectComposerActionModel(
       ? 'followUp'
       : input.preferredBusyDelivery;
 
+  /* A blocked action still names what it would do: the button reads
+     "干预当前执行（正在停止本轮）", never a bare "发送". Only `none` — nothing
+     addressable at all — has no action to name. */
+  const blockedPrimary: ComposerPrimaryAction = input.busy ? effectiveBusyDelivery : 'prompt';
+
   if (input.stopping) {
     return {
-      primary: 'none',
+      primary: blockedPrimary,
       primaryDisabled: true,
       effectiveBusyDelivery,
       busyDeliveries,
@@ -76,7 +81,7 @@ export function projectComposerActionModel(
 
   if (input.sending) {
     return {
-      primary: 'none',
+      primary: blockedPrimary,
       primaryDisabled: true,
       effectiveBusyDelivery,
       busyDeliveries,
@@ -87,7 +92,7 @@ export function projectComposerActionModel(
 
   if (input.modelChanging) {
     return {
-      primary: 'none',
+      primary: blockedPrimary,
       primaryDisabled: true,
       effectiveBusyDelivery,
       busyDeliveries,
@@ -98,7 +103,7 @@ export function projectComposerActionModel(
 
   if (!input.draftHasContent) {
     return {
-      primary: input.busy ? effectiveBusyDelivery : 'prompt',
+      primary: blockedPrimary,
       primaryDisabled: true,
       effectiveBusyDelivery,
       busyDeliveries,
