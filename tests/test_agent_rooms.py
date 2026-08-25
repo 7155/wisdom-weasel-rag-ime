@@ -1760,6 +1760,157 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(accepted["participant"]["id"], target["id"])
         self.assertEqual(accepted["retryOfRootId"], "room-turn:failed")
 
+    def test_room_retry_root_recovers_the_single_returned_work_item(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "退回后继续原 WorkItem",
+                "routingPolicy": "natural",
+                "routingConfig": {"naturalJitter": 0},
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        facilitator, partner = room["participants"]
+        prior_root_id = "room-turn:returned-work"
+        work_item = self.service.room_work.create(
+            room_id=str(room["id"]),
+            objective="补齐浏览器真实验收证据",
+            expected_output="可操作性和需求证据齐全的修订交付",
+            acceptance_criteria=["真实浏览器路径已验证"],
+            current_owner_participant_id=str(partner["id"]),
+            created_by_participant_id=str(facilitator["id"]),
+            accountable_participant_id=str(facilitator["id"]),
+            client_message_id="returned-work-retry",
+            topic_id=str(room["activeTopicId"]),
+            root_turn_id=prior_root_id,
+            state="active",
+        )
+        submitted = self.service.room_work.submit(
+            str(partner["sessionId"]),
+            {
+                "workId": work_item["id"],
+                "resultSummary": "首轮没有完成真实浏览器验收。",
+                "evidenceRefs": ["test:first-pass"],
+                "proposedOperabilityVerdict": "unverified",
+                "proposedRequirementVerdict": "not_satisfied",
+            },
+        )
+        returned = self.service.room_work.return_for_revision(
+            str(facilitator["sessionId"]),
+            {
+                "workId": work_item["id"],
+                "expectedRevision": 0,
+                "operabilityVerdict": "unverified",
+                "requirementVerdict": "not_satisfied",
+                "evidenceRefs": ["test:first-pass"],
+                "reason": "请补齐同窗 Browser 的真实可操作性证据。",
+            },
+        )
+        self.assertEqual(submitted["state"], "review")
+        self.assertEqual(returned["state"], "active")
+        self.assertEqual(returned["revision"], 1)
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:returned-work-retry"},
+        ) as prompt:
+            resumed = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "继续",
+                    "clientMessageId": "retry-returned-work-from-old-ui",
+                    "retryOfRootId": prior_root_id,
+                },
+            )
+
+        prompt.assert_called_once()
+        self.assertEqual(prompt.call_args.args[0], str(partner["sessionId"]))
+        self.assertEqual(resumed["participant"]["id"], partner["id"])
+        self.assertEqual(resumed["routeDecision"]["reason"], "work_item_owner")
+        self.assertEqual(resumed["workItem"]["id"], work_item["id"])
+        self.assertEqual(resumed["workItem"]["revision"], 1)
+        self.assertEqual(len(self.service.room_work.list(room_id=str(room["id"]))), 1)
+        retry_dispatch = self.service.room_partner_dispatches.get_by_work(
+            str(work_item["id"])
+        )
+        self.assertEqual(
+            retry_dispatch["childDispatchId"],
+            resumed["routeDecision"]["dispatchId"],
+        )
+        self.assertEqual(retry_dispatch["rootId"], resumed["roomTurnId"])
+        self.assertEqual(
+            retry_dispatch["sourceParticipantId"],
+            facilitator["id"],
+        )
+        self.assertEqual(retry_dispatch["targetParticipantId"], partner["id"])
+        self.assertEqual(retry_dispatch["status"], "dispatched")
+        self.assertEqual(
+            retry_dispatch["targetSessionTurnId"],
+            "turn:returned-work-retry",
+        )
+
+    def test_room_retry_root_does_not_guess_between_returned_work_items(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "多个退回项需要明确选择",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        facilitator, partner = room["participants"]
+        prior_root_id = "room-turn:ambiguous-returned-work"
+        for index in range(2):
+            work_item = self.service.room_work.create(
+                room_id=str(room["id"]),
+                objective=f"修订轨道 {index + 1}",
+                expected_output="修订交付",
+                acceptance_criteria=["补齐证据"],
+                current_owner_participant_id=str(partner["id"]),
+                created_by_participant_id=str(facilitator["id"]),
+                accountable_participant_id=str(facilitator["id"]),
+                client_message_id=f"ambiguous-returned-work:{index}",
+                topic_id=str(room["activeTopicId"]),
+                root_turn_id=prior_root_id,
+            )
+            self.service.room_work.submit(
+                str(partner["sessionId"]),
+                {
+                    "workId": work_item["id"],
+                    "resultSummary": "仍需修订。",
+                    "evidenceRefs": [f"test:ambiguous:{index}"],
+                    "proposedOperabilityVerdict": "unverified",
+                    "proposedRequirementVerdict": "not_satisfied",
+                },
+            )
+            self.service.room_work.return_for_revision(
+                str(facilitator["sessionId"]),
+                {
+                    "workId": work_item["id"],
+                    "expectedRevision": 0,
+                    "operabilityVerdict": "unverified",
+                    "requirementVerdict": "not_satisfied",
+                    "evidenceRefs": [f"test:ambiguous:{index}"],
+                    "reason": "补齐证据后重交。",
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "provide workItemId"):
+            self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "继续",
+                    "clientMessageId": "ambiguous-retry-from-old-ui",
+                    "retryOfRootId": prior_root_id,
+                },
+            )
+
     def test_user_room_message_resumes_paused_goal_before_dispatch(self) -> None:
         """An explicit user Room message is the only conversation entry a
         returning user has; it must resume a paused target Goal before the

@@ -72,6 +72,7 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
             "roomId": "room-a",
             "sessionId": "session:facilitator",
             "displayName": "Facilitator",
+            "ordinal": 0,
             "status": "active",
         }
         self.target = {
@@ -79,6 +80,7 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
             "roomId": "room-a",
             "sessionId": "session:partner",
             "displayName": "Partner",
+            "ordinal": 1,
             "status": "active",
         }
         self.other_facilitator = {
@@ -86,6 +88,7 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
             "roomId": "room-a",
             "sessionId": "session:other-facilitator",
             "displayName": "Other Facilitator",
+            "ordinal": 2,
             "status": "active",
         }
         self.other_room_facilitator = {
@@ -181,7 +184,9 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
             item = self.work.items[str(payload["workId"])]
             item["state"] = "active"
             item["revision"] = int(item.get("revision") or 0) + 1
-            item["reviewReason"] = str(payload.get("reason") or "")
+            reason = str(payload.get("reason") or "")
+            item["review"]["reason"] = reason
+            item["blocker"] = {"reviewFeedback": reason}
             return {"work": dict(item)}
 
         def accept(
@@ -354,6 +359,33 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
             tool_call_id=f"{tool_call_id}:return",
         )
         return delegated
+
+    def test_partner_rosters_include_frontend_celestial_aliases(self) -> None:
+        listed = self.application.execute(
+            str(self.source["sessionId"]),
+            {"op": "list"},
+            tool_call_id="tool:list-celestial-aliases",
+        )
+        self.assertEqual(
+            [
+                (partner["displayName"], partner["celestialName"])
+                for partner in listed["partners"]
+            ],
+            [("Partner", "Mars"), ("Other Facilitator", "Venus")],
+        )
+
+        peer_list = self.application.execute(
+            str(self.source["sessionId"]),
+            {"op": "peer_list"},
+            tool_call_id="tool:peer-list-celestial-aliases",
+        )
+        self.assertEqual(
+            [
+                (peer["displayName"], peer["celestialName"])
+                for peer in peer_list["peers"]
+            ],
+            [("Partner", "Mars"), ("Other Facilitator", "Venus")],
+        )
 
     def test_returned_work_revises_and_resubmits_before_final_accept(self) -> None:
         first = self._delegate(tool_call_id="tool:revision-loop:1")
@@ -550,6 +582,62 @@ class AgentRoomPartnerRevisionLoopTest(unittest.TestCase):
             self.assertEqual(revised["workItem"][key], original_contract[key])
         self.assertEqual(self.dispatches.get(first_dispatch_id)["status"], "returned")
         self.assertEqual(self.dispatches.get(second_dispatch_id)["rootId"], "root-b")
+
+    def test_retry_without_target_redelegates_returned_work_to_current_owner(self) -> None:
+        first = self._return_work_for_revision(tool_call_id="tool:returned-retry:first")
+        work_item_id = str(first["workItemId"])
+        first_dispatch_id = str(first["childDispatchId"])
+
+        retried = self.application.execute(
+            str(self.source["sessionId"]),
+            {
+                "op": "retry",
+                "workItemId": work_item_id,
+                "expectedRevision": 1,
+                "reason": "浏览器恢复，按原合同让当前负责人补齐真实验收证据。",
+            },
+            tool_call_id="tool:returned-retry:second",
+        )
+
+        self.assertEqual(retried["workItemId"], work_item_id)
+        self.assertNotEqual(retried["childDispatchId"], first_dispatch_id)
+        self.assertEqual(retried["workItem"]["state"], "active")
+        self.assertEqual(retried["workItem"]["revision"], 1)
+        self.assertEqual(
+            retried["workItem"]["currentOwnerParticipantId"],
+            self.target["id"],
+        )
+        self.assertEqual(self.dispatches.get(first_dispatch_id)["status"], "returned")
+        self.assertEqual(
+            self.dispatches.get(str(retried["childDispatchId"]))["status"],
+            "dispatched",
+        )
+
+    def test_list_projects_returned_work_as_a_retry_action(self) -> None:
+        first = self._return_work_for_revision(
+            tool_call_id="tool:list-returned-recovery:first"
+        )
+        work_item_id = str(first["workItemId"])
+
+        listed = self.application.execute(
+            str(self.source["sessionId"]),
+            {"op": "list"},
+            tool_call_id="tool:list-returned-recovery:second",
+        )
+
+        self.assertEqual(
+            listed["recoverableWorkItems"],
+            [
+                {
+                    "workItemId": work_item_id,
+                    "state": "active",
+                    "expectedRevision": 1,
+                    "currentOwnerParticipantId": self.target["id"],
+                    "recommendedOperation": "retry",
+                    "reason": "修订后重新派发",
+                }
+            ],
+        )
 
     def test_failed_partner_dispatch_retries_same_work_with_new_owner(self) -> None:
         first = self._delegate(tool_call_id="tool:failed-retry:first")

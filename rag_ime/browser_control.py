@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import plistlib
 import shutil
 import signal
 import sqlite3
@@ -180,6 +181,18 @@ class BrowserControlService:
                 CREATE INDEX IF NOT EXISTS idx_browser_events_created
                     ON browser_control_events(created_at_ms DESC);
                 """
+            )
+            connection.execute(
+                """
+                UPDATE browser_control_commands
+                SET status='failed',
+                    result_json=?,
+                    failure_reason='direct_browser_interrupted',
+                    completed_at_ms=?
+                WHERE status='claimed'
+                  AND claimed_by='paw-cdp-direct'
+                """,
+                (json.dumps({"ok": False}, separators=(",", ":")), self._now_ms()),
             )
             connection.commit()
 
@@ -419,6 +432,8 @@ class BrowserControlService:
         normalized_action = str(action or "").strip()
         if normalized_action not in ALLOWED_ACTIONS:
             raise BrowserControlError(f"unsupported browser action: {normalized_action}")
+        if not bool(self.managed_status().get("running")):
+            self.start_managed()
         self._sync_direct_browser()
         device_id = self._select_device(requested=str(payload.get("deviceId") or ""))
         command_id = f"bcmd_{uuid.uuid4().hex}"
@@ -628,21 +643,25 @@ class BrowserControlService:
                 **self.managed_status(),
                 "summary": "PAW Browser 已在运行",
             }
-        chrome = self._chrome_executable()
-        if chrome is None:
-            raise BrowserControlError("未找到 Google Chrome 或 Chromium")
+        host_executable = self._paw_browser_host_executable()
+        if host_executable is None:
+            raise BrowserControlError(
+                "PAW 同窗 Browser 宿主未安装；不会启动外部 Chrome"
+            )
         self._stop_ego_host()
         self.browser_runtime.prepare_launch()
-        command = self.browser_runtime.launch_command(chrome)
         with self._connection() as connection:
             self._set_setting(connection, "managed_pid", "")
             connection.commit()
+        environment = dict(os.environ)
+        environment["PAW_INITIAL_ROUTE"] = "/browser"
         try:
             process = self.command_runner(
-                command,
+                [str(host_executable)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                env=environment,
             )
         except BaseException:
             raise
@@ -672,7 +691,7 @@ class BrowserControlService:
             "schemaVersion": SCHEMA_VERSION,
             "ok": True,
             **self.managed_status(),
-            "summary": "PAW Browser 已启动，Agent 正通过 CDP 直接连接",
+            "summary": "PAW 同窗 Browser 已启动，Agent 正通过 Ego/CDP 连接",
         }
 
     def stop_managed(self) -> dict[str, object]:
@@ -1526,21 +1545,52 @@ class BrowserControlService:
             raise BrowserControlError("browser screenshot exceeds the 8 MiB limit")
         return mime, data
 
-    def _chrome_executable(self) -> Path | None:
+    def _paw_browser_host_executable(self) -> Path | None:
         candidates = [
-            os.environ.get("RAG_IME_CHROME_EXECUTABLE"),
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            os.environ.get("RAG_IME_PAW_BROWSER_HOST_APP"),
+            str(Path.home() / "Applications" / "RagImeControl.app"),
+            "/Applications/RagImeControl.app",
         ]
         for candidate in candidates:
-            if candidate and Path(candidate).is_file():
-                return Path(candidate)
+            if not candidate:
+                continue
+            application = Path(candidate).expanduser()
+            marker_path = (
+                application
+                / "Contents"
+                / "Resources"
+                / "rag-ime-control-web-build-marker.json"
+            )
+            info_path = application / "Contents" / "Info.plist"
+            try:
+                marker = json.loads(marker_path.read_text(encoding="utf-8"))
+                with info_path.open("rb") as handle:
+                    info = plistlib.load(handle)
+            except (OSError, ValueError, plistlib.InvalidFileException):
+                continue
+            if not (
+                marker.get("ui") == "control-center-web"
+                and marker.get("frontendTransport") == "native"
+            ):
+                continue
+            executable_name = str(info.get("CFBundleExecutable") or "").strip()
+            executable = application / "Contents" / "MacOS" / executable_name
+            if executable_name and executable.is_file():
+                return executable
         return None
 
     @staticmethod
     def _pid_running(pid: int) -> bool:
         if pid <= 0:
             return False
+        try:
+            waited_pid, _status = os.waitpid(pid, os.WNOHANG)
+            if waited_pid == pid:
+                return False
+            if waited_pid == 0:
+                return True
+        except (ChildProcessError, OSError):
+            pass
         try:
             os.kill(pid, 0)
             return True

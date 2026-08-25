@@ -122,6 +122,38 @@ class RoomSessionDispatchService:
         self.host._restore_room_participant_sessions(room)
         work_item: dict[str, object] | None = None
         authoritative_participant_id = ""
+        if retry_of_root_id and not str(work_item_id or "").strip():
+            returned_candidates: list[Mapping[str, object]] = []
+            for candidate in self.host.room_work.list(
+                room_id=room_id,
+                states=("active",),
+                limit=200,
+            ):
+                if (
+                    not isinstance(candidate, Mapping)
+                    or str(candidate.get("rootTurnId") or "")
+                    != retry_of_root_id
+                ):
+                    continue
+                blocker = candidate.get("blocker")
+                review = candidate.get("review")
+                has_return_feedback = (
+                    isinstance(blocker, Mapping)
+                    and bool(str(blocker.get("reviewFeedback") or "").strip())
+                ) or (
+                    isinstance(review, Mapping)
+                    and bool(str(review.get("reason") or "").strip())
+                )
+                if has_return_feedback:
+                    returned_candidates.append(candidate)
+            if len(returned_candidates) > 1:
+                raise ValueError(
+                    "retryOfRootId matches multiple returned WorkItems; "
+                    "provide workItemId"
+                )
+            if returned_candidates:
+                work_item_id = str(returned_candidates[0].get("id") or "")
+                route_id = "room.message.execute"
         if work_item_id:
             work_item, authoritative_participant_id = (
                 self.host.room_work.authoritative_owner(
@@ -302,6 +334,7 @@ class RoomSessionDispatchService:
 
         work_claimed = False
         previous_accepted_turn_id = ""
+        retry_dispatch_id = ""
         try:
             if work_item is not None:
                 previous_accepted_turn_id = str(
@@ -316,6 +349,27 @@ class RoomSessionDispatchService:
                     room_turn_id=room_turn_id,
                 )
                 work_claimed = True
+                # A retry submitted from the Room UI still represents the
+                # same governed Partner WorkItem.  Register its ordinary Room
+                # dispatch in the existing durable Partner ledger so a typed
+                # work_result can settle to review and wake the accountable
+                # Facilitator exactly like a tool-originated retry.
+                retry_dispatch_id = str(decisions[0]["dispatchId"])
+                accountable = self.host.rooms.participant(
+                    str(work_item["accountableParticipantId"])
+                )
+                self.host.room_partner_dispatches.register(
+                    child_dispatch_id=retry_dispatch_id,
+                    room_id=room_id,
+                    root_id=room_turn_id,
+                    parent_dispatch_id=f"room-user-retry:{room_turn_id}",
+                    tool_call_id=client_message_id or room_turn_id,
+                    source_participant_id=str(accountable["id"]),
+                    source_session_id=str(accountable["sessionId"]),
+                    target_participant_id=str(targets[0]["id"]),
+                    target_session_id=str(targets[0]["sessionId"]),
+                    work_item_id=str(work_item["id"]),
+                )
         except Exception as exc:
             for decision, target in zip(decisions, targets, strict=True):
                 self.host._cancel_room_turn(str(target["sessionId"]), room_turn_id)
@@ -369,6 +423,13 @@ class RoomSessionDispatchService:
             ]
 
         successful = [result for result in dispatch_results if result["accepted"] is True]
+        if retry_dispatch_id and successful:
+            self.host.room_partner_dispatches.mark_dispatched(
+                retry_dispatch_id,
+                target_session_turn_id=str(
+                    successful[0].get("sessionTurnId") or ""
+                ),
+            )
         cancelled_only = bool(dispatch_results) and all(
             result.get("status") == "cancelled" for result in dispatch_results
         )

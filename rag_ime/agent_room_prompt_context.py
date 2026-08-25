@@ -90,6 +90,7 @@ def room_participant_prompt(
     ]
     related_work_items: list[Mapping[str, object]] = []
     work_lines: list[str] = []
+    recovery_directives: list[str] = []
     for work in room_work_items:
         if not isinstance(work, Mapping):
             continue
@@ -107,6 +108,20 @@ def room_participant_prompt(
             f"- WorkItem {work_id} · {relation}，{_work_state(state)}："
             f"{_bounded_text(work.get('objective'), maximum=320)}"
         )
+        blocker = work.get("blocker")
+        blocker = blocker if isinstance(blocker, Mapping) else {}
+        review_feedback = _bounded_text(
+            blocker.get("reviewFeedback"),
+            maximum=500,
+        )
+        if role == "coordinator" and state == "active" and review_feedback:
+            revision = int(work.get("revision") or 0)
+            recovery_directives.append(
+                "返修待重新派发（先执行，不要把本轮结束为 blocked）："
+                f"op=retry、workItemId={work_id}、expectedRevision={revision}、"
+                "reason=本轮恢复原因；省略 targetParticipantId 会沿用当前负责人。"
+                "Partner 重新提交到 review 后才能 accept，不能直接改写历史 review。"
+            )
         if len(work_lines) >= 4:
             break
     total_omitted = (
@@ -119,6 +134,7 @@ def room_participant_prompt(
         else ""
     )
     work_item_lines: list[str] = []
+    work_item_id = ""
     if work_item is not None:
         work_item_id = _bounded_text(work_item.get("id"), maximum=240)
         work_authority = (work_document_authorities or {}).get(
@@ -215,6 +231,7 @@ def room_participant_prompt(
             f"Room：{_bounded_text(room.get('title'), maximum=120)}；"
             f"话题：{topic_title}；你本轮从“{role_label}”的角度参与"
         ),
+        *recovery_directives,
     ]
     context_sections: list[str] = []
     if topic_summary:
@@ -290,10 +307,14 @@ def room_participant_prompt(
                         "evidenceRefs 与非空 reason accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
                         "文档修订都不能代替验收。审查报告 unverified、changes_required、failed 或未解决 "
                         "HIGH/MEDIUM 时必须 return，不得写成 passed/satisfied；Runtime 会机械拒绝"
-                        "在 Partner 提交的 failed/unverified/not_satisfied 之上 accept。出现新证据时"
-                        "先创建原失败 WorkItem 的直接子复核项，待复核提交 passed/satisfied 后用 "
-                        "supersededByWorkId 显式引用，不得改写历史提交结论。return 后重新委派修订时，"
-                        "必须用新的 Tool 调用并携带原 workItemId；不要新建一个 WorkItem 来冒充同一修订链。"
+                        "在 Partner 提交的 failed/unverified/not_satisfied 之上 accept。"
+                        "仍为 active 且带 reviewFeedback 的退回项必须先按上文 retry 同一修订链；"
+                        "只有原失败 WorkItem 已是不可返修的终态且出现新证据时，才创建其直接子复核项，"
+                        "待复核提交 passed/satisfied 后用 supersededByWorkId 显式引用，不得改写历史提交结论。"
+                        "return 后重新委派修订时，"
+                        "调用 room_partner retry 并携带原 workItemId、最新 expectedRevision 与具体 reason；"
+                        "省略 targetParticipantId 会继续交给当前负责人，需要改派时才使用 list 返回的精确 ID。"
+                        "不要新建一个 WorkItem 来冒充同一修订链。"
                         "不要把仍在进行的 Room Goal 暂停来等待用户或界面；受阻时发 blocked/partial，"
                         "保持 Goal active。网页验收只用 product browser（PAW Browser）；"
                         "禁止 desktop_semantic 去操作独立 Chrome/Edge。"
@@ -307,9 +328,9 @@ def room_participant_prompt(
                         "progress 是非终态，不会完成 WorkItem、Room Goal 或当前 Session 回合，"
                         "也不得根据 content 前缀或其他文本内容推断终态。主管完成全部 WorkItem 对账，"
                         "并以 operabilityVerdict=passed、requirementVerdict=satisfied 完成双轴验收后，"
-                        "必须恰好一次调用 room_partner，参数为 op=post、kind=result。发出该 typed result "
-                        "后不要再发第二个 result；直接完成正常 assistant 回合，由 Pi 随后产生普通 "
-                        "turn_completed。",
+                        "必须恰好一次调用 room_partner，参数为 op=post、kind=result。只有该 Tool 回执成功后"
+                        "才能调用 agent_goal complete；Goal 完成回执成功后不要再发第二个 result，直接完成"
+                        "正常 assistant 回合，由 Pi 随后产生普通 turn_completed。",
                     ]
                 )
             )
@@ -330,6 +351,16 @@ def room_participant_prompt(
                         "网页验收只用 product browser（PAW Browser）；禁止 desktop_semantic "
                         "去操作独立 Chrome/Edge。bound write 使用当前文档索引上的 live "
                         "authorityRevision，不要沿用更早记住的旧值。",
+                        (
+                            "当前 WorkItem 完成时只使用这一种提交形状："
+                            f"op=post、kind=work_result、workItemId={work_item_id}、"
+                            "content=交付摘要、proposedOperabilityVerdict=passed|failed|unverified、"
+                            "proposedRequirementVerdict=satisfied|not_satisfied|unverified。"
+                            "省略 kind 或使用 kind=progress 只会发布过程消息，不会提交 review；"
+                            "普通 assistant 最终回复也不会替代这次结构化调用。"
+                            if work_item_id
+                            else ""
+                        ),
                     ]
                 )
             )

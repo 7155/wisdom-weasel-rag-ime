@@ -1216,6 +1216,16 @@ def _room_tool_error(value: object) -> str:
         error = bounded_text(value.get(key), maximum=1_000)
         if error:
             return error
+    content = value.get("content")
+    if isinstance(content, list):
+        for item in content[:8]:
+            if not isinstance(item, Mapping):
+                continue
+            if bounded_text(item.get("type"), maximum=40) != "text":
+                continue
+            error = bounded_text(item.get("text"), maximum=1_000)
+            if error:
+                return error
     for child in value.values():
         error = _room_tool_error(child)
         if error:

@@ -26,6 +26,32 @@ _RECOVERABLE_RUNTIME_HOST_FAILURE_MARKERS = (
     "runtime_host_exit",
     "partial protocol record",
 )
+_ROOM_CELESTIAL_NAMES = (
+    "Earth",
+    "Mars",
+    "Venus",
+    "Jupiter",
+    "Saturn",
+    "Mercury",
+    "Neptune",
+    "Uranus",
+)
+
+
+def _room_celestial_name(
+    participant: Mapping[str, object],
+    *,
+    fallback_ordinal: int,
+) -> str:
+    raw_ordinal = participant.get("ordinal")
+    ordinal = (
+        raw_ordinal
+        if isinstance(raw_ordinal, int) and not isinstance(raw_ordinal, bool)
+        else fallback_ordinal
+    )
+    if 0 <= ordinal < len(_ROOM_CELESTIAL_NAMES):
+        return _ROOM_CELESTIAL_NAMES[ordinal]
+    return f"Planet {ordinal + 1}"
 
 
 class RoomPartnerApplicationService:
@@ -1489,6 +1515,29 @@ class RoomPartnerApplicationService:
         root_id, dispatch_id = self.room_turns.active_turn(
             str(source["sessionId"])
         )
+        room = self.rooms.get(str(source["roomId"]))
+        peers = []
+        for ordinal, participant in enumerate(room.get("participants", [])):
+            if (
+                not isinstance(participant, Mapping)
+                or str(participant.get("status") or "") != "active"
+                or str(participant.get("id") or "") == str(source["id"])
+            ):
+                continue
+            peers.append(
+                {
+                    "participantId": str(participant.get("id") or ""),
+                    "displayName": str(participant.get("displayName") or ""),
+                    "celestialName": _room_celestial_name(
+                        participant,
+                        fallback_ordinal=ordinal,
+                    ),
+                    "collaborationRole": str(
+                        participant.get("collaborationRole") or "implementer"
+                    ),
+                    "sessionId": str(participant.get("sessionId") or ""),
+                }
+            )
         items = (
             self.list_room_intercom(str(source["sessionId"]))
             if self.list_room_intercom is not None
@@ -1500,6 +1549,7 @@ class RoomPartnerApplicationService:
             "roomId": str(source["roomId"]),
             "rootId": root_id,
             "dispatchId": dispatch_id,
+            "peers": peers,
             "messages": [dict(item) for item in items],
         }
 
@@ -1790,7 +1840,7 @@ class RoomPartnerApplicationService:
             if str(value or "").strip()
         }
         partners = []
-        for value in room.get("participants", []):
+        for ordinal, value in enumerate(room.get("participants", [])):
             if (
                 not isinstance(value, Mapping)
                 or str(value.get("status") or "") != "active"
@@ -1803,6 +1853,10 @@ class RoomPartnerApplicationService:
                 {
                     "participantId": str(value.get("id") or ""),
                     "displayName": str(value.get("displayName") or ""),
+                    "celestialName": _room_celestial_name(
+                        value,
+                        fallback_ordinal=ordinal,
+                    ),
                     "collaborationRole": str(
                         value.get("collaborationRole") or "implementer"
                     ),
@@ -1816,6 +1870,42 @@ class RoomPartnerApplicationService:
                     ),
                 }
             )
+        recoverable_work_items: list[dict[str, object]] = []
+        if self.room_work is not None:
+            for work_item in self.room_work.list(
+                room_id=str(room["id"]),
+                states=("active",),
+                limit=200,
+            ):
+                if (
+                    not isinstance(work_item, Mapping)
+                    or str(work_item.get("accountableParticipantId") or "")
+                    != str(source["id"])
+                ):
+                    continue
+                blocker = work_item.get("blocker")
+                feedback = (
+                    str(blocker.get("reviewFeedback") or "").strip()
+                    if isinstance(blocker, Mapping)
+                    else ""
+                )
+                review = work_item.get("review")
+                if not feedback and isinstance(review, Mapping):
+                    feedback = str(review.get("reason") or "").strip()
+                if not feedback:
+                    continue
+                recoverable_work_items.append(
+                    {
+                        "workItemId": str(work_item.get("id") or ""),
+                        "state": "active",
+                        "expectedRevision": int(work_item.get("revision") or 0),
+                        "currentOwnerParticipantId": str(
+                            work_item.get("currentOwnerParticipantId") or ""
+                        ),
+                        "recommendedOperation": "retry",
+                        "reason": feedback,
+                    }
+                )
         return {
             "schemaVersion": "rag-ime.room-partner-result.v1",
             "operation": "list",
@@ -1823,6 +1913,7 @@ class RoomPartnerApplicationService:
             "rootId": root_id,
             "dispatchId": dispatch_id,
             "partners": partners,
+            "recoverableWorkItems": recoverable_work_items,
         }
 
     def _delegate(
@@ -2178,13 +2269,19 @@ class RoomPartnerApplicationService:
         if self.room_work is None:
             raise ValueError("Room WorkItem retry is unavailable")
         work_item_id = _required_text(args, "workItemId", maximum=240)
-        target_id = _required_text(args, "targetParticipantId", maximum=240)
         reason = _required_text(args, "reason", maximum=2_000)
         expected_revision = _expected_revision(args.get("expectedRevision"))
         existing = self.room_work.get(
             work_item_id,
             room_id=str(source["roomId"]),
         )
+        target_id = _text(args.get("targetParticipantId"), maximum=240) or str(
+            existing.get("currentOwnerParticipantId") or ""
+        )
+        if not target_id:
+            raise ValueError(
+                "retry requires targetParticipantId when the WorkItem has no current owner"
+            )
         if str(existing.get("currentOwnerParticipantId") or "") == target_id:
             target = self.rooms.participant(target_id)
             target_session_id = str(target.get("sessionId") or "")
@@ -2198,6 +2295,15 @@ class RoomPartnerApplicationService:
                         "faulted Room Partner Session recovery is unavailable"
                     )
                 self.recover_faulted_session(target_session_id)
+        prior_dispatch = (
+            self.dispatch_store.get_by_work(work_item_id)
+            if self.dispatch_store is not None
+            else {}
+        )
+        returned_revision = (
+            str(existing.get("state") or "") == "active"
+            and str(prior_dispatch.get("status") or "") == "returned"
+        )
         return self._delegate(
             source,
             {
@@ -2210,7 +2316,7 @@ class RoomPartnerApplicationService:
                 "workItemId": work_item_id,
             },
             tool_call_id=tool_call_id,
-            retry_terminal=True,
+            retry_terminal=not returned_revision,
             expected_revision=expected_revision,
             retry_reason=reason,
         )

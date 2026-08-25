@@ -296,6 +296,38 @@ class AgentEventProjectionTests(unittest.TestCase):
         self.assertEqual(payload["arguments"]["timeoutSeconds"], 30)
         self.assertEqual(len(payload["result"]["result"]), 500)
 
+    def test_room_partner_tool_error_preserves_runtime_text(self) -> None:
+        event_type, payload = room_event_projection(AgentEventEnvelope(
+            event_id="event:partner-tool-error",
+            session_id="session:1",
+            turn_id="turn:1",
+            sequence=9,
+            created_at_ms=9,
+            event_type="tool_finished",
+            payload={
+                "toolName": "room_partner",
+                "args": {
+                    "op": "accept",
+                    "workItemId": "room-work:1",
+                    "expectedRevision": 1,
+                },
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Room work must be in review",
+                        }
+                    ],
+                    "details": {},
+                },
+                "isError": True,
+            },
+            resume_token="event:partner-tool-error",
+        ))
+
+        self.assertEqual(event_type, "participant_activity")
+        self.assertEqual(payload["error"], "Room work must be in review")
+
 
 if __name__ == "__main__":
     unittest.main()

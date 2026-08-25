@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
 
+from rag_ime.agent_background_jobs import AgentBackgroundJobService
 from rag_ime.agent_protocol import AgentEventEnvelope
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks, provider_block_projection
 from rag_ime.agent_command_receipts import (
@@ -19,6 +20,7 @@ from rag_ime.agent_command_receipts import (
 )
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_prompt_delivery import AgentPromptAcceptanceUnknown
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
@@ -151,6 +153,46 @@ class AgentServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.service.close()
         self.tmp.cleanup()
+
+    def test_background_job_recovery_publishes_after_event_projection_is_ready(self) -> None:
+        recovered_db = self.root / "background-recovery.sqlite"
+        session_store = AgentSessionStore(recovered_db)
+        session_store.initialize()
+        recovered_session_id = str(
+            session_store.create(title="background recovery")["id"]
+        )
+
+        def publish_recovered_job(background_jobs: AgentBackgroundJobService) -> None:
+            background_jobs.events(
+                recovered_session_id,
+                "background_job_completed",
+                {"jobId": "bg_recovered"},
+            )
+
+        with patch.object(
+            AgentBackgroundJobService,
+            "initialize",
+            publish_recovered_job,
+        ):
+            recovered = AgentService(
+                db_path=recovered_db,
+                runtime_config=PiRuntimeConfig(
+                    enabled=False,
+                    executable=None,
+                    agent_dir=self.root / "background-recovery-agent",
+                    session_dir=self.root / "background-recovery-sessions",
+                    logs_dir=self.root / "background-recovery-logs",
+                ),
+            )
+        try:
+            replay, gap = recovered.events.replay(recovered_session_id)
+            self.assertFalse(gap)
+            self.assertEqual(
+                [event.event_type for event in replay],
+                ["background_job_completed"],
+            )
+        finally:
+            recovered.close()
 
 
 

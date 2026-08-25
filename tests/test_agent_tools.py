@@ -20,6 +20,7 @@ from rag_ime.agent_tool_artifacts import AgentToolArtifactProjector
 from rag_ime.agent_tools import (
     ControlToolGateway,
     _RUNTIME_TOOL_PROJECTIONS,
+    _TOOL_SPECS,
     _runtime_tool_parameter_schema,
 )
 from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
@@ -1328,6 +1329,30 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertEqual(len(calls), 1)
 
+    def test_room_partner_catalog_describes_dynamic_fanout_up_to_capacity(self) -> None:
+        room_partner = next(
+            spec for spec in _TOOL_SPECS if spec["id"] == "room_partner"
+        )
+        when = " ".join(str(item) for item in room_partner["when"])
+
+        self.assertIn("按任务规模动态选择", when)
+        self.assertIn("最多 7 个可见 Partner", when)
+        self.assertIn("Room 总参与者最多 8 个", when)
+        self.assertNotIn("2–3 个", when)
+        self.assertIn("active 且带 reviewFeedback", str(room_partner["description"]))
+        self.assertIn("recoverableWorkItems", str(room_partner["description"]))
+        self.assertIn("expectedRevision", str(room_partner["description"]))
+
+        schema = _runtime_tool_parameter_schema(
+            "room_partner",
+            list(room_partner["operations"]),
+        )
+        self.assertIn("退回后仍为 active", schema["properties"]["op"]["description"])
+        self.assertIn(
+            "recoverableWorkItems",
+            schema["properties"]["op"]["description"],
+        )
+
     def test_room_partner_contract_routes_through_the_room_gateway(self) -> None:
         calls = []
 
@@ -1490,7 +1515,6 @@ class ControlToolGatewayTests(unittest.TestCase):
             [
                 "op",
                 "workItemId",
-                "targetParticipantId",
                 "expectedRevision",
                 "reason",
             ],
@@ -1551,9 +1575,8 @@ class ControlToolGatewayTests(unittest.TestCase):
             {
                 "op": "retry",
                 "workItemId": "room-work:1",
-                "targetParticipantId": "room-a:p2",
                 "expectedRevision": 0,
-                "reason": "原执行失败，保留同一合同并改派空闲伙伴。",
+                "reason": "原执行失败，保留同一合同并由当前负责人继续。",
             },
             {"op": "collect", "childDispatchId": "room-child:1"},
             {
@@ -2350,6 +2373,87 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn(
             "agent_goal",
             {item["name"] for item in gateway.runtime_manifests(read_only_child)},
+        )
+
+    def test_room_facilitator_goal_complete_requires_typed_root_result(self) -> None:
+        facilitator = self.store.create(
+            title="Room terminal ordering",
+            mode="coordinator",
+            created_at_ms=5,
+        )
+        session_id = str(facilitator["id"])
+        self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "先发布 Room typed result，再完成 Goal",
+            },
+        )
+
+        class _Rooms:
+            def participant_for_session(self, requested_session_id, *, active_only=True):
+                if requested_session_id != session_id:
+                    return None
+                return {
+                    "roomId": "room:terminal-ordering",
+                    "collaborationRole": "coordinator",
+                }
+
+        class _RoomTurns:
+            def active_turn(self, requested_session_id):
+                self.requested_session_id = requested_session_id
+                return "room-turn:terminal-ordering", "room-dispatch:terminal-ordering"
+
+        class _RoomEvents:
+            present = False
+
+            def has_projection(self, projection_key):
+                self.projection_key = projection_key
+                return self.present
+
+        room_events = _RoomEvents()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=SimpleNamespace(
+                rooms=_Rooms(),
+                room_turns=_RoomTurns(),
+                room_events=room_events,
+            ),
+        )
+        tool_call = {
+            **self._tool_call(
+                "agent_goal",
+                "complete",
+                summary="Room terminal ordering verified",
+                evidence=[
+                    {
+                        "kind": "receipt",
+                        "summary": "typed result receipt",
+                        "reference": "room-post:terminal-ordering",
+                    }
+                ],
+            ),
+            "sessionId": session_id,
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            r"room_partner post\(kind=result\)",
+        ):
+            gateway.execute(tool_call)
+        self.assertEqual(self.store.agent_goal(session_id)["status"], "active")
+
+        room_events.present = True
+        completed = gateway.execute(tool_call)["result"]
+        self.assertEqual(completed["goal"]["status"], "completed")
+        self.assertEqual(
+            room_events.projection_key,
+            "room-terminal-result:room:terminal-ordering:room-turn:terminal-ordering",
         )
 
     def test_todo_is_session_local_and_never_grants_work_authority(self) -> None:

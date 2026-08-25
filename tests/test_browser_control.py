@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +59,35 @@ class BrowserControlServiceTests(unittest.TestCase):
 
         self.assertEqual(snapshot["snapshotId"], "snap-test")
         self.assertIn("[0:e1]", snapshot["markdown"])
+
+    def test_restart_fails_interrupted_direct_browser_claim(self) -> None:
+        command_id = "bcmd_interrupted_direct"
+        with self.service._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO browser_control_commands(
+                    command_id, device_id, session_id, action, payload_json,
+                    status, created_at_ms, claimed_at_ms, claimed_by
+                ) VALUES (?, ?, 'session-restart', 'navigate', '{}',
+                          'claimed', 1, 2, 'paw-cdp-direct')
+                """,
+                (command_id, PawBrowserRuntime.DEVICE_ID),
+            )
+
+        BrowserControlService(
+            self.service.db_path,
+            app_support_root=Path(self.temp.name) / "support",
+            browser_runtime=self.runtime,
+        )
+
+        trace = next(
+            item
+            for item in self.service.traces()["items"]
+            if item["commandId"] == command_id
+        )
+        self.assertEqual(trace["status"], "failed")
+        self.assertEqual(trace["failureReason"], "direct_browser_interrupted")
+        self.assertIsNotNone(trace["completedAtMs"])
 
     def test_status_uses_created_at_index_for_latest_snapshot(self) -> None:
         with self.service._connection() as connection:
@@ -144,6 +174,31 @@ class BrowserControlServiceTests(unittest.TestCase):
         traces = self.service.traces()["items"]
         self.assertEqual([item["action"] for item in traces[:3]], ["reload", "forward", "back"])
         self.assertTrue(all(item["sourceKind"] == "agent" for item in traces[:3]))
+
+    def test_first_browser_command_starts_the_managed_browser_when_stopped(self) -> None:
+        stopped = {"running": False, "connected": False, "debugPort": None}
+        connected = {"running": True, "connected": True, "debugPort": 9222}
+
+        with (
+            mock.patch.object(
+                self.service,
+                "managed_status",
+                side_effect=[stopped, connected, connected],
+            ),
+            mock.patch.object(
+                self.service,
+                "start_managed",
+                return_value={"ok": True, **connected},
+            ) as start_managed,
+        ):
+            result = self.service.submit_command(
+                "navigate",
+                {"url": "https://example.com/managed"},
+                session_id="session-auto-start",
+            )
+
+        self.assertTrue(result["ok"])
+        start_managed.assert_called_once_with()
 
     def test_screenshot_is_stored_behind_bounded_binary_route(self) -> None:
         result = self.service.submit_command(
@@ -326,7 +381,7 @@ class BrowserControlServiceTests(unittest.TestCase):
         with self.service._connection() as connection:
             self.assertEqual(self.service._setting(connection, "ego_runner_pid"), "")
 
-    def test_managed_browser_launches_an_isolated_direct_cdp_profile(self) -> None:
+    def test_managed_browser_launches_the_embedded_paw_host_without_external_chrome(self) -> None:
         root = Path(self.temp.name)
         runtime = FakePawBrowserRuntime(root / "launch-profile")
         service = BrowserControlService(
@@ -335,27 +390,60 @@ class BrowserControlServiceTests(unittest.TestCase):
             browser_runtime=runtime,
         )
         captured: list[str] = []
+        captured_environment: dict[str, str] = {}
 
-        def launch(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        def launch(command: list[str], **kwargs: object) -> SimpleNamespace:
             captured.extend(command)
+            captured_environment.update(dict(kwargs.get("env") or {}))
+            runtime.host_pid_file.parent.mkdir(parents=True, exist_ok=True)
+            runtime.host_pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
             return SimpleNamespace(pid=os.getpid())
 
         service.command_runner = launch
-        fake_chrome = root / "Google Chrome"
-        fake_chrome.write_text("", encoding="utf-8")
+        host_app = root / "PAW.app"
+        host_executable = host_app / "Contents" / "MacOS" / "PAW"
+        host_executable.parent.mkdir(parents=True)
+        host_executable.write_text("", encoding="utf-8")
+        with (host_app / "Contents" / "Info.plist").open("wb") as handle:
+            plistlib.dump({"CFBundleExecutable": "PAW"}, handle)
+        marker = host_app / "Contents" / "Resources" / "rag-ime-control-web-build-marker.json"
+        marker.parent.mkdir(parents=True)
+        marker.write_text(
+            '{"ui":"control-center-web","frontendTransport":"native"}\n',
+            encoding="utf-8",
+        )
 
-        with mock.patch.object(service, "_chrome_executable", return_value=fake_chrome):
+        with mock.patch.dict(os.environ, {"RAG_IME_PAW_BROWSER_HOST_APP": str(host_app)}):
             response = service.start_managed()
 
         self.assertTrue(response["running"])
-        self.assertIn(f"--user-data-dir={runtime.profile_path}", captured)
-        self.assertIn("--remote-debugging-address=127.0.0.1", captured)
-        self.assertIn("--remote-debugging-port=0", captured)
-        self.assertFalse(any("extension" in item for item in captured))
-        self.assertFalse(any("bootstrap" in item for item in captured))
+        self.assertEqual(captured, [str(host_executable)])
+        self.assertEqual(captured_environment["PAW_INITIAL_ROUTE"], "/browser")
+        self.assertFalse(any("Google Chrome" in item for item in captured))
         self.assertEqual(response["controlProtocol"], "ego-browser")
         self.assertEqual(response["browserTransport"], "cdp")
+        self.assertEqual(response["hostKind"], "electron-webview")
         self.assertFalse(response["egoBrowser"]["secondBrowserProcess"])
+
+    def test_managed_browser_never_falls_back_to_external_chrome(self) -> None:
+        root = Path(self.temp.name)
+        runtime = FakePawBrowserRuntime(root / "missing-host-profile")
+        service = BrowserControlService(
+            root / "missing-host.sqlite",
+            app_support_root=root / "missing-host-support",
+            browser_runtime=runtime,
+        )
+        service.command_runner = mock.Mock()
+
+        with mock.patch.object(
+            service,
+            "_paw_browser_host_executable",
+            return_value=None,
+        ):
+            with self.assertRaisesRegex(BrowserControlError, "同窗 Browser"):
+                service.start_managed()
+
+        service.command_runner.assert_not_called()
 
     def test_managed_browser_adopts_the_live_electron_host_without_launching_chrome(self) -> None:
         root = Path(self.temp.name)
@@ -368,13 +456,23 @@ class BrowserControlServiceTests(unittest.TestCase):
             browser_runtime=runtime,
         )
 
-        with mock.patch.object(service, "_chrome_executable") as chrome:
+        with mock.patch.object(service, "_paw_browser_host_executable") as launcher:
             response = service.start_managed()
 
-        chrome.assert_not_called()
+        launcher.assert_not_called()
         self.assertTrue(response["running"])
         self.assertTrue(response["connected"])
         self.assertEqual(response["hostKind"], "electron-webview")
+
+    def test_zombie_managed_process_is_not_reported_as_running(self) -> None:
+        with (
+            mock.patch("rag_ime.browser_control.os.waitpid", return_value=(424242, 0)),
+            mock.patch("rag_ime.browser_control.os.kill") as kill,
+        ):
+            running = self.service._pid_running(424242)
+
+        self.assertFalse(running)
+        kill.assert_not_called()
 
 
 class FakePawBrowserRuntime:

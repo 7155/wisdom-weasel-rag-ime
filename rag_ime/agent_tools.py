@@ -367,10 +367,16 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "room_partner",
         "domain": "agents",
         "displayName": "Room 伙伴协作",
-        "description": "在 Room 中查看伙伴、异步委派有界工作、显式收集或等待结果、验收或退回 WorkItem、直接通信，或发布公开回执",
+        "description": (
+            "在 Room 中查看伙伴、异步委派有界工作、显式收集或等待结果、验收或退回 WorkItem、"
+            "直接通信，或发布公开回执。恢复规则：Facilitator 看到 active 且带 reviewFeedback 的退回项时，"
+            "list 会在 recoverableWorkItems 给出原 workItemId、expectedRevision 和 retry 动作；"
+            "先按该动作调用 retry，不要 delegate 新复核项，也不要直接 accept。"
+        ),
         "when": (
             "当前 Session 是 Room 的任一正式伙伴，需要直接与另一位伙伴通信或独立处理有界子任务",
-            "同一阶段有 2–3 个无依赖、不重叠的工作轨道，需要真实并行启动",
+            "同一阶段存在多个无依赖、不重叠的工作轨道，需要按任务规模动态选择并真实并行启动；"
+            "一次最多 7 个可见 Partner，Room 总参与者最多 8 个",
         ),
         "notFor": (
             "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
@@ -816,6 +822,11 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
         "properties": {
             "op": {
                 "type": "string",
+                "description": (
+                    "list 返回 recoverableWorkItems，其中包含退回后仍为 active 且带 "
+                    "reviewFeedback 的 WorkItem 及其 expectedRevision；按其建议使用 retry；"
+                    "retry 沿同一修订链重新派发当前负责人。"
+                ),
                 "enum": [
                     "list",
                     "delegate",
@@ -836,7 +847,10 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 240,
-                "description": "必须原样使用 list 返回的 participantId。",
+                "description": (
+                    "delegate 时必须原样使用 list 返回的 participantId；retry 可省略，"
+                    "省略时继续使用 WorkItem 当前负责人。"
+                ),
             },
             "task": {
                 "type": "string",
@@ -876,7 +890,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "maxLength": 240,
                 "description": (
                     "delegate 回执或 collect/wait 结果中的 WorkItem ID；"
-                    "return 后重新 delegate 修订，或失败后 retry 时携带原 ID。"
+                    "return、blocked 或 failed 后 retry 时携带原 ID。"
                 ),
             },
             "expectedRevision": {
@@ -1045,7 +1059,6 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "required": [
                     "op",
                     "workItemId",
-                    "targetParticipantId",
                     "expectedRevision",
                     "reason",
                 ],
@@ -3740,6 +3753,8 @@ class ControlToolGateway:
             "cancel",
         }:
             raise ValueError("unsupported agent_goal operation")
+        if operation == "complete":
+            self._require_room_terminal_result(session_id)
         payload: dict[str, object] = {
             "action": operation,
             "expectedRevision": _safe_int(current.get("revision")),
@@ -3795,6 +3810,39 @@ class ControlToolGateway:
             "goal": goal,
             "workflow": workflow,
         }
+
+    def _require_room_terminal_result(self, session_id: str) -> None:
+        """Keep a Room's typed public result ahead of Goal completion."""
+
+        session = self.sessions.get(session_id)
+        if not self._is_active_room_facilitator(session):
+            return
+        rooms = getattr(self.collaboration, "rooms", None)
+        room_turns = getattr(self.collaboration, "room_turns", None)
+        room_events = getattr(self.collaboration, "room_events", None)
+        participant_for_session = getattr(rooms, "participant_for_session", None)
+        active_turn = getattr(room_turns, "active_turn", None)
+        has_projection = getattr(room_events, "has_projection", None)
+        if not (
+            callable(participant_for_session)
+            and callable(active_turn)
+            and callable(has_projection)
+        ):
+            raise ValueError(
+                "Room Goal completion cannot verify the typed terminal result"
+            )
+        participant = participant_for_session(session_id, active_only=True)
+        participant = participant if isinstance(participant, Mapping) else {}
+        room_id = str(participant.get("roomId") or "").strip()
+        root_id, _dispatch_id = active_turn(session_id)
+        root_id = str(root_id or "").strip()
+        if not room_id or not root_id:
+            raise ValueError("Room Goal completion requires an active Room root")
+        if not has_projection(f"room-terminal-result:{room_id}:{root_id}"):
+            raise ValueError(
+                "Room Goal completion requires room_partner post(kind=result) "
+                "for the active Root first"
+            )
 
     def _work_documents(
         self,

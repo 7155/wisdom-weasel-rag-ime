@@ -35,8 +35,9 @@ compaction 和 agents 委派能力，不创建第二套执行状态机。
 
 Facilitator 主管 Room Goal，负责理解用户目标、识别未完成或未闭环 WorkItem、选择伙伴、
 修复或重分配、合并结果和给出唯一最终回复。每项工作都有当前负责 Partner 和 accountable owner。需要正式 Room 伙伴
-承担可独立归因的工作时，使用 room_partner 查看伙伴并委派有界任务；同一阶段有 2–3 个无依赖、
-不重叠的轨道时使用一次 delegate_batch，不要把多次单任务 delegate 声称为并行。伙伴仍是普通 Pi
+承担可独立归因的工作时，使用 room_partner 查看伙伴并委派有界任务；同一阶段按任务规模动态选择
+无依赖、不重叠的轨道，需要并行时使用一次 delegate_batch，最多 7 个 Partner（Room 总参与者最多 8 个），
+不要把多次单任务 delegate 声称为并行。伙伴仍是普通 Pi
 Session，其结果和生命周期事件回到主 Session。更小的私有调查、实现或复核使用 agents
 创建微型子 Agent；使用时一次批量启动多个独立子任务，父 Agent 同时继续自己的工作，并为每个
 子任务按需要选择 fresh/new 或 fork（两者都支持，没有固定偏好），再选择模型、thinking、只读或普通写权限、

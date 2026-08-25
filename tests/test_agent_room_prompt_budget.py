@@ -109,6 +109,7 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
         self.assertIn("不得根据 content 前缀", prompt)
         self.assertIn("op=post、kind=result", prompt)
         self.assertIn("恰好一次", prompt)
+        self.assertIn("才能调用 agent_goal complete", prompt)
         self.assertIn("普通 turn_completed", prompt)
         self.assertEqual(prompt.count("op=post、kind=result"), 1)
         self.assertNotIn("documentRevision >= 2）后才会自动验收", prompt)
@@ -132,9 +133,16 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
         self.assertIn("content prefix", skill)
         self.assertIn("`op=post`, `kind=result`", skill)
         self.assertIn("exactly once", skill)
+        self.assertIn(
+            "Only after that Tool receipt succeeds, call `agent_goal complete`",
+            skill,
+        )
         self.assertIn("ordinary `turn_completed`", skill)
         self.assertIn("Do not pause a live Room Goal to wait", skill)
         self.assertIn("If a reviewer reported `unverified`", skill)
+        self.assertIn("A returned item remains `active` with `reviewFeedback`", skill)
+        self.assertIn("send it back for revision with `room_partner retry`", skill)
+        self.assertIn("Do not call `delegate`", skill)
         self.assertEqual(skill.count("`op=post`, `kind=result`"), 1)
         self.assertLess(
             skill.index("`op=post`, `kind=result`"),
@@ -177,6 +185,133 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
         self.assertIn("网页验收只用 product browser", prompt)
         self.assertIn("live authorityRevision", prompt)
         self.assertNotIn("当前尚未形成结构化 WorkItem", prompt)
+        self.assertTrue(prompt.endswith("</room-context>"))
+
+    def test_facilitator_sees_exact_retry_for_returned_active_work(self) -> None:
+        work_item = {
+            "id": "room-work:returned-one",
+            "state": "active",
+            "revision": 1,
+            "objective": "补齐真实浏览器验收",
+            "currentOwnerParticipantId": "participant-worker",
+            "accountableParticipantId": "participant-coordinator",
+            "blocker": {"reviewFeedback": "浏览器不可用，证据不足。"},
+            "review": {
+                "operabilityVerdict": "unverified",
+                "requirementVerdict": "unverified",
+            },
+        }
+        prompt = room_participant_prompt(
+            {
+                "title": "Recovery Room",
+                "roomKind": "collaboration",
+                "participants": [
+                    {
+                        "id": "participant-coordinator",
+                        "status": "active",
+                        "displayName": "Facilitator",
+                        "sessionId": "session-coordinator",
+                    },
+                    {
+                        "id": "participant-worker",
+                        "status": "active",
+                        "displayName": "Worker",
+                        "sessionId": "session-worker",
+                    },
+                ],
+                "workItems": [work_item],
+            },
+            {
+                "id": "participant-coordinator",
+                "collaborationRole": "coordinator",
+            },
+            "继续完成刚才没做完的任务。",
+        )
+
+        self.assertIn("返修待重新派发", prompt)
+        self.assertIn("op=retry", prompt)
+        self.assertIn("workItemId=room-work:returned-one", prompt)
+        self.assertIn("expectedRevision=1", prompt)
+        self.assertIn("省略 targetParticipantId", prompt)
+        self.assertIn("重新提交到 review 后才能 accept", prompt)
+        self.assertIn("先执行，不要把本轮结束为 blocked", prompt)
+        self.assertLess(
+            prompt.index("返修待重新派发"),
+            prompt.index("当前职责：Room Facilitator"),
+        )
+
+    def test_retry_directive_survives_extreme_context_budget(self) -> None:
+        participant_id = "participant-coordinator"
+        work_items = [
+            {
+                "id": "room-work:returned-under-pressure",
+                "state": "active",
+                "revision": 4,
+                "objective": "返修真实验收" + ("长" * 900),
+                "currentOwnerParticipantId": "participant-worker",
+                "accountableParticipantId": participant_id,
+                "blocker": {"reviewFeedback": "需要返修" + ("证据" * 300)},
+            }
+        ]
+        work_documents = []
+        authorities = {}
+        for ordinal in range(12):
+            work_id = f"room-work:pressure-{ordinal}-" + ("w" * 180)
+            work_items.append(
+                {
+                    "id": work_id,
+                    "state": "active",
+                    "objective": "o" * 1_000,
+                    "accountableParticipantId": participant_id,
+                }
+            )
+            authority_key = f"room_work_item:{work_id}"
+            work_documents.append(
+                {
+                    "authorityKey": authority_key,
+                    "path": "docs/" + ("p" * 980),
+                    "documentId": "document-" + ("d" * 220),
+                    "authorityRevision": 2,
+                    "title": "title-" + ("t" * 220),
+                }
+            )
+            authorities[authority_key] = {"authorityRevision": 2}
+
+        prompt = room_participant_prompt(
+            {
+                "title": "Budgeted recovery",
+                "roomKind": "collaboration",
+                "participants": [
+                    {
+                        "id": participant_id,
+                        "status": "active",
+                        "displayName": "Facilitator",
+                        "sessionId": "session-coordinator",
+                    },
+                    {
+                        "id": "participant-worker",
+                        "status": "active",
+                        "displayName": "Worker",
+                        "sessionId": "session-worker",
+                    },
+                ],
+                "workItems": work_items,
+            },
+            {
+                "id": participant_id,
+                "collaborationRole": "coordinator",
+            },
+            "REQUEST-BEGIN " + ("继续。" * 3_000) + " REQUEST-END",
+            work_documents=work_documents,
+            work_document_authorities=authorities,
+        )
+
+        self.assertLessEqual(len(prompt), ROOM_CONTEXT_PROMPT_CHAR_BUDGET)
+        self.assertIn("workItemId=room-work:returned-under-pressure", prompt)
+        self.assertIn("expectedRevision=4", prompt)
+        self.assertIn("先执行，不要把本轮结束为 blocked", prompt)
+        self.assertIn("REQUEST-BEGIN", prompt)
+        self.assertIn("REQUEST-END", prompt)
         self.assertTrue(prompt.endswith("</room-context>"))
 
 

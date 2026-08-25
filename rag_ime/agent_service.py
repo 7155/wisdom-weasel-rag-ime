@@ -258,7 +258,6 @@ class AgentService:
             events=self.events.publish,
             execution_owner=background_job_execution_owner,
         )
-        self.background_jobs.initialize()
         self.work_documents = WorkDocumentService(
             db_path,
             sessions=self.sessions,
@@ -443,6 +442,9 @@ class AgentService:
                 ),
             )
         )
+        # Recovered jobs can finish and publish synchronously from initialize().
+        # Their durable event must never race the projection owner into existence.
+        self.background_jobs.initialize()
         self.room_intercom_application = (
             RoomIntercomApplicationService(
                 sessions=self.sessions,
