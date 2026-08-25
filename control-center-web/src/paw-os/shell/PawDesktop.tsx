@@ -8,6 +8,7 @@ import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 import { PawCompositionField } from './PawCompositionField';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuItem } from './PawContextMenu';
+import { PawWayfinderWork } from './PawWayfinderWork';
 import { PawWindowLayer } from './PawWindowLayer';
 import { pawBrowserHost } from '../apps/paw-browser-host';
 
@@ -167,7 +168,7 @@ export function PawDesktop() {
   const startLasso = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     const target = event.target as HTMLElement;
-    if (target.closest('button, input, textarea, select, a, [data-paw-window-id], [data-paw-text-selection]')) return;
+    if (target.closest('button, input, textarea, select, a, [data-paw-window-id], [data-paw-text-selection], [data-paw-desktop-panel]')) return;
     event.preventDefault();
     setContextMenu(null);
     const viewport = viewportRef.current;
@@ -404,6 +405,7 @@ function Wayfinder({ onOpen, onSelect, selectedApps }: {
       <div aria-hidden="true" className="paw-field-media">
         <PawCompositionField effects />
       </div>
+      <PawWayfinderWork />
       {/* The first viewport leads with the actionable list: one dense
           Wayfinder instrument over the fog field instead of a sparse icon
           scatter. Each row keeps the selection/open contracts (click selects,
