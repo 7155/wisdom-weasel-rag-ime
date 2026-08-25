@@ -525,26 +525,30 @@
   font-size: 13px;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity-row__details,
+/* 「这个应该不要方框的，方框导致信息太少」：an opened step is a row in the
+   document flow, not a card. Indent carries the disclosure depth, so the width
+   a plate used to spend on border, radius and inset goes back to the text. */
+.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity-row__details {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Raw Tool output keeps exactly one hairline boundary around the 原文 — the
+   same single container the fx layer draws, not a floating white card. */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-tool-result-panel {
-  margin: 6px 0 0 20px;
+  margin: 8px 0 0;
   border: 1px solid var(--paw-chat-border);
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 2px 4px rgb(0 0 0 / 4%);
+  border-radius: var(--paw-chat-radius-tool);
+  background: var(--paw-chat-surface);
+  box-shadow: none;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity--inline[open] {
-  border: 1px solid var(--paw-chat-border);
-  background: #fff;
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity--inline[open] > summary {
-  width: 100%;
-  border-bottom: 1px solid var(--paw-chat-border);
-  border-radius: 8px 8px 0 0;
-  background: var(--paw-chat-surface-subtle);
-}
+/* No `[open]` rule follows on purpose: the disclosure dressing above holds for
+   both states, so opening reveals rows instead of a card header around them. */
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-activity__inline-timeline {
   padding: 7px;
