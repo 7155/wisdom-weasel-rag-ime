@@ -7,6 +7,7 @@ import {
 import {
   advanceToSafeBoundary,
   computeReleaseCeiling,
+  remapVisibleOffsetAfterEdit,
 } from "./safeInlineBoundary";
 
 const useBrowserLayoutEffect =
@@ -14,27 +15,6 @@ const useBrowserLayoutEffect =
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-function commonPrefixLength(
-  left: string,
-  right: string,
-  maximum = Math.min(left.length, right.length),
-): number {
-  let index = 0;
-  const upper = Math.min(maximum, left.length, right.length);
-  while (index < upper && left.charCodeAt(index) === right.charCodeAt(index)) {
-    index += 1;
-  }
-  // Avoid splitting a surrogate pair.
-  if (
-    index > 0 &&
-    index < right.length &&
-    (right.charCodeAt(index) & 0xfc00) === 0xdc00
-  ) {
-    index -= 1;
-  }
-  return index;
 }
 
 export interface SafeTextReleaseOptions {
@@ -93,7 +73,7 @@ export function useSafeTextRelease(
     if (!enabled || revealMotionDisabled()) {
       nextVisibleEnd = text.length;
     } else if (!text.startsWith(previousText.slice(0, previousVisibleEnd))) {
-      nextVisibleEnd = commonPrefixLength(
+      nextVisibleEnd = remapVisibleOffsetAfterEdit(
         previousText,
         text,
         previousVisibleEnd,

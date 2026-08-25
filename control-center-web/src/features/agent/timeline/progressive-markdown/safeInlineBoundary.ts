@@ -165,6 +165,12 @@ export function computeReleaseCeiling(
   );
 }
 
+/**
+ * Advance the reveal by at least stepChars, and by a quarter of the backlog
+ * when the transport is further ahead than that. A fixed step turns a fast
+ * burst into a reveal that visibly trails the delivered answer; scaling the
+ * step to the backlog keeps the pacing a courtesy rather than a throttle.
+ */
 export function advanceToSafeBoundary(
   text: string,
   current: number,
@@ -172,11 +178,56 @@ export function advanceToSafeBoundary(
   stepChars = 40,
 ): number {
   if (current >= ceiling) return ceiling;
-  let probe = Math.min(current + stepChars, ceiling);
+  const step = Math.max(stepChars, Math.ceil((ceiling - current) / 4));
+  let probe = Math.min(current + step, ceiling);
   let next = findSafeInlineBoundary(text, probe);
   while (next <= current && probe < ceiling) {
     probe = Math.min(probe + stepChars, ceiling);
     next = findSafeInlineBoundary(text, probe);
   }
   return avoidBrokenSurrogate(text, next > current ? next : ceiling);
+}
+
+/**
+ * Map the visible offset across a source replacement (retry, edit, rewrite).
+ *
+ * The reveal is append-only, so any non-prefix change previously collapsed the
+ * visible window back to the common prefix and replayed everything after it.
+ * When the replacement only rewrote a leading region — the common case for an
+ * edit that regenerates the same answer — the reader's position is preserved
+ * by measuring from the end instead, and only a genuine divergence falls back
+ * to the prefix.
+ */
+export function remapVisibleOffsetAfterEdit(
+  previousText: string,
+  nextText: string,
+  previousOffset: number,
+): number {
+  let prefix = 0;
+  const prefixLimit = Math.min(
+    previousText.length,
+    nextText.length,
+    previousOffset,
+  );
+  while (prefix < prefixLimit && previousText[prefix] === nextText[prefix]) {
+    prefix += 1;
+  }
+  if (prefix >= previousOffset) return previousOffset;
+
+  let suffix = 0;
+  const suffixLimit = Math.min(previousText.length, nextText.length) - prefix;
+  while (
+    suffix < suffixLimit
+    && previousText[previousText.length - 1 - suffix]
+      === nextText[nextText.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const mapped = previousOffset >= previousText.length - suffix
+    ? nextText.length - (previousText.length - previousOffset)
+    : prefix;
+  return avoidBrokenSurrogate(
+    nextText,
+    Math.max(0, Math.min(mapped, nextText.length)),
+  );
 }
