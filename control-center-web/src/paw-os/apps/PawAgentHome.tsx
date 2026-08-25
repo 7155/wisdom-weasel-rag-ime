@@ -5,6 +5,9 @@
  * 与 PawAgentApp 原内联实现逐项一致。
  *
  * 设计合同：
+ * - 桌面首屏合同：这是一块固定的 App 表面，不是往下翻的落地页。新建 Composer
+ *   与「继续工作」在同一屏内完成；继续工作列表只在自身内部滚动，页脚是钉在
+ *   底部的状态条。
  * - UR-002/040：单一 Agent 入口，Session / Room 在 Composer 底栏选择；
  *   PF-CM-003：所选工作类型的真实后果（谁来做、哪些伙伴加入）就写在 Composer 下方。
  * - UR-042/044/048：统一 Composer 骨架；锚定菜单紧贴触发控件，不撑开布局。
@@ -41,7 +44,6 @@ import type { RoomSummary } from '@/features/rooms/room-types';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { pawBrowserHost } from './paw-browser-host';
-import { PawGalaxyStarfield } from './PawStarfield';
 import { PawAppIcon } from '../shell/PawAppIcon';
 
 type WorkMode = 'session' | 'room';
@@ -549,7 +551,9 @@ export function PawAgentHome({
           ) : null}
 
           {recents.length ? (
-            <div className="an-home-section">
+            /* 桌面首屏合同：继续工作与 Composer 同屏。列表在自身内部滚动，
+               绝不把页面推成一篇往下翻的长文。 */
+            <div className="an-home-section an-home-recents">
               <h2>继续工作</h2>
               <div className="an-recent-list">
                 {recents.map((entry) => entry.kind === 'session' ? (
@@ -566,14 +570,6 @@ export function PawAgentHome({
                   </button>
                 ))}
               </div>
-            </div>
-          ) : null}
-
-          {rooms.length ? (
-            <div className="an-home-section an-home-galaxy">
-              <h2>Room 星系</h2>
-              {/* 每颗恒星是一间真实 Room；点击进入该星系（打开 Room）。 */}
-              <PawGalaxyStarfield rooms={rooms} onOpenRoom={onOpenRoom} />
             </div>
           ) : null}
 
