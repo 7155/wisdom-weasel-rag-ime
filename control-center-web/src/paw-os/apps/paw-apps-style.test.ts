@@ -704,7 +704,9 @@ describe('PAWOS semantic type roles', () => {
     expect(appCss).not.toContain('.paw-room-workspace__tool-content');
     expect(appCss).toMatch(/\.paw-room-governance article strong\s*\{[^}]*font-size:\s*14px;/s);
     expect(appCss).toMatch(/\.paw-room-governance article small\s*\{[^}]*font-size:\s*12px;/s);
-    expect(appCss).toMatch(/\.paw-room-governance select, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
+    // Governance dropdowns moved from native <select> onto the shared Select
+    // primitive; the readable 13px control floor rides its trigger now.
+    expect(appCss).toMatch(/\.paw-room-governance \.ui-select__trigger, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
   });
 
   it('keeps Room panel and participant satellites at the 12px metadata floor', () => {
@@ -829,7 +831,10 @@ describe('PAWOS semantic type roles', () => {
   });
 
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
-    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    // The denser five-track Launchpad shelf deliberately sets its captions at
+    // 12.5px/1.5 (still above the 12px metadata floor) so all four archive
+    // bands land on one screen.
+    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*12\.5px;[^}]*line-height:\s*1\.5;/s);
     expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
     expect(systemMigratedCss).toMatch(/\.paw-agent-mode__copy small\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.55;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);

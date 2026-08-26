@@ -17,9 +17,12 @@ describe('PawWorkbenchMigrated', () => {
     });
 
     // Workspace identity is a status rail, not a hero plate above the work.
+    // The filesystem path appears exactly once, on the ledger; the top chrome
+    // anchor carries only the project's name.
     const ledger = container.querySelector('.paw-wb-ledger') as HTMLElement;
     expect(within(ledger).getByText('personal-agent-workbench')).toBeInTheDocument();
-    expect(screen.getAllByText('/work/paw')).toHaveLength(2);
+    expect(screen.getAllByText('/work/paw')).toHaveLength(1);
+    expect(within(ledger).getByText('/work/paw')).toBeInTheDocument();
     expect(within(screen.getByLabelText('项目真实指标')).getByText('3')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /统一 Agent 入口/ }));
     expect(onOpenTask).toHaveBeenCalledWith(task);
@@ -177,7 +180,11 @@ describe('PawWorkbenchMigrated', () => {
     expect(container.querySelector('.paw-wb-chrome [data-paw-app-icon]')).toBeNull();
     expect(screen.queryByText('Project Workbench')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: '项目概览' })).toBeInTheDocument();
-    expect(within(container.querySelector('.paw-wb-chrome') as HTMLElement).getByText(projectPath)).toHaveAttribute('title', projectPath);
+    // The chrome anchor stays one quiet name; the long path remains
+    // inspectable on its title and readable on the ledger below.
+    const chromeAnchor = within(container.querySelector('.paw-wb-chrome') as HTMLElement).getByText('personal-agent-workbench');
+    expect(chromeAnchor).toHaveAttribute('title', `personal-agent-workbench · ${projectPath}`);
+    expect(within(container.querySelector('.paw-wb-ledger') as HTMLElement).getByText(projectPath)).toBeInTheDocument();
   });
 
   it('draws only declared task dependencies and emits one bounded packet for an active edge', () => {
@@ -410,7 +417,7 @@ describe('PawWorkbenchMigrated', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('正在读取任务');
     expect(screen.getByRole('alert')).toHaveTextContent('工作文档读取失败。');
-    expect(screen.queryByText('暂无真实任务')).not.toBeInTheDocument();
+    expect(screen.queryByText('还没有任务')).not.toBeInTheDocument();
     expect(screen.queryByText('暂无工作文档')).not.toBeInTheDocument();
 
     loading.rerender(<PawWorkbenchMigrated {...baseProps({
@@ -418,7 +425,7 @@ describe('PawWorkbenchMigrated', () => {
       resourceStates: { planning: { error: '任务编排读取失败。' } },
     })} />);
     expect(screen.getByRole('alert')).toHaveTextContent('任务编排读取失败。');
-    expect(screen.queryByText('没有可编排的真实任务')).not.toBeInTheDocument();
+    expect(screen.queryByText('还没有可编排的任务')).not.toBeInTheDocument();
 
     loading.rerender(<PawWorkbenchMigrated {...baseProps({
       pageId: 'documents',

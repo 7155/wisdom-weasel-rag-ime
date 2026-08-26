@@ -201,9 +201,9 @@
   color: #68717d;
   background: rgb(255 255 255 / .94);
   box-shadow: 0 1px 4px rgb(42 45 52 / .06);
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 14px;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 15px;
   white-space: nowrap;
   pointer-events: none;
   transform: translate(-50%, -50%);
@@ -241,7 +241,7 @@
 .paw-desktop-root .paw-room-focus-overview__mesh-node > span { width: 100%; min-width: 0; display: grid; gap: 0; padding: 2px 4px 3px; border-radius: 6px; background: rgb(250 250 250 / .9); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node > span > strong { overflow: hidden; font-size: 12px; font-weight: 640; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-overview__mesh-node > span > small { overflow: hidden; color: #858c97; font-size: 12px; line-height: 15px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node > span > em { display: -webkit-box; overflow: hidden; color: #59616e; font-size: 10.5px; font-style: normal; font-weight: 570; line-height: 14px; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node > span > em { display: -webkit-box; overflow: hidden; color: #59616e; font-size: 12px; font-style: normal; font-weight: 570; line-height: 15px; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
 /* Planet marks keep their identity colors; the state ring is live state. */
 .paw-desktop-root .paw-room-focus-overview__mesh-node > i { width: 10px; height: 10px; border-radius: 50%; background: #9198a3; box-shadow: 0 0 0 2.5px rgb(145 152 163 / .16); }

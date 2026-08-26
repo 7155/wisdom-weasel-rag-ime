@@ -1026,17 +1026,22 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 
 /* UR-104 App palettes. Each window owns one recognizable hue relationship;
-   success, warning and danger remain inherited system semantics. Material
-   doses tint the current theme instead of assuming a fixed wallpaper. */
+   success, warning and danger remain inherited system semantics.
+
+   One material ladder for all eleven windows: identity speaks through the
+   accent — title ink, titlebar hairline, controls, selection — while the
+   large materials stay near-neutral whisper doses (canvas ≈ 1%, nav ≈ 6–7%,
+   surface ≈ 2%). Ten different chrome saturations was what made the desktop
+   read as ten brands; ten hues on one quiet material reads as one OS. */
 [data-app='project-workbench'] {
   --paw-app-accent: #315eac;
   --paw-app-accent-strong: #244781;
   --paw-app-support: #c9802c;
   --paw-app-material-family: work-document;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 97.5%, var(--paw-app-support));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 91%, var(--paw-app-accent));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98.8%, var(--paw-app-support));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 93.5%, var(--paw-app-accent));
   --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 98%, var(--paw-app-accent));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 81.5%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 83.5%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='agent'] {
@@ -1044,10 +1049,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #50398a;
   --paw-app-support: #c65e79;
   --paw-app-material-family: conversation-flow;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98%, var(--paw-app-accent));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 88%, var(--paw-app-accent));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 96%, var(--paw-app-support));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 80%, var(--paw-app-accent));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98.9%, var(--paw-app-accent));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 93%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 97.6%, var(--paw-app-support));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 83%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='memory'] {
@@ -1055,10 +1060,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #7d2c55;
   --paw-app-support: #c9852c;
   --paw-app-material-family: memory-library;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98%, var(--paw-app-support));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 90%, var(--paw-app-accent));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 95%, var(--paw-app-support));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 82%, var(--paw-app-accent));
+  /* The library's paper carries the rose identity, not the amber support:
+     amber at material scale is what turned the whole App cream. Amber stays
+     a small semantic dose on the evidence stage inside the pipeline. */
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 99%, var(--paw-app-accent));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 93.8%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 98.3%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 84%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='knowledge'] {
@@ -1066,10 +1074,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #354584;
   --paw-app-support: #16877f;
   --paw-app-material-family: knowledge-library;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98.5%, var(--paw-app-accent));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 89%, var(--paw-app-support));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 96.5%, var(--paw-app-accent));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 83%, var(--paw-app-support));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 99.05%, var(--paw-app-accent));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 93.2%, var(--paw-app-support));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 97.9%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 84.5%, var(--paw-app-support));
   --app-color: var(--paw-app-accent);
 }
 [data-app='input-studio'] {
@@ -1077,10 +1085,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #0c5b52;
   --paw-app-support: #be684f;
   --paw-app-material-family: studio-console;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 97%, var(--paw-app-accent));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 87%, var(--paw-app-support));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98.7%, var(--paw-app-accent));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 92.8%, var(--paw-app-support));
   --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 97.5%, var(--paw-app-support));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 78%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 83.2%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='app-center'] {
@@ -1088,10 +1096,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #8a3b1e;
   --paw-app-support: #8650aa;
   --paw-app-material-family: catalog;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 97.2%, var(--paw-app-support));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 86%, var(--paw-app-accent));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 96.8%, var(--paw-app-accent));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 79%, var(--paw-app-accent));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98.6%, var(--paw-app-support));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 92.6%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 97.7%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 83.8%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='system-monitor'] {
@@ -1099,10 +1107,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #07536a;
   --paw-app-support: #779b2e;
   --paw-app-material-family: telemetry;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 99%, var(--paw-app-accent));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 93%, var(--paw-app-accent));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 98.5%, var(--paw-app-support));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 84%, var(--paw-app-accent));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 99.1%, var(--paw-app-accent));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 94%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 98.2%, var(--paw-app-support));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 85%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='system-settings'] {
@@ -1110,10 +1118,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #3e4961;
   --paw-app-support: #a87632;
   --paw-app-material-family: system-preferences;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 99%, var(--paw-app-support));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 92%, var(--paw-app-accent));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 97.8%, var(--paw-app-accent));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 85%, var(--paw-app-accent));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 99.15%, var(--paw-app-support));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 93.6%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 98.05%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 85.5%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='files'] {
@@ -1121,10 +1129,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-accent-strong: #20518b;
   --paw-app-support: #c79427;
   --paw-app-material-family: work-document;
-  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98.2%, var(--paw-app-support));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 89.5%, var(--paw-app-accent));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 97.2%, var(--paw-app-accent));
-  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 81%, var(--paw-app-accent));
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 98.95%, var(--paw-app-support));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 93.4%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 97.85%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 84.2%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
 [data-app='browser'] {
@@ -1133,8 +1141,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-support: #4868bd;
   --paw-app-material-family: browser-chrome;
   --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 99.2%, var(--paw-app-accent));
-  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 91.5%, var(--paw-app-accent));
-  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 98.8%, var(--paw-app-support));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 94.2%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 98.4%, var(--paw-app-support));
   --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 86%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
@@ -1153,8 +1161,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-window-shell[data-app] {
   --paw-accent: var(--paw-app-accent);
   --paw-accent-strong: var(--paw-app-accent-strong);
-  --paw-app-surface-strong: color-mix(in oklab, var(--paw-app-surface) 94%, var(--paw-app-support));
-  --paw-app-support-soft: color-mix(in oklab, var(--paw-panel-strong) 88%, var(--paw-app-support));
+  /* Material ladder doses from premium craft; no --paw-app-line — Apple dialect
+     retired accent-leaning titlebar edges in favor of one neutral hairline. */
+  --paw-app-surface-strong: color-mix(in oklab, var(--paw-app-surface) 97%, var(--paw-app-support));
+  --paw-app-support-soft: color-mix(in oklab, var(--paw-panel-strong) 94%, var(--paw-app-support));
   --paw-accent-soft: var(--paw-app-selection);
 }
 .paw-window-shell[data-app] .paw-native-app {
