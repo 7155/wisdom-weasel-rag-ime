@@ -379,15 +379,16 @@
   pointer-events: none;
 }
 
+/* The new-tab hero is a brand surface, so it shows the Browser App's own
+   identity. A borrowed search-engine blue inside a grey disc claimed another
+   product's chrome, and the identity system forbids wrapping an App mark in a
+   plate of its own. */
 .paw-desktop-root .paw-browser-start-logo {
   width: 52px;
   height: 52px;
   display: grid;
   place-items: center;
   margin-bottom: 12px;
-  border-radius: 50%;
-  background: #f1f3f4;
-  color: #4285f4;
 }
 
 .paw-desktop-root .paw-browser-start-halo {
