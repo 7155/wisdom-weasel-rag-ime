@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import agentFeatureCss from '../../features/agent/agent.css?raw';
 import sessionSubagentCss from '../../features/agent/delegation/session-subagent.css?raw';
+import subagentLaunchCss from '../../features/agent/delegation/subagent-launch.css?raw';
+import evidenceEchoCss from '../../features/evidence-echo/evidence-echo.css?raw';
 import configurationCss from '../../features/configuration/configuration.css?raw';
 import contextDebugCss from '../../features/context-debug/context-debug.css?raw';
 import diagnosticsCss from '../../features/diagnostics/diagnostics.css?raw';
@@ -22,6 +24,7 @@ import agentFxCss from '../styles/paw-os-agent-fx.css?raw';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import agentNextCss from '../styles/paw-os-agent-next.css?raw';
 import pawOsCss from '../styles/paw-os.css?raw';
+import starfieldCss from '../styles/paw-os-starfield.css?raw';
 import motionCss from '../styles/paw-os-motion.css?raw';
 import roomFocusCss from '../styles/paw-os-room-focus.css?raw';
 import roomMigratedCss from '../styles/paw-os-room-migrated-v1.css?raw';
@@ -470,8 +473,23 @@ describe('PAWOS semantic type roles', () => {
     ['memory', memoryCss],
     ['memory-activity', activityTimelineCss],
     ['knowledge', knowledgeCss],
+    // The 12px readable floor also holds on the shell's live surfaces and the
+    // App owners whose base rules ship without a migrated override: Wayfinder
+    // work panel, starfield labels, Room/result-window base blocks, satellite
+    // hosts, the Agent delegation form, and the small per-App owners below.
+    ['shell', pawOsCss],
+    ['starfield', starfieldCss],
+    ['apps', appCss],
+    ['satellite', satelliteCss],
+    ['subagent-launch', subagentLaunchCss],
+    ['agent-next', agentNextCss],
+    ['webmodel', webmodelCss],
+    ['terminal-app', terminalCss],
+    ['files-app', filesCss],
+    ['evidence-echo', evidenceEchoCss],
+    ['configuration', configurationCss],
   ])('%s final owner declares readable roles at the owning selectors', (_surface, css) => {
-    expect(css).not.toMatch(/font-size:\s*(?:9\.5|10|10\.5|11|11\.5)px/);
+    expect(css).not.toMatch(/font-size:\s*(?:9|9\.5|10|10\.5|11|11\.5)px/);
     expect(css).not.toContain('UR-087 readable typography floor');
   });
 

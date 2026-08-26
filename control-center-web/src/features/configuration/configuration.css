@@ -87,7 +87,7 @@ main[data-route-id='configuration'] .configuration-section-nav__pending {
   border-radius: 999px;
   background: var(--color-accent);
   color: var(--color-accent-text);
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -252,7 +252,7 @@ main[data-route-id='configuration'] .configuration-subagents__rules small { colo
 
 main[data-route-id='configuration'] .configuration-subagents__templates { display: grid; }
 main[data-route-id='configuration'] .configuration-subagents__templates article { min-height: 58px; padding: 8px 2px; border-bottom: 1px solid var(--color-border); }
-main[data-route-id='configuration'] .configuration-subagents__templates em { color: var(--color-text-tertiary); font-size: 11px; font-style: normal; font-weight: 650; }
+main[data-route-id='configuration'] .configuration-subagents__templates em { color: var(--color-text-tertiary); font-size: 12px; font-style: normal; font-weight: 650; }
 main[data-route-id='configuration'] .configuration-subagents__error { margin: 0; padding: 9px; border-left: 3px solid var(--color-danger); background: var(--color-danger-soft); color: var(--color-danger); font-size: 12px; }
 
 @media (max-width: 760px) {
@@ -331,7 +331,7 @@ main[data-route-id='configuration'] .configuration-field-consequence {
   border-radius: 999px;
   background: var(--color-warning-soft);
   color: var(--color-warning);
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 650;
   line-height: 1.6;

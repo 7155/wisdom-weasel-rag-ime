@@ -134,7 +134,7 @@
   overflow: hidden;
   max-width: 196px;
   color: #c3d3ef;
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   letter-spacing: .01em;
   text-overflow: ellipsis;
@@ -165,7 +165,7 @@
   border-radius: 999px;
   background: rgb(5 8 18 / .72);
   color: #bfe9f4;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   text-shadow: 0 1px 6px rgb(4 6 15 / .95);
@@ -189,7 +189,7 @@
   overflow: hidden;
   max-width: 172px;
   color: var(--sf-ink-dim);
-  font-size: 11.5px;
+  font-size: 12px;
   text-overflow: ellipsis;
   text-shadow: 0 1px 8px rgb(4 6 15 / .95);
   white-space: nowrap;
@@ -264,7 +264,7 @@
   border-radius: 5px;
   color: var(--sf-ink-dim);
   font-family: inherit;
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .paw-sf__notice {
@@ -382,7 +382,7 @@
 .paw-sf__feed-meta {
   grid-column: 2;
   color: rgb(147 161 189 / .8);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* -------------------------------------------------- legend + hint --- */
@@ -544,7 +544,7 @@
   border-radius: 999px;
   background: rgb(102 115 143 / .22);
   color: var(--sf-ink-dim);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 620;
 }
 
@@ -597,7 +597,7 @@
 
 .paw-sf__card-work small {
   color: var(--sf-ink-dim);
-  font-size: 11.5px;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
@@ -930,7 +930,7 @@
   border-radius: 999px;
   background: rgb(5 8 18 / .55);
   color: #c3d3ef;
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   text-overflow: ellipsis;
   text-shadow: 0 1px 8px rgb(4 6 15 / .9);

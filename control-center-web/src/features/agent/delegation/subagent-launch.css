@@ -24,7 +24,7 @@
 }
 .subagent-launch-shell > summary > span:nth-child(2) { display: grid; gap: 2px; min-width: 0; }
 .subagent-launch-shell > summary strong { font-size: 13px; }
-.subagent-launch-shell > summary small { color: var(--color-text-muted); font-size: 11px; }
+.subagent-launch-shell > summary small { color: var(--color-text-muted); font-size: 12px; }
 .subagent-launch-shell__icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; color: var(--color-accent); background: var(--color-accent-soft); }
 .subagent-launch-shell__chevron { margin-left: auto; transition: transform 160ms ease; }
 .subagent-launch-shell[open] .subagent-launch-shell__chevron { transform: rotate(180deg); }
@@ -43,14 +43,14 @@
 .subagent-launch__header { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
 .subagent-launch__header > span:nth-child(2) { display: grid; gap: 2px; min-width: 0; }
 .subagent-launch__header strong { font-size: 13px; }
-.subagent-launch__header small { color: var(--color-text-muted); font-size: 11px; line-height: 1.45; }
-.subagent-launch__header > em { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 999px; color: var(--launch-accent); background: var(--color-accent-soft); font-size: 10px; font-style: normal; font-weight: 650; }
+.subagent-launch__header small { color: var(--color-text-muted); font-size: 12px; line-height: 1.45; }
+.subagent-launch__header > em { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 999px; color: var(--launch-accent); background: var(--color-accent-soft); font-size: 12px; font-style: normal; font-weight: 650; }
 .subagent-launch__mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: white; background: var(--launch-accent); box-shadow: 0 8px 24px color-mix(in srgb, var(--launch-accent) 22%, transparent); }
 
 .subagent-launch fieldset { margin: 0; padding: 0; border: 0; }
 .subagent-launch legend,
 .subagent-launch__field > span,
-.subagent-launch__brief label > span { display: flex; align-items: baseline; gap: 6px; margin-bottom: 7px; font-size: 11px; font-weight: 700; }
+.subagent-launch__brief label > span { display: flex; align-items: baseline; gap: 6px; margin-bottom: 7px; font-size: 12px; font-weight: 700; }
 .subagent-launch legend small,
 .subagent-launch__field small { color: var(--color-text-muted); font-weight: 450; }
 
@@ -82,14 +82,14 @@
 }
 .subagent-launch__templates input { position: absolute; opacity: 0; pointer-events: none; }
 .subagent-launch__templates label > span { grid-column: 1 / -1; display: grid; gap: 5px; }
-.subagent-launch__templates label strong { font-size: 12px; }
-.subagent-launch__templates label small { color: var(--color-text-muted); font-size: 10px; line-height: 1.45; }
-.subagent-launch__templates label em { display: inline-flex; align-items: center; gap: 4px; color: var(--launch-accent); font-size: 10px; font-style: normal; }
+.subagent-launch__templates label strong { font-size: 13px; }
+.subagent-launch__templates label small { color: var(--color-text-muted); font-size: 12px; line-height: 1.45; }
+.subagent-launch__templates label em { display: inline-flex; align-items: center; gap: 4px; color: var(--launch-accent); font-size: 12px; font-style: normal; }
 
 .subagent-launch__policy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .subagent-launch__policy { padding: 10px; display: grid; gap: 9px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
-.subagent-launch__policy > header { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: 11px; }
-.subagent-launch__policy > small { min-height: 30px; color: var(--color-text-muted); font-size: 10px; line-height: 1.45; }
+.subagent-launch__policy > header { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: 12px; }
+.subagent-launch__policy > small { min-height: 30px; color: var(--color-text-muted); font-size: 12px; line-height: 1.45; }
 .subagent-launch__policy .ui-segmented { width: 100%; }
 .subagent-launch__policy .ui-segmented__item { flex: 1; }
 
@@ -97,11 +97,11 @@
 .subagent-launch__tools > summary { padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; }
 .subagent-launch__tools > summary::-webkit-details-marker { display: none; }
 .subagent-launch__tools > summary > span { display: grid; grid-template-columns: auto 1fr; gap: 2px 7px; align-items: center; }
-.subagent-launch__tools > summary strong { font-size: 11px; }
-.subagent-launch__tools > summary small { grid-column: 2; color: var(--color-text-muted); font-size: 10px; }
+.subagent-launch__tools > summary strong { font-size: 13px; }
+.subagent-launch__tools > summary small { grid-column: 2; color: var(--color-text-muted); font-size: 12px; }
 .subagent-launch__tools[open] > summary > svg { transform: rotate(180deg); }
 .subagent-launch__tools-content { display: grid; min-width: 0; }
-.subagent-launch__tool-mode { padding: 10px 12px; display: flex; gap: 16px; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); font-size: 11px; }
+.subagent-launch__tool-mode { padding: 10px 12px; display: flex; gap: 16px; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); font-size: 12px; }
 .subagent-launch__tool-mode label { display: flex; align-items: center; gap: 6px; }
 .subagent-launch__tool-list { max-height: 220px; padding: 8px 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; overflow: auto; }
 .subagent-launch__tool-list label,
@@ -111,26 +111,26 @@
 .subagent-launch__tool-list span,
 .subagent-launch__skill-flags span { display: grid; gap: 2px; min-width: 0; }
 .subagent-launch__tool-list strong,
-.subagent-launch__skill-flags strong { font-size: 10px; }
+.subagent-launch__skill-flags strong { font-size: 12px; }
 .subagent-launch__tool-list small,
-.subagent-launch__skill-flags small { color: var(--color-text-muted); font-size: 9px; overflow-wrap: anywhere; }
+.subagent-launch__skill-flags small { color: var(--color-text-muted); font-size: 12px; overflow-wrap: anywhere; }
 .subagent-launch__skill-flags { padding: 8px 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--color-border); }
 
 .subagent-launch__brief { display: grid; gap: 10px; }
 .subagent-launch__brief label { display: grid; }
 
 .subagent-launch__digest { padding: 9px 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; border: 1px dashed color-mix(in srgb, var(--launch-accent) 44%, var(--color-border)); border-radius: 11px; background: color-mix(in srgb, var(--color-accent-soft) 45%, var(--color-surface)); }
-.subagent-launch__digest > span { display: inline-flex; align-items: center; gap: 5px; margin-right: 2px; color: var(--launch-accent); font-size: 10px; }
-.subagent-launch__digest em { padding: 3px 6px; border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 9px; font-style: normal; }
+.subagent-launch__digest > span { display: inline-flex; align-items: center; gap: 5px; margin-right: 2px; color: var(--launch-accent); font-size: 12px; }
+.subagent-launch__digest em { padding: 3px 6px; border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 12px; font-style: normal; }
 
 .subagent-launch__error,
 .subagent-launch__notice,
-.subagent-launch__quiet { margin: 0; font-size: 10px; line-height: 1.5; }
+.subagent-launch__quiet { margin: 0; font-size: 12px; line-height: 1.5; }
 .subagent-launch__error { color: var(--color-danger); }
 .subagent-launch__notice { display: flex; align-items: center; gap: 6px; color: var(--launch-accent); }
 .subagent-launch__quiet { color: var(--color-text-muted); }
 .subagent-launch > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.subagent-launch > footer > small { color: var(--color-text-muted); font-size: 10px; }
+.subagent-launch > footer > small { color: var(--color-text-muted); font-size: 12px; }
 
 @media (max-width: 760px) {
   .subagent-launch__header { grid-template-columns: auto 1fr; }

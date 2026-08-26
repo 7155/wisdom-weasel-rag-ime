@@ -313,7 +313,7 @@
 .an-node > summary:hover,
 .an-node[data-expanded='true'] > summary { background: var(--an-paper-soft); }
 .an-node > summary:focus-visible { outline: 2px solid var(--an-cobalt); outline-offset: -3px; }
-.an-node .n-ord { min-width: 18px; flex: none; color: var(--an-ink-3); font-family: var(--an-mono); font-size: 11.5px; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+.an-node .n-ord { min-width: 18px; flex: none; color: var(--an-ink-3); font-family: var(--an-mono); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
 .an-disp { width: 10px; height: 10px; flex: none; border-radius: 2px; background: var(--an-ink); }
 .an-disp.is-omitted { border: 1px solid var(--an-ink-3); background: transparent; }
 .an-disp.is-redacted { border: 2px solid var(--an-yellow); border-radius: 50%; background: transparent; }
