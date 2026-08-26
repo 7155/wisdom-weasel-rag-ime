@@ -716,6 +716,26 @@ export const CONTROL_ROUTES = {
     body: ['previewToken', 'payloadSha256', 'confirmText'],
     requiredBody: ['previewToken', 'payloadSha256', 'confirmText'],
   },
+  'agent.forms.list': { method: 'GET', path: '/api/agent/forms' },
+  'agent.forms.catalog': { method: 'GET', path: '/api/agent/forms/catalog' },
+  'agent.forms.active': { method: 'GET', path: '/api/agent/forms/active' },
+  'agent.forms.validate': {
+    method: 'POST',
+    path: '/api/agent/forms/validate',
+    body: ['sourcePath', 'catalogId', 'catalogVersion'],
+  },
+  'agent.forms.preview': {
+    method: 'POST',
+    path: '/api/agent/forms/preview',
+    body: ['action', 'validationToken', 'formId', 'version'],
+    requiredBody: ['action'],
+  },
+  'agent.forms.apply': {
+    method: 'POST',
+    path: '/api/agent/forms/apply',
+    body: ['previewToken', 'payloadSha256', 'confirmText'],
+    requiredBody: ['previewToken', 'payloadSha256', 'confirmText'],
+  },
   'agent.lifecycleHooks.get': {
     method: 'GET',
     path: '/api/agent/lifecycle-hooks',

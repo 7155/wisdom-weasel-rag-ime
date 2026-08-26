@@ -134,6 +134,12 @@ class ControlPathId(str, Enum):
     AGENT_EXTENSIONS_VALIDATE = "agent.extensions.validate"
     AGENT_EXTENSIONS_PREVIEW = "agent.extensions.preview"
     AGENT_EXTENSIONS_APPLY = "agent.extensions.apply"
+    AGENT_FORMS_LIST = "agent.forms.list"
+    AGENT_FORMS_CATALOG = "agent.forms.catalog"
+    AGENT_FORMS_ACTIVE = "agent.forms.active"
+    AGENT_FORMS_VALIDATE = "agent.forms.validate"
+    AGENT_FORMS_PREVIEW = "agent.forms.preview"
+    AGENT_FORMS_APPLY = "agent.forms.apply"
     AGENT_LIFECYCLE_HOOKS_GET = "agent.lifecycleHooks.get"
     AGENT_LIFECYCLE_HOOKS_UPDATE = "agent.lifecycleHooks.update"
     AGENT_APPROVALS_LIST = "agent.approvals.list"
@@ -825,6 +831,12 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_EXTENSIONS_VALIDATE, ControlMethod.POST, "/api/agent/extensions/validate", "/control/v1/agent/extensions/validate", body={"sourcePath", "packageSource", "catalogId", "catalogVersion"}),
         _route(ControlPathId.AGENT_EXTENSIONS_PREVIEW, ControlMethod.POST, "/api/agent/extensions/preview", "/control/v1/agent/extensions/preview", body={"action", "validationToken", "pluginId", "enable"}, required_body={"action"}),
         _route(ControlPathId.AGENT_EXTENSIONS_APPLY, ControlMethod.POST, "/api/agent/extensions/apply", "/control/v1/agent/extensions/apply", body={"previewToken", "payloadSha256", "confirmText"}, required_body={"previewToken", "payloadSha256", "confirmText"}),
+        _route(ControlPathId.AGENT_FORMS_LIST, ControlMethod.GET, "/api/agent/forms", "/control/v1/agent/forms"),
+        _route(ControlPathId.AGENT_FORMS_CATALOG, ControlMethod.GET, "/api/agent/forms/catalog", "/control/v1/agent/forms/catalog"),
+        _route(ControlPathId.AGENT_FORMS_ACTIVE, ControlMethod.GET, "/api/agent/forms/active", "/control/v1/agent/forms/active"),
+        _route(ControlPathId.AGENT_FORMS_VALIDATE, ControlMethod.POST, "/api/agent/forms/validate", "/control/v1/agent/forms/validate", body={"sourcePath", "catalogId", "catalogVersion"}),
+        _route(ControlPathId.AGENT_FORMS_PREVIEW, ControlMethod.POST, "/api/agent/forms/preview", "/control/v1/agent/forms/preview", body={"action", "validationToken", "formId", "version"}, required_body={"action"}),
+        _route(ControlPathId.AGENT_FORMS_APPLY, ControlMethod.POST, "/api/agent/forms/apply", "/control/v1/agent/forms/apply", body={"previewToken", "payloadSha256", "confirmText"}, required_body={"previewToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.AGENT_LIFECYCLE_HOOKS_GET, ControlMethod.GET, "/api/agent/lifecycle-hooks", "/control/v1/agent/lifecycle-hooks", query={"limit"}),
         _route(ControlPathId.AGENT_LIFECYCLE_HOOKS_UPDATE, ControlMethod.PATCH, "/api/agent/lifecycle-hooks", "/control/v1/agent/lifecycle-hooks", body={"eventType", "enabled", "action", "tokenLimit", "cooldownSeconds"}, required_body={"eventType"}),
         _route(ControlPathId.AGENT_APPROVALS_LIST, ControlMethod.GET, "/api/agent/approvals", "/control/v1/agent/approvals", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, query={"sessionId", "state", "limit"}),

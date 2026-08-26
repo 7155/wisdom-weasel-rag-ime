@@ -15,6 +15,7 @@ import {
   Network,
   PackageCheck,
   PackageOpen,
+  LayoutTemplate,
   Palette,
   RefreshCw,
   Search,
@@ -66,6 +67,7 @@ import {
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { PluginsFeature } from '@/features/plugins';
 import { pluginQueryKeys, usePluginCatalog } from '@/features/plugins/api';
+import { LandingFormsFeature } from '@/features/plugins/landing-forms';
 import { ObservabilityFeature } from '@/features/observability';
 import { VoiceFeature } from '@/features/voice';
 import type { PawAppId } from '../runtime/app-registry';
@@ -100,6 +102,7 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
   'app-center': [
     { id: 'installed', label: '已安装', icon: PackageOpen, route: '/plugins', purpose: '已安装 Package 的启用、更新与移除' },
     { id: 'catalog', label: '目录', icon: LibraryBig, route: '/plugins?view=catalog', purpose: '安装之前先看清来源、权限与版本' },
+    { id: 'forms', label: '形态', icon: LayoutTemplate, route: '/plugins?view=forms', purpose: '切换落地形态：Dock、Persona 与知识范围' },
     { id: 'proposals', label: '建议', icon: Sparkles, route: '/plugins?view=proposals', purpose: 'Agent 提出的安装建议，逐项等你确认' },
   ],
   'system-monitor': [
@@ -254,6 +257,7 @@ function PawSystemSurface({ appId, pageId }: { appId: PawSystemAppId; pageId: st
   }
   if (appId === 'app-center') {
     if (pageId === 'catalog') return <PawPackageCatalog />;
+    if (pageId === 'forms') return <LandingFormsFeature />;
     return <PluginsFeature />;
   }
   if (appId === 'system-monitor') {

@@ -39,6 +39,7 @@ describe('PawSystemAppsMigrated', () => {
   it.each([
     ['input-studio', '/history', '输入记录'],
     ['app-center', '/plugins?view=proposals', '建议'],
+    ['app-center', '/plugins?view=forms', '形态'],
     ['system-monitor', '/diagnostics', '诊断'],
     ['system-settings', '/approvals', '审批'],
   ] as const)('keeps %s route %s selected in the migrated App navigation', (appId, route, label) => {
