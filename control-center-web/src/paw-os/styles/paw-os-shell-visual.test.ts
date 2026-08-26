@@ -380,6 +380,25 @@ describe('PAWOS shell visual language', () => {
     expect(rule(motionCss, '.paw-desktop-viewport::before')).toMatch(/transition:\s*opacity/);
   });
 
+  it('picks an overview card in the same language a desktop window is focused in', () => {
+    // Elevation and edge ink, never a spread halo — the switcher must not
+    // reintroduce one layer up what the focused window just gave up.
+    const picked = rule(
+      pawOsCss,
+      '.paw-window-layer[data-overview] .paw-window-shell:hover .paw-window,\n.paw-window-layer[data-overview] .paw-window-shell:focus-within .paw-window',
+    );
+    expect(picked).toContain('border-color: color-mix(in srgb, var(--paw-accent)');
+    expect(picked, 'no halo ring under a picked overview card').not.toMatch(/0 0 0 \d+px/);
+    // The caption is the Dock label in another placement: one opaque plate,
+    // owned by the visual file, never text over a scaled screenshot.
+    expect(rule(pawOsCss, '.paw-overview-window-target span'), 'geometry only in the structure owner')
+      .not.toContain('background');
+    const caption = rule(shellCss, '.paw-desktop-root .paw-overview-window-target span');
+    expect(caption).toContain('background: #fff');
+    expect(caption).toContain('var(--paw-chrome-hairline)');
+    expect(contrast(hexToRgb('#171a21'), hexToRgb('#ffffff'))).toBeGreaterThanOrEqual(7);
+  });
+
   it('never transitions the all keyword anywhere in shell-owned styles', () => {
     // `transition: all` re-runs unrelated computed-value changes (visibility,
     // layout, filters) through the transition engine, which reads as flicker

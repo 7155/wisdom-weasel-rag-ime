@@ -728,10 +728,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   border-color: color-mix(in srgb, var(--paw-line) 74%, white);
   box-shadow: 0 24px 58px -16px rgba(15, 23, 42, .34), 0 2px 8px rgba(15, 23, 42, .12);
 }
+/* Picking a window in overview speaks the same language as focusing one on the
+   desktop: the card rises and its edge takes the accent. No spread ring — the
+   halo that reads as a selected web card was removed from the focused window,
+   and the switcher must not reintroduce it one layer up. */
 .paw-window-layer[data-overview] .paw-window-shell:hover .paw-window,
 .paw-window-layer[data-overview] .paw-window-shell:focus-within .paw-window {
   border-color: color-mix(in srgb, var(--paw-accent) 64%, var(--paw-line));
-  box-shadow: 0 30px 72px -14px rgba(15, 23, 42, .42), 0 0 0 3px color-mix(in srgb, var(--paw-accent) 18%, transparent);
+  box-shadow: 0 34px 78px -14px rgba(15, 23, 42, .44), 0 6px 16px -6px rgba(15, 23, 42, .18);
 }
 .paw-window-titlebar {
   position: absolute;
@@ -849,10 +853,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   position: absolute; z-index: 8; inset: 0; display: flex; align-items: flex-end; justify-content: center;
   padding: 18px; border-radius: var(--paw-radius); cursor: pointer;
 }
+/* Geometry only; the caption's material is the Dock label's, declared once by
+   the visual owner so no shell caption ever ends up as text over glass. */
 .paw-overview-window-target span {
-  max-width: 80%; overflow: hidden; padding: 7px 12px; border-radius: 9px;
-  color: var(--paw-chrome-ink); background: var(--paw-chrome-soft);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, .14); font-size: 14px; font-weight: 650;
+  max-width: 80%; overflow: hidden; padding: 5px 11px; border-radius: 8px;
   text-overflow: ellipsis; white-space: nowrap;
 }
 /* The overview target is a tile like any other: same ring, one step of air so

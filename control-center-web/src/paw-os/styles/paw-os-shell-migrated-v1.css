@@ -638,6 +638,19 @@
   font-weight: 620;
 }
 
+/* The overview caption is the Dock label in another placement: the same
+   opaque graphite-on-white plate with the same hairline, so a window name in
+   the switcher never becomes text floating on a scaled screenshot. */
+.paw-desktop-root .paw-overview-window-target span {
+  border: 1px solid var(--paw-chrome-hairline);
+  color: var(--paw-chrome-ink);
+  background: #fff;
+  box-shadow: 0 10px 26px -14px rgb(23 32 52 / .35), 0 2px 8px rgb(23 26 33 / .08);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 620;
+}
+
 /* Hover lift is owned by the proximity magnification (structure owner);
    colour answers here with a soft halo in the App's own accent. */
 @media (hover: hover) and (pointer: fine) {
