@@ -33,6 +33,24 @@
   transition-duration: var(--paw-motion-chrome);
 }
 
+/* Focus hand-off is one chrome movement: title ink and the traffic lights
+ * travel on the clock the frame's border and shadow already use, so
+ * activating a window never half-snaps between two chromes. */
+.paw-window-title,
+.paw-traffic-lights > button {
+  transition:
+    color var(--paw-motion-chrome) ease,
+    opacity var(--paw-motion-chrome) ease,
+    border-color var(--paw-motion-chrome) ease,
+    background-color var(--paw-motion-chrome) ease;
+}
+
+/* Live resize hides the title so it is not re-measured per frame; that hide
+ * must stay instant, not become a fade that keeps the text painting. */
+.paw-window-shell[data-interaction] .paw-window-title {
+  transition: none;
+}
+
 .paw-traffic-lights button,
 .paw-system-mark,
 .paw-dock button,

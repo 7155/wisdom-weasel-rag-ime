@@ -83,6 +83,39 @@ export class StubControlTransport implements ControlTransport {
     return delivered;
   }
 
+  /** Simulates the transport announcing a stream retry (link gap started). */
+  emitReconnect(pathId: ControlSubscription['pathId'], attempt = 1, delayMs = 0): number {
+    let delivered = 0;
+    for (const subscription of this.subscriptions.values()) {
+      if (subscription.request.pathId !== pathId) continue;
+      subscription.observer.reconnect?.({ attempt, delayMs, lastEventId: subscription.request.lastEventId });
+      delivered += 1;
+    }
+    return delivered;
+  }
+
+  /** Simulates the stream reopening after a gap. */
+  emitOpen(pathId: ControlSubscription['pathId']): number {
+    let delivered = 0;
+    for (const subscription of this.subscriptions.values()) {
+      if (subscription.request.pathId !== pathId) continue;
+      subscription.observer.open?.(subscription.request.lastEventId);
+      delivered += 1;
+    }
+    return delivered;
+  }
+
+  /** Simulates a stream error surfaced to the observer. */
+  emitStreamError(pathId: ControlSubscription['pathId'], error: Error): number {
+    let delivered = 0;
+    for (const subscription of this.subscriptions.values()) {
+      if (subscription.request.pathId !== pathId) continue;
+      subscription.observer.error?.(error);
+      delivered += 1;
+    }
+    return delivered;
+  }
+
   subscriptionCount(pathId: ControlSubscription['pathId']): number {
     let count = 0;
     for (const subscription of this.subscriptions.values()) {
