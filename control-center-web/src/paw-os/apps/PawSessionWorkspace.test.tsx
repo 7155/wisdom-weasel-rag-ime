@@ -13,6 +13,7 @@ import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import type { SessionSummary } from '@/features/agent/types';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
+import appsCss from './paw-apps.css?raw';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 import { PawSessionWorkspace } from './PawSessionWorkspace';
 
@@ -338,6 +339,22 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(agentMigratedCss).toMatch(
       /\.paw-desktop-root \.paw-session-workspace\[data-panel='status'\] \.paw-session-workspace__body,\s*\.paw-desktop-root \.paw-session-workspace\[data-panel='subagents'\] \.paw-session-workspace__body,\s*\.paw-desktop-root \.paw-session-workspace\[data-panel='files'\] \.paw-session-workspace__body\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
     );
+  });
+
+  it('reserves the stop-button slot and status width so a turn starting never shifts the chrome row', () => {
+    // 每次发送都会让乐观回合把 busy 翻真：停止钮随之挂载、状态词换词。
+    // 稳定合同：状态词右缘钉住（min-width + 右对齐），停止钮在缺席时由同尺寸
+    // 占位补上，视图切换与工具簇因此在回合开始/结束时纹丝不动。Room 同理。
+    for (const owner of ['paw-session-workspace', 'paw-room-workspace']) {
+      expect(appsCss).toMatch(new RegExp(
+        `\\.${owner}__runtime > span \\{[^}]*min-width: calc\\(4em \\+ 12px\\);[^}]*justify-content: flex-end;`,
+        's',
+      ));
+      expect(appsCss).toMatch(new RegExp(
+        `\\.${owner}__runtime:not\\(:has\\(> button\\)\\)::after \\{[^}]*width: 29px;[^}]*height: 29px;`,
+        's',
+      ));
+    }
   });
 
   it('dresses the portaled Session chrome in the OS window palette, not a private one', () => {
