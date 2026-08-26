@@ -339,6 +339,13 @@ describe('PAWOS shell visual language', () => {
     const activeKeyBlur = Number(active.match(/inset,\s*\n?\s*0 \d+px (\d+)px/)?.[1]);
     const restKeyBlur = Number(shellToken('paw-shadow-rest').match(/0 \d+px (\d+)px/)?.[1]);
     expect(activeKeyBlur).toBeGreaterThan(restKeyBlur * 2);
+    // A window you are holding is still the window in front: the gesture tier
+    // trades the per-frame color-mix for static layers, not for its depth.
+    const drag = shellToken('paw-shadow-drag');
+    expect(drag, 'the drag tier stays cheap for the compositor').not.toContain('color-mix');
+    expect(Number(drag.match(/0 \d+px (\d+)px/)?.[1])).toBeGreaterThan(restKeyBlur * 2);
+    expect(rule(shellCss, '.paw-desktop-root[data-window-interaction] .paw-window-shell[data-active] .paw-window,\n.paw-desktop-root[data-window-interaction] .paw-window-shell[data-interaction] .paw-window'))
+      .toContain('box-shadow: var(--paw-shadow-drag)');
   });
 
   it('gives a hovered launcher tile one ring and one shadow instead of a stack', () => {
