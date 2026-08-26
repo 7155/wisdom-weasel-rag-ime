@@ -8,6 +8,7 @@ export {
   INITIAL_SCAN_STATE,
   resolveProgressiveChunks,
   scanIncrementalMarkdown,
+  settleScannedMarkdown,
   splitSettledMarkdown,
 } from './blockScanner';
 export { detectOpenFenceTail, type OpenFenceTail } from './openFence';

@@ -3,7 +3,10 @@ set -euo pipefail
 
 OUTPUT="${1:?usage: build_input_menu_icon.sh OUTPUT.png}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE="${RAG_IME_INPUT_MENU_ICON_SOURCE:-$ROOT/macos/Shared/Assets/CompanionStates/RagImeCompanionIdle.png}"
+# The input menu shows one 18 pt mark. A companion portrait reduced to that
+# size is an unreadable smudge and says nothing about the input method, so the
+# source is a mark drawn for this size, carrying the product identity.
+SOURCE="${RAG_IME_INPUT_MENU_ICON_SOURCE:-$ROOT/assets/brand/rag-ime-input-menu-icon.png}"
 SIZE="${RAG_IME_INPUT_MENU_ICON_SIZE:-18}"
 
 if [[ ! -f "$SOURCE" ]]; then

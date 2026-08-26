@@ -560,18 +560,18 @@
   --ccui-reading-width: 760px;
 }
 
-.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-assistant-body { font-size: 16px; line-height: 24px; }
+.paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-assistant-body { font-size: 15px; line-height: 22px; }
 .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-assistant-head small { color: var(--paw-chat-violet); }
 .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-user-text { font-size: 15px; }
 
-/* 输入/输出分家：用户输入保留 Session 同一张落款（冷钴微渐变 + hairline 边
-   + 收紧右下角）；伙伴与 Sol 的输出保持文档级独立区域。 */
+/* 输入/输出分家：用户输入保留 Session 同一张落款（平底色 + hairline 边
+   + 收紧右下角，对齐 zip 稿）；伙伴与 Sol 的输出保持文档级独立区域。 */
 .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-user-bubble {
-  border-color: color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
-  border-radius: 18px 18px 6px 18px;
-  padding: 8px 15px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
+  border-color: var(--paw-chat-border);
+  border-radius: 16px 16px 5px 16px;
+  padding: 8px 14px;
+  background: var(--paw-chat-user-bubble);
+  box-shadow: none;
 }
 
 .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-live-hint { color: var(--paw-chat-accent); }
@@ -986,7 +986,6 @@
   .paw-desktop-root .paw-room-workspace__focus svg { width: 14px; height: 14px; }
   .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-timeline .ccui-transcript-scroll { padding: 12px 0 18px; }
   .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-user-bubble { max-width: 88%; }
-  .paw-desktop-root .paw-room-workspace--migrated-v1 .ccui-assistant-body { font-size: 15px; line-height: 23px; }
   .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer { padding: 5px 7px 7px; }
   /* 窄窗与 Session 同一档收窄（agent-migrated 在 680px 下取 54px）。 */
   .paw-desktop-root .paw-room-workspace--migrated-v1 .paw-room-workspace__composer .room-composer textarea { min-height: 54px; }

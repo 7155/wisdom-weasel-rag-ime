@@ -304,6 +304,44 @@ export function splitSettledMarkdown(text: string): readonly MarkdownChunk[] {
     : scanned.chunks;
 }
 
+/**
+ * Settle the document without discarding the incremental scan.
+ *
+ * The previous settle path re-scanned the whole body from offset zero and
+ * minted brand-new chunk objects, so a long answer paid one more O(document)
+ * pass at the exact commit that also swaps in the rich renderer. Committed
+ * chunks are append-only facts; when the settled text still extends the last
+ * scanned text, they are carried over by identity and only the unscanned
+ * suffix is walked once more. Adapted from `paw-agent-chat-ui-kit`
+ * `src/core/markdown/scanner.ts` (`finalizeStreamingMarkdownDocument`).
+ * Any non-append replacement (retry, edit, rewrite) rebuilds from zero.
+ */
+export function settleScannedMarkdown(
+  previous: MarkdownScanState,
+  text: string,
+): readonly MarkdownChunk[] {
+  if (text.length === 0) return [];
+  if (
+    previous.previousText.length === 0 ||
+    !text.startsWith(previous.previousText)
+  ) {
+    return splitSettledMarkdown(text);
+  }
+
+  const { boundaries } = scanSuffix(text, previous.cursor);
+  const chunks: MarkdownChunk[] = [...previous.chunks];
+  let start = previous.committedEnd;
+  for (const boundary of boundaries) {
+    if (boundary <= start) continue;
+    const chunkText = trimTrailingWhitespace(text.slice(start, boundary));
+    if (chunkText.length > 0) chunks.push({ text: chunkText, offset: start });
+    start = boundary;
+  }
+  const remainder = text.slice(start);
+  if (remainder.length > 0) chunks.push({ text: remainder, offset: start });
+  return chunks;
+}
+
 export function resolveProgressiveChunks(
   text: string,
   isStreaming: boolean,
@@ -320,7 +358,7 @@ export function resolveProgressiveChunks(
 
   if (hasEverStreamed) {
     return {
-      completedChunks: splitSettledMarkdown(text),
+      completedChunks: settleScannedMarkdown(scanState, text),
       streamingChunk: "",
       streamingChunkOffset: text.length,
     };
