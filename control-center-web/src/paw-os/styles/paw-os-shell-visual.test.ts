@@ -143,7 +143,7 @@ describe('PAWOS shell visual language', () => {
     // label and the running pill invert exactly what the tile applied instead
     // of each re-deriving the product from the two raw inputs.
     const button = rule(pawOsCss, '.paw-dock button');
-    expect(button).toContain('--paw-dock-scale: calc((1 + var(--paw-dock-mag, 0) * .32) * var(--paw-dock-press, 1))');
+    expect(button).toContain('--paw-dock-scale: calc((1 + var(--paw-dock-mag, 0) * .18) * var(--paw-dock-press, 1))');
     expect(button).toContain('scale(var(--paw-dock-scale))');
     expect(pawOsCss.match(/--paw-dock-scale:/g), '--paw-dock-scale is resolved once').toHaveLength(1);
     // Running state is machine state, not decoration: it holds one shelf line
@@ -441,16 +441,24 @@ describe('PAWOS shell visual language', () => {
     expect(pawOsCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-room-window-flow,\s*\.paw-room-window-flow:has\(g\[data-live\]\)\s*\{[^}]*will-change: transform/s);
   });
 
-  it('signs the focused window with a static aurora hairline in its own App key', () => {
-    const aurora = rule(shellCss, ".paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar::after");
-    expect(aurora).toContain('linear-gradient(');
-    expect(aurora).toContain('var(--paw-app-accent');
-    expect(aurora).toContain('var(--paw-app-support');
-    expect(aurora).toContain('height: 1px');
-    expect(aurora).toContain('pointer-events: none');
-    // A signature, not a show: the hairline never animates or blurs.
-    expect(aurora).not.toContain('animation');
-    expect(aurora).not.toContain('backdrop-filter');
+  it('keeps shell chrome to quiet hairlines instead of gradient signatures', () => {
+    // The macOS-adjacent dialect: focus and orientation read through plain
+    // hairlines, neutral elevation and ink — never a painted gradient strip.
+    // Neither the menu bar nor any window titlebar may grow a gradient
+    // pseudo-element signature, and the wordmark is plain ink.
+    expect(shellCss).not.toMatch(/\.paw-menu-bar::after/);
+    expect(shellCss).not.toMatch(/\.paw-window-titlebar::after/);
+    const wordmark = rule(shellCss, '.paw-brand-wordmark');
+    expect(wordmark).not.toContain('gradient');
+    expect(wordmark).toContain('color: var(--paw-chrome-ink)');
+    // The focused window's shadow is neutral depth, never an accent glow.
+    const active = rule(shellCss, '.paw-desktop-root .paw-window-shell[data-active] .paw-window');
+    expect(active.match(/box-shadow:[^;]+/s)?.[0]).not.toContain('color-mix');
+    // Shell materials carry no violet wash: the retired aurora stops must
+    // not return to the backdrop, the Launchpad veil, or the wordmark.
+    for (const violet of ['rgb(214 205 255', 'rgb(178 156 255', 'rgb(112 72 232', '#6d3fd4']) {
+      expect(shellCss, `${violet} stays retired`).not.toContain(violet);
+    }
   });
 
   it('lets Launchpad group headers lead their tiles in the same cascade', () => {
@@ -500,10 +508,9 @@ describe('PAWOS shell visual language', () => {
     expect(visualRadius, '--paw-radius in paw-os-shell-migrated-v1.css').toBe(structureRadius);
     // No shell owner may give one named App's titlebar its own height or give
     // one named App's window its own corner radius: identity speaks through
-    // ink, icon and the documented Terminal ink/aurora hairline only. The
-    // generic `[data-app]` presence selector (shared by every App, e.g. the
-    // active-window aurora hairline `::after`) is deliberately excluded here
-    // — only a selector naming one specific App value is a fork.
+    // ink, icon and the documented Terminal re-pairing only. The generic
+    // `[data-app]` presence selector (shared by every App) is deliberately
+    // excluded here — only a selector naming one specific App value is a fork.
     for (const [name, css] of Object.entries({
       'paw-os.css': pawOsCss,
       'paw-os-shell-migrated-v1.css': shellCss,

@@ -878,18 +878,19 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
    pointer energy) and --paw-dock-shift (neighbour push plus the magnet gather
    toward the pointer, in px) per shelf child; everything below is
    transform-only, so the shelf answers the pointer at frame rate without
-   reflow. The .32 scale factor is DOCK_MAGNIFY_GROW — geometry and paint use
+   reflow. The .18 scale factor is DOCK_MAGNIFY_GROW — geometry and paint use
    the same number, so the computed push always clears the real grown width.
-   At rest both properties resolve to 0 and the button is exactly its layout
-   box. */
+   The growth is deliberately restrained: the shelf is a tool shelf that
+   acknowledges the pointer, not a carnival of swelling icons. At rest both
+   properties resolve to 0 and the button is exactly its layout box. */
 .paw-dock button {
   position: relative; width: 44px; height: 44px; display: grid; place-items: center;
   border-radius: 12px; color: var(--paw-ink); cursor: pointer;
   /* One resolved scale for the whole tile, so the label and the running
      indicator can invert exactly what the button applied instead of each
      re-deriving the same product from the two raw inputs. */
-  --paw-dock-scale: calc((1 + var(--paw-dock-mag, 0) * .32) * var(--paw-dock-press, 1));
-  transform: translate3d(calc(var(--paw-dock-shift, 0) * 1px), calc(var(--paw-dock-mag, 0) * -12px), 0)
+  --paw-dock-scale: calc((1 + var(--paw-dock-mag, 0) * .18) * var(--paw-dock-press, 1));
+  transform: translate3d(calc(var(--paw-dock-shift, 0) * 1px), calc(var(--paw-dock-mag, 0) * -6px), 0)
     scale(var(--paw-dock-scale));
   transform-origin: 50% 92%;
   transition: transform 280ms var(--paw-ease-out), background-color 120ms ease, box-shadow 120ms ease;
@@ -912,11 +913,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
    decoration, while a fixed one reads as machine state. The 7px constant is
    the resting distance from the button's transform origin (92% of 44px =
    40.5px) to the pill's own centre (bottom -5px, height 3px => 47.5px); the
-   division undoes the parent scale that would otherwise multiply this travel. */
+   division undoes the parent scale that would otherwise multiply this travel.
+   The 6px term is the tile's magnification lift, so the inversion cancels
+   exactly the travel the button applied. */
 .paw-dock button[data-open]::after {
   position: absolute; bottom: -5px; left: 50%; width: 14px; height: 3px;
   border-radius: 999px;
-  translate: -50% calc((7px + var(--paw-dock-mag, 0) * 12px) / var(--paw-dock-scale, 1) - 7px);
+  translate: -50% calc((7px + var(--paw-dock-mag, 0) * 6px) / var(--paw-dock-scale, 1) - 7px);
   scale: calc(1 / var(--paw-dock-scale, 1));
   background: var(--paw-identity-dot, var(--paw-accent)); content: '';
 }

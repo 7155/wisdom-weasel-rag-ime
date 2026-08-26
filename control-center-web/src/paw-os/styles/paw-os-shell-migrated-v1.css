@@ -1,7 +1,9 @@
 /*
- * THESIS: PAWOS is one machined bright desktop. A cold glacial field carries
- * thin translucent chrome; work happens on opaque white windows; the only
- * saturation on screen is App identity and one cobalt focus.
+ * THESIS: PAWOS is one machined bright desktop in a macOS-adjacent dialect:
+ * quiet translucent chrome over a cold glacial field; work happens on opaque
+ * white windows; the only saturation on screen is App identity and one cobalt
+ * focus. Decoration is out: no gradient signatures in chrome, no coloured
+ * glows — hierarchy reads through hairlines, neutral elevation and ink.
  * OWN-WORLD: cool white mist, graphite ink, hairline edges, soft offset depth.
  * OWNERSHIP: this file is the shell's visual owner (colour, material, blur,
  * shadow). Structure, geometry and state semantics live in paw-os.css; timing
@@ -73,13 +75,15 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* The backdrop is one cool grey-blue field with restrained atmospheric
+   washes — no violet, no triad, nothing that reads as a brand gradient. */
 .paw-desktop-root[data-paw-theme],
 .paw-desktop-root[data-paw-theme] .paw-desktop {
   background-color: #eef1f6;
   background-image:
-    radial-gradient(72rem 46rem at -8% -12%, rgb(177 207 255 / .46), transparent 62%),
-    radial-gradient(62rem 42rem at 106% 8%, rgb(214 205 255 / .36), transparent 60%),
-    radial-gradient(56rem 36rem at 54% 112%, rgb(190 234 225 / .3), transparent 64%),
+    radial-gradient(72rem 46rem at -8% -12%, rgb(177 207 255 / .4), transparent 62%),
+    radial-gradient(62rem 42rem at 106% 8%, rgb(186 212 240 / .32), transparent 60%),
+    radial-gradient(56rem 36rem at 54% 112%, rgb(196 226 232 / .26), transparent 64%),
     linear-gradient(145deg, #f8fafd 0%, #e9edf4 58%, #eef2f7 100%);
 }
 
@@ -112,25 +116,6 @@
   background: #fbfcfe;
 }
 
-/* Signature light: one static aurora hairline along the bottom edge of the
-   bar — cobalt into violet into teal, the same triad the wallpaper carries.
-   A single composited gradient; it never animates. */
-.paw-desktop-root .paw-menu-bar::after {
-  position: absolute;
-  inset: auto 0 -1px;
-  height: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgb(47 107 255 / .5) 16%,
-    rgb(112 72 232 / .4) 46%,
-    rgb(15 139 128 / .4) 74%,
-    transparent
-  );
-  content: '';
-}
-
 .paw-desktop-root .paw-system-mark {
   min-width: 40px;
   border: 0;
@@ -140,15 +125,12 @@
   box-shadow: none;
 }
 
-/* The wordmark carries the aurora triad as ink. Every stop stays dark enough
-   for AA on the bright veil, so the brand reads before it shimmers. */
+/* The wordmark is plain graphite ink: the brand reads through the mark and
+   the set of the letters, never through a gradient shimmer. */
 .paw-brand-wordmark {
-  background: linear-gradient(105deg, #1e57e7, #6d3fd4 52%, #0c7568);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--paw-chrome-ink);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: .06em;
   line-height: 1;
 }
@@ -457,14 +439,15 @@
 /* The keyed nouns step up to the deepest proven ink rather than taking a
    second accent: the composition keeps exactly one cobalt word. */
 .paw-desktop-root .paw-field-lede__copy b { color: #171a21; }
+/* One filled action, one quiet neutral elevation — never a cobalt glow. */
 .paw-desktop-root .paw-field-lede__start {
   color: #fff;
   background: #1e50d8;
-  box-shadow: 0 10px 26px -14px rgb(30 80 216 / .8);
+  box-shadow: 0 8px 20px -14px rgb(23 32 52 / .55);
 }
 .paw-desktop-root .paw-field-lede__start:hover {
   background: #1746c2;
-  box-shadow: 0 14px 30px -14px rgb(30 80 216 / .85);
+  box-shadow: 0 10px 24px -14px rgb(23 32 52 / .6);
 }
 
 /* ------------------------------------------------------- Wayfinder list
@@ -670,13 +653,10 @@
  * opaque or near-white ground. There is no second glass layer. */
 .paw-desktop-root .paw-launchpad {
   padding: clamp(16px, 3.4vh, 34px) 24px;
+  /* One neutral translucent veil. The blurred wallpaper underneath supplies
+     all the colour this surface needs; the pinned veil alpha owns contrast
+     for every ink. */
   background: rgb(240 243 248 / .86);
-  /* The aurora triad drifts into the veil as three static low-alpha washes;
-     the pinned veil colour above still owns contrast for every ink. */
-  background-image:
-    radial-gradient(58rem 34rem at 14% -8%, rgb(129 170 255 / .3), transparent 62%),
-    radial-gradient(52rem 32rem at 88% -2%, rgb(178 156 255 / .24), transparent 58%),
-    radial-gradient(64rem 40rem at 50% 116%, rgb(126 214 199 / .26), transparent 64%);
   -webkit-backdrop-filter: blur(26px) saturate(135%);
   backdrop-filter: blur(26px) saturate(135%);
   animation: paw-shell-launchpad-backdrop 180ms ease-out both;
@@ -770,9 +750,11 @@
 .paw-desktop-root .paw-launchpad section > div > button:focus-visible {
   border-color: var(--paw-chrome-hairline);
   background: var(--paw-identity-wash-strong);
+  /* Identity ring plus one neutral ambient shadow: elevation is depth, never
+     a coloured glow in the App's own hue. */
   box-shadow:
     var(--paw-identity-ring),
-    0 12px 28px -18px color-mix(in srgb, var(--app-color, #2f6bff) 30%, rgb(31 43 66 / .4));
+    0 12px 28px -18px rgb(31 43 66 / .45);
   transform: translateY(-2px);
 }
 /* The launcher presses exactly like the shelf, on the same short clock. */
@@ -854,18 +836,18 @@
   border-color: rgb(23 26 33 / .12);
   box-shadow: var(--paw-shadow-rest);
 }
-/* The lifted window rises on two shadows and one accent-leaning edge: a key
-   shadow tinted toward the App identity, and a short contact shadow that keeps
-   the frame attached to the desktop instead of floating. There is deliberately
-   no halo ring — a coloured glow around the frame reads as a web card in a
-   selected state, while pure elevation reads as the window in front. During
-   live drag/resize the color-mix stack collapses to the resting shadow so the
-   compositor keeps a cheap layer under the transform. */
+/* The lifted window rises on neutral depth alone: one graphite key shadow and
+   a short contact shadow that keeps the frame attached to the desktop, over
+   the inset top light. There is deliberately no halo ring and no accent tint
+   in the shadow — a coloured glow around the frame reads as a web card in a
+   selected state, while pure elevation reads as the window in front. The edge
+   leans only faintly toward the App accent; lit traffic lights and the
+   titlebar hairline carry the rest of the focus answer. */
 .paw-desktop-root .paw-window-shell[data-active] .paw-window {
-  border-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 38%, rgb(23 26 33 / .16));
+  border-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 24%, rgb(23 26 33 / .16));
   box-shadow:
     0 1px 0 rgb(255 255 255 / .75) inset,
-    0 32px 76px -24px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 24%, rgb(23 32 52 / .38)),
+    0 32px 76px -24px rgb(23 32 52 / .42),
     0 6px 16px -6px rgb(23 26 33 / .14);
 }
 .paw-desktop-root[data-window-interaction] .paw-window-shell[data-active] .paw-window,
@@ -880,29 +862,11 @@
   border-bottom-color: var(--paw-app-line, rgb(23 26 33 / .1));
   background: var(--paw-app-nav, #fff);
 }
-/* The active window signs itself: its titlebar hairline leans into the App
-   accent, which is enough identity without a painted strip. */
+/* The active window signs itself with one quiet hairline: the titlebar edge
+   leans into the App accent, which is enough identity without a painted strip
+   or a gradient signature. */
 .paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar {
   border-bottom-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 34%, rgb(23 26 33 / .08));
-}
-/* Aurora signature, continued from the menu bar into window chrome: the
-   focused window's titlebar edge carries the same hairline language, but
-   transposed into the App's own key — accent flowing into support. One
-   static composited gradient over the border row; it never animates, never
-   blurs, and resting windows keep the plain hairline. */
-.paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar::after {
-  position: absolute;
-  inset: auto 0 0;
-  height: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--paw-app-accent, #2f6bff) 62%, transparent) 16%,
-    color-mix(in srgb, var(--paw-app-support, #7048e8) 52%, transparent) 56%,
-    transparent 92%
-  );
-  content: '';
 }
 .paw-desktop-root .paw-window-title { gap: 8px; color: #171a21; font-size: 13px; line-height: 1.4; font-weight: 650; }
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-title { color: var(--paw-app-accent-strong, #171a21); }
