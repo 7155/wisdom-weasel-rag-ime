@@ -81,8 +81,8 @@ describe('PAWOS App identity icons', () => {
     expect(small).toHaveAttribute('focusable', 'false');
   });
 
-  it('preserves each independent silhouette and mark at every shipping size', () => {
-    const sizes = [16, 24, 32, 48];
+  it('preserves each independent silhouette at the shipping sizes including 14 and 34', () => {
+    const sizes = [14, 16, 24, 34, 48];
     const { container } = render(<>{pawApps.flatMap((app) => sizes.map((size) => (
       <PawAppIcon appId={app.id} key={`${app.id}-${size}`} size={size} />
     )))}</>);
@@ -108,15 +108,34 @@ describe('PAWOS App identity icons', () => {
     expect(agent?.querySelector('[class*="face"], [class*="avatar"]')).toBeNull();
   });
 
-  it('ships the monochrome paw-print system mark outside the App colour system', () => {
+  it('ships the monochrome glacial paw-print system mark outside the App colour system', () => {
     const { container, getByRole, rerender } = render(<PawBrandMark />);
     const mark = container.querySelector('svg.paw-brand-mark');
     expect(mark).toHaveAttribute('aria-hidden', 'true');
     expect(mark).toHaveAttribute('fill', 'currentColor');
+    expect(mark).toHaveAttribute('viewBox', '0 0 48 48');
+    // Three toe pads + one stamp heel — four filled shapes, no App colour API.
     expect(mark?.querySelectorAll('ellipse, path')).toHaveLength(4);
+    expect(mark?.querySelectorAll('ellipse')).toHaveLength(3);
     expect(mark?.hasAttribute('data-paw-app-icon')).toBe(false);
+    // Toe pads keep deliberate air gaps (not a soft animal blob at 14 px).
+    const toes = [...mark!.querySelectorAll('ellipse')].map((el) => Number(el.getAttribute('cx')));
+    expect(toes[1]! - toes[0]!).toBeGreaterThanOrEqual(12);
+    expect(toes[2]! - toes[1]!).toBeGreaterThanOrEqual(12);
     rerender(<PawBrandMark title="PAW" />);
     expect(getByRole('img', { name: 'PAW' })).toBeInTheDocument();
+  });
+
+  it('keeps Workbench as a plan ledger and Terminal as a filled prompt', () => {
+    const { container } = render(<><PawAppIcon appId="project-workbench" /><PawAppIcon appId="terminal" /></>);
+    const workbench = container.querySelector('[data-paw-icon-silhouette="project-workbench"]');
+    expect(workbench?.querySelector('path.paw-app-icon__primary')).toBeInTheDocument();
+    expect(workbench?.querySelector('path.paw-app-icon__secondary')).toBeInTheDocument();
+    expect(workbench?.querySelectorAll('rect.paw-app-icon__paper').length).toBeGreaterThanOrEqual(1);
+    const terminal = container.querySelector('[data-paw-icon-silhouette="terminal"]');
+    expect(terminal?.querySelector('path.paw-app-icon__primary')).toBeInTheDocument();
+    expect(terminal?.querySelector('path.paw-app-icon__stroke')).toBeNull();
+    expect(terminal?.querySelector('rect.paw-app-icon__secondary')).toBeInTheDocument();
   });
 
   it('stays decorative inside a disabled owner while preserving the App identity', () => {

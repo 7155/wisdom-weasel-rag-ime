@@ -116,6 +116,15 @@ describe('PAWOS shell visual language', () => {
     expect(contrast(hexToRgb('#171a21'), launchpadVeil)).toBeGreaterThanOrEqual(7);
   });
 
+  it('keeps the PAW wordmark on the glacial cobalt–teal triad', () => {
+    const wordmark = rule(shellCss, '.paw-brand-wordmark');
+    expect(wordmark).toContain('linear-gradient(105deg, #1e57e7, #0f7a9a 52%, #0c7568)');
+    // Purple mid-stops fight the cold Wayfinder aurora and were retired.
+    expect(wordmark).not.toMatch(/#6d3fd4|#7a5af8|#5e5ce6/i);
+    expect(appIconCss).toContain('.paw-brand-mark');
+    expect(appIconCss).not.toMatch(/\.paw-brand-mark[^{]*\{[^}]*fill:\s*#/);
+  });
+
   it('gives the Dock a shaped running language and an opaque hover label', () => {
     // Long pill = visible window, short pill = minimized; shape, not colour alone.
     const open = rule(pawOsCss, '.paw-dock button[data-open]::after');
