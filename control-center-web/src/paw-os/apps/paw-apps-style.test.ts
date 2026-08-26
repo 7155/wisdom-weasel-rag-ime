@@ -17,7 +17,6 @@ import appCss from './paw-apps.css?raw';
 import pawOsAppSource from '../PawOsApp.tsx?raw';
 import primitiveCss from '../../components/primitives/primitives.css?raw';
 import workspaceCss from '../../design/workspace.css?raw';
-import agentCompositionCss from '../styles/paw-os-agent-composition.css?raw';
 import agentFxCss from '../styles/paw-os-agent-fx.css?raw';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import agentNextCss from '../styles/paw-os-agent-next.css?raw';
@@ -30,6 +29,32 @@ import systemMigratedCss from '../styles/paw-os-sys-apps-migrated-v1.css?raw';
 import toolsMigratedCss from '../styles/paw-os-tools-files-migrated-v1.css?raw';
 import webmodelCss from '../styles/paw-os-webmodel-v1.css?raw';
 import workbenchMigratedCss from '../styles/paw-os-workbench-migrated-v1.css?raw';
+
+/** Every stylesheet the PAWOS style directory still ships, by file name. */
+const pawOsStyleFiles = new Set(
+  Object.keys(import.meta.glob('../styles/*.css')).map((filePath) => filePath.split('/').pop()!),
+);
+
+/** Border, fill, shadow and backdrop — the composer chrome one owner declares. */
+const COMPOSER_CHROME_DECLARATION =
+  /(?:^|[;\s])-?(?:webkit-)?(?:border(?:-[a-z]+)*|box-shadow|background(?:-[a-z]+)?|backdrop-filter)\s*:/;
+
+/**
+ * Rules whose subject is a composer dock element itself, rather than something
+ * inside it. `.paw-x__composer .agent-composer:focus-within` counts;
+ * `.agent-composer textarea` and `.paw-unified-composer > textarea` do not,
+ * because their metrics legitimately live with the surface that lays them out.
+ */
+function composerElementRules(css: string): { selector: string; declarations: string }[] {
+  const composerSubject = /\.(?:agent|room|paw-unified)-composer(?:::?[a-z-]+(?:\([^)]*\))?|\[[^\]]*\])*$/;
+  const rules: { selector: string; declarations: string }[] = [];
+  for (const [, selectorList, declarations] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = (selectorList ?? '').split(',').map((one) => one.trim()).filter(Boolean);
+    if (!selectors.some((one) => composerSubject.test(one))) continue;
+    rules.push({ selector: selectors.join(', ').replace(/\s+/g, ' '), declarations: declarations ?? '' });
+  }
+  return rules;
+}
 
 type SemanticBlock = {
   css: string;
@@ -252,9 +277,6 @@ describe('PAWOS semantic type roles', () => {
 
   it('keeps generic paper polish retired and removes retired native owners', () => {
     expect(pawOsAppSource).not.toContain('./styles/paw-os-polish.css');
-    expect(agentCompositionCss).not.toContain('.paw-window-shell[data-app] .paw-native-app');
-    expect(agentCompositionCss).not.toContain('.paw-window-shell[data-app] .paw-native-nav');
-    expect(agentCompositionCss).not.toContain(".paw-window-shell[data-app='files'] .paw-files-tree");
   });
 
   it('does not ship the retired generic Project and suite prototypes', () => {
@@ -485,7 +507,6 @@ describe('PAWOS semantic type roles', () => {
     expect(agentMigratedCss).toMatch(
       /\.paw-window-shell\[data-app='agent'\] \.paw-agent-rail\s*\{[^}]*background:\s*#f6f8fb;[^}]*backdrop-filter:\s*none;/s,
     );
-    expect(agentCompositionCss).not.toMatch(/\[data-app='agent'\] \.paw-agent-rail[^{]*\{[^}]*rgba\([^)]*,\s*\.5\)/s);
   });
 
   it('reads activity as rows in the document flow rather than a stack of plates', () => {
@@ -516,7 +537,6 @@ describe('PAWOS semantic type roles', () => {
       'paw-os-webmodel-v1.css': webmodelCss,
       'paw-os-agent-fx.css': agentFxCss,
       'paw-os-agent-next.css': agentNextCss,
-      'paw-os-agent-composition.css': agentCompositionCss,
     })) {
       for (const [, selector, block] of css.matchAll(
         /([^{}]*\.agent-activity--inline\[open\][^{}]*)\{([^{}]*)\}/g,
@@ -638,17 +658,84 @@ describe('PAWOS semantic type roles', () => {
     expect(webmodelCss).not.toContain(".agent-assistant-turn__body > header");
   });
 
-  it('keeps dead Agent status and Composition 8 selectors out of live owners', () => {
+  it('keeps dead Agent status selectors out of live owners', () => {
     expect(agentNextCss).not.toMatch(/\.agent-activity-row[^{}]*data-status/);
     expect(workspaceCss).toContain('.agent-activity-row [data-state]');
     expect(workspaceCss).not.toContain('.agent-tool-step [data-state]');
-
-    expect(agentCompositionCss).not.toMatch(/\.agent-assistant-pending \.paw-comp8-shape/);
-    expect(agentCompositionCss).not.toContain('@keyframes paw-comp8-shape-hop');
-    expect(agentCompositionCss).toContain('.agent-assistant-pending::after');
-    expect(agentCompositionCss).toContain('.paw-desktop-root .paw-os-satellite');
-    expect(agentCompositionCss).not.toContain(".paw-window-shell[data-app='agent'] .paw-agent-rail");
     expect(agentMigratedCss).toContain(".paw-window-shell[data-app='agent'] .paw-agent-rail");
+  });
+
+  it('has retired the Composition 8 Agent compatibility layer entirely', () => {
+    // The layer is gone from disk and from the desktop import list, so a
+    // re-added file cannot quietly repaint live Agent and satellite chrome
+    // again. Its `--comp8-*` recolour block leaves with it.
+    expect(pawOsStyleFiles.has('paw-os-agent-composition.css')).toBe(false);
+    expect(pawOsAppSource).not.toContain('paw-os-agent-composition.css');
+    for (const [owner, css] of Object.entries({
+      'paw-os-webmodel-v1.css': webmodelCss,
+      'paw-os-agent-migrated-v1.css': agentMigratedCss,
+      'paw-os-agent-next.css': agentNextCss,
+      'paw-os-agent-fx.css': agentFxCss,
+      'paw-os-room-migrated-v1.css': roomMigratedCss,
+      'paw-apps.css': appCss,
+    })) expect(css, `${owner} must not read a retired Composition 8 token`).not.toContain('--comp8-');
+
+    // The two signals that layer really did own moved to the satellite owner
+    // instead of disappearing: the partner-colour band on a satellite's first
+    // content row, and the shared graphite pair for the process terminal.
+    expect(roomMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-window-shell\[data-collaboration-role='satellite'\] \.paw-window-body > \*:first-child\s*\{[^}]*border-top:\s*3px solid var\(--paw-satellite-color,/s,
+    );
+    expect(roomMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-os-satellite--process\s*\{[^}]*background:\s*var\(--color-code-bg\);[^}]*color:\s*var\(--color-code-text\);/s,
+    );
+    // The participant reset still has to follow the band it undoes.
+    expect(roomMigratedCss.indexOf("[data-collaboration-role='satellite'] .paw-window-body > *:first-child"))
+      .toBeLessThan(roomMigratedCss.indexOf("[data-window-target='participant'] .paw-window-body > *:first-child"));
+  });
+
+  it('leaves Session and Room composer chrome to exactly one owner under the desktop root', () => {
+    // ComposerShell emits the same `agent-composer` class family for both
+    // surfaces, so one rule in the Agent migrated owner paints both docks.
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root :is\(\.paw-session-workspace__composer, \.paw-room-workspace__composer\) \.agent-composer\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*18px;[^}]*background:\s*#fff;[^}]*box-shadow:/s,
+    );
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root :is\(\.paw-session-workspace__composer, \.paw-room-workspace__composer\) \.agent-composer:focus-within\s*\{[^}]*box-shadow:/s,
+    );
+
+    // No second non-motion owner may re-declare the dock's border, radius,
+    // fill, shadow or focus ring — that is how the violet hard-offset and the
+    // stacked focus shadows came back the last three times.
+    for (const [owner, css] of Object.entries({
+      'paw-os-webmodel-v1.css': webmodelCss,
+      'paw-os-agent-next.css': agentNextCss,
+      'paw-os-agent-fx.css': agentFxCss,
+      'paw-apps.css': appCss,
+      'paw-os-motion.css': motionCss,
+      'paw-os.css': pawOsCss,
+    })) {
+      for (const rule of composerElementRules(css)) {
+        expect(rule.declarations, `${owner}: ${rule.selector} must leave composer chrome to paw-os-agent-migrated-v1.css`)
+          .not.toMatch(COMPOSER_CHROME_DECLARATION);
+      }
+    }
+
+    // The motion owner keeps the composer's transition contract, and the chrome
+    // owner does not overwrite it with a narrower one.
+    expect(motionCss).toMatch(
+      /\.paw-session-workspace__composer \.agent-composer,\s*\.paw-room-workspace__composer \.room-composer\s*\{\s*transition:/s,
+    );
+    expect(agentMigratedCss).not.toMatch(
+      /:is\(\.paw-session-workspace__composer, \.paw-room-workspace__composer\) \.agent-composer\s*\{[^}]*transition:/s,
+    );
+
+    // Reduced motion stills the running ring; it does not delete the signal
+    // (PF-CM-011), and no other owner may force it away.
+    expect(agentMigratedCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.agent-composer\[data-busy\]::before\s*\{\s*animation:\s*none;\s*opacity:\s*\.6;/s,
+    );
+    expect(appCss).not.toMatch(/\.agent-composer::(?:before|after)[^{}]*\{[^{}]*(?:display:\s*none|opacity:\s*0\s*!important)/s);
   });
 
   it('keeps the retired approval-block renderer out of the Agent rich owner', () => {

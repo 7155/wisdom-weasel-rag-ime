@@ -6,26 +6,9 @@
    they do not contribute App state, data, routes or duplicated components.
    ========================================================================== */
 
-.paw-desktop-root {
-  --comp8-paper: #f3f5f8;
-  --comp8-paper-hi: #ffffff;
-  --comp8-paper-bright: #ffffff;
-  --comp8-paper-soft: #e9edf3;
-  --comp8-paper-sink: #e3e7ed;
-  --comp8-ink: #171a21;
-  --comp8-ink-2: #4a5260;
-  --comp8-ink-3: #687180;
-  --comp8-ink-soft: rgb(23 26 33 / .64);
-  --comp8-ink-faint: rgb(23 26 33 / .38);
-  --comp8-rule: rgb(23 26 33 / .16);
-  --comp8-hairline: rgb(23 26 33 / .1);
-  --comp8-red: #f04438;
-  --comp8-yellow: #f5a623;
-  --comp8-cobalt: #2f6bff;
-  --comp8-violet: #7a5af8;
-  --comp8-teal: #0e9f8a;
-  --comp8-rose: #e85d9e;
-}
+/* The Composition 8 token block that used to sit here existed only to recolour
+   the retired Agent composition layer onto the cold desktop palette. That layer
+   is gone, and no owner reads a Composition 8 token any more. */
 
 /* Agent conversation -------------------------------------------------------
  * The Runtime already emits one truthful, interleaved turn sequence.  This
@@ -262,42 +245,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .paw-session-workspace__composer {
-  padding: 8px clamp(10px, 3vw, 30px) 14px;
-  border-top: 0;
-  background: linear-gradient(180deg, transparent, rgb(247 249 252 / .94) 18%, #f7f9fc 52%);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .paw-session-workspace__composer > .agent-composer-wrap {
-  width: min(850px, 100%);
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer {
-  border: 1px solid rgb(24 32 43 / .13);
-  border-radius: 16px;
-  background: rgb(255 255 255 / .96);
-  box-shadow: 0 14px 34px -18px rgb(29 45 72 / .3), 0 2px 7px rgb(29 45 72 / .055);
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer::before,
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer::after {
-  display: none;
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer:focus-within {
-  border-color: rgb(47 107 255 / .48);
-  box-shadow: 0 18px 42px -20px rgb(34 68 125 / .38), 0 0 0 3px rgb(47 107 255 / .08);
-}
-
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer textarea {
-  min-height: 62px;
-  color: var(--an-ink);
-  caret-color: var(--an-cobalt);
-  font-size: 15px;
-  line-height: 1.55;
-}
+/* No composer rules follow. `.paw-session-workspace__composer` is a sibling of
+   `.paw-session-workspace__conversation` in PawSessionWorkspace, so a composer
+   selector scoped under the conversation never matches the shipped DOM. Session
+   and Room composer chrome has exactly one owner:
+   paw-os-agent-migrated-v1.css. */
 
 /* The Agent trace is a separate inspection surface.  It follows the supplied
  * turn-grouped reference while continuing to consume real trace projections;

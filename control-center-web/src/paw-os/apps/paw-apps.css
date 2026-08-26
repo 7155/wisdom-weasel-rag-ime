@@ -249,11 +249,8 @@
    same measure, so the queue never reads as part of the transcript. */
 .paw-session-workspace__composer > :is(.ccui-queue-tray, .ccui-queue-panel, .ccui-queue-cap-notice) { width: min(900px, 100%); margin: 0 auto 6px; }
 /* UR-042：Session 与 Room 同一只 Composer——两个工作面的输入船坞共用
-   同一组规则，Room 不再持有第二套视觉系统。 */
-.paw-session-workspace__composer .agent-composer,
-.paw-room-workspace__composer .agent-composer { overflow: visible; border-color: color-mix(in srgb, var(--paw-accent) 18%, var(--paw-line)); border-radius: 15px; background: color-mix(in srgb, var(--paw-panel) 97%, transparent); box-shadow: 0 14px 38px rgb(15 23 42 / 11%), 0 2px 6px rgb(15 23 42 / 5%); }
-.paw-session-workspace__composer .agent-composer:focus-within,
-.paw-room-workspace__composer .agent-composer:focus-within { border-color: color-mix(in srgb, var(--paw-accent) 48%, var(--paw-line)); box-shadow: 0 18px 46px rgb(15 23 42 / 13%), 0 0 0 3px color-mix(in srgb, var(--paw-accent) 8%, transparent); }
+   同一组规则，Room 不再持有第二套视觉系统。船坞本体的边框/圆角/底色/投影
+   由 paw-os-agent-migrated-v1.css 单一负责；这里只留度量。 */
 .paw-session-workspace__composer .agent-composer textarea,
 .paw-room-workspace__composer .agent-composer textarea { min-height: 52px; padding: 12px 13px 38px; font-size: 12px; }
 .paw-session-workspace__composer .agent-composer__toolbar,
@@ -1362,29 +1359,10 @@
 }
 .paw-agent-rail-toggle,
 .paw-agent-rail-backdrop { display: none; }
-.paw-session-workspace__composer .agent-composer::before,
-.paw-session-workspace__composer .agent-composer::after,
-.paw-room-workspace__composer .agent-composer::before,
-.paw-room-workspace__composer .agent-composer::after {
-  display: none;
-}
-.paw-session-workspace[data-status='busy'] .paw-session-workspace__composer .agent-composer::before,
-.paw-session-workspace[data-status='busy'] .paw-session-workspace__composer .agent-composer::after {
-  display: none;
-}
+/* The composer's running glow ring is the owner's signal (PF-CM-011); it is not
+   re-hidden here, and its reduced-motion behaviour is decided once, in
+   paw-os-agent-migrated-v1.css. */
 
-.paw-unified-composer {
-  border-color: var(--paw-line);
-  border-radius: 12px;
-  background: var(--paw-panel);
-  box-shadow: 0 8px 24px rgb(9 43 73 / 8%);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-.paw-unified-composer:focus-within {
-  border-color: color-mix(in srgb, var(--paw-accent) 54%, var(--paw-line));
-  box-shadow: inset 0 0 0 1px var(--paw-accent-soft), 0 8px 24px rgb(9 43 73 / 10%);
-}
 .paw-unified-composer > textarea {
   min-height: 64px;
   padding: 12px 13px 41px;
@@ -1420,19 +1398,6 @@
   background: var(--paw-panel-strong);
 }
 .paw-session-workspace__composer > .agent-composer-wrap { width: min(760px, 100%); }
-.paw-session-workspace__composer .agent-composer,
-.paw-room-workspace__composer .agent-composer {
-  position: relative;
-  isolation: isolate;
-  border-color: var(--paw-line);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 5%);
-}
-.paw-session-workspace__composer .agent-composer:focus-within,
-.paw-room-workspace__composer .agent-composer:focus-within {
-  border-color: var(--paw-line);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 7%);
-}
 .paw-session-workspace__composer .agent-composer textarea,
 .paw-room-workspace__composer .agent-composer textarea { min-height: 64px; padding: 12px 13px 41px; }
 
@@ -1494,10 +1459,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-agent-rail { transition: none !important; }
-  .paw-session-workspace__composer .agent-composer::before,
-  .paw-session-workspace__composer .agent-composer::after,
-  .paw-room-workspace__composer .agent-composer::before,
-  .paw-room-workspace__composer .agent-composer::after { animation: none !important; opacity: 0 !important; }
 }
 
 /* Tutti rail behavior: the conversation list is an on-demand overlay at every

@@ -6,7 +6,6 @@ import type { PawDesktopStore } from './runtime/desktop-store';
 import { PawDesktop } from './shell/PawDesktop';
 import './styles/paw-os.css';
 import './styles/paw-os-motion.css';
-import './styles/paw-os-agent-composition.css';
 import './styles/paw-os-agent-next.css';
 import './styles/paw-os-webmodel-v1.css';
 import './styles/paw-os-shell-migrated-v1.css';

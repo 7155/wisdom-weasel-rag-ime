@@ -647,8 +647,17 @@
   width: min(742px, 100%);
 }
 
-/* 输入船坞：白卡 + 分层投影悬浮；聚焦时亮起冷钴描边与光环。 */
+/* 输入船坞：白卡 + 分层投影悬浮；聚焦时亮起冷钴描边与光环。
+ *
+ * UR-042：这条规则是 Session 与 Room 输入船坞 chrome 的唯一 owner。
+ * ComposerShell 给两个工作面发同一组 `agent-composer` 类，所以边框、圆角、
+ * 底色、投影、backdrop 与光环只在这里声明一次；paw-apps.css 只留度量，
+ * paw-os-motion.css 只留过渡，paw-os-webmodel-v1.css 不再声明 composer。 */
 .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer {
+  /* 光环画在 inset:-1px 的伪元素上，必须能溢出船坞边界，同时自成层叠上下文
+     以免盖住命令面板与提及菜单。 */
+  overflow: visible;
+  isolation: isolate;
   border: 0;
   border-radius: 18px;
   background: #fff;
@@ -656,7 +665,9 @@
     0 1px 2px rgb(24 32 43 / 5%),
     0 10px 32px rgb(24 32 43 / 8%),
     0 0 0 1px rgb(24 32 43 / 7%);
-  transition: box-shadow 160ms ease;
+  /* 不透明白卡下的 backdrop 只会重新采样一层纯色，却按窗代价合成。 */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer:focus-within {
