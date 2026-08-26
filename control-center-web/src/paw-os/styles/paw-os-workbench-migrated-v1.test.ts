@@ -121,5 +121,20 @@ describe('Project Workbench lays out as a window, not a document', () => {
     expect(baseCss).toMatch(/\.paw-wb-metrics\s*\{[^}]*flex-wrap:\s*wrap;/s);
     expect(baseCss).not.toMatch(/\.paw-wb-metrics\s*\{[^}]*overflow-x:\s*auto;/s);
     expect(baseCss).not.toMatch(/\.paw-wb-chrome__commands\s*\{[^}]*overflow-x:\s*auto;/s);
+
+    // Narrow CQ blocks used to re-introduce the hidden scroller; keep wrap.
+    for (const width of ['760px', '520px']) {
+      const marker = `@container paw-native-stage (max-width: ${width})`;
+      const start = workbenchCss.indexOf(marker);
+      expect(start, marker).toBeGreaterThanOrEqual(0);
+      const next = workbenchCss.indexOf('@container paw-native-stage', start + marker.length);
+      const block = workbenchCss.slice(start, next === -1 ? undefined : next);
+      expect(block).toMatch(
+        /\.paw-wb-planning-tools__date,\s*\.paw-workbench-migrated \.paw-wb-planning-tools__actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow:\s*visible;/s,
+      );
+      expect(block).not.toMatch(
+        /\.paw-wb-planning-tools__(?:date|actions)\s*\{[^}]*overflow-x:\s*auto;/s,
+      );
+    }
   });
 });

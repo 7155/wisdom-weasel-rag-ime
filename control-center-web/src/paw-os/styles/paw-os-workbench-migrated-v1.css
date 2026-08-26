@@ -1388,11 +1388,9 @@
   .paw-workbench-migrated .paw-wb-planning-tools__date,
   .paw-workbench-migrated .paw-wb-planning-tools__actions {
     width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
+    flex-wrap: wrap;
+    overflow: visible;
   }
-  .paw-workbench-migrated .paw-wb-planning-tools__date::-webkit-scrollbar,
-  .paw-workbench-migrated .paw-wb-planning-tools__actions::-webkit-scrollbar { display: none; }
   .paw-workbench-migrated .paw-wb-now,
   .paw-workbench-migrated .paw-wb-now[data-state='empty'] { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px; }
   .paw-workbench-migrated .paw-wb-now__lead { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'eyebrow' 'title' 'meta' 'actions'; }
@@ -1434,11 +1432,9 @@
   .paw-workbench-migrated .paw-wb-planning-tools__date,
   .paw-workbench-migrated .paw-wb-planning-tools__actions {
     width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
+    flex-wrap: wrap;
+    overflow: visible;
   }
-  .paw-workbench-migrated .paw-wb-planning-tools__date::-webkit-scrollbar,
-  .paw-workbench-migrated .paw-wb-planning-tools__actions::-webkit-scrollbar { display: none; }
   .paw-workbench-migrated .paw-wb-graph > header { min-height: 38px; gap: 8px; padding: 6px 12px; }
   .paw-workbench-migrated .paw-wb-graph .paw-wb-empty { min-height: 0; padding: 16px; }
   /* The lane name folds onto the pill's title; the ring and the truthful count
