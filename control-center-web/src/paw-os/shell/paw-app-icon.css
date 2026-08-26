@@ -102,10 +102,9 @@
    in time. */
 .paw-app-loading > .paw-app-icon { flex: 0 0 auto; }
 
-:is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:hover .paw-app-icon {
-  filter: drop-shadow(0 5px 8px rgb(15 23 42 / .24));
-  transform: translateY(-1px) scale(1.035);
-}
+/* Hover adds no second motion to an identity: the Dock's magnification and
+   each surface's own quiet wash are the whole answer. A tile that also lifts,
+   grows and blooms its shadow on hover reads as theatrics, not as a shelf. */
 :is(.paw-dock, .paw-desktop-shortcuts) button[data-open] .paw-app-icon__plate,
 :is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:is(
   :hover,

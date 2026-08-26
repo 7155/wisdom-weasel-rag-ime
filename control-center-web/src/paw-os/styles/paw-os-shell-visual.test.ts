@@ -246,12 +246,11 @@ describe('PAWOS shell visual language', () => {
     for (const token of ['--paw-identity-wash:', '--paw-identity-wash-strong:', '--paw-identity-ring:', '--paw-identity-dot:']) {
       expect(appIconCss.split(token), `${token} declared once in the identity system`).toHaveLength(2);
     }
-    const dockCurrent = rule(shellCss, ".paw-desktop-root .paw-dock button[aria-current='page']");
-    expect(dockCurrent).toContain('var(--paw-identity-wash-strong)');
-    expect(dockCurrent).toContain('var(--paw-identity-ring)');
-    // The button wash remains identity-tinted, so selection does not add a
-    // second white card around the SVG-owned plate.
-    expect(dockCurrent).not.toContain('#fff');
+    // The shelf holds no plate behind a tile: running state is the identity
+    // dot, and which App is frontmost is the menu bar's answer. Neither a
+    // hover wash nor a lit current-App card may return to the Dock.
+    expect(shellCss).not.toMatch(/\.paw-dock button\[aria-current='page'\]/);
+    expect(shellCss).not.toMatch(/\.paw-dock button:hover\s*\{/);
     const shortcutSelected = rule(pawOsCss, ".paw-desktop-shortcuts button[aria-selected='true']");
     expect(shortcutSelected).toContain('var(--paw-identity-wash-strong)');
     expect(shortcutSelected).toContain('var(--paw-identity-ring)');
@@ -264,6 +263,9 @@ describe('PAWOS shell visual language', () => {
     expect(appIconCss).toContain("button[data-open] .paw-app-icon__plate");
     expect(appIconCss).toContain('fill: var(--paw-icon-plate-fill-active)');
     expect(appIconCss).toContain('stroke: var(--paw-icon-plate-edge-active)');
+    // Identity marks keep still under the pointer: no second lift, grow or
+    // shadow bloom rides on top of the Dock magnification or a quiet wash.
+    expect(appIconCss).not.toMatch(/button:hover \.paw-app-icon\s*\{/);
   });
 
   it('grounds the whole Project Field column on one blur-free veil instead of a second plate', () => {
@@ -319,19 +321,24 @@ describe('PAWOS shell visual language', () => {
     expect(contrast(hexToRgb('#93a0ae'), hexToRgb('#161b22'))).toBeGreaterThanOrEqual(4.5);
   });
 
-  it('keeps window depth on two named tiers and signs the active window with its accent', () => {
+  it('keeps window depth on two named tiers and keeps the active titlebar hairline plain', () => {
     expect(shellCss).toContain('--paw-shadow-rest:');
     expect(rule(shellCss, ".paw-desktop-root .paw-window-shell:not([data-active]):not([data-overview]):not([data-collaboration-role]) .paw-window"))
       .toContain('box-shadow: var(--paw-shadow-rest)');
-    expect(shellCss).toMatch(/\.paw-window-shell\[data-active\]\[data-app\] \.paw-window-titlebar\s*\{[^}]*border-bottom-color:\s*color-mix\(in srgb, var\(--paw-app-accent/s);
+    // Focus is answered by lit lights and elevation. The hairline under an
+    // active titlebar is the same plain App hairline a resting window wears —
+    // no accent lean may return to window chrome.
+    expect(shellCss).not.toMatch(/\.paw-window-shell\[data-active\]\[data-app\] \.paw-window-titlebar\s*\{[^}]*border-bottom-color/s);
   });
 
-  it('raises the focused window on elevation alone, never on a coloured halo', () => {
+  it('raises the focused window on neutral elevation alone, never on colour', () => {
     // Which window has the keyboard is answered by depth and edge ink. A
-    // spread ring in the App accent reads as a web card in a selected state,
-    // so the active tier carries no zero-blur spread layer at all.
+    // spread ring or an accent-tinted frame reads as a web card in a selected
+    // state, so the active tier carries no halo layer and no colour at all.
     const active = rule(shellCss, '.paw-desktop-root .paw-window-shell[data-active] .paw-window');
     expect(active, 'no halo ring under the active frame').not.toMatch(/0 0 0 \d+px/);
+    expect(active, 'no accent tint in the active frame or its depth').not.toContain('color-mix');
+    expect(active, 'no accent variable reaches the active frame').not.toContain('--paw-app-accent');
     // Key shadow plus contact shadow, over the inset top light — the two
     // tiers must actually separate, so the resting key blur stays well below
     // the active one rather than merely dimming.
@@ -340,7 +347,7 @@ describe('PAWOS shell visual language', () => {
     const restKeyBlur = Number(shellToken('paw-shadow-rest').match(/0 \d+px (\d+)px/)?.[1]);
     expect(activeKeyBlur).toBeGreaterThan(restKeyBlur * 2);
     // A window you are holding is still the window in front: the gesture tier
-    // trades the per-frame color-mix for static layers, not for its depth.
+    // stays on static layers without giving up its depth.
     const drag = shellToken('paw-shadow-drag');
     expect(drag, 'the drag tier stays cheap for the compositor').not.toContain('color-mix');
     expect(Number(drag.match(/0 \d+px (\d+)px/)?.[1])).toBeGreaterThan(restKeyBlur * 2);
@@ -348,15 +355,17 @@ describe('PAWOS shell visual language', () => {
       .toContain('box-shadow: var(--paw-shadow-drag)');
   });
 
-  it('gives a hovered launcher tile one ring and one shadow instead of a stack', () => {
+  it('hovers a launcher tile with one quiet wash instead of a lifted card', () => {
     const hovered = rule(
       shellCss,
       '.paw-desktop-root .paw-launchpad section > div > button:hover,\n.paw-desktop-root .paw-launchpad section > div > button:focus-visible',
     );
-    expect(hovered).toContain('var(--paw-identity-ring)');
-    // The identity ring plus exactly one ambient shadow: a third layer under a
-    // hovered tile is what makes a grid read as a page of cards.
-    expect(hovered.match(/\d+px -\d+px/g), 'one ambient layer beside the ring').toHaveLength(1);
+    expect(hovered).toContain('background: var(--paw-identity-wash)');
+    // No edge, no shadow, no lift: the moment a hovered tile becomes a card,
+    // the archive reads as a page of products instead of a launcher.
+    expect(hovered).not.toContain('box-shadow');
+    expect(hovered).not.toContain('transform');
+    expect(hovered).not.toContain('border-color');
     // Pressing a launcher tile dips exactly as far as a shelf tile does.
     expect(rule(shellCss, '.paw-desktop-root .paw-launchpad section > div > button:active'))
       .toContain('scale(.97)');
@@ -441,24 +450,25 @@ describe('PAWOS shell visual language', () => {
     expect(pawOsCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-room-window-flow,\s*\.paw-room-window-flow:has\(g\[data-live\]\)\s*\{[^}]*will-change: transform/s);
   });
 
-  it('keeps shell chrome to quiet hairlines instead of gradient signatures', () => {
-    // The macOS-adjacent dialect: focus and orientation read through plain
-    // hairlines, neutral elevation and ink — never a painted gradient strip.
-    // Neither the menu bar nor any window titlebar may grow a gradient
-    // pseudo-element signature, and the wordmark is plain ink.
-    expect(shellCss).not.toMatch(/\.paw-menu-bar::after/);
-    expect(shellCss).not.toMatch(/\.paw-window-titlebar::after/);
-    const wordmark = rule(shellCss, '.paw-brand-wordmark');
-    expect(wordmark).not.toContain('gradient');
-    expect(wordmark).toContain('color: var(--paw-chrome-ink)');
-    // The focused window's shadow is neutral depth, never an accent glow.
-    const active = rule(shellCss, '.paw-desktop-root .paw-window-shell[data-active] .paw-window');
-    expect(active.match(/box-shadow:[^;]+/s)?.[0]).not.toContain('color-mix');
-    // Shell materials carry no violet wash: the retired aurora stops must
-    // not return to the backdrop, the Launchpad veil, or the wordmark.
+  it('keeps every chrome hairline plain — no gradient signature in system chrome', () => {
+    // The menu bar's edge and the window titlebar's edge are plain hairlines.
+    // A cobalt-into-violet gradient signature is brand theatrics in system
+    // chrome; the brand is a word in the bar, the App is an icon and a name.
+    expect(shellCss).not.toContain('.paw-menu-bar::after');
+    expect(shellCss).not.toContain('.paw-window-titlebar::after');
+    expect(shellCss, 'no gradient ink in the wordmark').not.toMatch(/\.paw-brand-wordmark\s*\{[^}]*gradient/s);
+    expect(rule(shellCss, '.paw-brand-wordmark')).toContain('color: var(--paw-chrome-ink)');
+    // The current App's menu-bar name stays graphite: colour in the bar
+    // belongs to the App identity plate alone, never to system text.
+    expect(shellCss).not.toMatch(/\.paw-menu-app\[data-app\]/);
+    // Desktop / Launchpad materials carry no violet wash — the retired aurora
+    // triad must not return half-done beside an otherwise calm chrome.
     for (const violet of ['rgb(214 205 255', 'rgb(178 156 255', 'rgb(112 72 232', '#6d3fd4']) {
       expect(shellCss, `${violet} stays retired`).not.toContain(violet);
     }
+    const active = rule(shellCss, '.paw-desktop-root .paw-window-shell[data-active] .paw-window');
+    expect(active.match(/box-shadow:[^;]+/s)?.[0]).not.toContain('color-mix');
+    expect(active).toContain('border-color: rgb(23 26 33');
   });
 
   it('lets Launchpad group headers lead their tiles in the same cascade', () => {
@@ -508,9 +518,10 @@ describe('PAWOS shell visual language', () => {
     expect(visualRadius, '--paw-radius in paw-os-shell-migrated-v1.css').toBe(structureRadius);
     // No shell owner may give one named App's titlebar its own height or give
     // one named App's window its own corner radius: identity speaks through
-    // ink, icon and the documented Terminal re-pairing only. The generic
-    // `[data-app]` presence selector (shared by every App) is deliberately
-    // excluded here — only a selector naming one specific App value is a fork.
+    // ink, icon and the documented Terminal ink/aurora hairline only. The
+    // generic `[data-app]` presence selector (shared by every App, e.g. the
+    // active-window aurora hairline `::after`) is deliberately excluded here
+    // — only a selector naming one specific App value is a fork.
     for (const [name, css] of Object.entries({
       'paw-os.css': pawOsCss,
       'paw-os-shell-migrated-v1.css': shellCss,
