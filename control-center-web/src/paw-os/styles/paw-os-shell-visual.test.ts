@@ -153,6 +153,17 @@ describe('PAWOS shell visual language', () => {
     // and no per-surface recolour of any identity.
     expect(appIconCss.match(/--paw-icon-paper:/g)).toHaveLength(1);
     expect(appIconCss).not.toMatch(/data-paw-app-icon='[a-z-]+'\]/);
+    // The SVG itself owns one opaque, identity-tinted plate. Both colour-mix
+    // inputs are opaque, and placement wrappers stay out of this recipe.
+    const icon = rule(appIconCss, '.paw-app-icon');
+    const plate = rule(appIconCss, '.paw-app-icon__plate');
+    expect(icon).toContain('--paw-icon-plate-fill: color-mix(');
+    expect(icon).toContain('#f7faff');
+    expect(icon).toContain('--paw-icon-plate-edge: color-mix(');
+    expect(plate).toContain('fill: var(--paw-icon-plate-fill)');
+    expect(plate).toContain('stroke: var(--paw-icon-plate-edge)');
+    expect(plate).toContain('vector-effect: non-scaling-stroke');
+    expect(plate).not.toContain('transparent');
   });
 
   it('speaks one selected and running language across Dock, desktop and launcher', () => {
@@ -164,7 +175,8 @@ describe('PAWOS shell visual language', () => {
     const dockCurrent = rule(shellCss, ".paw-desktop-root .paw-dock button[aria-current='page']");
     expect(dockCurrent).toContain('var(--paw-identity-wash-strong)');
     expect(dockCurrent).toContain('var(--paw-identity-ring)');
-    // Never again an opaque white plate behind the current App's bare icon.
+    // The button wash remains identity-tinted, so selection does not add a
+    // second white card around the SVG-owned plate.
     expect(dockCurrent).not.toContain('#fff');
     const shortcutSelected = rule(pawOsCss, ".paw-desktop-shortcuts button[aria-selected='true']");
     expect(shortcutSelected).toContain('var(--paw-identity-wash-strong)');
@@ -173,6 +185,11 @@ describe('PAWOS shell visual language', () => {
     // The running pill is the one notification dot, in the App's own colour.
     expect(rule(pawOsCss, '.paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
     expect(rule(shellCss, '.paw-desktop-root .paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
+    // Running and interactive Apps strengthen the plate itself as well as
+    // keeping the separate state shape for non-colour recognition.
+    expect(appIconCss).toContain("button[data-open] .paw-app-icon__plate");
+    expect(appIconCss).toContain('fill: var(--paw-icon-plate-fill-active)');
+    expect(appIconCss).toContain('stroke: var(--paw-icon-plate-edge-active)');
   });
 
   it('grounds the whole Project Field column on one blur-free veil instead of a second plate', () => {
