@@ -1,6 +1,8 @@
 import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
+import { dockAppIdsForForm, launchpadAppIdsForForm, useActiveLandingForm } from '@/features/paw-os/active-form';
+import { usePawOsPackageApps, type PawOsPackageApp } from '@/features/paw-os/package-apps';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import { dockMagnetics } from './dock-magnification';
@@ -61,6 +63,11 @@ export function PawDesktop() {
    * focus and live drag/resize keep their own suspension rules. */
   const documentHidden = useDocumentHidden();
   const ambientPaused = documentHidden || Boolean(activeWindowId) || launchpadOpen || overviewOpen;
+  const { form: activeLandingForm } = useActiveLandingForm();
+  const formDockAppIds = useMemo(
+    () => dockAppIdsForForm(activeLandingForm),
+    [activeLandingForm],
+  );
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
@@ -408,12 +415,20 @@ export function PawDesktop() {
       ><X size={14} />退出协作聚焦</button> : null}
       <PawDock
         activeAppId={activeAppId}
+        dockAppIds={formDockAppIds}
+        launchpadOpen={launchpadOpen}
         onLaunchpad={toggleLaunchpad}
         onOpen={openApp}
         onOverview={toggleOverview}
         overviewOpen={overviewOpen}
       />
-      {launchpadOpen ? <PawLaunchpad onClose={closeLaunchpad} onOpen={openApp} /> : null}
+      {launchpadOpen ? (
+        <PawLaunchpad
+          activeForm={activeLandingForm}
+          onClose={closeLaunchpad}
+          onOpen={openApp}
+        />
+      ) : null}
       {contextMenu ? (
         <PawContextMenu
           anchor={contextMenu.kind === 'menubar' ? menuAppRef : undefined}
@@ -443,12 +458,12 @@ function useDocumentHidden(): boolean {
 /* The half-minute clock tick lives in its own leaf so it re-renders one
  * <span>, never the whole desktop chrome. */
 function PawMenuClock() {
-  const [clock, setClock] = useState(() => timeLabel());
+  const [clock, setClock] = useState(() => ({ label: timeLabel(), date: dateLabel() }));
   useEffect(() => {
-    const timer = window.setInterval(() => setClock(timeLabel()), 30_000);
+    const timer = window.setInterval(() => setClock({ label: timeLabel(), date: dateLabel() }), 30_000);
     return () => window.clearInterval(timer);
   }, []);
-  return <span>{clock}</span>;
+  return <span title={clock.date}>{clock.label}</span>;
 }
 
 /* The Wayfinder is the desktop's heaviest resting subtree: the wallpaper, the
@@ -559,8 +574,10 @@ function usePawRunningApps(): { open: ReadonlySet<PawAppId>; visible: ReadonlySe
  * writes, so React only owns its resting content: which App is current, which
  * are running, whether the overview is open. Everything else on the desktop
  * re-renders without touching it. */
-const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }: {
+const PawDock = memo(function PawDock({ activeAppId, dockAppIds = pawDockAppIds, launchpadOpen, onLaunchpad, onOpen, onOverview, overviewOpen }: {
   activeAppId: PawAppId | null;
+  dockAppIds?: readonly PawAppId[];
+  launchpadOpen: boolean;
   onLaunchpad: () => void;
   onOpen: (id: PawAppId) => void;
   onOverview: () => void;
@@ -571,7 +588,7 @@ const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOver
   const dockState = usePawRunningApps();
   return (
     <nav aria-label="PAWOS 工具架" className="paw-dock" ref={dockRef}>
-      {pawDockAppIds.map((appId) => {
+      {dockAppIds.map((appId) => {
         const minimizedOnly = dockState.open.has(appId) && !dockState.visible.has(appId);
         return (
           <button
@@ -593,7 +610,7 @@ const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOver
       })}
       <i aria-hidden="true" />
       <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /><span aria-hidden="true" className="paw-dock-tip">窗口总览</span></button>
-      <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
+      <button aria-label="全部 App" aria-pressed={launchpadOpen} className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
     </nav>
   );
 });
@@ -676,16 +693,38 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
   }, [dockRef]);
 }
 
-function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: PawAppId) => void }) {
+function PawLaunchpad({
+  activeForm = null,
+  onClose,
+  onOpen,
+}: {
+  activeForm?: ReturnType<typeof useActiveLandingForm>['form'];
+  onClose: () => void;
+  onOpen: (id: PawAppId) => void;
+}) {
+  const api = usePawDesktopApi();
+  const packageApps = usePawOsPackageApps();
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
+  const visibleIds = useMemo(
+    () => new Set(launchpadAppIdsForForm(activeForm, pawApps.map((app) => app.id))),
+    [activeForm],
+  );
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return pawApps.filter((app) => {
+      if (!visibleIds.has(app.id)) return false;
       if (!needle) return true;
       return [app.label, app.shortLabel, app.tagline, app.id].some((part) => part.toLowerCase().includes(needle));
     });
-  }, [query]);
+  }, [query, visibleIds]);
+  const filteredPackages = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return packageApps.apps.filter((app) => {
+      if (!needle) return true;
+      return [app.label, app.tagline, app.packageId].some((part) => part.toLowerCase().includes(needle));
+    });
+  }, [packageApps.apps, query]);
   const groups = useMemo(() => {
     // A running index across groups drives the cascade arrival: each group
     // header takes its own beat and its tiles follow, so the archive opens as
@@ -698,9 +737,30 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
         : [];
     });
   }, [filtered]);
+  const packageGroupOrder = useMemo(() => {
+    const base = groups.reduce((total, group) => total + 1 + group.apps.length, 0);
+    return base;
+  }, [groups]);
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
+
+  const openPackage = useCallback((pkg: PawOsPackageApp) => {
+    api.getState().openApp('app-center', {
+      entityId: pkg.packageId,
+      title: pkg.label,
+      target: {
+        kind: 'package',
+        id: pkg.packageId,
+        title: pkg.label,
+        subtitle: pkg.tagline,
+        version: pkg.version,
+        resourceCount: pkg.resourceCount,
+      },
+    });
+    onClose();
+    pulsePawComposition('app', .72);
+  }, [api, onClose]);
   return (
     <div
       aria-label="全部 App"
@@ -734,34 +794,68 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
           <button onClick={onClose} type="button">完成</button>
         </header>
         <div>
-          {groups.length === 0 ? (
+          {groups.length === 0 && filteredPackages.length === 0 ? (
             <p className="paw-launchpad-empty">没有匹配的 App</p>
-          ) : groups.map((group) => (
-            <Fragment key={group.kind}>
-              <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': group.order } as CSSProperties}>{group.label}</h2>
-              {group.apps.map(({ app, order }) => (
-                <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} style={{ '--paw-tile-i': order } as CSSProperties} type="button">
-                  <span><PawAppIcon appId={app.id} size={48} /></span>
-                  <strong>{app.label}</strong>
-                  <small>{app.tagline}</small>
-                </button>
+          ) : (
+            <>
+              {groups.map((group) => (
+                <Fragment key={group.kind}>
+                  <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': group.order } as CSSProperties}>{group.label}</h2>
+                  {group.apps.map(({ app, order }) => (
+                    <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} style={{ '--paw-tile-i': order } as CSSProperties} type="button">
+                      <span><PawAppIcon appId={app.id} size={48} /></span>
+                      <strong>{app.label}</strong>
+                      <small>{app.tagline}</small>
+                    </button>
+                  ))}
+                </Fragment>
               ))}
-            </Fragment>
-          ))}
+              {filteredPackages.length ? (
+                <Fragment>
+                  <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': packageGroupOrder } as CSSProperties}>已安装 Package</h2>
+                  {filteredPackages.map((pkg, index) => (
+                    <button
+                      data-package={pkg.packageId}
+                      key={pkg.packageId}
+                      onClick={() => openPackage(pkg)}
+                      style={{ '--paw-tile-i': packageGroupOrder + 1 + index } as CSSProperties}
+                      type="button"
+                    >
+                      <span><PawAppIcon appId="app-center" size={48} /></span>
+                      <strong>{pkg.label}</strong>
+                      <small>{pkg.tagline}</small>
+                    </button>
+                  ))}
+                </Fragment>
+              ) : null}
+            </>
+          )}
         </div>
       </section>
     </div>
   );
 }
 
+/* A system strip answers "when" in as few glyphs as it can: weekday and time
+ * read at a glance, and the full date stays one hover away instead of taking
+ * permanent width in 34px of chrome. The zh-CN numeric pattern also ran the
+ * date straight into the weekday ("8/26周三"), which is not how the date is
+ * written. */
 function timeLabel(): string {
+  const now = new Date();
+  // Composed rather than formatted in one pass: the zh-CN pattern joins a
+  // short weekday straight onto the clock ("周三01:45") with no separator.
+  const weekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(now);
+  const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+  return `${weekday} ${time}`;
+}
+
+function dateLabel(): string {
   return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric',
+    year: 'numeric',
+    month: 'long',
     day: 'numeric',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
+    weekday: 'long',
   }).format(new Date());
 }
 

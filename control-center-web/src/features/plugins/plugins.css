@@ -1117,3 +1117,73 @@ main[data-route-id='plugins'][data-paw-os-app] .mgmt-metrics {
   main[data-route-id='plugins'][data-paw-os-app] .plugins-native-card { animation: none; }
   main[data-route-id='plugins'][data-paw-os-app] :is(.installed-plugin, .plugin-proposal) { transition: none; }
 }
+
+/* Landing Forms — App Center 「形态」 */
+.landing-forms {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.landing-forms__hint,
+.landing-forms__meta {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.landing-forms__notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.landing-forms__catalog {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-forms__card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border-soft, rgb(0 0 0 / 8%));
+  border-radius: 12px;
+  background: var(--color-surface, #fff);
+}
+
+.landing-forms__card > header,
+.landing-forms__card > footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.landing-forms__card > header strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.landing-forms__card > p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.landing-forms__card > footer > span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.landing-forms__card > footer {
+  justify-content: flex-end;
+}

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import agentFeatureCss from '../../features/agent/agent.css?raw';
 import sessionSubagentCss from '../../features/agent/delegation/session-subagent.css?raw';
+import subagentLaunchCss from '../../features/agent/delegation/subagent-launch.css?raw';
+import evidenceEchoCss from '../../features/evidence-echo/evidence-echo.css?raw';
 import configurationCss from '../../features/configuration/configuration.css?raw';
 import contextDebugCss from '../../features/context-debug/context-debug.css?raw';
+import projectFieldCss from '../../features/project-field/project-field.css?raw';
 import diagnosticsCss from '../../features/diagnostics/diagnostics.css?raw';
 import filesCss from '../../features/files/paw-os-files-app.css?raw';
 import filesSource from '../../features/files/PawOsFilesApp.tsx?raw';
@@ -11,6 +14,7 @@ import memoryCss from '../../features/memory/memory.css?raw';
 import knowledgeCss from '../../features/knowledge/knowledge.css?raw';
 import observabilityCss from '../../features/observability/observability.css?raw';
 import pluginsCss from '../../features/plugins/plugins.css?raw';
+import roomsCss from '../../features/rooms/rooms.css?raw';
 import satelliteCss from '../../features/paw-os/paw-os-satellite.css?raw';
 import terminalCss from '../../features/terminal/paw-os-terminal-app.css?raw';
 import appCss from './paw-apps.css?raw';
@@ -22,6 +26,7 @@ import agentFxCss from '../styles/paw-os-agent-fx.css?raw';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import agentNextCss from '../styles/paw-os-agent-next.css?raw';
 import pawOsCss from '../styles/paw-os.css?raw';
+import starfieldCss from '../styles/paw-os-starfield.css?raw';
 import motionCss from '../styles/paw-os-motion.css?raw';
 import roomFocusCss from '../styles/paw-os-room-focus.css?raw';
 import roomMigratedCss from '../styles/paw-os-room-migrated-v1.css?raw';
@@ -225,7 +230,7 @@ describe('PAWOS semantic type roles', () => {
     expect(primitiveCss).toMatch(/\.ui-toast__viewport\s*\{[^}]*z-index:\s*1120;/s);
   });
 
-  it('stacks Project planning controls and keeps the primary action icon-only at narrow widths', () => {
+  it('stacks Project planning controls and keeps deck command labels readable at narrow widths', () => {
     const compactDetailCss = workbenchMigratedCss.slice(
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 1050px)'),
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 760px)'),
@@ -238,14 +243,23 @@ describe('PAWOS semantic type roles', () => {
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'),
     );
     expect(mediumProjectCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
-    expect(mediumProjectCss).toMatch(/\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(mediumProjectCss).toMatch(
+      /\.paw-wb-planning-tools__date,\s*\.paw-workbench-migrated \.paw-wb-planning-tools__actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow:\s*visible;/s,
+    );
+    expect(mediumProjectCss).not.toMatch(/\.paw-wb-planning-tools__(?:date|actions)\s*\{[^}]*overflow-x:\s*auto;/s);
     expect(mediumProjectCss).toMatch(/\.paw-wb-documents\[data-reader-open='true'\] \.paw-wb-document-index\s*\{\s*display:\s*none;/s);
     expect(appCss).toMatch(/\.paw-native-stage\s*\{[^}]*container-name:\s*paw-native-stage;[^}]*container-type:\s*inline-size;/s);
     const narrowProjectCss = workbenchMigratedCss.slice(workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'));
-    expect(narrowProjectCss).toMatch(/\.paw-wb-primary > span\s*\{\s*display:\s*none;/s);
+    // Labels stay — chrome wraps instead of collapsing mid-width into icon-only chips
+    // that read as clipped buttons.
+    expect(narrowProjectCss).not.toMatch(/\.paw-wb-primary > span\s*\{\s*display:\s*none;/s);
+    expect(narrowProjectCss).not.toMatch(/\.paw-wb-chrome__commands button > span\s*\{\s*display:\s*none;/s);
     expect(narrowProjectCss).not.toContain('.paw-wb-primary { font-size: 0; }');
     expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
-    expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools__date,[\s\S]*?\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(narrowProjectCss).toMatch(
+      /\.paw-wb-planning-tools__date,\s*\.paw-workbench-migrated \.paw-wb-planning-tools__actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow:\s*visible;/s,
+    );
+    expect(narrowProjectCss).not.toMatch(/\.paw-wb-planning-tools__(?:date|actions)\s*\{[^}]*overflow-x:\s*auto;/s);
     expect(narrowProjectCss).toMatch(/\.paw-wb-documents\[data-reader-open='true'\] \.paw-wb-document-index\s*\{\s*display:\s*none;/s);
     expect(narrowProjectCss).toMatch(/\.paw-wb-schedules-dialog \.planning-wake-form,\s*\.paw-wb-schedules-dialog \.planning-wake-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
   });
@@ -467,9 +481,36 @@ describe('PAWOS semantic type roles', () => {
     ['memory', memoryCss],
     ['memory-activity', activityTimelineCss],
     ['knowledge', knowledgeCss],
+    // The 12px readable floor also holds on the shell's live surfaces and the
+    // App owners whose base rules ship without a migrated override: Wayfinder
+    // work panel, starfield labels, Room/result-window base blocks, satellite
+    // hosts, the Agent delegation form, and the small per-App owners below.
+    ['shell', pawOsCss],
+    ['starfield', starfieldCss],
+    ['apps', appCss],
+    ['satellite', satelliteCss],
+    ['subagent-launch', subagentLaunchCss],
+    ['agent-next', agentNextCss],
+    ['webmodel', webmodelCss],
+    ['terminal-app', terminalCss],
+    ['files-app', filesCss],
+    ['evidence-echo', evidenceEchoCss],
+    ['configuration', configurationCss],
+    ['rooms', roomsCss],
+    ['context-debug', contextDebugCss],
+    ['project-field', projectFieldCss],
   ])('%s final owner declares readable roles at the owning selectors', (_surface, css) => {
-    expect(css).not.toMatch(/font-size:\s*(?:9\.5|10|10\.5|11|11\.5)px/);
+    expect(css).not.toMatch(/font-size:\s*(?:9|9\.5|10|10\.5|11|11\.5)px/);
     expect(css).not.toContain('UR-087 readable typography floor');
+  });
+
+  it('wraps Monitor category filters instead of hiding them behind a scroller', () => {
+    expect(observabilityCss).toMatch(
+      /\.observation-category-tabs\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow:\s*visible;/s,
+    );
+    expect(observabilityCss).not.toMatch(
+      /\[data-paw-os-app\][^{]*\.observation-category-tabs\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;/s,
+    );
   });
 
   it('keeps final Agent controls at 13px and metadata at 12px or larger', () => {
@@ -682,11 +723,11 @@ describe('PAWOS semantic type roles', () => {
   it('keeps the imported Room owner at a 12px metadata floor and 14–16px reading/control roles', () => {
     expect(roomMigratedCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
     expect(roomFocusCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
-    // The Room reading size matches the Session assistant text (16px/24px),
-    // one conversation type scale across both streams. The Room now reaches it
-    // by theming the shared conversation surface rather than by owning a
-    // second set of message rules.
-    expect(roomMigratedCss).toMatch(/\.ccui-assistant-body\s*\{[^}]*font-size:\s*16px;[^}]*line-height:\s*24px;/s);
+    // The Room reading size matches the Session assistant text (15px/22px —
+    // the denser zip-demo reading surface), one conversation type scale across
+    // both streams. The Room reaches it by theming the shared conversation
+    // surface rather than by owning a second set of message rules.
+    expect(roomMigratedCss).toMatch(/\.ccui-assistant-body\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*22px;/s);
     expect(roomMigratedCss).toMatch(/\.paw-room-workspace--migrated-v1 \.ccui-conversation-surface\s*\{[^}]*--ccui-text:\s*var\(--paw-chat-text\);/s);
     expect(roomMigratedCss).not.toContain('.paw-room-chronology');
     expect(roomMigratedCss).toMatch(/@container paw-room-workspace \(max-width: 520px\)[\s\S]*?\.paw-room-workspace__objective > div > small\s*\{[^}]*font-size:\s*12px;/s);
@@ -701,7 +742,9 @@ describe('PAWOS semantic type roles', () => {
     expect(appCss).not.toContain('.paw-room-workspace__tool-content');
     expect(appCss).toMatch(/\.paw-room-governance article strong\s*\{[^}]*font-size:\s*14px;/s);
     expect(appCss).toMatch(/\.paw-room-governance article small\s*\{[^}]*font-size:\s*12px;/s);
-    expect(appCss).toMatch(/\.paw-room-governance select, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
+    // Governance dropdowns moved from native <select> onto the shared Select
+    // primitive; the readable 13px control floor rides its trigger now.
+    expect(appCss).toMatch(/\.paw-room-governance \.ui-select__trigger, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
   });
 
   it('keeps Room panel and participant satellites at the 12px metadata floor', () => {
@@ -826,7 +869,10 @@ describe('PAWOS semantic type roles', () => {
   });
 
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
-    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    // The denser five-track Launchpad shelf deliberately sets its captions at
+    // 12.5px/1.5 (still above the 12px metadata floor) so all four archive
+    // bands land on one screen.
+    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*12\.5px;[^}]*line-height:\s*1\.5;/s);
     expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
     expect(systemMigratedCss).toMatch(/\.paw-agent-mode__copy small\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.55;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);

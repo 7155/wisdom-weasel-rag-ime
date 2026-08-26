@@ -51,6 +51,15 @@ under MIT (see the `LICENSE` file next to the reference).
   retry/edit/rewrite that replaces a leading region. `useSafeTextRelease.ts`
   previously collapsed to the common prefix on any non-append change and
   replayed the whole reveal from there.
+- `blockScanner.ts` adopts the settle finalization from the kit's
+  `src/core/markdown/scanner.ts` (`finalizeStreamingMarkdownDocument`):
+  `settleScannedMarkdown` carries committed chunks over by object identity and
+  walks only the still-unscanned suffix, and `useProgressiveChunks.ts` retains
+  the incremental scan state at settle instead of resetting it. The previous
+  settle path re-scanned the whole body from offset zero and minted new chunk
+  objects inside the same commit that swaps in the rich renderer. A non-append
+  replacement (retry, edit, rewrite) still rebuilds from zero via
+  `splitSettledMarkdown`.
 
 ## Deliberately not vendored
 

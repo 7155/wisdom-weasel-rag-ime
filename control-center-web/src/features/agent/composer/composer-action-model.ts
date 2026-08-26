@@ -14,6 +14,7 @@ export type ComposerBlockedReason =
   | 'stopping'
   | 'no-session'
   | 'sending'
+  | 'edit-resolving'
   | 'model-changing'
   | 'empty-draft'
   | 'queue-needs-text'
@@ -26,6 +27,10 @@ export interface ComposerActionModelInput {
    *  the Runtime deliveries carry the whole draft. */
   draftHasText: boolean;
   sending: boolean;
+  /** Historical editing is open but Pi is still resolving the branch anchor.
+   *  The host also raises `sending` for this state; the dedicated flag keeps
+   *  the blocked reason honest — nothing is being sent yet. */
+  editResolving?: boolean;
   stopping: boolean;
   modelChanging: boolean;
   busy: boolean;
@@ -80,6 +85,17 @@ export function projectComposerActionModel(
       busyDeliveries,
       blockedReason: 'no-session',
       mode: 'hard-blocked',
+    };
+  }
+
+  if (input.editResolving) {
+    return {
+      primary: blockedPrimary,
+      primaryDisabled: true,
+      effectiveBusyDelivery,
+      busyDeliveries,
+      blockedReason: 'edit-resolving',
+      mode: 'sending',
     };
   }
 
@@ -154,6 +170,7 @@ export function composerBlockedReasonLabel(reason: ComposerBlockedReason): strin
   if (reason === 'stopping') return '正在停止本轮';
   if (reason === 'no-session') return '先选择或创建对话';
   if (reason === 'sending') return '正在发送上一条消息';
+  if (reason === 'edit-resolving') return '正在定位历史消息';
   if (reason === 'model-changing') return '正在切换模型';
   if (reason === 'empty-draft') return '先输入内容或添加附件';
   if (reason === 'queue-needs-text') return '排队只保留文字，附件请用干预或接续直接发送';

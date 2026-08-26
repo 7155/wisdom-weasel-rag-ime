@@ -84,14 +84,10 @@ main[data-route-id='observability'] .observation-controls {
 
 main[data-route-id='observability'] .observation-category-tabs {
   display: flex;
+  flex-wrap: wrap;
   min-width: 0;
   gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-main[data-route-id='observability'] .observation-category-tabs::-webkit-scrollbar {
-  display: none;
+  overflow: visible;
 }
 
 /* Category filters are quiet rounded chips: the selected scope reads as a
@@ -731,7 +727,10 @@ main[data-route-id='observability'] .observation-privacy p {
   main[data-route-id='observability'][data-paw-os-app] .observation-facts { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='observability'][data-paw-os-app] .observation-search,
   main[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: auto; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-category-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-category-tabs {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
   main[data-route-id='observability'][data-paw-os-app] .observation-category-tabs button { flex: 0 0 auto; min-height: 44px; }
   main[data-route-id='observability'][data-paw-os-app] .observation-timeline button { grid-template-columns: 28px minmax(0, 1fr) auto; }
   main[data-route-id='observability'][data-paw-os-app] .observation-row__scope {

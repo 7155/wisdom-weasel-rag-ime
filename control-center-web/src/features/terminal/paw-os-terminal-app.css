@@ -313,7 +313,7 @@
   flex: 0 3 auto;
   overflow: hidden;
   color: var(--paw-terminal-faint);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -531,7 +531,7 @@
 .paw-terminal-switcher li button > span { min-width: 0; display: grid; gap: 1px; }
 .paw-terminal-switcher li button :is(strong, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paw-terminal-switcher li button strong { font-size: 13px; font-weight: 600; }
-.paw-terminal-switcher li button small { color: var(--paw-terminal-faint); font-size: 11px; line-height: 1.4; }
+.paw-terminal-switcher li button small { color: var(--paw-terminal-faint); font-size: 12px; line-height: 1.4; }
 .paw-terminal-switcher li button > em {
   flex: 0 0 auto;
   color: var(--paw-terminal-muted);
@@ -1036,7 +1036,7 @@
 @container paw-terminal (max-width: 380px) {
   .paw-terminal-search { padding-left: 6px; }
   .paw-terminal-search__glyph { display: none; }
-  .paw-terminal-search__count { min-width: 0; font-size: 11px; }
+  .paw-terminal-search__count { min-width: 0; font-size: 12px; }
   .paw-terminal-running-badge { padding-inline: 6px; }
   .paw-terminal-state-tag { gap: 6px; }
 }

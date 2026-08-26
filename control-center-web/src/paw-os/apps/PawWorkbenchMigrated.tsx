@@ -325,7 +325,9 @@ function WorkbenchChrome({
               <button aria-label={commandName} key={command.page} onClick={() => onNavigate(command.page)} title={commandName} type="button">
                 <Icon aria-hidden size={14} />
                 <span>{command.label}</span>
-                {count === null ? null : <em>{count}</em>}
+                {/* A zero is still spoken to assistive tech through the
+                    command name, but the chrome never wears a 0 badge. */}
+                {count ? <em>{count}</em> : null}
               </button>
             );
           })}
@@ -338,10 +340,11 @@ function WorkbenchChrome({
           <span>{primaryAction.label}</span>
         </button>
       ) : null}
+      {/* The anchor stays quiet: the project's name only. Its filesystem path
+          already lives once, in the status ledger at the window's foot. */}
       <div className="paw-wb-chrome__identity">
         <span>
-          <strong title={projectName}>{projectName}</strong>
-          <small title={projectPath || page.label}>{projectPath || page.label}</small>
+          <strong title={projectPath ? `${projectName} · ${projectPath}` : projectName}>{projectName}</strong>
         </span>
       </div>
     </header>
@@ -432,7 +435,7 @@ function ProjectOverview({
                 </li>
               ))}
             </ol>
-          ) : resourceSettled(planningState) ? <EmptyState icon={<CircleDashed size={22} />} title="暂无真实任务" copy="任务会在规划数据可用后出现在这里。" /> : null}
+          ) : resourceSettled(planningState) ? <EmptyState icon={<CircleDashed size={22} />} title="还没有任务" copy="第一个任务确定后会先出现在这里。" /> : null}
           {remainingTasks ? <button className="paw-wb-pane__more" aria-label={`显示更多任务：${remainingTasks} 项`} onClick={() => setVisibleTaskCount((value) => value + 8)} type="button">显示更多 {Math.min(8, remainingTasks)} 项</button> : null}
         </section>
 
@@ -457,7 +460,7 @@ function ProjectOverview({
                   </li>
                 ))}
               </ol>
-            ) : resourceSettled(documentsState) ? <EmptyState icon={<FileText size={22} />} title="暂无工作文档" copy="这里只显示 Runtime 已登记的 WorkDocument。" /> : null}
+            ) : resourceSettled(documentsState) ? <EmptyState icon={<FileText size={22} />} title="暂无工作文档" copy="工作留下的文档会登记到这里。" /> : null}
             {remainingLoadedDocuments ? <button className="paw-wb-pane__more" aria-label={`显示更多工作文档：${remainingLoadedDocuments} 项`} onClick={() => setVisibleDocumentCount((value) => value + 6)} type="button">显示已加载的更多 {Math.min(6, remainingLoadedDocuments)} 项</button> : null}
             {!remainingLoadedDocuments && remainingUnloadedDocuments ? (
               onNavigate ? <button className="paw-wb-pane__more" aria-label={`在工作文档中查看其余 ${remainingUnloadedDocuments} 项`} onClick={() => onNavigate('documents')} type="button">在工作文档中查看其余 {remainingUnloadedDocuments} 项<ArrowRight aria-hidden size={13} /></button> : <p className="paw-wb-pane__boundary">已加载全部 {documents.length} 项；其余 {remainingUnloadedDocuments} 项尚未加载。</p>
@@ -564,12 +567,16 @@ function NowBand({
           <small>{doneCount} / {tasks.length} 已完成</small>
         </div>
       ) : null}
-      <dl aria-label="未完成工作脉搏" className="paw-wb-now__pulse">
-        <div data-tone={blockedCount ? 'blocked' : undefined}><dt>受阻</dt><dd>{blockedCount}</dd></div>
-        <div data-tone={reviewCount ? 'review' : undefined}><dt>待验收</dt><dd>{reviewCount}</dd></div>
-        <div data-tone={activeCount ? 'active' : undefined}><dt>进行中</dt><dd>{activeCount}</dd></div>
-        <div><dt>证据更新</dt><dd>{evidenceValue}</dd></div>
-      </dl>
+      {/* Without tasks there is no pulse to take — a row of three zeros only
+          apologizes for the plan the band already explains in words. */}
+      {tasks.length ? (
+        <dl aria-label="未完成工作脉搏" className="paw-wb-now__pulse">
+          <div data-tone={blockedCount ? 'blocked' : undefined}><dt>受阻</dt><dd>{blockedCount}</dd></div>
+          <div data-tone={reviewCount ? 'review' : undefined}><dt>待验收</dt><dd>{reviewCount}</dd></div>
+          <div data-tone={activeCount ? 'active' : undefined}><dt>进行中</dt><dd>{activeCount}</dd></div>
+          <div><dt>证据更新</dt><dd>{evidenceValue}</dd></div>
+        </dl>
+      ) : null}
     </section>
   );
 }
@@ -708,7 +715,7 @@ function TaskOrchestration({
               ))}
             </div>
           </div>
-        ) : resourceSettled(resourceState) ? <EmptyState icon={<GitBranch size={24} />} title="没有可编排的真实任务" copy="Workbench 不会为了填满画布创建演示节点。" /> : null}
+        ) : resourceSettled(resourceState) ? <EmptyState icon={<GitBranch size={24} />} title="还没有可编排的任务" copy="第一个任务立下后，依赖图会从这里展开。" /> : null}
       </main>
 
       <TaskDetail onEditTask={onEditTask} onOpenTask={onOpenTask} onSelectTask={onSelectTask} task={selectedTask} tasks={tasks} />
@@ -732,7 +739,7 @@ function TaskDetail({
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const selectedTaskKey = task ? taskId(task, tasks.indexOf(task)) : '';
   useEffect(() => setDetailsExpanded(false), [selectedTaskKey]);
-  if (!task) return <aside className="paw-wb-detail"><EmptyState icon={<CircleDashed size={23} />} title="未选择任务" copy="选择一个真实任务以查看它的状态与依赖。" /></aside>;
+  if (!task) return <aside className="paw-wb-detail"><EmptyState icon={<CircleDashed size={23} />} title="未选择任务" copy="从左侧选择一项，查看它的状态与依赖。" /></aside>;
   const dependencies = taskDependencyIds(task);
   const progress = taskProgress(task);
   const detail = text(task.detail) || text(task.description);
@@ -847,7 +854,7 @@ function WorkDocumentWorkspace({
         <ResourceNotice label="工作文档" onRefresh={onRefresh ? () => onRefresh('documents') : undefined} state={listState} />
         {visibleDocuments.length ? <ol>{visibleDocuments.map((document, index) => <li key={documentId(document, index)}><button aria-current={sameDocument(document, selectedDocument) || undefined} onClick={() => void onOpenDocument(document)} title={`${documentTitle(document)} · ${text(document.activePath) || text(document.path) || text(document.authorityId)}`} type="button"><FileText aria-hidden size={15} /><span><strong>{documentTitle(document)}</strong><small>{authorityLabel(text(document.authorityKind))} · r{number(document.documentRevision)}</small></span><StatusMark lane={documentLane(document)} /></button></li>)}</ol> : trimmedActiveQuery && documents.length ? (
           <EmptyState icon={<FileText size={22} />} title="没有匹配的文档" copy="调整筛选词，或清空后查看全部当前文档。" />
-        ) : resourceSettled(listState) ? <EmptyState icon={<FileText size={22} />} title={documentScope === 'history' ? '没有匹配的历史文档' : '暂无工作文档'} copy={documentScope === 'history' ? '调整筛选条件，或返回当前文档。' : '这里只投影 Runtime 已登记的文档。'} /> : null}
+        ) : resourceSettled(listState) ? <EmptyState icon={<FileText size={22} />} title={documentScope === 'history' ? '没有匹配的历史文档' : '暂无工作文档'} copy={documentScope === 'history' ? '调整筛选条件，或返回当前文档。' : '工作留下的文档会登记到这里。'} /> : null}
       </aside>
 
       {/* A reader, not a scrolling page: the document header is fixed chrome and

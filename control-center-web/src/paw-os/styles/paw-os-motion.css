@@ -7,6 +7,10 @@
 .paw-desktop-root {
   --paw-ease-out: cubic-bezier(.23, 1, .32, 1);
   --paw-ease-in-out: cubic-bezier(.77, 0, .175, 1);
+  /* Press is its own clock, and it is the shortest one in the system. Every
+     other feedback can afford to be eased; a press that eases is a press that
+     feels late, because the finger is already down when the dip begins. */
+  --paw-motion-press: 90ms;
   --paw-motion-feedback: 140ms;
   --paw-motion-chrome: 180ms;
   --paw-motion-window: 240ms;
@@ -33,6 +37,24 @@
   transition-duration: var(--paw-motion-chrome);
 }
 
+/* Focus hand-off is one chrome movement: title ink and the traffic lights
+ * travel on the clock the frame's border and shadow already use, so
+ * activating a window never half-snaps between two chromes. */
+.paw-window-title,
+.paw-traffic-lights > button {
+  transition:
+    color var(--paw-motion-chrome) ease,
+    opacity var(--paw-motion-chrome) ease,
+    border-color var(--paw-motion-chrome) ease,
+    background-color var(--paw-motion-chrome) ease;
+}
+
+/* Live resize hides the title so it is not re-measured per frame; that hide
+ * must stay instant, not become a fade that keeps the text painting. */
+.paw-window-shell[data-interaction] .paw-window-title {
+  transition: none;
+}
+
 .paw-traffic-lights button,
 .paw-system-mark,
 .paw-dock button,
@@ -44,7 +66,6 @@
 .paw-system-mark:active,
 .paw-desktop-shortcuts button:active > span {
   transform: scale(.96);
-  transition-duration: var(--paw-motion-feedback);
 }
 
 /* The Project Field column arrives once, when the desktop mounts: the lede's
@@ -68,9 +89,14 @@
 
 /* Dock press feedback rides the magnification transform through its own
  * multiplier, so pressing a magnified icon dips it without snapping the
- * proximity scale (owned by paw-os.css). */
-.paw-dock button:active {
-  transition-duration: var(--paw-motion-feedback);
+ * proximity scale (owned by paw-os.css). Shelf tile, launcher tile, desktop
+ * identity and the system mark all dip on the one press clock, so "I pressed
+ * that" is a single learned sensation rather than four similar ones. */
+.paw-dock button:active,
+.paw-launchpad section > div > button:active,
+.paw-desktop-shortcuts button:active > span,
+.paw-system-mark:active {
+  transition-duration: var(--paw-motion-press);
 }
 
 /* The Dock name label and Launchpad tiles reveal with short, interruptible
@@ -414,8 +440,8 @@
   }
 }
 
-/* App identities keep their own silhouettes. Motion only clarifies selection
- * and press state; it never grows a common tile around unrelated marks. */
+/* App identities keep their own silhouettes inside the one SVG-owned plate.
+ * Motion elevates that complete App object; no placement grows a second card. */
 .paw-app-icon,
 .paw-app-icon__shape {
   transition:

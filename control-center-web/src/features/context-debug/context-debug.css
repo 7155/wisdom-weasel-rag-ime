@@ -663,7 +663,7 @@
   gap: var(--space-5);
 }
 .context-debug-reader__masthead dl > div { display: grid; gap: 2px; }
-.context-debug-reader__masthead dt { color: var(--color-text-tertiary); font-size: 11px; }
+.context-debug-reader__masthead dt { color: var(--color-text-tertiary); font-size: 12px; }
 .context-debug-reader__masthead dd {
   margin: 0;
   color: var(--color-text-secondary);
@@ -719,7 +719,7 @@
 .context-debug-reader__call-status {
   padding: 3px 7px;
   border-radius: var(--radius-round);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
@@ -735,7 +735,7 @@
 }
 .context-debug-reader__delta > div { display: grid; gap: 2px; padding: 9px var(--space-4); border-right: 1px solid var(--color-border-soft); }
 .context-debug-reader__delta > div:last-child { border-right: 0; }
-.context-debug-reader__delta dt { color: var(--color-text-tertiary); font-size: 11px; }
+.context-debug-reader__delta dt { color: var(--color-text-tertiary); font-size: 12px; }
 .context-debug-reader__delta dd { margin: 0; color: var(--color-text-secondary); font: 650 12px/1.4 var(--font-mono); }
 .context-debug-reader__delta [data-tone='added'] dd { color: var(--color-success); }
 .context-debug-reader__delta [data-tone='removed'] dd { color: var(--color-danger); }
@@ -798,8 +798,8 @@
 .context-debug-reader__messages > li[data-role='tool'],
 .context-debug-reader__messages > li[data-role='toolResult'] { border-left-color: var(--color-warning); background: var(--color-warning-soft); }
 .context-debug-reader__messages > li > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.context-debug-reader__messages > li > header span { color: var(--color-text-tertiary); font-size: 11px; font-weight: 650; letter-spacing: .03em; }
-.context-debug-reader__messages > li > header small { color: var(--color-text-tertiary); font: 11px/1.4 var(--font-mono); }
+.context-debug-reader__messages > li > header span { color: var(--color-text-tertiary); font-size: 12px; font-weight: 650; letter-spacing: .03em; }
+.context-debug-reader__messages > li > header small { color: var(--color-text-tertiary); font: 12px/1.4 var(--font-mono); }
 .context-debug-reader__messages > li > div {
   color: var(--color-text-primary);
   font-size: 15px;
@@ -813,7 +813,7 @@
   min-height: 28px;
   align-items: center;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .context-debug-reader__tool-flow > div { display: grid; min-width: 0; gap: var(--space-3); }
@@ -835,7 +835,7 @@
 }
 .context-debug-reader__tool-batch > header strong,
 .context-debug-reader__tool-batch > header span,
-.context-debug-reader__tool-batch > header small { font-size: 11px; }
+.context-debug-reader__tool-batch > header small { font-size: 12px; }
 .context-debug-reader__tool-batch > header strong { color: var(--color-warning); }
 .context-debug-reader__tool-batch > header span { color: var(--color-text-secondary); }
 .context-debug-reader__tool-batch > header small { color: var(--color-text-tertiary); }
@@ -877,8 +877,8 @@
 .context-debug-reader__disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .context-debug-reader__disclosure > summary > span { display: grid; min-width: 0; gap: 1px; }
 .context-debug-reader__disclosure > summary strong { color: var(--color-text-secondary); font-size: 12px; }
-.context-debug-reader__disclosure > summary small { color: var(--color-text-tertiary); font-size: 11px; }
-.context-debug-reader__disclosure > summary::after { color: var(--color-text-tertiary); content: '展开'; font-size: 11px; }
+.context-debug-reader__disclosure > summary small { color: var(--color-text-tertiary); font-size: 12px; }
+.context-debug-reader__disclosure > summary::after { color: var(--color-text-tertiary); content: '展开'; font-size: 12px; }
 .context-debug-reader__disclosure[open] > summary::after { content: '收起'; }
 .context-debug-reader__reveal > div {
   min-height: 0;
@@ -1068,7 +1068,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   outline: 0;
   color: var(--color-text-primary);
   background: transparent;
-  font: 11px/1 var(--font-mono);
+  font: 12px/1 var(--font-mono);
 }
 
 .context-debug-session-tree input::placeholder { color: var(--color-text-tertiary); }
@@ -1086,7 +1086,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   border-radius: 999px;
   color: var(--color-text-tertiary);
   background: transparent;
-  font: 10px/1.4 var(--font-mono);
+  font: 12px/1.4 var(--font-mono);
   cursor: pointer;
   transition: color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
@@ -1135,7 +1135,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 
 .context-debug-session-tree > ol button > strong {
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1143,7 +1143,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-session-tree > ol button > small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1158,7 +1158,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   padding: 5px 12px;
   border-top: 1px solid var(--context-reader-hairline-soft);
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .context-debug-session-content {
@@ -1188,7 +1188,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-session-header > p {
   margin: 0 0 10px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .context-debug-session-header dl {
@@ -1207,7 +1207,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 
 .context-debug-session-header dt {
   color: var(--color-text-tertiary);
-  font-size: 9.5px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -1216,7 +1216,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-session-header dd {
   margin: 0;
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
@@ -1259,7 +1259,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   align-items: baseline;
   gap: 7px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .context-debug-session-call__marker > h3 {
@@ -1281,7 +1281,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   border-radius: 4px;
   color: var(--color-text-tertiary);
   background: color-mix(in srgb, var(--color-warning) 7%, transparent);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .context-debug-session-message-list {
@@ -1310,7 +1310,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 
 .context-debug-session-message-list > li > header strong {
   color: var(--color-text-tertiary);
-  font-size: 9.5px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: .08em;
   line-height: 1.45;
@@ -1319,7 +1319,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 
 .context-debug-session-message-list > li > header small {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   opacity: .85;
 }
 
@@ -1405,7 +1405,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   min-height: 22px;
   align-items: center;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
 }
 .context-debug-session-message-list[data-nested='true'] > li { padding: 7px 10px; border: 1px solid var(--context-reader-hairline-soft); }
@@ -1431,10 +1431,10 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   border-bottom: 1px solid var(--context-reader-hairline-soft);
   color: var(--color-text-tertiary);
   background: var(--context-reader-inset);
-  font-size: 10px;
+  font-size: 12px;
 }
 .context-debug-session-tools > section > header > span { color: var(--color-warning); font-weight: 600; text-transform: uppercase; }
-.context-debug-session-tools > section > header > strong { color: var(--color-text-secondary); font-size: 10px; font-weight: 500; }
+.context-debug-session-tools > section > header > strong { color: var(--color-text-secondary); font-size: 12px; font-weight: 500; }
 .context-debug-session-tools > section > header > small { margin-left: auto; }
 
 .context-debug-session-tools > section > div {
@@ -1464,7 +1464,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 }
 .context-debug-session-viewer .context-debug-tool summary strong { font: 600 11.5px/1.5 var(--font-mono); }
 .context-debug-session-viewer .context-debug-tool summary small,
-.context-debug-session-viewer .context-debug-tool summary em { font: 10px/1.5 var(--font-mono); }
+.context-debug-session-viewer .context-debug-tool summary em { font: 12px/1.5 var(--font-mono); }
 .context-debug-session-viewer .context-debug-tool__payloads { border-top-color: var(--context-reader-hairline-soft); }
 .context-debug-session-viewer .context-debug-tool__payloads h4 {
   padding: 5px 9px;
@@ -1478,7 +1478,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   padding: 7px 9px;
   color: var(--color-text-secondary);
   background: var(--color-paper);
-  font: 11.5px/1.55 var(--font-mono);
+  font: 12px/1.55 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1493,8 +1493,8 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 }
 .context-debug-session-delta > div { padding: 5px 8px; border-right: 1px solid var(--context-reader-hairline-soft); }
 .context-debug-session-delta > div:last-child { border-right: 0; }
-.context-debug-session-delta dt { color: var(--color-text-tertiary); font-size: 9.5px; text-transform: uppercase; }
-.context-debug-session-delta dd { margin: 0; color: var(--color-text-primary); font-size: 11px; }
+.context-debug-session-delta dt { color: var(--color-text-tertiary); font-size: 12px; text-transform: uppercase; }
+.context-debug-session-delta dd { margin: 0; color: var(--color-text-primary); font-size: 12px; }
 
 .context-debug-session-viewer .context-debug-reader__disclosure {
   width: 100%;
@@ -1521,14 +1521,14 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-session-viewer .context-debug-reader__disclosure > summary small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font: 10px/1.5 var(--font-mono);
+  font: 12px/1.5 var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .context-debug-session-viewer .context-debug-reader__disclosure > summary::after {
   content: '展开';
   color: var(--color-text-tertiary);
-  font: 10px/1.5 var(--font-mono);
+  font: 12px/1.5 var(--font-mono);
 }
 .context-debug-session-viewer .context-debug-reader__disclosure[open] > summary::after { content: '收起'; }
 .context-debug-session-viewer .context-debug-reader__disclosure > .context-debug-reader__reveal > div {
@@ -1552,11 +1552,11 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   border-radius: 4px;
   color: var(--color-text-secondary);
   background: var(--context-reader-inset);
-  font: 11.5px/1.55 var(--font-mono);
+  font: 12px/1.55 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.context-debug-session-viewer .context-debug-reader__code--text { font: 11px/1.65 var(--font-mono); }
+.context-debug-session-viewer .context-debug-reader__code--text { font: 12px/1.65 var(--font-mono); }
 
 .context-debug-session-tool-chips {
   display: flex;
@@ -1569,7 +1569,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   border-radius: 3px;
   color: var(--color-text-tertiary);
   background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -1791,7 +1791,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-turns__copy { flex-direction: column; gap: 2px; }
 .context-debug-turns__copy > span { width: 100%; }
 .context-debug-turns__copy strong { overflow: hidden; color: var(--color-text-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.context-debug-turns__copy time { margin-left: auto; color: var(--color-text-tertiary); font: 11px/1.4 var(--font-mono); white-space: nowrap; }
+.context-debug-turns__copy time { margin-left: auto; color: var(--color-text-tertiary); font: 12px/1.4 var(--font-mono); white-space: nowrap; }
 .context-debug-turns__copy small { overflow: hidden; width: 100%; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .context-debug-turns > p {
@@ -1799,7 +1799,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   padding: 8px 16px 10px;
   border-top: 1px solid var(--context-reader-hairline-soft);
   color: var(--color-text-tertiary);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -1815,7 +1815,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-session-tree > ol button { min-height: 40px; gap: 7px; padding: 5px 14px; }
 .context-debug-session-tree > ol button > strong { font-size: 12.5px; }
 .context-debug-session-tree > ol button > small { font-size: 12px; }
-.context-debug-session-tree > footer { padding: 8px 14px; font-size: 11.5px; }
+.context-debug-session-tree > footer { padding: 8px 14px; font-size: 12px; }
 
 .context-debug-session-content {
   max-width: none;
@@ -1891,7 +1891,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-assembly__metrics > div { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 7px; padding-inline: 12px; border-right: 1px solid var(--context-reader-hairline-soft); }
 .context-debug-assembly__metrics > div:first-child { padding-left: 0; }
 .context-debug-assembly__metrics > div:last-child { padding-right: 0; border-right: 0; }
-.context-debug-assembly__metrics dt { color: var(--color-text-tertiary); font-size: 11px; }
+.context-debug-assembly__metrics dt { color: var(--color-text-tertiary); font-size: 12px; }
 .context-debug-assembly__metrics dd { overflow: hidden; margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 
 .context-debug-assembly__layers {
@@ -1920,8 +1920,8 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-assembly__layers li > span { color: var(--color-text-tertiary); font: 650 10px/1.4 var(--font-mono); }
 .context-debug-assembly__layers li > div { display: grid; min-width: 0; gap: 4px; }
 .context-debug-assembly__layers strong { color: var(--color-text-primary); font-size: 12px; line-height: 1.3; }
-.context-debug-assembly__layers small { display: -webkit-box; overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.context-debug-assembly__layers em { grid-column: 2; color: var(--color-text-secondary); font: 11px/1.4 var(--font-mono); font-style: normal; }
+.context-debug-assembly__layers small { display: -webkit-box; overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.context-debug-assembly__layers em { grid-column: 2; color: var(--color-text-secondary); font: 12px/1.4 var(--font-mono); font-style: normal; }
 .context-debug-assembly__layers li[data-channel='input'] { border-color: color-mix(in srgb, var(--color-accent) 38%, var(--context-reader-hairline)); }
 
 .context-debug-session-preamble { gap: 8px; margin-bottom: 16px; }
@@ -1935,7 +1935,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 .context-debug-session-message-list > li[data-role='user'],
 .context-debug-session-message-list > li[data-role='context'] { padding: 13px 16px 15px; }
 .context-debug-session-message-list > li > header strong,
-.context-debug-session-message-list > li > header small { font-size: 11.5px; }
+.context-debug-session-message-list > li > header small { font-size: 12px; }
 .context-debug-session-message__body { font: 14px/1.68 var(--font-sans); }
 .context-debug-session-message-list > li[data-role='assistant'] .context-debug-session-message__body { font-size: 15.5px; }
 .context-debug-session-message-list > li > details > summary { font-size: 12px; }

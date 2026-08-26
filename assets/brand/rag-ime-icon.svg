@@ -1,32 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="bg" x1="120" y1="80" x2="900" y2="940" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#12B8B1"/>
-      <stop offset="0.55" stop-color="#1689C4"/>
-      <stop offset="1" stop-color="#3558A8"/>
-    </linearGradient>
-    <linearGradient id="book" x1="260" y1="300" x2="740" y2="760" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#DDF7F5"/>
-    </linearGradient>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="28" stdDeviation="26" flood-color="#12324F" flood-opacity="0.28"/>
-    </filter>
-  </defs>
-  <rect x="52" y="52" width="920" height="920" rx="210" fill="url(#bg)"/>
-  <circle cx="790" cy="230" r="76" fill="#FFD15C" opacity="0.96"/>
-  <path d="M790 128l17 59 59 17-59 17-17 59-17-59-59-17 59-17z" fill="#FFF6C7"/>
-  <g filter="url(#shadow)">
-    <path d="M218 318c0-42 34-76 76-76 90 0 165 28 218 78 53-50 128-78 218-78 42 0 76 34 76 76v394c0 42-34 76-76 76-93 0-168 30-218 84-50-54-125-84-218-84-42 0-76-34-76-76V318z" fill="#0B5474" opacity="0.42"/>
-    <path d="M236 292c0-32 26-58 58-58 92 0 165 31 218 88v444c-53-52-126-80-218-80-32 0-58-26-58-58V292z" fill="url(#book)"/>
-    <path d="M788 292c0-32-26-58-58-58-92 0-165 31-218 88v444c53-52 126-80 218-80 32 0 58-26 58-58V292z" fill="#F8FFFF"/>
-    <path d="M512 322v444" stroke="#B4E6E5" stroke-width="18" stroke-linecap="round"/>
-  </g>
-  <circle cx="420" cy="458" r="18" fill="#183B52"/>
-  <circle cx="604" cy="458" r="18" fill="#183B52"/>
-  <path d="M446 538c42 36 90 36 132 0" fill="none" stroke="#183B52" stroke-width="18" stroke-linecap="round"/>
-  <path d="M665 248h78v292l-39-36-39 36z" fill="#F26B5E"/>
-  <path d="M306 590h104M614 590h104" stroke="#8BD6D4" stroke-width="16" stroke-linecap="round"/>
-  <circle cx="326" cy="398" r="18" fill="#F26B5E" opacity="0.8"/>
-  <circle cx="698" cy="398" r="18" fill="#F26B5E" opacity="0.8"/>
+  <!-- Product mark: a silver crescent holding one emerald working spark.
+       This is the vector source of the same mark assets/brand/rag-ime-icon.png
+       ships to the macOS .icns builds, so both files carry one identity: same
+       ground (#022D3E), same full-bleed square, same composition. Flat by
+       intent — the mark has to survive a 16px menu bar and a Dock tile, where
+       gradient plates, glows and feathered tips turn to mud. -->
+  <rect width="1024" height="1024" fill="#022D3E"/>
+  <path fill="#F4F8F9" fill-rule="evenodd" d="M168 512A322 322 0 1 0 812 512 322 322 0 1 0 168 512ZM322 500A268 268 0 1 0 858 500 268 268 0 1 0 322 500Z"/>
+  <path fill="#2EE6B0" d="M560 312l26 160 160 26-160 26-26 160-26-160-160-26 160-26z"/>
 </svg>

@@ -303,6 +303,7 @@ export function AgentTimeline({
   modelSelectionAvailable,
   turnRecoveryDisabled = false,
   onRetryTurn,
+  onResyncSession,
   onContinueTurn,
   onSwitchModel,
   onApprovalDecision,
@@ -330,6 +331,9 @@ export function AgentTimeline({
     turnId: string,
     onAdmissionRolledBack?: () => void,
   ) => boolean;
+  /** Quiet snapshot + admission reconcile: the one safe recovery for a turn
+   * whose admission is still pending/unresolved (never an automatic resend). */
+  onResyncSession?: () => void;
   onContinueTurn?: (turnId: string) => boolean;
   onSwitchModel: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
@@ -719,6 +723,7 @@ export function AgentTimeline({
             modelSelectionAvailable={modelSelectionAvailable}
             turnRecoveryDisabled={turnRecoveryDisabled}
             onRetryTurn={onRetryTurn}
+            onResyncSession={onResyncSession}
             onContinueTurn={onContinueTurn}
             onSwitchModel={onSwitchModel}
             onApprovalDecision={onApprovalDecision}
@@ -840,6 +845,7 @@ export const AgentTurn = memo(function AgentTurn({
   modelSelectionAvailable = false,
   turnRecoveryDisabled = false,
   onRetryTurn,
+  onResyncSession,
   onContinueTurn,
   onSwitchModel,
   onApprovalDecision,
@@ -864,6 +870,7 @@ export const AgentTurn = memo(function AgentTurn({
     turnId: string,
     onAdmissionRolledBack?: () => void,
   ) => boolean;
+  onResyncSession?: () => void;
   onContinueTurn?: (turnId: string) => boolean;
   onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
@@ -916,6 +923,20 @@ export const AgentTurn = memo(function AgentTurn({
       ) ?? false
     );
   });
+  /* Ambiguous admission is retriable-by-verification: retry reuses the same
+     clientMessageId, so the button names the verification, not a resend. */
+  const ambiguousAdmission = useAgentLiveStore((state) => {
+    const projection = state.projections[sessionId];
+    return (
+      projection?.turnsById[turnId]?.messageIds.some(
+        (messageId) => (
+          projection.messagesById[messageId]?.role === 'user'
+          && projection.messagesById[messageId]
+            ?.admissionState === 'ambiguous'
+        ),
+      ) ?? false
+    );
+  });
   const latestTurnId = useAgentLiveStore((state) => (
     state.projections[sessionId]?.turnOrder.at(-1) ?? ''
   ));
@@ -959,7 +980,9 @@ export const AgentTurn = memo(function AgentTurn({
     message.blocks.some((block) => block.type === 'file' || block.type === 'artifact' || block.type === 'diff')
   ));
   const safeContinuation = runtimeInterrupted || networkInterrupted || retryExhausted;
-  const failureTitle = runtimeInterrupted
+  const failureTitle = nonRetryableAdmission
+    ? '正在核对是否已接收'
+    : runtimeInterrupted
     ? '运行时中断'
     : networkInterrupted
     ? '网络中断'
@@ -1050,7 +1073,23 @@ export const AgentTurn = memo(function AgentTurn({
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
                 <span><strong>{failureTitle}</strong><small>{failureDetail}</small></span>
-                {onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId ? (
+                {/* Pending/unresolved admission is a dead end without a live
+                    action: retrying would risk double execution, so the one
+                    primary action is 重新同步 — verify against the Runtime,
+                    then either acknowledge or unlock 核对后重试. */}
+                {nonRetryableAdmission && latestTurnId === turnId && onResyncSession ? (
+                  <div className="agent-turn__failure-actions">
+                    <Button
+                      size="small"
+                      variant="primary"
+                      leadingIcon={<RefreshCcw size={14} />}
+                      disabled={turnRecoveryDisabled}
+                      onClick={onResyncSession}
+                    >
+                      重新同步
+                    </Button>
+                  </div>
+                ) : onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId ? (
                   <div className="agent-turn__failure-actions">
                     {safeContinuation ? (
                       onContinueTurn && latestTurnId === turnId ? (
@@ -1080,7 +1119,7 @@ export const AgentTurn = memo(function AgentTurn({
                           }
                         }}
                       >
-                        {retryRequested ? '已提交重试' : '重试本轮'}
+                        {retryRequested ? '已提交重试' : ambiguousAdmission ? '核对后重试' : '重试本轮'}
                       </Button>
                     ) : null}
                     <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>

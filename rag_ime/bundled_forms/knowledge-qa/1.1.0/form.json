@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "rag-ime.landing-form.v1",
+  "id": "knowledge-qa",
+  "displayName": "知识库问答",
+  "version": "1.1.0",
+  "description": "以企业知识库问答为主落地形态：Agent 与 Knowledge 前置；内置自举造 App（plugin-creator + landing-app-builder），完成后可提示安装。",
+  "tagline": "问库得据 · 可造可装",
+  "dockAppIds": ["agent", "knowledge", "files", "app-center"],
+  "launchpadAppIds": [
+    "agent",
+    "knowledge",
+    "memory",
+    "files",
+    "app-center",
+    "system-settings"
+  ],
+  "defaultLandingAppId": "knowledge",
+  "defaultPersona": {
+    "roleId": "companion-present-v1",
+    "version": "1"
+  },
+  "knowledgeBindings": [
+    {
+      "knowledgeDomain": "document_library",
+      "scopeKind": "user",
+      "visibility": "private"
+    }
+  ],
+  "policyPreset": "default",
+  "skillRefs": ["landing-app-builder", "plugin-creator", "rag-retrieval-optimization"],
+  "bootstrapPrompt": "/skill:landing-app-builder 用户要一个可安装的垂直助手。先澄清场景与验收，再搜索市场；没有合适 Package 时写最小 Skill（必要时加 prompt/theme），走 create_package → validate → propose_install，然后停下。不要声称已安装。示例：智能调研助手。",
+  "packageRefs": []
+}

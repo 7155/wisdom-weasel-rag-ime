@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 16,
+    "bundledSkillEntries": 17,
     "projectedBundledCards": 5,
     "canonicalCards": 40
   },
@@ -17,6 +17,7 @@
         "implementation-planning",
         "improve-codebase-architecture",
         "independent-review",
+        "landing-app-builder",
         "memory-curation",
         "orchestrate-session",
         "organize-work-documents",

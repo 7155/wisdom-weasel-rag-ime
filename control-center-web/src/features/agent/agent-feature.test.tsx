@@ -749,7 +749,9 @@ describe('Agent experience', () => {
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue(
       '读取输入法工具书，并把结果作为可展开卡片保留。',
     );
-    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
+    // A blocked action names why: the button carries the resolving state
+    // instead of pretending an earlier message is still in flight.
+    expect(screen.getByRole('button', { name: '发送（正在定位历史消息）' })).toBeDisabled();
 
     pendingForkCatalog.resolve(forkListFixture());
     expect(await screen.findByText('发送后将从这里重新生成后续对话')).toBeInTheDocument();
@@ -2138,8 +2140,10 @@ describe('Agent experience', () => {
     expect(warning).toHaveTextContent(
       '手动重试会核对同一条消息',
     );
+    // An ambiguous admission replays the same clientMessageId, so the button
+    // names the verification instead of promising a fresh send.
     const retry = await screen.findByRole('button', {
-      name: '重试本轮',
+      name: '核对后重试',
     });
     const firstAttempt = transport.requests.filter(
       (call) => call.request.pathId === 'agent.session.prompt',
@@ -2288,11 +2292,11 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '发送' }));
 
     const warning = await screen.findByText(
-      /服务端仍在确认这条消息是否已接收/,
+      /连接不稳，正在核对这条消息是否已接收/,
     );
     const failure = warning.closest('[role="alert"]');
     expect(failure).not.toBeNull();
-    expect(failure).toHaveTextContent('系统不会自动重试');
+    expect(failure).toHaveTextContent('系统不会自动重发');
     expect(within(failure as HTMLElement).queryByRole(
       'button',
       { name: '重试本轮' },
@@ -2427,7 +2431,9 @@ describe('Agent experience', () => {
 
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('working'));
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById[failedTurnId]?.status).toBe('failed');
-    expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled();
+    // The failed turn unlocks the composer: the primary action is plain 发送
+    // again (blocked only on the empty draft), never a stale 干预.
+    expect(await screen.findByRole('button', { name: '发送（先输入内容或添加附件）' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重试本轮' })).toBeEnabled();
     expect(screen.getByText('模型服务请求失败，请重试或切换模型。')).toBeInTheDocument();

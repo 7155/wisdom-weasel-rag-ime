@@ -127,30 +127,37 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(pulse).toHaveTextContent('受阻');
     expect(pulse.querySelectorAll('.paw-room-focus-overview__pulse-bar > i').length).toBeGreaterThanOrEqual(2);
 
-    // Every real partner and WorkItem is exactly one clickable mesh node.
+    // The partner-only graph: every real planet is exactly one clickable mesh
+    // node; Sol stays chrome and WorkItems stay inspectable data (UR-023).
     const mesh = screen.getByRole('group', { name: '协作网状图' });
-    expect(within(mesh).getAllByRole('button')).toHaveLength(
-      harness.focus.partners.length + harness.focus.workItems.length,
-    );
-    // The real parallel wave keeps its two lanes readable on the work nodes.
-    expect(within(mesh).getAllByText('∥ 轨道 1/2').length).toBeGreaterThanOrEqual(1);
-    expect(within(mesh).getAllByText('∥ 轨道 2/2').length).toBeGreaterThanOrEqual(1);
+    expect(within(mesh).getAllByRole('button')).toHaveLength(harness.focus.partners.length);
+    // The real parallel wave keeps its two lanes readable in the console —
+    // the flow ledger carries each dispatch with its lane once the recent
+    // window is expanded to the full history.
+    fireEvent.click(screen.getByRole('button', { name: '显示全部' }));
+    expect(screen.getAllByText(/并行轨道 1\/2/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/并行轨道 2\/2/).length).toBeGreaterThanOrEqual(1);
     // The two wave planets stay clickable owners with their live states.
     expect(within(mesh).getByRole('button', { name: /^Venus，/ })).toBeInTheDocument();
     expect(within(mesh).getByRole('button', { name: /^Jupiter，/ })).toBeInTheDocument();
 
-    // Edges exist only for recorded relations: one ownership edge per owned
-    // task and one review edge per recorded verdict (>= 4 in this fixture).
-    const owned = new Set(harness.focus.workItems
-      .filter((item) => item.ownerParticipantId)
-      .map((item) => item.id));
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="ownership"]')).toHaveLength(owned.size);
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="review"]').length).toBeGreaterThanOrEqual(4);
+    // Edges exist only for recorded partner-to-partner relations: one review
+    // edge per distinct recorded verifier→owner pair in this fixture.
+    const partnerIds = new Set(harness.focus.partners.map((partner) => partner.participantId));
+    const reviewPairs = new Set(harness.focus.workItems.flatMap((item) => {
+      const reviewer = item.review?.reviewerParticipantId || item.verifierParticipantId;
+      const owner = item.ownerParticipantId || item.offeredToParticipantId;
+      return reviewer && owner && reviewer !== owner && partnerIds.has(reviewer) && partnerIds.has(owner)
+        ? [`${reviewer}->${owner}`]
+        : [];
+    }));
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="review"]')).toHaveLength(reviewPairs.size);
 
-    // The blocked task is the red node, and — as the strongest state — the
-    // default selection, so its real blocker reads in the inspector.
-    expect(container.querySelector('.paw-room-focus-overview__mesh-node--work[data-state="blocked"]')).not.toBeNull();
-    expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('WorkDocument 尚未完成开工与交付同步');
+    // The blocked task is still the strongest state, so it is the default
+    // selection and its real blocker reads in the inspector.
+    const inspector = screen.getByRole('region', { name: '焦点详情' });
+    expect(inspector).toHaveAttribute('data-state', 'blocked');
+    expect(inspector).toHaveTextContent('WorkDocument 尚未完成开工与交付同步');
 
     // The machine enum never leaks into the reader-facing console.
     expect(screen.getByLabelText('Sol 协作态势').textContent).not.toContain('route_decision');

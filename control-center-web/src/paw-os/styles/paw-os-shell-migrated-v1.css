@@ -15,7 +15,9 @@
  * chrome glass — that re-blur was starving the pointer. Windows, menus,
  * tooltips and every text surface stay opaque always.
  * STORY: orient in the menu bar, launch from Dock or Launchpad, recognize the
- * active App by its accent, continue work on a spatially stable white window.
+ * active window by lit lights and neutral elevation, continue work on a
+ * spatially stable white window. Colour belongs to App identity plates and
+ * status — never to system chrome, frames or shadows.
  */
 
 .paw-desktop-root {
@@ -49,10 +51,25 @@
   --paw-warning: #d98806;
   --paw-danger: #d92d20;
   --paw-radius: 12px;
+  /* One keyboard-focus language for the whole desktop. Two shapes derive from
+     one cobalt: a *ring* for anything you press (button, tile, shelf icon,
+     overview target) and a *field* border+halo for anything you type into —
+     never a third per-surface invention and never the UA default. Because the
+     ring is an outline it follows each control's own radius, so a shelf tile,
+     a launcher tile and a window control all light up in their own shape. */
+  --paw-focus-ring: #2f6bff;
+  --paw-focus-ring-w: 2px;
+  --paw-focus-ring-gap: 2px;
   /* Two depth tiers only: resting and lifted. Focus reads through border ink
-     and shadow travel, never through transparency. */
-  --paw-shadow-rest: 0 16px 40px -22px rgb(23 32 52 / .24), 0 2px 8px rgb(23 26 33 / .05);
+     and shadow travel, never through transparency — and never through colour:
+     every tier is neutral graphite depth. */
+  --paw-shadow-rest: 0 10px 26px -18px rgb(23 32 52 / .22), 0 1px 4px rgb(23 26 33 / .06);
   --paw-shadow: 0 28px 72px -24px rgb(23 32 52 / .3), 0 5px 18px rgb(23 26 33 / .07);
+  /* A window you are holding is still the window in front. This tier keeps the
+     lifted depth on slightly cheaper static layers, so the compositor holds
+     one inexpensive layer under the transform instead of the frame visibly
+     flattening the moment you grab it. */
+  --paw-shadow-drag: 0 26px 60px -24px rgb(23 32 52 / .34), 0 5px 14px -6px rgb(23 26 33 / .12);
   --paw-ease-out: cubic-bezier(.16, 1, .3, 1);
   color: var(--paw-ink);
   background: #eef1f6;
@@ -62,10 +79,11 @@
 .paw-desktop-root[data-paw-theme],
 .paw-desktop-root[data-paw-theme] .paw-desktop {
   background-color: #eef1f6;
+  /* Cool grey-blue field only — no violet triad wash in system chrome. */
   background-image:
-    radial-gradient(72rem 46rem at -8% -12%, rgb(177 207 255 / .46), transparent 62%),
-    radial-gradient(62rem 42rem at 106% 8%, rgb(214 205 255 / .36), transparent 60%),
-    radial-gradient(56rem 36rem at 54% 112%, rgb(190 234 225 / .3), transparent 64%),
+    radial-gradient(72rem 46rem at -8% -12%, rgb(177 207 255 / .4), transparent 62%),
+    radial-gradient(62rem 42rem at 106% 8%, rgb(186 212 240 / .32), transparent 60%),
+    radial-gradient(56rem 36rem at 54% 112%, rgb(196 226 232 / .26), transparent 64%),
     linear-gradient(145deg, #f8fafd 0%, #e9edf4 58%, #eef2f7 100%);
 }
 
@@ -75,8 +93,8 @@
 }
 
 .paw-desktop-root :is(button, [role='button'], a, input, textarea, select):focus-visible {
-  outline: 2px solid #2f6bff;
-  outline-offset: 2px;
+  outline: var(--paw-focus-ring-w) solid var(--paw-focus-ring);
+  outline-offset: var(--paw-focus-ring-gap);
 }
 
 /* ------------------------------------------------------------------ Menu bar
@@ -98,25 +116,6 @@
   background: #fbfcfe;
 }
 
-/* Signature light: one static aurora hairline along the bottom edge of the
-   bar — cobalt into violet into teal, the same triad the wallpaper carries.
-   A single composited gradient; it never animates. */
-.paw-desktop-root .paw-menu-bar::after {
-  position: absolute;
-  inset: auto 0 -1px;
-  height: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgb(47 107 255 / .5) 16%,
-    rgb(112 72 232 / .4) 46%,
-    rgb(15 139 128 / .4) 74%,
-    transparent
-  );
-  content: '';
-}
-
 .paw-desktop-root .paw-system-mark {
   min-width: 40px;
   border: 0;
@@ -126,15 +125,12 @@
   box-shadow: none;
 }
 
-/* The wordmark carries the aurora triad as ink. Every stop stays dark enough
-   for AA on the bright veil, so the brand reads before it shimmers. */
+/* The wordmark is plain graphite ink. System chrome does not advertise: the
+   brand is a word in the bar, in the same register as everything else. */
 .paw-brand-wordmark {
-  background: linear-gradient(105deg, #1e57e7, #6d3fd4 52%, #0c7568);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--paw-chrome-ink);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: .06em;
   line-height: 1;
 }
@@ -159,12 +155,9 @@
 .paw-desktop-root .paw-menu-app:hover { background: rgb(23 26 33 / .05); }
 .paw-desktop-root .paw-menu-app:active,
 .paw-desktop-root .paw-menu-app[aria-expanded='true'] { background: rgb(23 26 33 / .08); }
-/* The current App signs the menu bar in its own accent-strong ink, so the
-   orientation row answers "where am I" at a glance. */
-.paw-desktop-root .paw-menu-app[data-app] { color: var(--paw-app-accent-strong, var(--paw-chrome-ink)); }
-.paw-desktop-root .paw-menu-app[data-app]:hover {
-  background: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 8%, transparent);
-}
+/* The current App answers "where am I" through its icon and bold graphite
+   name — the macOS menu-bar grammar. Colour in the bar belongs to the App
+   identity plate alone, never to system text. */
 .paw-desktop-root .paw-menu-app[data-idle] {
   color: var(--paw-chrome-muted);
   font-weight: 550;
@@ -175,6 +168,23 @@
   font-size: 13px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
+}
+/* The system strip reports, it does not offer. The shared connection
+   indicator arrives from the web Control Center wearing a bordered surface
+   pill — correct in an App topbar, but inside a 34px OS menu bar it reads as
+   one App control parked in system chrome. Here it drops to plain chrome ink
+   and lets only its state icon carry colour, so the right edge of the bar is
+   exactly as quiet as the left and the clock keeps the last word. */
+.paw-desktop-root .paw-menu-status .global-connection,
+.paw-desktop-root .paw-menu-status .global-connection[data-state='mock'] {
+  min-height: 0;
+  padding-inline: 0;
+  border: 0;
+  color: var(--paw-chrome-muted);
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 550;
 }
 
 /* Wayfinder fog terrain. The wallpaper is one photographic landscape in the
@@ -481,9 +491,9 @@
 /* The label carries the focus ring so the input can drop its own outline
    without losing a visible keyboard-focus state. */
 .paw-desktop-root .paw-wayfinder-work__search:focus-within {
-  border-color: rgb(47 107 255 / .62);
+  border-color: var(--paw-focus-line);
   background: #fff;
-  box-shadow: 0 0 0 2px rgb(47 107 255 / .18);
+  box-shadow: 0 0 0 3px var(--paw-focus-halo);
 }
 .paw-desktop-root .paw-wayfinder-work__search input { color: var(--paw-ink); outline: none; }
 .paw-desktop-root .paw-wayfinder-work__search input::placeholder { color: #8a93a2; }
@@ -573,12 +583,9 @@
 .paw-desktop-root .paw-dock button { color: #556171; }
 .paw-desktop-root .paw-dock > i { background: rgb(23 26 33 / .12); }
 .paw-desktop-root .paw-dock button::before { content: none; }
-/* Current App, hover and the running dot all resolve the one identity wash
-   declared in paw-app-icon.css — never an opaque white plate. */
-.paw-desktop-root .paw-dock button[aria-current='page'] {
-  background: var(--paw-identity-wash-strong);
-  box-shadow: var(--paw-identity-ring);
-}
+/* The shelf holds no plate behind a tile. Running state is the identity dot;
+   which App is frontmost is the menu bar's answer, not a lit card here —
+   magnification and the opaque label are the whole hover conversation. */
 .paw-desktop-root .paw-dock button[data-open]::after {
   background: var(--paw-identity-dot, #2f6bff);
 }
@@ -586,9 +593,15 @@
   background: color-mix(in srgb, var(--paw-identity-dot, #2f6bff) 46%, #fff);
 }
 .paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview) { color: #4c5868; }
-.paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview):is([aria-pressed='true'], :active) {
-  color: #1e57e7;
-  background: var(--paw-identity-wash);
+.paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview):active {
+  background: rgb(23 26 33 / .08);
+}
+/* Launcher and overview are held-open switches, not momentary buttons: while
+   their surface is on screen the tile keeps one quiet neutral wash, so the
+   shelf still answers "what is open" without wearing an identity ring. */
+.paw-desktop-root .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview)[aria-pressed='true'] {
+  color: var(--paw-chrome-ink);
+  background: rgb(23 26 33 / .08);
 }
 
 /* The hover label is a real opaque surface: graphite on white, hairline and
@@ -603,13 +616,21 @@
   font-weight: 620;
 }
 
-/* Hover lift is owned by the proximity magnification (structure owner);
-   colour answers here with a soft halo in the App's own accent. */
-@media (hover: hover) and (pointer: fine) {
-  .paw-desktop-root .paw-dock button:hover {
-    background: var(--paw-identity-wash);
-  }
+/* The overview caption is the Dock label in another placement: the same
+   opaque graphite-on-white plate with the same hairline, so a window name in
+   the switcher never becomes text floating on a scaled screenshot. */
+.paw-desktop-root .paw-overview-window-target span {
+  border: 1px solid var(--paw-chrome-hairline);
+  color: var(--paw-chrome-ink);
+  background: #fff;
+  box-shadow: 0 10px 26px -14px rgb(23 32 52 / .35), 0 2px 8px rgb(23 26 33 / .08);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 620;
 }
+
+/* Hover is owned entirely by the proximity magnification (structure owner)
+   and the opaque name label: no wash appears behind a shelf tile. */
 
 /* ----------------------------------------------------------------- Launchpad
  * The complete 11-App archive as an immersive plane: one blurred veil owns
@@ -618,18 +639,17 @@
 .paw-desktop-root .paw-launchpad {
   padding: clamp(16px, 3.4vh, 34px) 24px;
   background: rgb(240 243 248 / .86);
-  /* The aurora triad drifts into the veil as three static low-alpha washes;
-     the pinned veil colour above still owns contrast for every ink. */
-  background-image:
-    radial-gradient(58rem 34rem at 14% -8%, rgb(129 170 255 / .3), transparent 62%),
-    radial-gradient(52rem 32rem at 88% -2%, rgb(178 156 255 / .24), transparent 58%),
-    radial-gradient(64rem 40rem at 50% 116%, rgb(126 214 199 / .26), transparent 64%);
   -webkit-backdrop-filter: blur(26px) saturate(135%);
   backdrop-filter: blur(26px) saturate(135%);
   animation: paw-shell-launchpad-backdrop 180ms ease-out both;
 }
+/* The archive is a shelf of App objects, not a page of five columns. At
+   1060px the five tracks stretched to ~200px each and every plate floated
+   alone in its own cell, which is what made the launcher read as a website
+   directory; holding the column near the width the tiles actually need packs
+   the groups back into bands you can take in at one glance. */
 .paw-desktop-root .paw-launchpad > section {
-  width: min(1060px, 100%);
+  width: min(880px, 100%);
   max-height: 100%;
   overflow: auto;
   border: 0;
@@ -660,9 +680,9 @@
 }
 .paw-desktop-root .paw-launchpad section > header input[type='search']::placeholder { color: #6b7484; }
 .paw-desktop-root .paw-launchpad section > header input[type='search']:focus {
-  border-color: rgb(47 107 255 / .5);
+  border-color: var(--paw-focus-line);
   outline: 0;
-  box-shadow: 0 0 0 3px rgb(47 107 255 / .14), 0 10px 28px -18px rgb(31 43 66 / .35);
+  box-shadow: 0 0 0 3px var(--paw-focus-halo), 0 10px 28px -18px rgb(31 43 66 / .35);
 }
 .paw-desktop-root .paw-launchpad section > header button {
   min-height: 32px;
@@ -690,8 +710,12 @@
 .paw-desktop-root .paw-launchpad section > div > button {
   min-height: 118px;
   align-content: center;
-  gap: 7px;
-  padding: 14px 10px 12px;
+  /* The plate leads and the words follow it: one clear step of air under the
+     identity, then the name and its line of purpose set close together, so a
+     tile reads as an App object with a caption instead of a text card that
+     happens to carry a picture. */
+  gap: 9px;
+  padding: 15px 10px 13px;
   border: 1px solid transparent;
   border-radius: 16px;
   background: transparent;
@@ -701,17 +725,15 @@
   animation: paw-shell-tile-arrive 360ms var(--paw-ease-out) backwards;
   animation-delay: calc(var(--paw-tile-i, 0) * 22ms);
 }
+/* A hovered tile takes one quiet identity wash and nothing else: no edge, no
+   shadow, no lift. The moment a tile hovers into a card, the archive stops
+   reading as a launcher and starts reading as a page of products. */
 .paw-desktop-root .paw-launchpad section > div > button:hover,
 .paw-desktop-root .paw-launchpad section > div > button:focus-visible {
-  border-color: var(--paw-chrome-hairline);
-  background: var(--paw-identity-wash-strong);
-  box-shadow:
-    var(--paw-identity-ring),
-    0 14px 34px -20px color-mix(in srgb, var(--app-color, #2f6bff) 26%, rgb(31 43 66 / .35)),
-    0 2px 8px rgb(23 26 33 / .05);
-  transform: translateY(-2px);
+  background: var(--paw-identity-wash);
 }
-.paw-desktop-root .paw-launchpad section > div > button:active { transform: translateY(0) scale(.985); }
+/* The launcher presses exactly like the shelf, on the same short clock. */
+.paw-desktop-root .paw-launchpad section > div > button:active { transform: translateY(0) scale(.97); }
 .paw-desktop-root .paw-launchpad section > div > button > span {
   width: 54px;
   height: 54px;
@@ -721,7 +743,7 @@
 }
 .paw-desktop-root .paw-launchpad section > div > button strong {
   font-size: 13px;
-  font-weight: 680;
+  font-weight: 620;
 }
 .paw-desktop-root .paw-launchpad section > div > button small {
   display: -webkit-box;
@@ -782,61 +804,45 @@
   background: #fff;
   box-shadow: var(--paw-shadow);
 }
+/* A resting window keeps a legible 1px edge and sits almost flat on the
+   desktop. Depth is the whole answer to "which window has the keyboard", so
+   the resting tier must genuinely give it up rather than merely dim. */
 .paw-desktop-root .paw-window-shell:not([data-active]):not([data-overview]):not([data-collaboration-role]) .paw-window {
-  border-color: rgb(23 26 33 / .1);
+  border-color: rgb(23 26 33 / .12);
   box-shadow: var(--paw-shadow-rest);
 }
-/* The lifted window casts its own light: a whisper-thin accent ring plus an
-   ambient shadow tinted toward the App identity. Shadow colour only — the
-   surface stays opaque white. During live drag/resize the multi-layer
-   color-mix stack collapses to the resting shadow so the compositor keeps a
-   cheap layer under the transform. */
+/* The lifted window rises on neutral depth alone: a slightly darker graphite
+   edge, one deep key shadow and a short contact shadow that keeps the frame
+   attached to the desktop. No accent tint and no halo ring — a coloured frame
+   reads as a web card in a selected state, while pure elevation plus the lit
+   traffic lights reads as the window in front. Every layer is static, so the
+   compositor keeps a cheap layer under any transform. */
 .paw-desktop-root .paw-window-shell[data-active] .paw-window {
-  border-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 38%, rgb(23 26 33 / .16));
+  border-color: rgb(23 26 33 / .22);
   box-shadow:
     0 1px 0 rgb(255 255 255 / .75) inset,
-    0 0 0 4px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 8%, transparent),
-    0 30px 74px -22px color-mix(in srgb, var(--paw-app-accent, #2f6bff) 26%, rgb(23 32 52 / .34)),
-    0 5px 18px rgb(23 26 33 / .07);
+    0 32px 76px -24px rgb(23 32 52 / .42),
+    0 6px 16px -6px rgb(23 26 33 / .14);
 }
 .paw-desktop-root[data-window-interaction] .paw-window-shell[data-active] .paw-window,
 .paw-desktop-root[data-window-interaction] .paw-window-shell[data-interaction] .paw-window {
-  box-shadow: var(--paw-shadow-rest);
+  box-shadow: var(--paw-shadow-drag);
 }
 .paw-desktop-root .paw-window-titlebar {
   border-bottom: 1px solid rgb(23 26 33 / .1);
   background: #fff;
 }
+/* App palettes may tint the titlebar material (--paw-app-nav); the hairline
+   under it stays the one neutral chrome edge, so identity never reaches the
+   chrome line. (--paw-app-line was retired with the accent lean.) */
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-titlebar {
-  border-bottom-color: var(--paw-app-line, rgb(23 26 33 / .1));
   background: var(--paw-app-nav, #fff);
 }
-/* The active window signs itself: its titlebar hairline leans into the App
-   accent, which is enough identity without a painted strip. */
-.paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar {
-  border-bottom-color: color-mix(in srgb, var(--paw-app-accent, #2f6bff) 34%, rgb(23 26 33 / .08));
-}
-/* Aurora signature, continued from the menu bar into window chrome: the
-   focused window's titlebar edge carries the same hairline language, but
-   transposed into the App's own key — accent flowing into support. One
-   static composited gradient over the border row; it never animates, never
-   blurs, and resting windows keep the plain hairline. */
-.paw-desktop-root .paw-window-shell[data-active][data-app] .paw-window-titlebar::after {
-  position: absolute;
-  inset: auto 0 0;
-  height: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--paw-app-accent, #2f6bff) 62%, transparent) 16%,
-    color-mix(in srgb, var(--paw-app-support, #7048e8) 52%, transparent) 56%,
-    transparent 92%
-  );
-  content: '';
-}
+/* Focus in the titlebar is answered the way macOS answers it: the lights turn
+   on and the caption ink darkens. The hairline under an active titlebar stays
+   the same plain App hairline a resting window wears — no accent lean and no
+   gradient signature in window chrome. */
 .paw-desktop-root .paw-window-title { gap: 8px; color: #171a21; font-size: 13px; line-height: 1.4; font-weight: 650; }
-.paw-desktop-root .paw-window-shell[data-app] .paw-window-title { color: var(--paw-app-accent-strong, #171a21); }
 .paw-desktop-root .paw-window-shell:not([data-active]) .paw-window-title { color: #5d6675; }
 /* Terminal chrome is dark; its title ink must be re-paired, not inherited. */
 .paw-desktop-root .paw-window-shell[data-app='terminal'] .paw-window-title { color: #8fd08a; }
