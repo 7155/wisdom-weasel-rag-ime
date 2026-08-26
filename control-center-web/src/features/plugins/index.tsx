@@ -38,7 +38,6 @@ import {
   InlineNotice,
   ManagementPage,
   ManagementSection,
-  MetricStrip,
   QueryState,
   StatusBadge,
   arrayRecords,
@@ -177,8 +176,8 @@ export function PluginsFeature() {
   const lifecyclePolicies = arrayRecords(asRecord(lifecycle.data).policies);
   const lifecycleEvents = arrayRecords(asRecord(lifecycle.data).recentEvents);
   const availableCount = items.filter((item) => ['online', 'ready', 'installed'].includes(item.status.toLowerCase())).length;
-  const disclosedCount = items.filter((item) => item.disclosure.state === 'disclosed').length;
   const hiddenCount = items.filter((item) => item.disclosure.state === 'hidden').length;
+  const unavailableCount = items.length - availableCount;
   const pendingSummary = asRecord(pendingChange.summary);
   const pendingResources = asRecord(pendingSummary.resources);
   const pendingResourceCount = packageResourceCount(pendingResources);
@@ -438,11 +437,22 @@ export function PluginsFeature() {
 
   const capabilityOverviewBlock = (
     <>
-      <MetricStrip items={[
-        { label: '可查看', value: items.length, detail: '技能、工具与扩展', icon: Wrench },
-        { label: '当前可用', value: availableCount, detail: '连接正常', icon: ShieldCheck },
-        { label: 'Agent 可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
-      ]} />
+      {/* 可查看 / 当前可用 / Agent 可见 are the same number whenever nothing
+          is wrong, so the strip spent the first band of the window on three
+          copies of one count. The reader needs the exceptions; the total is
+          one number and does not need three boxes. */}
+      <p className="plugins-capability-lead">
+        <strong>{items.length}</strong> 项能力
+        {unavailableCount || hiddenCount ? (
+          <>
+            {'，其中 '}
+            {unavailableCount ? <span data-tone="attention">{unavailableCount} 项需要处理</span> : null}
+            {unavailableCount && hiddenCount ? '、' : null}
+            {hiddenCount ? <span data-tone="hidden">{hiddenCount} 项 Agent 暂不可见</span> : null}
+            。
+          </>
+        ) : '，全部连接正常，Agent 都能看到。'}
+      </p>
       <Disclosure
         className="plugins-policy-disclosure"
         summary={<>

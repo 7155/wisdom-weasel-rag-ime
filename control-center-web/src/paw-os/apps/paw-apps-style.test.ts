@@ -835,4 +835,17 @@ describe('PAWOS semantic type roles', () => {
     expect(knowledgeCss).toMatch(/\.knowledge-graph__inspector > p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/s);
     expect(knowledgeCss).toMatch(/\.knowledge-chunk-grid p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.62;/s);
   });
+
+  it('keeps every Monitor event filter reachable instead of clipping the last one', () => {
+    /* Ten chips in a scroller whose scrollbar is hidden lose the tenth: at a
+       1440px desktop the 系统 filter rendered as a clipped 系 with nothing to
+       say the row continued. Filters wrap; they do not scroll out of sight. */
+    expect(observabilityCss).toMatch(
+      /\.observation-category-tabs\s*\{[^}]*flex-wrap:\s*wrap;/s,
+    );
+    expect(observabilityCss).not.toMatch(
+      /\.observation-category-tabs\s*\{[^}]*overflow-x:\s*auto;/s,
+    );
+    expect(observabilityCss).not.toContain('.observation-category-tabs::-webkit-scrollbar');
+  });
 });

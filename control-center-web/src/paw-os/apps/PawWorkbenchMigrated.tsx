@@ -564,10 +564,17 @@ function NowBand({
           <small>{doneCount} / {tasks.length} 已完成</small>
         </div>
       ) : null}
+      {/* With no task at all, 受阻 / 待验收 / 进行中 can only read 0. Three
+          zeroes are not a pulse, so the band keeps the one fact that can
+          still differ and drops the strip. */}
       <dl aria-label="未完成工作脉搏" className="paw-wb-now__pulse">
-        <div data-tone={blockedCount ? 'blocked' : undefined}><dt>受阻</dt><dd>{blockedCount}</dd></div>
-        <div data-tone={reviewCount ? 'review' : undefined}><dt>待验收</dt><dd>{reviewCount}</dd></div>
-        <div data-tone={activeCount ? 'active' : undefined}><dt>进行中</dt><dd>{activeCount}</dd></div>
+        {tasks.length ? (
+          <>
+            <div data-tone={blockedCount ? 'blocked' : undefined}><dt>受阻</dt><dd>{blockedCount}</dd></div>
+            <div data-tone={reviewCount ? 'review' : undefined}><dt>待验收</dt><dd>{reviewCount}</dd></div>
+            <div data-tone={activeCount ? 'active' : undefined}><dt>进行中</dt><dd>{activeCount}</dd></div>
+          </>
+        ) : null}
         <div><dt>证据更新</dt><dd>{evidenceValue}</dd></div>
       </dl>
     </section>

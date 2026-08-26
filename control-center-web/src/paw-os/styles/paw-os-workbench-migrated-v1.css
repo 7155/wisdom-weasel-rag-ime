@@ -262,6 +262,37 @@
 
 .paw-workbench-migrated .paw-wb-now[data-state='empty'] { grid-template-columns: minmax(0, 1fr) auto; }
 
+/* The deck earns its ultramarine by naming the next unresolved thing. With no
+   task to name it was still the darkest, loudest surface in the first
+   viewport, and what it announced at that volume was an absence. Empty, it
+   drops to the same bright plate language as the columns underneath. */
+.paw-workbench-migrated .paw-wb-now[data-state='empty'] {
+  border-color: var(--paw-wb-line);
+  background: var(--paw-wb-surface);
+  color: var(--paw-wb-ink);
+  box-shadow: var(--paw-wb-shadow);
+}
+
+.paw-workbench-migrated .paw-wb-now[data-state='empty']::before,
+.paw-workbench-migrated .paw-wb-now[data-state='empty']::after { display: none; }
+
+.paw-workbench-migrated .paw-wb-now[data-state='empty'] .paw-wb-now__eyebrow { color: var(--paw-wb-accent); }
+
+.paw-workbench-migrated .paw-wb-now[data-state='empty'] h2 {
+  color: var(--paw-wb-ink);
+  text-shadow: none;
+}
+
+.paw-workbench-migrated .paw-wb-now[data-state='empty'] .paw-wb-now__lead > p { color: var(--paw-wb-muted); }
+
+.paw-workbench-migrated .paw-wb-now[data-state='empty'] .paw-wb-now__pulse > div {
+  border-color: var(--paw-wb-line);
+  background: var(--paw-wb-surface-soft);
+}
+
+.paw-workbench-migrated .paw-wb-now[data-state='empty'] .paw-wb-now__pulse dt { color: var(--paw-wb-faint); }
+.paw-workbench-migrated .paw-wb-now[data-state='empty'] .paw-wb-now__pulse dd { color: var(--paw-wb-muted); }
+
 .paw-workbench-migrated .paw-wb-now::before {
   content: '';
   position: absolute;

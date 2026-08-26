@@ -44,6 +44,22 @@ describe('Project Workbench lays out as a window, not a document', () => {
     expect(workbenchCss).not.toContain('.paw-wb-overview__columns');
   });
 
+  it('spends the one dark deck on a task, not on the absence of one', () => {
+    /* The ultramarine band is the loudest surface in the window. With nothing
+       to act on it was still painted at full strength, so the first thing the
+       first viewport said, in its strongest voice, was that there is nothing
+       to do. Empty, it reads as an ordinary bright plate. */
+    expect(workbenchCss).toMatch(
+      /\.paw-wb-now\[data-state='empty'\]\s*\{[^}]*background:\s*var\(--paw-wb-surface\);[^}]*color:\s*var\(--paw-wb-ink\);/s,
+    );
+    expect(workbenchCss).toMatch(
+      /\.paw-wb-now\[data-state='empty'\]::before,\s*\n?[^{]*\.paw-wb-now\[data-state='empty'\]::after\s*\{\s*display:\s*none;\s*\}/,
+    );
+    expect(workbenchCss).toMatch(
+      /\.paw-wb-now\[data-state='empty'\] h2\s*\{[^}]*color:\s*var\(--paw-wb-ink\);[^}]*text-shadow:\s*none;/s,
+    );
+  });
+
   it('keeps the WorkDocument reader header fixed above one scrolling body', () => {
     expect(workbenchCss).toMatch(
       /\.paw-wb-document-reader\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*overflow:\s*hidden;/s,

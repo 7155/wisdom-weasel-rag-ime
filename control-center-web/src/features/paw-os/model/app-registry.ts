@@ -22,6 +22,14 @@ export type PawOsAppPresentation =
   | 'utility'
   | 'system';
 
+/**
+ * Colour identity is not declared here. The UR-104 `[data-app]` palettes in
+ * `paw-os/styles/paw-os.css` own every App hue, and the window, Dock mark,
+ * menu-bar mark and nav all read it from `--paw-app-accent`. A second colour
+ * name on this record had no reader and had drifted away from the palette it
+ * claimed to describe — App Center said `violet` while its window rendered
+ * `#b95028`, Terminal said `slate` while its window rendered `#79c56e`.
+ */
 export type PawOsAppDefinition = {
   id: PawOsAppId;
   label: string;
@@ -29,7 +37,6 @@ export type PawOsAppDefinition = {
   routeIds: readonly RouteId[];
   defaultRouteId: RouteId | null;
   presentation: PawOsAppPresentation;
-  accent: 'cyan' | 'blue' | 'violet' | 'amber' | 'green' | 'rose' | 'slate';
   tagline: string;
 };
 
@@ -43,7 +50,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['overview', 'planning', 'work-documents'],
     defaultRouteId: 'overview',
     presentation: 'workspace',
-    accent: 'green',
     tagline: '概览、任务与工作文档',
   },
   {
@@ -53,7 +59,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['agent', 'rooms'],
     defaultRouteId: 'agent',
     presentation: 'conversation',
-    accent: 'violet',
     tagline: 'Session 与 Room',
   },
   {
@@ -63,7 +68,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['memory'],
     defaultRouteId: 'memory',
     presentation: 'library',
-    accent: 'rose',
     tagline: '可追溯的个人记忆',
   },
   {
@@ -73,7 +77,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['knowledge'],
     defaultRouteId: 'knowledge',
     presentation: 'library',
-    accent: 'blue',
     tagline: '资料、索引与检索空间',
   },
   {
@@ -83,7 +86,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['input', 'voice', 'history'],
     defaultRouteId: 'input',
     presentation: 'studio',
-    accent: 'green',
     tagline: '语音、输入法、词库与输入记录',
   },
   {
@@ -93,7 +95,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['plugins'],
     defaultRouteId: 'plugins',
     presentation: 'utility',
-    accent: 'violet',
     tagline: '插件、Pi Package 与 App Surface',
   },
   {
@@ -103,7 +104,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['context-debug', 'observability', 'diagnostics'],
     defaultRouteId: 'observability',
     presentation: 'system',
-    accent: 'cyan',
     tagline: '上下文、运行记录与问题排查',
   },
   {
@@ -113,7 +113,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['configuration', 'governance', 'approvals'],
     defaultRouteId: 'configuration',
     presentation: 'system',
-    accent: 'slate',
     tagline: '通用配置、外观与安全审批',
   },
   {
@@ -123,7 +122,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: [],
     defaultRouteId: null,
     presentation: 'utility',
-    accent: 'blue',
     tagline: '项目文件与工作区浏览',
   },
   {
@@ -133,7 +131,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: ['browser'],
     defaultRouteId: 'browser',
     presentation: 'utility',
-    accent: 'cyan',
     tagline: '受控浏览与网页工作台',
   },
   {
@@ -143,7 +140,6 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     routeIds: [],
     defaultRouteId: null,
     presentation: 'utility',
-    accent: 'slate',
     tagline: '项目命令与本地任务',
   },
 ] as const;
