@@ -76,4 +76,22 @@ describe('Project Workbench lays out as a window, not a document', () => {
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*?animation-duration:\s*\.01ms\s*!important;[\s\S]*?\.paw-wb-flow-packet\s*\{\s*display:\s*none;/,
     );
   });
+
+  it('lets the deck chrome wrap before command labels are clipped', () => {
+    // Commands keep intrinsic width; the strip wraps instead of scrolling a
+    // hidden scrollbar that ate mid-glyph labels in a crowded window.
+    expect(workbenchCss).toMatch(
+      /\.paw-wb-chrome\s*\{[^}]*flex-wrap:\s*wrap;/s,
+    );
+    expect(workbenchCss).toMatch(
+      /\.paw-wb-chrome__commands\s*\{[^}]*min-width:\s*max-content;[^}]*overflow:\s*visible;/s,
+    );
+    expect(workbenchCss).toMatch(
+      /\.paw-wb-chrome__identity\s*\{[^}]*max-width:\s*240px;/s,
+    );
+    // Mid-width stages must not hide command names — that read as broken UI.
+    expect(workbenchCss).not.toMatch(
+      /@container paw-native-stage \(max-width: 520px\)[\s\S]*?\.paw-wb-chrome__commands button > span \{ display: none;/,
+    );
+  });
 });

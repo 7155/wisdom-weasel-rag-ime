@@ -424,7 +424,8 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
+  /* Rail fits 「工作文档」 + icon + chevron without clipping mid-glyph. */
+  grid-template-columns: 212px minmax(0, 1fr);
   overflow: hidden;
   background: var(--paw-panel-strong);
   color: var(--paw-ink);
@@ -448,7 +449,7 @@
   min-width: 0;
   height: 39px;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 13px;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
   align-items: center;
   gap: 8px;
   padding: 0 10px;
@@ -456,10 +457,22 @@
   color: var(--paw-muted);
   font-size: 11px;
   text-align: left;
+  overflow: hidden;
   cursor: pointer;
   transition: color 140ms var(--paw-ease-out), background-color 140ms var(--paw-ease-out), transform 110ms var(--paw-ease-out);
 }
-.paw-native-nav nav button > svg:last-child { opacity: 0; transform: translateX(-3px); transition: opacity 140ms var(--paw-ease-out), transform 140ms var(--paw-ease-out); }
+.paw-native-nav nav button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paw-native-nav nav button > svg:last-child {
+  justify-self: end;
+  opacity: 0;
+  transform: translateX(-3px);
+  transition: opacity 140ms var(--paw-ease-out), transform 140ms var(--paw-ease-out);
+}
 .paw-native-nav nav button[aria-current='page'] { background: color-mix(in srgb, var(--paw-accent) 11%, var(--paw-panel-strong)); color: var(--paw-ink); box-shadow: inset 2px 0 0 var(--paw-accent), 0 1px 2px rgb(15 23 42 / 4%); }
 .paw-native-nav nav button[aria-current='page'] > svg:first-child { color: var(--paw-accent); }
 .paw-native-nav nav button:active { transform: scale(.98); }
@@ -506,7 +519,7 @@
 @keyframes paw-native-feedback-fade { from { opacity: .35; } to { opacity: 1; } }
 
 @container paw-window (max-width: 900px) {
-  .paw-native-app { grid-template-columns: 164px minmax(0, 1fr); }
+  .paw-native-app { grid-template-columns: 188px minmax(0, 1fr); }
 }
 @container paw-window (max-width: 650px) {
   .paw-native-app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }

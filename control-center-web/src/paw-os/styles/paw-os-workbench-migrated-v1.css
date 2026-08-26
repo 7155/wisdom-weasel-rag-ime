@@ -93,12 +93,13 @@
 .paw-workbench-migrated .paw-wb-chrome {
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 0 12px;
+  gap: 8px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--paw-wb-line);
-  /* The deck is a fixed grid row — nothing ever scrolls beneath it, so a
-     backdrop blur can only sample the flat window surface. Opaque, no glass. */
+  /* The deck is fixed chrome — opaque, no glass. It may wrap to a second row
+     before any command label is half-clipped by a single crowded strip. */
   background: rgb(255 255 255 / 97%);
   user-select: none;
   z-index: 4;
@@ -107,7 +108,7 @@
 .paw-workbench-migrated .paw-wb-chrome__purpose {
   min-width: 0;
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 140px;
   align-items: baseline;
   gap: 9px;
   white-space: nowrap;
@@ -130,16 +131,15 @@
 }
 
 .paw-workbench-migrated .paw-wb-chrome__commands {
-  min-width: 0;
+  /* Commands keep their intrinsic width — wrap the chrome before truncating
+     labels. A scrollport that hides its scrollbar was clipping mid-glyph. */
+  min-width: max-content;
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: visible;
 }
-
-.paw-workbench-migrated .paw-wb-chrome__commands::-webkit-scrollbar { display: none; }
 
 .paw-workbench-migrated .paw-wb-chrome__commands button {
   min-height: 30px;
@@ -177,12 +177,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-.paw-workbench-migrated .paw-wb-chrome__spacer { flex: 1 1 0; min-width: 8px; }
+.paw-workbench-migrated .paw-wb-chrome__spacer { flex: 1 1 12px; min-width: 8px; }
 
 .paw-workbench-migrated .paw-wb-chrome__identity {
+  /* Identity yields first: ellipsis the path before any command is cut. */
   min-width: 0;
+  max-width: 240px;
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 120px;
   align-items: center;
 }
 
@@ -1456,12 +1458,9 @@
 
 @container paw-native-stage (max-width: 520px) {
   .paw-workbench-migrated .paw-wb-chrome { padding-inline: 10px; }
+  .paw-workbench-migrated .paw-wb-chrome__identity { max-width: 160px; }
   .paw-workbench-migrated .paw-wb-chrome__identity small { display: none; }
-  /* Deck commands collapse to icon + truthful count; names stay on aria-label. */
-  .paw-workbench-migrated .paw-wb-chrome__commands button { padding: 0 8px; }
-  .paw-workbench-migrated .paw-wb-chrome__commands button > span { display: none; }
-  .paw-workbench-migrated .paw-wb-primary { width: 28px; min-height: 28px; padding: 0; justify-content: center; }
-  .paw-workbench-migrated .paw-wb-primary > span { display: none; }
+  /* Keep command labels readable — wrap already gave the row room. */
   .paw-workbench-migrated .paw-wb-planning-tools {
     min-height: 82px;
     display: grid;
