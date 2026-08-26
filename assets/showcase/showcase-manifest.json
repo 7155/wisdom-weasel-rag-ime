@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "pawos.showcase-assets.v1",
+  "generatedAt": "2026-08-26T21:30:22.932Z",
+  "source": {
+    "baseCommit": "50834992fb8489b6709c8212d066693f6572eab0",
+    "workingTree": "modified",
+    "diffFingerprint": "sha256:010de4daab279a8da5ef8030badf5a192f055503b67a0972ae5c0c7ceb7c41f6",
+    "untrackedSourceFiles": 6
+  },
+  "capture": {
+    "frontend": "paw-os",
+    "transport": "mock",
+    "fixture": "deterministic public preview data",
+    "command": "scripts/capture_pawos_showcase.sh",
+    "fixedTime": "2026-08-27T04:00:00+08:00",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "starfieldReducedMotion": true
+  },
+  "reproducibility": "The command reproduces the same named scenes and checkpoints. Asset hashes identify this run; they are not cross-machine golden-image assertions because Chromium and GPU rasterization can vary by a few pixels.",
+  "privacy": "Synthetic public preview data only; no private Session, credential, local database, or personal input is captured.",
+  "evidenceBoundary": "These images and the video prove the deterministic preview flow, not installation, live Runtime health, foreground macOS behavior, signing, notarization, or release readiness.",
+  "assets": [
+    {
+      "file": "pawos-agent-trace.webp",
+      "caption": "同一 Session 的上下文装配与事件证据视图。",
+      "bytes": 74832,
+      "sha256": "5bfd25c028eb3d27a5f5d3a2db550f6cc510938b8ad3464d28c66c02de298180",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "file": "pawos-room-focus-satellite.webp",
+      "caption": "Room 公开对话与可弹出的 Sol 协作态势卫星窗。",
+      "bytes": 73356,
+      "sha256": "24eb2fd3b90e9db2bb8a27296a395b6bf338fb46d25964d2d1bf28cd02b8abaa",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "file": "pawos-room-starfield.webp",
+      "caption": "Room 把伙伴、任务与状态投影到同一星系视图。",
+      "bytes": 35008,
+      "sha256": "2e8766a983a1b99f8c9658599d63552ea18eab3c9b62a37900121e643bcf2c9b",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      }
+    }
+  ],
+  "video": {
+    "tracked": false,
+    "path": "control-center-web/output/showcase/pawos-showcase.webm",
+    "bytes": 1306605,
+    "sha256": "e8c005b168742cbf50ed9a4236edb89a767cb0cca19680fba8c4c845f57900f6"
+  }
+}

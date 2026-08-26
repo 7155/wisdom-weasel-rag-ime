@@ -9,7 +9,7 @@ Do not restart from a blank UI. Do not treat this file as install/foreground pro
 ## Read in this order (all in-repo)
 
 1. This file.
-2. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete user ledger `UR-001`–`UR-132`. Newest explicit user correction wins.
+2. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete user ledger `UR-001`–`UR-152`. Newest explicit user correction wins.
 3. [PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) — current `PF-CM-001`–`023`, eleven-App design, completion gate, receipt template.
 4. [PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) — what already landed on `main` and what is unfinished.
 5. [docs/references/pawos-conversation-baseline.html](docs/references/pawos-conversation-baseline.html) — Agent conversation craft baseline. Reference only; do not replace the App with this static page.

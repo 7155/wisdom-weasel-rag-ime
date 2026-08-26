@@ -41,18 +41,19 @@ Evidence levels describe scope, not a completion ladder. For example, E2 does
 not prove E4–E6, and a screenshot without an authoritative run identity does
 not prove the Runtime path.
 
-## Current honest summary — 2026-08-26
+## Current honest summary — 2026-08-27
 
 | Scope | Current indexed result | Boundary / next action |
 | --- | --- | --- |
-| All requirements | `149 unassessed`, `0 complete`, `0 receipts` | This index is newly established; existing prose and dirty source changes were deliberately not converted into completion claims. |
+| All requirements | `149 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts. |
 | Current P0 requirements | 126 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
-| Recent P0 conversation/UI/integration requirements | `UR-133`–`UR-149` are recorded, all `unassessed` | Implementation may be in progress elsewhere, but this index has no accepted closeout receipt yet. |
+| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
 | Install / Runtime / foreground | No E4, E5, or E6 receipt is linked here | Do not claim installed or foreground acceptance from source, tests, builds, or screenshots. |
 
 This conservative baseline is intentional. It does not say that no code exists;
-it says the 149 requirements have not yet been individually assessed against
-fresh, linked evidence in this index.
+it says 149 requirements have not yet been individually assessed against fresh,
+linked evidence in this index. Closing the three documentation/Demo delivery
+requirements does not promote their preview receipts to E4–E6.
 
 ## Updating one requirement
 
@@ -82,8 +83,8 @@ not inferred status.
   "schemaVersion": "pawos.requirement-status.v1",
   "sourceReceipt": {
     "path": "PAWOS_REQUIREMENTS.md",
-    "sha256": "sha256:e73b2b800077dbbd3ed32c661cb08c62d443a0e807e89f41bc81aed76076e6a8",
-    "recordedAt": "2026-08-27T01:24:20+08:00",
+    "sha256": "sha256:9904a5a0c4e190ef827926464c4bab2672effc82e2544bd5d89d0fa28bc24ec3",
+    "recordedAt": "2026-08-27T02:37:10+08:00",
     "owner": "PAWOS requirements status index"
   },
   "evidenceLevelLabels": {
@@ -100,7 +101,36 @@ not inferred status.
     "requirementVerdict": "unverified",
     "evidenceRefs": []
   },
-  "receipts": {},
+  "receipts": {
+    "RCP-PAWOS-SHOWCASE-SOURCE-20260827": {
+      "level": "E1",
+      "recordedAt": "2026-08-27T04:52:28+08:00",
+      "owner": "PAWOS final showcase Goal",
+      "claim": "The current-source capability decision, Demo contract, README images and command, and explicit E1-E6 evidence boundaries are present.",
+      "artifactRefs": [
+        "README.md#pawos-in-one-tour",
+        "control-center-web/docs/pawos/PAWOS_SHOWCASE.md",
+        "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md#ur-150--ur-152",
+        "scripts/capture_pawos_showcase.sh",
+        "scripts/write_pawos_showcase_manifest.mjs"
+      ],
+      "sha256": "sha256:772eda8e0da3a83b20b3627aeac8d20d4dccd044b64e7e86bbfc38a1f67331a9"
+    },
+    "RCP-PAWOS-SHOWCASE-CAPTURE-20260827": {
+      "level": "E2",
+      "recordedAt": "2026-08-27T05:18:44+08:00",
+      "owner": "PAWOS final showcase Goal",
+      "claim": "The documented command passed 1/1 in the Goal worktree and in a disposable clean checkout after a frozen-lockfile install, generating three named 1440x900 WebP images and a playable VP8 WebM from public fixtures.",
+      "artifactRefs": [
+        "scripts/capture_pawos_showcase.sh",
+        "control-center-web/e2e/pawos-showcase.capture.ts",
+        "control-center-web/playwright.showcase.config.ts",
+        "assets/showcase/showcase-manifest.json",
+        "control-center-web/output/showcase/pawos-showcase.webm (ignored local artifact)"
+      ],
+      "sha256": "sha256:e8c005b168742cbf50ed9a4236edb89a767cb0cca19680fba8c4c845f57900f6"
+    }
+  },
   "requirements": {
     "UR-001": {},
     "UR-002": {},
@@ -250,7 +280,55 @@ not inferred status.
     "UR-146": {},
     "UR-147": {},
     "UR-148": {},
-    "UR-149": {}
+    "UR-149": {},
+    "UR-150": {
+      "assessment": "complete",
+      "runsVerdict": "passed",
+      "requirementVerdict": "satisfied",
+      "evidenceRefs": [
+        "RCP-PAWOS-SHOWCASE-SOURCE-20260827",
+        "RCP-PAWOS-SHOWCASE-CAPTURE-20260827"
+      ],
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2"
+      ],
+      "owner": "PAWOS final showcase Goal",
+      "updatedAt": "2026-08-27T04:52:28+08:00",
+      "note": "Current source and fresh checks selected Agent Session plus Multi-Agent Room; optional adapters were not promoted without fresh foreground evidence."
+    },
+    "UR-151": {
+      "assessment": "complete",
+      "runsVerdict": "passed",
+      "requirementVerdict": "satisfied",
+      "evidenceRefs": [
+        "RCP-PAWOS-SHOWCASE-SOURCE-20260827",
+        "RCP-PAWOS-SHOWCASE-CAPTURE-20260827"
+      ],
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2"
+      ],
+      "owner": "PAWOS final showcase Goal",
+      "updatedAt": "2026-08-27T04:52:28+08:00",
+      "note": "The repository command passed after a clean clone, frozen-lockfile dependency install, and Playwright Chromium install check; it generated the same three named scenes and a playable recording without personal data."
+    },
+    "UR-152": {
+      "assessment": "complete",
+      "runsVerdict": "passed",
+      "requirementVerdict": "satisfied",
+      "evidenceRefs": [
+        "RCP-PAWOS-SHOWCASE-SOURCE-20260827",
+        "RCP-PAWOS-SHOWCASE-CAPTURE-20260827"
+      ],
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2"
+      ],
+      "owner": "PAWOS final showcase Goal",
+      "updatedAt": "2026-08-27T04:52:28+08:00",
+      "note": "README now presents the strongest current PAWOS scenes with fixture provenance, a runnable command, privacy limits, and explicit non-claims for install, Runtime, foreground, signing, notarization, and release readiness."
+    }
   }
 }
 ```

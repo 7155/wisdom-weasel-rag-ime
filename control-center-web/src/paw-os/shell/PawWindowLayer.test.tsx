@@ -253,6 +253,39 @@ describe('PAWOS compositor window frame', () => {
     expect(within(rail).getAllByRole('button')).toHaveLength(7);
   });
 
+  it('moves eight Room satellites into the accessible rail at an 800px desktop width', async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
+    const windows = narrowRoomWindows(8);
+    window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
+      windows,
+      stack: Object.keys(windows),
+      activeWindowId: 'main',
+    }));
+
+    try {
+      render(
+        <ControlTransportProvider transport={createPreviewTransport()}>
+          <PawDesktopProvider>
+            <EnterRoomFocus />
+            <PawWindowLayer />
+          </PawDesktopProvider>
+        </ControlTransportProvider>,
+      );
+
+      const rail = await screen.findByRole('region', { name: 'Sol 行星窗口，横向滚动查看全部 8 个窗口' });
+      expect(rail).toHaveAttribute('data-satellite-count', '8');
+      const satelliteShells = Array.from({ length: 8 }, (_, index) => screen.getByLabelText(`伙伴 ${index + 1}窗口`));
+      expect(Math.min(...satelliteShells.map((shell) => Number.parseFloat(shell.style.height)))).toBeGreaterThanOrEqual(210);
+      expect(transformCoordinate(satelliteShells.at(-1)!.style.transform, 'x')).toBeGreaterThan(window.innerWidth);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });
+    }
+  });
+
   it('moves on the compositor and commits state only when the pointer finishes', () => {
     const commit = vi.fn();
     let processRenders = 0;
@@ -694,10 +727,10 @@ function roomWindows(): Record<string, PawWindowNode> {
   };
 }
 
-function narrowRoomWindows(): Record<string, PawWindowNode> {
+function narrowRoomWindows(count = 5): Record<string, PawWindowNode> {
   return Object.fromEntries([
     ['main', windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' })],
-    ...Array.from({ length: 5 }, (_, index) => {
+    ...Array.from({ length: count }, (_, index) => {
       const id = `participant-${index + 1}`;
       return [id, windowNode(id, { kind: 'participant', id, roomId: 'room-a', title: `伙伴 ${index + 1}` })];
     }),

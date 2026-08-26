@@ -17,4 +17,22 @@ describe('PAWOS route bridge', () => {
       initialRoute: '/input?view=lexicon',
     });
   });
+
+  it('lets an Agent deep link replace a previously bound Session target', () => {
+    const store = createPawDesktopStore('agent', '/agent?session=session-old');
+    store.getState().bindAgentMain('agent', {
+      kind: 'session',
+      id: 'session-old',
+      title: '旧 Session',
+    });
+    window.location.hash = '#/rooms?room=room-preview';
+
+    syncPawOsRoute(store);
+
+    expect(store.getState().windows.agent).toMatchObject({
+      initialRoute: '/rooms?room=room-preview',
+      title: 'Agent',
+    });
+    expect(store.getState().windows.agent?.target).toBeUndefined();
+  });
 });

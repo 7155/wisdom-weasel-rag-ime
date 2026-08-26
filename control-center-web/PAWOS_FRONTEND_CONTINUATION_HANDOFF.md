@@ -43,7 +43,7 @@ Do not revert those unless the backend owner says so. Do not commit `integration
 Root `/docs/` is gitignored. A cloud model must read the tracked copies:
 
 1. `control-center-web/docs/README.md` — index
-2. `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` — complete `UR-001`–`UR-132`
+2. `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` — complete `UR-001`–`UR-152`
 3. `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` — `PF-CM-001`–`023` and App specs
 4. this file — latest checkpoint
 5. `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` — earlier receipts

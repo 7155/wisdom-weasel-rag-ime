@@ -5,7 +5,7 @@ import { expectNoHorizontalPageOverflow, isMobileViewport, percentile, settleAge
 // Keep this product fixture serial so the 50 ms responsiveness budget measures the UI itself.
 test.describe.configure({ mode: 'serial' });
 
-test('production Agent scene preserves Turn aggregation and composer responsiveness', async ({
+test('legacy compatibility Agent scene preserves Turn aggregation and composer responsiveness', async ({
   page,
 }, testInfo) => {
   await openAgentScene(page, testInfo.project.name);
@@ -15,7 +15,14 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   const avatarCounts = await assistantTurns.evaluateAll((turns) =>
     turns.map((turn) => turn.querySelectorAll(':scope > .agent-persona-avatar').length),
   );
-  expect(avatarCounts.every((count) => count === 1)).toBe(true);
+  // Product conversation surfaces no longer repeat decorative personas on
+  // every assistant Turn; identity stays in the owning Session chrome.
+  expect(avatarCounts.every((count) => count === 0)).toBe(true);
+  const assistantMeasures = await assistantTurns.evaluateAll((turns) => turns.map((turn) => {
+    const body = turn.querySelector<HTMLElement>(':scope > .agent-assistant-turn__body');
+    return { turn: turn.getBoundingClientRect().width, body: body?.getBoundingClientRect().width ?? 0 };
+  }));
+  expect(assistantMeasures.every(({ body, turn }) => body >= turn * .85)).toBe(true);
 
   await expect(page.locator('.agent-markdown table')).toBeAttached();
   await expect(page.locator('.agent-code-block')).toBeAttached();
@@ -24,9 +31,7 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await expect(page.locator('.agent-sticker-block')).toBeAttached();
   await expect(page.locator('.agent-citation')).toBeAttached();
   await expect(page.locator('.agent-file-block')).toBeAttached();
-  const reasoningSummary = page.getByRole('button', { name: /查看 Agent 思考摘要/ });
-  await expect(reasoningSummary).toBeVisible();
-  await expect(reasoningSummary).toContainText('核对迁移计划与当前前端边界');
+  await expect(page.getByRole('button', { name: /查看 Agent 思考摘要/ })).toHaveCount(0);
   await page.getByRole('button', { name: '展开 room-runtime-handoff.md' }).click();
   const filePreview = page.getByRole('region', { name: 'room-runtime-handoff.md 内联预览' });
   await expect(filePreview.getByRole('heading', { name: 'Room Runtime 交接' })).toBeVisible();
@@ -34,16 +39,9 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await page.getByRole('button', { name: '收起 room-runtime-handoff.md' }).click();
   await expect(filePreview).toBeHidden();
 
-  const activity = page.locator('.agent-activity');
-  await expect(activity).toHaveCount(1);
-  await activity.locator(':scope > summary').click();
-  await expect(activity).toHaveAttribute('open', '');
-  await expect(activity.locator('.agent-activity-row > summary strong')).toHaveText([
-    '检索文档',
-    '读取工具书',
-    '协作 Agent',
-    '权限确认',
-  ]);
+  // Tool execution is projected into the task/status surface instead of
+  // injecting a second raw activity transcript into the conversation.
+  await expect(page.locator('.agent-activity')).toHaveCount(0);
 
   const visibleText = await page.locator('main[data-route-id="agent"]').innerText();
   expect(visibleText).not.toMatch(/\{"(?:schemaVersion|eventType|payload)"/);
@@ -77,11 +75,13 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await expect(page.getByRole('listbox', { name: '命令面板' })).toBeVisible();
   await composer.fill('');
   await expect(composer).toHaveAttribute('placeholder', /粘贴图片/);
-  await expect(page.getByRole('button', { name: '添加附件' })).toHaveCount(0);
+  const attachmentButtons = page.getByRole('button', { name: '添加附件' });
+  expect(await attachmentButtons.count()).toBeGreaterThanOrEqual(1);
+  await expect(attachmentButtons.first()).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
-test('production Agent scene matches the desktop and mobile visual baselines', async ({
+test('legacy compatibility Agent scene matches the desktop and mobile visual baselines', async ({
   page,
 }, testInfo) => {
   await openAgentScene(page, testInfo.project.name);
@@ -97,8 +97,8 @@ test('production Agent scene matches the desktop and mobile visual baselines', a
   });
 });
 
-test('production Room and Role scenes retain group and persona boundaries', async ({ page }, testInfo) => {
-  await page.goto('/#/rooms');
+test('legacy compatibility Room scene retains group boundaries and the retired Role route falls back to Agent', async ({ page }, testInfo) => {
+  await page.goto(legacyRoute('/rooms'));
   const roomsScene = page.locator('main[data-route-id="rooms"]');
   if (isMobileViewport(page)) {
     await expect(roomsScene.locator('.rooms-rail')).toBeHidden();
@@ -112,10 +112,11 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     await expect(page.getByRole('radio', { name: '对话' })).toBeChecked();
     await page.getByRole('radio', { name: '任务' }).click();
     await expect(roomsScene.locator('.room-execution-workspace')).toBeVisible();
-    const taskGraph = roomsScene.getByRole('region', { name: '任务图', exact: true });
+    const taskGraph = roomsScene.getByRole('region', { name: '任务流转与验收', exact: true });
     await expect(taskGraph).toBeVisible();
-    await expect(taskGraph).toContainText('共同目标');
-    await expect(taskGraph).toContainText('结果');
+    await expect(taskGraph).toContainText('分工与 @');
+    await expect(taskGraph).toContainText('任务 Workflow');
+    await expect(taskGraph).toContainText('Root 最终答复');
     await page.getByRole('radio', { name: '伙伴' }).click();
     await expect(roomsScene.locator('.room-session-workspace')).toBeVisible();
     await roomsScene.getByRole('button', { name: '查看能做什么' }).first().click();
@@ -155,27 +156,15 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     contentType: 'image/png',
   });
 
-  await page.goto('/#/roles');
-  await expect(page.locator('#workspace-main').getByRole('heading', { name: '伙伴', level: 1 })).toBeVisible();
-  await expect(page.getByRole('region', { name: '伙伴目录' })).toBeVisible();
-  expect(await page.locator('.persona-grid > button').count()).toBeGreaterThanOrEqual(3);
-  const secondPersona = page.locator('.persona-grid > button').nth(1);
-  const personaName = (await secondPersona.locator('strong').innerText()).trim();
-  await secondPersona.click();
-  await page.getByRole('button', { name: '开始对话' }).click();
-  await expect(page).toHaveURL(/#\/agent\?session=session-persona-1$/);
-  await expect(page.getByText(`${personaName} 对话`, { exact: true }).first()).toBeVisible();
-
-  await page.goto('/#/roles');
-  await expect(page.getByRole('region', { name: '伙伴能力边界' })).toBeVisible();
-  await expect(page.getByText('新对话设置', { exact: true })).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Agent 模板' })).toHaveCount(0);
-  await expect(page.getByRole('radio', { name: /主持人|执行者|研究员|审查员/ })).toHaveCount(0);
+  await page.goto(legacyRoute('/roles'));
+  await expect(page).toHaveURL(/#\/agent$/);
+  await expect(page.locator('main[data-route-id="agent"]')).toBeVisible();
+  await expect(page.locator('main[data-route-id="roles"]')).toHaveCount(0);
   await expectNoHorizontalPageOverflow(page);
 });
 
 async function openAgentScene(page: Page, projectName: string): Promise<void> {
-  await page.goto('/#/agent');
+  await page.goto(legacyRoute('/agent'));
   if (projectName.startsWith('mobile-')) {
     await expect(page.locator('main[data-route-id="agent"]')).toHaveAttribute(
       'data-rail-open',
@@ -196,6 +185,10 @@ async function openAgentScene(page: Page, projectName: string): Promise<void> {
     await expect(page.locator('.agent-session-row').first()).toBeVisible();
   }
   await expect(page.locator('.agent-turn').first()).toBeVisible();
+}
+
+function legacyRoute(path: string): string {
+  return `/?frontend=legacy&controlTransport=mock#${path}`;
 }
 
 async function installTypingPaintProbe(page: Page): Promise<void> {

@@ -5,8 +5,9 @@ that can only read GitHub still has the complete requirement set.
 
 | Document | Role |
 | --- | --- |
-| [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md) | Append-only accepted requirements `UR-001`–`UR-149`, source evidence, corrections. `current` means controlling semantics, not implementation completion. |
+| [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md) | Append-only accepted requirements `UR-001`–`UR-152`, source evidence, corrections. `current` means controlling semantics, not implementation completion. |
 | [PAWOS_REQUIREMENT_STATUS.md](PAWOS_REQUIREMENT_STATUS.md) | Per-requirement assessment, independent run/requirement verdicts, E1–E6 evidence receipts, and source-hash freshness. |
+| [PAWOS_SHOWCASE.md](PAWOS_SHOWCASE.md) | Current final-verification, Demo, capture, evidence-boundary, and closeout record. |
 | [PAWOS_FRONTEND_HANDOFF.md](PAWOS_FRONTEND_HANDOFF.md) | Historical frontend rewrite receipts, Agent/Room `AUI-*`/`RUI-*`, open boundaries. |
 | [../../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](../../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) | Current `PF-CM-*` ledger, eleven-App design spec, completion gate. |
 | [../../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](../../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) | 2026-08-24 checkpoint: what landed on `main`, what remains. |

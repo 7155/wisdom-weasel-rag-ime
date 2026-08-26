@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-25T15:45:26Z",
+  "generatedAt": "2026-08-26T18:44:00Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -15,15 +15,15 @@
   "groups": {
     "project_harness": {
       "description": "Root self-hosting project context and bounded consistency checks.",
-      "pathCount": 12
+      "pathCount": 14
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 741
+      "pathCount": 760
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 219
+      "pathCount": 388
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -43,24 +43,24 @@
     },
     "installation_reliability": {
       "description": "Clean installation compatibility for full Xcode paths and immutable installed database history.",
-      "pathCount": 9
+      "pathCount": 10
     }
   },
   "summary": {
-    "pathCount": 1012,
+    "pathCount": 1203,
     "dispositionCounts": {
-      "keep_release": 990,
+      "keep_release": 1181,
       "delete_old_implementation": 22
     },
     "groupCounts": {
-      "project_harness": 12,
-      "control_center_release_ui": 741,
-      "session_room_skill_flow": 219,
-      "memory_curation": 14,
+      "project_harness": 14,
+      "control_center_release_ui": 760,
+      "session_room_skill_flow": 388,
       "desktop_semantic_accessibility": 12,
+      "memory_curation": 14,
+      "room_kernel_cleanup": 2,
       "release_scope": 3,
-      "installation_reliability": 9,
-      "room_kernel_cleanup": 2
+      "installation_reliability": 10
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -92,8 +92,8 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1012/1012 base-to-HEAD paths classified; 990 retained and 22 old implementations deleted",
-    "repositoryPublicAudit": "repository-only audit found no required, tracked-forbidden, secret-shape, or machine-path violations; requestedScopeOk=false because excluded local node_modules and untracked design artifacts keep the worktree dirty",
+    "releaseScopeCoverage": "1203/1203 base-to-HEAD paths classified; 1181 retained and 22 old implementations deleted",
+    "repositoryPublicAudit": "Current 2026-08-27 repository-only audit is blocked by tracked handoff artifacts, machine-specific paths, the dirty worktree, pending foreground acceptance, declared blocked product status, and a missing release manifest. This file is a path-classification inventory, not a current public-release readiness receipt.",
     "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
   },
@@ -7181,6 +7181,1343 @@
       "disposition": "keep_release",
       "group": "installation_reliability",
       "reason": "Keep the reproducible dependency and installed Gateway reliability changes."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ModelPicker.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ToolPicker.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/file-preview-store.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/file-preview-store.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/state/live-store.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/AgentTimeline.follow.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/conversation-status-polish.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/conversation-ui/use-conversation-queue.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/evidence-echo/EvidenceEchoUsage.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/evidence-echo/evidence-echo.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/evidence-echo/evidence-echo.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/evidence-echo/evidence-echo.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/memory/api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawSessionWorkspace.performance.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawFieldLede.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawFieldLede.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/UPSTREAM.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/.github/workflows/publish-ego-browser-skill.yml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/LICENSE",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/.gitignore",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/package-lock.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/package.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/build.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/extract-help-docs.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/mutation-check.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/adversarial.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/canvas.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/damai-rush.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/downloads.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/environment.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/helper-surface.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/index.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/interactions.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/keyboard-regression.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/keyboard.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/macos-input-regression.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/navigation.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/observation.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/playwright-locators.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/playwright-page-info.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/playwright-page-url.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/playwright-permissions.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/playwright-targets.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/playwright-url-waits.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/pointer.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/runtime-regression.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/runtime.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/shared.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/task-space.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/video-recording.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/cases/workflows.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/app.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/client-state.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/competition.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/fixture-routes.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/index.html",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/styles.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/ticket-store.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/ego-source.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/fixture.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/preamble.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/run-command.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/runner.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/run-real-browser-e2e.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/validate-agent-style.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/validate-site-skills.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/browser-runtime.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/browser-runtime.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/cdp-eval.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/cdp-eval.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/downloads.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/downloads.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/element-ops.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/files.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/keyboard.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/keyboard.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/load.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/locator.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/locator.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/nav.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/nav.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/observe.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/observe.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/pointer.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/pointer.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/screencast.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/screencast.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/waits.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/driver/waits.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/ego-errors.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/ego-errors.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/element-resolver.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/element-resolver.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/env.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/format.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/format.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/help-runtime.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/help-runtime.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/helpers.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/helpers.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/http.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/index.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/index.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/learning/check-domain-learning.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/learning/index.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/learning/index.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/learning/validate-learning-format.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/legacy-skill-guard.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/legacy-skill-guard.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/locator-query.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/output-sink.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/output-sink.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/paw-trace.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/ref-map.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/ref-state.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/run-output-sink.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/run.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/state.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/taskspace-e2e.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/update-notice.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/update-notice.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/video-recorder.test.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/src/video-recorder.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/test/fixture-server.test.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/test/skill-publish-workflow.test.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/tsconfig.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/.gitignore",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/bin/ego-browser.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/bin/ego-linux-hostd.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/package-lock.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/package.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/scripts/build.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/scripts/smoke.sh",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/cdp-bridge.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/cdp-bridge.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/chrome-supervisor.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/chrome-supervisor.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/cli.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/config.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/config.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/e2e-smoke.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/ego-client.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/ego-client.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/ego-runtime.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/ego-runtime.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/errors.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/errors.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/fixtures/ax-tree-minimal.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/health-server.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/health-server.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/host-control.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/host-control.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/host-daemon.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/host-daemon.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/paths.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/paths.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/persistence-e2e.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/rpc.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/rpc.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/snapshot-engine.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/snapshot-engine.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/space-manager.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/src/space-manager.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/tsconfig.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/assets/composer-icon.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/assets/logo.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/google/browser-tools/autocomplete.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/google/manifest.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/google/notes/overview.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/google/tools/search-extract.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/x-com/browser-tools/extract-post.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/x-com/manifest.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/x-com/notes/overview.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/x-com/notes/timeline.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/x-com/tools/search-users.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/learnings/x-com/tools/timeline.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/references/install.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/references/video.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/scripts/install-linux.sh",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/scripts/install.sh",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
+      "path": "scripts/build_paw_os_electron_host.sh",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Keep build, host, and installation verification aligned with the current product generation."
+    },
+    {
+      "path": "scripts/check_pawos_requirement_status.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "tests/test_pawos_requirement_status.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
     }
   ]
 }

@@ -773,6 +773,17 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
     const addressedParticipants = pendingQuestionAnswer
       ? []
       : roomMentionedParticipants(activeParticipants, message, participantAliases);
+    if (steering && addressedParticipants.length > 1) {
+      setRoomError(room.id, '当前回合只能点名一位伙伴，请只保留一个 @伙伴。');
+      return false;
+    }
+    const steerParticipantId = steering
+      ? addressedParticipants[0]?.id ?? activeRoomTurn?.participantIds[0] ?? activeParticipants[0]?.id ?? ''
+      : '';
+    if (steering && !steerParticipantId) {
+      setRoomError(room.id, '当前回合还没有可点名的伙伴，请稍后重试。');
+      return false;
+    }
     const clientMessageId = `room-web-${crypto.randomUUID()}`;
     roomTimelineFollowIntentRef.current = true;
     roomSendLocksRef.current.add(room.id);
@@ -807,7 +818,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
             body: {
               action: 'steer_participant',
               rootId: activeRoomTurn.rootId ?? activeRoomTurn.id,
-              participantId: activeRoomTurn.participantIds[0] ?? '',
+              participantId: steerParticipantId,
               clientActionId: clientMessageId,
               message,
             },
@@ -1456,16 +1467,29 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
           taskBusyState={managedTaskBusyState}
           pendingUserAnswer={pendingQuestion?.roomId === room.id}
           onDraftChange={(value) => {
+            const previous = roomDraftsRef.current.get(room.id) ?? '';
             persistRoomDraft(room.id, value);
-            if (roomErrorsRef.current.get(room.id)?.source === 'operation') setRoomError(room.id, '');
+            if (
+              value !== previous
+              && roomErrorsRef.current.get(room.id)?.source === 'operation'
+            ) setRoomError(room.id, '');
           }}
           onAttachmentsChange={(value) => updateRoomAttachments(room.id, value)}
           onPasteImages={(files) => void pasteRoomImages(room.id, files)}
           onPasteFromClipboard={() => void pasteRoomImages(room.id)}
           onPickAttachments={() => void pickRoomImages(room.id)}
-          onSend={(value) => void send(value, {
-            question: pendingQuestion?.roomId === room.id ? pendingQuestion : undefined,
-          })}
+          onSend={(value) => {
+            const question = pendingQuestion?.roomId === room.id ? pendingQuestion : undefined;
+            if (
+              activeRoomTurn
+              && !question
+              && roomMentionedParticipants(activeParticipants, value, participantAliases).length > 1
+            ) {
+              setRoomError(room.id, '当前回合只能点名一位伙伴，请只保留一个 @伙伴。');
+              return false;
+            }
+            return send(value, { question });
+          }}
         /> : !catalogLoading ? <RoomComposer
           room={undefined}
           personas={personas}

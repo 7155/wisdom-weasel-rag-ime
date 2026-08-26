@@ -1,671 +1,302 @@
 from __future__ import annotations
 
-import threading
+import tempfile
 import unittest
-from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace
 
 from rag_ime.agent_room_partner_application import RoomPartnerApplicationService
+from rag_ime.agent_room_partner_dispatch_store import AgentRoomPartnerDispatchStore
 from rag_ime.agent_tools import _runtime_tool_parameter_schema
-from rag_ime.contracts.json_schema import (
-    ContractValidationError,
-    validate_contract,
-)
+from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore
+from rag_ime.contracts.json_schema import ContractValidationError, validate_contract
+from tests.test_agent_room_partner_application import _RoomEvents, _RoomWorkLedger
 
 
-class _RoomEvents:
-    def __init__(self) -> None:
-        self.published: list[dict[str, object]] = []
+class RoomPartnerWorkflowAsyncContractTest(unittest.TestCase):
+    """Focused coverage for the current durable async Partner contract."""
 
-    def publish(self, **values: object) -> dict[str, object]:
-        snapshot = dict(values)
-        self.published.append(snapshot)
-        return snapshot
-
-
-class _RoomWork:
-    def __init__(
-        self,
-        *,
-        source: Mapping[str, object],
-        targets: list[Mapping[str, object]],
-    ) -> None:
-        self._source = dict(source)
-        self._targets = {
-            str(target["id"]): dict(target)
-            for target in targets
-        }
-        self._items: dict[str, dict[str, object]] = {}
-        self._lock = threading.RLock()
-        self.assign_count = 0
-
-    def assign(
-        self,
-        source_session_id: str,
-        payload: Mapping[str, object],
-        *,
-        root_turn_id: str = "",
-        topic_id: str = "",
-    ) -> tuple[dict[str, object], bool]:
-        self.assert_source(source_session_id)
-        client_message_id = str(payload["clientMessageId"])
-        with self._lock:
-            for existing in self._items.values():
-                if existing["clientMessageId"] == client_message_id:
-                    return dict(existing), False
-            self.assign_count += 1
-            target_id = str(payload["targetParticipantId"])
-            work_id = f"room-work:{self.assign_count}"
-            work = {
-                "id": work_id,
-                "roomId": str(self._source["roomId"]),
-                "topicId": topic_id,
-                "rootTurnId": root_turn_id,
-                "rootWorkId": work_id,
-                "parentWorkId": str(payload.get("parentWorkId") or ""),
-                "objective": str(payload["objective"]),
-                "expectedOutput": str(payload["expectedOutput"]),
-                "acceptanceCriteria": list(payload["acceptanceCriteria"]),
-                "accountableParticipantId": str(self._source["id"]),
-                "currentOwnerParticipantId": str(self._source["id"]),
-                "offeredToParticipantId": target_id,
-                "createdByParticipantId": str(self._source["id"]),
-                "clientMessageId": client_message_id,
-                "assignmentKey": f"assignment:{work_id}",
-                "state": "queued",
-                "depth": 1,
-                "revision": 0,
-                "resultSummary": "",
-                "artifactRefs": [],
-                "evidenceRefs": [],
-                "blocker": {},
-                "acceptedTurnId": "",
-            }
-            self._items[work_id] = work
-            return dict(work), True
-
-    def get(self, work_id: str, *, room_id: str = "") -> dict[str, object]:
-        with self._lock:
-            work = dict(self._items[work_id])
-        if room_id and work["roomId"] != room_id:
-            raise ValueError("work item does not belong to this room")
-        return work
-
-    def list(
-        self,
-        *,
-        room_id: str,
-        states: tuple[str, ...] = (),
-        owner_participant_id: str = "",
-        limit: int = 100,
-    ) -> list[dict[str, object]]:
-        with self._lock:
-            values = [
-                dict(work)
-                for work in self._items.values()
-                if work["roomId"] == room_id
-            ]
-        if states:
-            values = [item for item in values if item["state"] in states]
-        if owner_participant_id:
-            values = [
-                item
-                for item in values
-                if item["currentOwnerParticipantId"] == owner_participant_id
-            ]
-        return values[:limit]
-
-    def accept_assignment(
-        self,
-        work_id: str,
-        *,
-        target_participant_id: str,
-        accepted_turn_id: str,
-    ) -> dict[str, object]:
-        with self._lock:
-            work = self._items[work_id]
-            if work["state"] == "active":
-                return dict(work)
-            if work["state"] != "queued":
-                raise ValueError("Room assignment is no longer queued")
-            if work["offeredToParticipantId"] != target_participant_id:
-                raise ValueError("only the offered participant may accept")
-            work.update(
-                {
-                    "state": "active",
-                    "currentOwnerParticipantId": target_participant_id,
-                    "offeredToParticipantId": "",
-                    "acceptedTurnId": accepted_turn_id,
-                }
-            )
-            return dict(work)
-
-    def claim_dispatch(
-        self,
-        work_id: str,
-        *,
-        room_id: str,
-        owner_participant_id: str,
-        assignment_key: str,
-        previous_accepted_turn_id: str,
-        room_turn_id: str,
-        root_turn_id: str = "",
-    ) -> dict[str, object]:
-        del root_turn_id
-        with self._lock:
-            work = self._items[work_id]
-            if work["roomId"] != room_id:
-                raise ValueError("work item does not belong to this room")
-            if work["state"] != "active":
-                raise ValueError("only active work may be dispatched")
-            if (
-                work["currentOwnerParticipantId"] != owner_participant_id
-                or work["assignmentKey"] != assignment_key
-                or work["acceptedTurnId"] != previous_accepted_turn_id
-            ):
-                raise ValueError("WorkItem assignment changed before dispatch")
-            work["acceptedTurnId"] = room_turn_id
-            return dict(work)
-
-    def fail_assignment(
-        self,
-        work_id: str,
-        *,
-        actor_participant_id: str,
-        reason: str,
-    ) -> dict[str, object]:
-        del actor_participant_id
-        with self._lock:
-            work = self._items[work_id]
-            work.update(
-                {
-                    "state": "failed",
-                    "blocker": {"phase": "assignment", "reason": reason},
-                }
-            )
-            return dict(work)
-
-    def fail_dispatch(
-        self,
-        work_id: str,
-        *,
-        room_id: str,
-        actor_participant_id: str,
-        room_turn_id: str,
-        previous_accepted_turn_id: str,
-        reason: str,
-    ) -> dict[str, object]:
-        del room_id, actor_participant_id, room_turn_id
-        with self._lock:
-            work = self._items[work_id]
-            work["acceptedTurnId"] = previous_accepted_turn_id
-            work["blocker"] = {"phase": "dispatch", "reason": reason}
-            return dict(work)
-
-    def submit(
-        self,
-        session_id: str,
-        payload: Mapping[str, object],
-    ) -> dict[str, object]:
-        target_id = self.target_for_session(session_id)
-        with self._lock:
-            work = self._items[str(payload["workId"])]
-            if work["currentOwnerParticipantId"] != target_id:
-                raise ValueError("only the current owner may submit")
-            if work["state"] not in {"active", "blocked"}:
-                raise ValueError("only active or blocked work may be submitted")
-            work.update(
-                {
-                    "state": "review",
-                    "resultSummary": str(payload["resultSummary"]),
-                    "artifactRefs": list(payload.get("artifactRefs") or []),
-                    "evidenceRefs": list(payload.get("evidenceRefs") or []),
-                    "blocker": {},
-                }
-            )
-            return dict(work)
-
-    def submit_attempt(
-        self,
-        session_id: str,
-        payload: Mapping[str, object],
-        *,
-        attempt_id: str,
-        expected_revision: int,
-    ) -> dict[str, object]:
-        with self._lock:
-            work = self._items[str(payload["workId"])]
-            if (
-                work["acceptedTurnId"] != attempt_id
-                or int(work["revision"]) != expected_revision
-            ):
-                raise ValueError("WorkItem attempt changed")
-        return self.submit(session_id, payload)
-
-    def block_attempt(
-        self,
-        session_id: str,
-        payload: Mapping[str, object],
-        *,
-        attempt_id: str,
-        expected_revision: int,
-    ) -> dict[str, object]:
-        target_id = self.target_for_session(session_id)
-        with self._lock:
-            work = self._items[str(payload["workId"])]
-            if (
-                work["currentOwnerParticipantId"] != target_id
-                or work["acceptedTurnId"] != attempt_id
-                or int(work["revision"]) != expected_revision
-            ):
-                raise ValueError("WorkItem attempt changed")
-            work["state"] = "blocked"
-            work["blocker"] = {
-                "reason": str(payload["reason"]),
-                "nextStep": str(payload.get("nextStep") or ""),
-            }
-            return dict(work)
-
-    def accept(
-        self,
-        session_id: str,
-        payload: Mapping[str, object],
-    ) -> dict[str, object]:
-        self.assert_source(session_id)
-        with self._lock:
-            work = self._items[str(payload["workId"])]
-            if work["state"] != "review":
-                raise ValueError("Room work must be in review")
-            work["state"] = "done"
-            return dict(work)
-
-    def return_for_revision(
-        self,
-        session_id: str,
-        payload: Mapping[str, object],
-    ) -> dict[str, object]:
-        self.assert_source(session_id)
-        with self._lock:
-            work = self._items[str(payload["workId"])]
-            target_id = self.target_id_for_work(work)
-            if work["state"] != "review":
-                raise ValueError("Room work must be in review")
-            work.update(
-                {
-                    "state": "active",
-                    "currentOwnerParticipantId": target_id,
-                    "revision": int(work["revision"]) + 1,
-                    "blocker": {"reviewFeedback": str(payload["reason"])},
-                }
-            )
-            return dict(work)
-
-    def reviewer_participant_id(self, work_id: str) -> str:
-        del work_id
-        return str(self._source["id"])
-
-    def require_dependencies_done(
-        self,
-        room_id: str,
-        work_ids: tuple[str, ...],
-    ) -> list[dict[str, object]]:
-        values = [self.get(work_id, room_id=room_id) for work_id in work_ids]
-        incomplete = [
-            f"{item['id']}={item['state']}"
-            for item in values
-            if item["state"] != "done"
-        ]
-        if incomplete:
-            raise ValueError(
-                "Room dependencies are not accepted: " + ", ".join(incomplete)
-            )
-        return values
-
-    def open_for_root(
-        self,
-        *,
-        room_id: str,
-        root_turn_id: str,
-    ) -> list[dict[str, object]]:
-        return [
-            item
-            for item in self.list(room_id=room_id, limit=200)
-            if item["rootTurnId"] == root_turn_id
-            and item["state"] in {"queued", "active", "review", "blocked"}
-        ]
-
-    def escalate(
-        self,
-        session_id: str,
-        payload: Mapping[str, object],
-    ) -> dict[str, object]:
-        target_id = self.target_for_session(session_id)
-        with self._lock:
-            work = self._items[str(payload["workId"])]
-            if work["currentOwnerParticipantId"] != target_id:
-                raise ValueError("only the current owner may escalate")
-            work.update(
-                {
-                    "state": "failed",
-                    "blocker": {
-                        "reason": str(payload["reason"]),
-                        "nextStep": str(payload["nextStep"]),
-                    },
-                }
-            )
-            return dict(work)
-
-    def seed_dependency(self, *, state: str) -> str:
-        with self._lock:
-            work_id = f"room-work:dependency:{len(self._items) + 1}"
-            self._items[work_id] = {
-                "id": work_id,
-                "roomId": str(self._source["roomId"]),
-                "topicId": "topic-a",
-                "rootTurnId": "root-a",
-                "rootWorkId": work_id,
-                "parentWorkId": "",
-                "objective": "依赖任务",
-                "expectedOutput": "已验收证据",
-                "acceptanceCriteria": ["已通过验收"],
-                "accountableParticipantId": str(self._source["id"]),
-                "currentOwnerParticipantId": str(self._source["id"]),
-                "offeredToParticipantId": "",
-                "createdByParticipantId": str(self._source["id"]),
-                "clientMessageId": f"dependency:{work_id}",
-                "assignmentKey": f"assignment:{work_id}",
-                "state": state,
-                "depth": 1,
-                "revision": 0,
-                "resultSummary": "",
-                "artifactRefs": [],
-                "evidenceRefs": [],
-                "blocker": {},
-                "acceptedTurnId": "",
-            }
-            return work_id
-
-    def assert_source(self, session_id: str) -> None:
-        if session_id != self._source["sessionId"]:
-            raise ValueError("only the accountable reviewer may change the work")
-
-    def target_for_session(self, session_id: str) -> str:
-        for participant_id, target in self._targets.items():
-            if target["sessionId"] == session_id:
-                return participant_id
-        raise ValueError("unknown Partner Session")
-
-    def target_id_for_work(self, work: Mapping[str, object]) -> str:
-        accepted_turn_id = str(work.get("acceptedTurnId") or "")
-        for participant_id, target in self._targets.items():
-            if participant_id in accepted_turn_id or len(self._targets) == 1:
-                return participant_id
-        return next(iter(self._targets))
-
-
-class RoomPartnerWorkflowTest(unittest.TestCase):
     def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        db_path = Path(self._temporary.name) / "agent.db"
+        self.dispatches = AgentRoomPartnerDispatchStore(db_path)
+        self.dispatches.initialize()
+        self.wakes = AgentWakeScheduleStore(db_path)
+        self.wakes.initialize()
+
         self.source = {
             "id": "room-a:p1",
             "roomId": "room-a",
-            "sessionId": "room-a:s1",
-            "displayName": "澄·远",
-            "collaborationRole": "coordinator",
+            "sessionId": "session:lead",
+            "displayName": "Facilitator",
             "status": "active",
         }
         self.target = {
             "id": "room-a:p2",
             "roomId": "room-a",
-            "sessionId": "room-a:s2",
-            "displayName": "澄·今",
-            "collaborationRole": "implementer",
+            "sessionId": "session:partner",
+            "displayName": "Partner",
             "status": "active",
         }
         self.room = {
             "id": "room-a",
             "status": "active",
             "activeTopicId": "topic-a",
-            "moderatorParticipantId": self.source["id"],
             "participants": [self.source, self.target],
         }
         self.events = _RoomEvents()
-        self.room_work = _RoomWork(source=self.source, targets=[self.target])
-        self.dispatched_work: list[Mapping[str, object] | None] = []
-        self.work_activity: list[tuple[str, str]] = []
+        self.work = _RoomWorkLedger()
+        self.phases: list[str] = []
+        self.scheduler_notifications = 0
+        self.review_payloads: list[tuple[str, dict[str, object]]] = []
+        self.service = self._service()
 
-        def dispatch_target(**kwargs: object) -> dict[str, object]:
-            work_item = kwargs.get("work_item")
-            self.dispatched_work.append(
-                dict(work_item) if isinstance(work_item, Mapping) else None
-            )
-            decision = kwargs["decision"]
-            assert isinstance(decision, Mapping)
-            return {
-                "accepted": True,
-                "sessionTurnId": "pi-turn:partner",
-                "dispatchId": str(decision["dispatchId"]),
-            }
+    def tearDown(self) -> None:
+        self._temporary.cleanup()
 
+    def _service(self) -> RoomPartnerApplicationService:
         participants = {
             str(self.source["id"]): self.source,
             str(self.target["id"]): self.target,
         }
-        sessions = {
-            str(self.source["sessionId"]): self.source,
-            str(self.target["sessionId"]): self.target,
-        }
-        self.service = RoomPartnerApplicationService(
-            room_work=self.room_work,
-            publish_room_work_activity=lambda work, *, phase, actor: (
-                self.work_activity.append((str(work["id"]), str(phase)))
-            ),
+
+        def accept(_session_id: str, payload: object) -> dict[str, object]:
+            assert isinstance(payload, dict)
+            self.review_payloads.append(("accept", dict(payload)))
+            item = self.work.items[str(payload["workId"])]
+            item["state"] = "done"
+            item["review"] = {
+                "operabilityVerdict": payload["operabilityVerdict"],
+                "requirementVerdict": payload["requirementVerdict"],
+                "evidenceRefs": list(payload["evidenceRefs"]),
+                "reason": payload["reason"],
+                "reviewerParticipantId": self.source["id"],
+                "reviewedAtMs": 1,
+            }
+            return {"work": dict(item)}
+
+        return RoomPartnerApplicationService(
             rooms=SimpleNamespace(
-                participant_for_session=lambda session_id, **_kwargs: sessions[session_id],
-                get=lambda _room_id: self.room,
+                participant_for_session=lambda session_id, **_kwargs: (
+                    self.source
+                    if session_id == self.source["sessionId"]
+                    else self.target
+                ),
                 participant=lambda participant_id: participants[participant_id],
-                plan_routes=lambda *_args, **kwargs: [{
-                    "reason": "explicit_invite",
-                    "targetDisplayName": participants[
-                        kwargs["requested_participant_ids"][0]
-                    ]["displayName"],
-                    "targetParticipantId": kwargs["requested_participant_ids"][0],
-                }],
-                unread_public_messages=lambda *_args, **_kwargs: {
-                    "items": [],
-                    "omittedCount": 0,
-                    "throughSequence": 0,
-                },
+                get=lambda _room_id: self.room,
                 list_events=lambda *_args, **_kwargs: [],
             ),
             room_turns=SimpleNamespace(
-                active_turn=lambda _session_id: ("root-a", "dispatch-root"),
-                turn_targets=lambda *_args, **_kwargs: [],
-                hold_priority_if_idle=lambda *_args, **_kwargs: None,
-                release_priority_session=lambda *_args, **_kwargs: None,
-                is_cancelled=lambda *_args, **_kwargs: False,
+                active_turn=lambda _session_id: ("root-a", "dispatch-a"),
             ),
             runtime_status=lambda: {},
             sessions=SimpleNamespace(),
             room_events=self.events,
             room_target_idle=lambda *_args, **_kwargs: True,
             begin_room_turn=lambda *_args, **_kwargs: None,
-            room_dispatch=SimpleNamespace(dispatch_target=dispatch_target),
+            room_dispatch=SimpleNamespace(),
             cancel_room_turn=lambda *_args, **_kwargs: None,
             abort_session=lambda *_args, **_kwargs: {},
             room_topic_for_turn=lambda _root_id: "topic-a",
+            room_work=self.work,
+            publish_room_work_activity=lambda _work, **kwargs: self.phases.append(
+                str(kwargs["phase"])
+            ),
+            work_document_for_authority=lambda _kind, _identifier: {
+                "documentId": "workdoc:one",
+                "documentRevision": 2,
+            },
+            dispatch_store=self.dispatches,
+            wake_schedules=self.wakes,
+            notify_wake_scheduler=lambda: setattr(
+                self, "scheduler_notifications", self.scheduler_notifications + 1
+            ),
+            dispatch_facilitator_wake=lambda *_args, **_kwargs: True,
+            accept_room_work=accept,
         )
-        self.service._wait_for_child = lambda **kwargs: {  # type: ignore[method-assign]
-            "schemaVersion": "rag-ime.room-partner-result.v1",
-            "operation": "delegate",
-            "roomId": "room-a",
-            "rootId": "root-a",
-            "childDispatchId": kwargs["child_dispatch_id"],
-            "participantId": self.target["id"],
-            "status": "completed",
-            "result": "已核对调用链并返回证据。",
-        }
 
-    def delegate(self) -> dict[str, object]:
-        return self.service.execute(
+    def _register(self, child_dispatch_id: str = "room-child:one") -> dict[str, object]:
+        work = self.service._create_delegated_work(
+            room_id="room-a",
+            root_id="root-a",
+            topic_id="topic-a",
+            tool_call_id=f"tool:{child_dispatch_id}",
+            source=self.source,
+            target=self.target,
+            task="实现并验证 Room 变更",
+            expected_output="可验收交付",
+            acceptance_criteria=["提供运行证据"],
+        )
+        self.dispatches.register(
+            child_dispatch_id=child_dispatch_id,
+            room_id="room-a",
+            root_id="root-a",
+            parent_dispatch_id="dispatch-a",
+            tool_call_id=f"tool:{child_dispatch_id}",
+            source_participant_id=str(self.source["id"]),
+            source_session_id=str(self.source["sessionId"]),
+            target_participant_id=str(self.target["id"]),
+            target_session_id=str(self.target["sessionId"]),
+            work_item_id=str(work["id"]),
+        )
+        self.dispatches.mark_dispatched(child_dispatch_id)
+        return work
+
+    def test_delegate_work_is_active_and_idempotent_before_completion(self) -> None:
+        work = self._register()
+        duplicate = self.service._create_delegated_work(
+            room_id="room-a",
+            root_id="root-a",
+            topic_id="topic-a",
+            tool_call_id="tool:room-child:one",
+            source=self.source,
+            target=self.target,
+            task="实现并验证 Room 变更",
+            expected_output="可验收交付",
+            acceptance_criteria=["提供运行证据"],
+        )
+
+        self.assertEqual(work["state"], "active")
+        self.assertEqual(duplicate["id"], work["id"])
+        self.assertEqual(len(self.work.items), 1)
+        record = self.dispatches.get("room-child:one")
+        self.assertEqual(record["status"], "dispatched")
+        self.assertEqual(record["workItemId"], work["id"])
+        self.assertEqual(self.phases, ["assigned"])
+
+    def test_result_event_settles_dispatch_and_schedules_facilitator_wake(self) -> None:
+        work = self._register()
+
+        self.service.observe_room_event(
+            {
+                "roomId": "room-a",
+                "turnId": "root-a",
+                "eventType": "room_post",
+                "payload": {
+                    "post": {
+                        "postId": "room-post:one",
+                        "rootId": "root-a",
+                        "dispatchId": "room-child:one",
+                        "authorActorRef": self.target["id"],
+                        "kind": "work_result",
+                        "content": "实现和回归证据已交付",
+                        "workResult": {
+                            "proposedOperabilityVerdict": "failed",
+                            "proposedRequirementVerdict": "unverified",
+                        },
+                    }
+                },
+            }
+        )
+
+        record = self.dispatches.get("room-child:one")
+        self.assertEqual(record["status"], "review")
+        self.assertEqual(self.work.items[str(work["id"])]["state"], "review")
+        self.assertEqual(
+            self.work.items[str(work["id"])]["proposedOperabilityVerdict"],
+            "failed",
+        )
+        self.assertEqual(record["wake"]["state"], "scheduled")
+        wake = self.wakes.get(str(record["wake"]["scheduleId"]))
+        self.assertEqual(wake["targetSessionId"], self.source["sessionId"])
+        self.assertEqual(self.scheduler_notifications, 1)
+
+        collected = self.service.execute(
+            str(self.source["sessionId"]),
+            {"op": "collect", "childDispatchId": "room-child:one"},
+            tool_call_id="tool:collect",
+        )
+        self.assertEqual(collected["status"], "review")
+        self.assertEqual(collected["workItem"]["state"], "review")
+
+    def test_accept_records_independent_operability_and_requirement_verdicts(self) -> None:
+        work = self._register()
+        self.dispatches.settle(
+            "room-child:one",
+            status="review",
+            result="已交付",
+            completion_source="room_post",
+        )
+
+        receipt = self.service.execute(
             str(self.source["sessionId"]),
             {
-                "op": "delegate",
-                "phase": "实现",
-                "targetParticipantId": self.target["id"],
-                "task": "核对 Room 调度链",
-                "expectedOutput": "调用链与证据",
-                "acceptanceCriteria": ["给出真实 dispatch 证据"],
+                "op": "accept",
+                "workItemId": work["id"],
+                "expectedRevision": 0,
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["test:green", "workdoc:one@2"],
+                "reason": "真实路径与需求验收均通过。",
             },
-            tool_call_id="tool:delegate",
-        )
-
-    def test_delegate_binds_real_session_to_work_item_and_stops_at_review(self) -> None:
-        result = self.delegate()
-
-        work_id = str(result["workItemId"])
-        work = self.room_work.get(work_id, room_id="room-a")
-        self.assertEqual(work["state"], "review")
-        self.assertEqual(result["contractStatus"], "pending_review")
-        self.assertIs(result["requiresAcceptance"], True)
-        self.assertEqual(self.room_work.assign_count, 1)
-        self.assertEqual(self.dispatched_work[0]["id"], work_id)  # type: ignore[index]
-        authority_events = [
-            item
-            for item in self.events.published
-            if item["event_type"] in {"route_decision", "participant_activity"}
-        ]
-        self.assertTrue(authority_events)
-        self.assertTrue(all(
-            item["payload"].get("workItemId") == work_id  # type: ignore[union-attr]
-            for item in authority_events
-        ))
-        self.assertIn((work_id, "assigned"), self.work_activity)
-        self.assertIn((work_id, "accepted"), self.work_activity)
-        self.assertIn((work_id, "submitted"), self.work_activity)
-
-    def test_root_final_is_blocked_until_explicit_acceptance(self) -> None:
-        delegated = self.delegate()
-        work_id = str(delegated["workItemId"])
-
-        with self.assertRaisesRegex(ValueError, "blocked until all formal WorkItems"):
-            self.service.execute(
-                str(self.source["sessionId"]),
-                {"op": "post", "kind": "result", "content": "尚未验收的最终答复"},
-                tool_call_id="tool:premature-final",
-            )
-
-        accepted = self.service.execute(
-            str(self.source["sessionId"]),
-            {"op": "accept", "workItemId": work_id},
             tool_call_id="tool:accept",
         )
-        self.assertEqual(accepted["contractStatus"], "accepted")
-        self.assertEqual(self.room_work.get(work_id)["state"], "done")
 
-        final = self.service.execute(
-            str(self.source["sessionId"]),
-            {"op": "post", "kind": "result", "content": "已验收后的唯一最终答复"},
-            tool_call_id="tool:final",
+        self.assertEqual(receipt["status"], "accepted")
+        self.assertEqual(self.dispatches.get("room-child:one")["status"], "accepted")
+        self.assertEqual(self.work.items[str(work["id"])]["state"], "done")
+        self.assertEqual(
+            self.review_payloads[0][1]["operabilityVerdict"],
+            "passed",
         )
-        self.assertIs(final["published"], True)
-
-    def test_return_and_resume_reuse_the_same_work_item(self) -> None:
-        delegated = self.delegate()
-        work_id = str(delegated["workItemId"])
-
-        returned = self.service.execute(
-            str(self.source["sessionId"]),
-            {
-                "op": "return",
-                "workItemId": work_id,
-                "reason": "缺少恢复路径证据",
-            },
-            tool_call_id="tool:return",
+        self.assertEqual(
+            self.review_payloads[0][1]["requirementVerdict"],
+            "satisfied",
         )
-        self.assertEqual(returned["contractStatus"], "revision_required")
-        self.assertEqual(self.room_work.get(work_id)["state"], "active")
-
-        resumed = self.service.execute(
-            str(self.source["sessionId"]),
-            {
-                "op": "resume",
-                "workItemId": work_id,
-                "phase": "返修",
-            },
-            tool_call_id="tool:resume",
-        )
-        self.assertEqual(resumed["workItemId"], work_id)
-        self.assertEqual(resumed["contractStatus"], "pending_review")
-        self.assertEqual(self.room_work.assign_count, 1)
-        self.assertEqual(self.room_work.get(work_id)["revision"], 1)
-
-    def test_unaccepted_dependency_blocks_next_phase(self) -> None:
-        dependency_id = self.room_work.seed_dependency(state="review")
-
-        with self.assertRaisesRegex(ValueError, "dependencies are not accepted"):
-            self.service.execute(
-                str(self.source["sessionId"]),
-                {
-                    "op": "delegate",
-                    "phase": "集成",
-                    "targetParticipantId": self.target["id"],
-                    "task": "集成上一阶段结果",
-                    "expectedOutput": "集成结果",
-                    "acceptanceCriteria": ["依赖已经通过验收"],
-                    "dependsOnWorkItemIds": [dependency_id],
-                },
-                tool_call_id="tool:dependent",
-            )
-        self.assertEqual(self.room_work.assign_count, 0)
 
 
 class RoomPartnerSchemaTest(unittest.TestCase):
-    def test_schema_rejects_single_and_batch_fields_in_one_call(self) -> None:
+    def test_schema_allows_shared_fields_on_batch_and_rejects_unknown_fields(self) -> None:
         schema = _runtime_tool_parameter_schema(
             "room_partner",
             [
                 "list",
                 "delegate",
                 "delegate_batch",
+                "retry",
                 "accept",
                 "return",
-                "resume",
-                "reassign",
-                "fail",
-                "abandon",
+                "collect",
+                "wait",
                 "post",
             ],
+        )
+        validate_contract(
+            {
+                "op": "delegate_batch",
+                "phase": "并行实现",
+                "targetParticipantId": "shared-context-is-allowed",
+                "task": "共享上下文",
+                "tasks": [
+                    {
+                        "targetParticipantId": "room-a:p2",
+                        "task": "轨道一",
+                        "expectedOutput": "结果一",
+                        "acceptanceCriteria": ["标准一"],
+                    },
+                    {
+                        "targetParticipantId": "room-a:p3",
+                        "task": "轨道二",
+                        "expectedOutput": "结果二",
+                        "acceptanceCriteria": ["标准二"],
+                    },
+                ],
+            },
+            schema,
         )
         with self.assertRaises(ContractValidationError):
             validate_contract(
                 {
                     "op": "delegate_batch",
                     "phase": "并行实现",
-                    "targetParticipantId": "room-a:p2",
-                    "task": "非法单任务字段",
-                    "tasks": [
-                        {
-                            "targetParticipantId": "room-a:p2",
-                            "task": "轨道一",
-                            "expectedOutput": "结果一",
-                            "acceptanceCriteria": ["标准一"],
-                        },
-                        {
-                            "targetParticipantId": "room-a:p3",
-                            "task": "轨道二",
-                            "expectedOutput": "结果二",
-                            "acceptanceCriteria": ["标准二"],
-                        },
-                    ],
+                    "tasks": [],
+                    "unknown": True,
                 },
                 schema,
             )
 
     def test_schema_requires_a_complete_delivery_contract(self) -> None:
-        schema = _runtime_tool_parameter_schema(
-            "room_partner",
-            ["delegate"],
-        )
+        schema = _runtime_tool_parameter_schema("room_partner", ["delegate"])
         with self.assertRaises(ContractValidationError):
             validate_contract(
                 {

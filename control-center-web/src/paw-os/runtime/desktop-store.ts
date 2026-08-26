@@ -563,14 +563,25 @@ function roomParticipantWindowBounds(index: number): PawWindowBounds {
   const viewport = pawWindowArea();
   const width = Math.min(viewport.width, 300, Math.max(PAW_WINDOW_MIN_WIDTH, viewport.width * .22));
   const height = Math.min(viewport.height, 240, Math.max(PAW_WINDOW_MIN_HEIGHT, viewport.height * .27));
-  const right = viewport.x + viewport.width - width - 12;
-  const bottom = viewport.y + viewport.height - height - 18;
+  const left = viewport.x;
+  const center = viewport.x + (viewport.width - width) / 2;
+  const right = viewport.x + viewport.width - width;
+  const top = viewport.y;
+  const middle = viewport.y + (viewport.height - height) / 2;
+  const bottom = viewport.y + viewport.height - height;
+  // Room admits eight participants. Keep all eight on distinct perimeter
+  // slots so the sixth through eighth windows do not cycle back over the
+  // first three. Corners stay first to preserve the familiar small-Room
+  // composition; edge centers are only occupied as the Room grows.
   const positions = [
-    { x: viewport.x + 12, y: viewport.y + 18 },
-    { x: right, y: viewport.y + 18 },
-    { x: viewport.x + 12, y: bottom },
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: left, y: bottom },
     { x: right, y: bottom },
-    { x: viewport.x + (viewport.width - width) / 2, y: bottom },
+    { x: center, y: top },
+    { x: center, y: bottom },
+    { x: left, y: middle },
+    { x: right, y: middle },
   ];
   const position = positions[index % positions.length]!;
   return fitPawWindowBounds({ ...position, width, height }, viewport);

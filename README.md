@@ -27,6 +27,36 @@ per-keystroke prediction.
 > stapling, and the final release manifest remain open. Treat local builds as
 > development installations.
 
+## PAWOS In One Tour
+
+PAWOS keeps an Agent's work inspectable without turning the conversation into
+a wall of internal logs. Start from one resumable Session, disclose its Tool
+and context evidence when it matters, then return to the answer in the same
+workspace.
+
+![PAWOS Agent Session showing context assembly, token sources, Tool calls, and recovered-turn evidence](assets/showcase/pawos-agent-trace.webp)
+
+When work benefits from several independently accountable Partners, the same
+workspace becomes a Room: public conversation stays central while the Sol
+overview can detach into a satellite window for responsibilities, handoffs,
+review state, and evidence.
+
+![PAWOS Room beside a detachable Sol collaboration overview](assets/showcase/pawos-room-focus-satellite.webp)
+
+The Room can project that same goal, Partner, WorkItem, and handoff state as a
+shared starfield—an overview of real collaboration structure, not a second
+agent runtime.
+
+![PAWOS Room starfield with Sol, Partner planets, work state, and handoffs](assets/showcase/pawos-room-starfield.webp)
+
+These privacy-safe scenes use the deterministic public preview transport. They
+prove the reproducible UI tour, not a native installation, live Runtime health,
+macOS foreground acceptance, signing, notarization, or release readiness. Run
+`scripts/capture_pawos_showcase.sh` to regenerate the three WebP images, an
+ignored 1440×900 WebM recording, and a source/hash manifest. The exact Demo
+script and evidence boundary are documented in
+[PAWOS Showcase And Final Verification](control-center-web/docs/pawos/PAWOS_SHOWCASE.md).
+
 ## What It Does
 
 | Capability | Current boundary |

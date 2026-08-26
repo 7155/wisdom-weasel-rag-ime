@@ -11,7 +11,7 @@ These files are on `main` and are the GitHub-visible authority pack:
 | File | Role |
 | --- | --- |
 | `control-center-web/CLOUD_MODEL.md` | GitHub-only start file; read first |
-| `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-132`, corrections, verbatim evidence |
+| `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-152`, corrections, verbatim evidence |
 | `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` | Historical Agent/Room `AUI-*`/`RUI-*` receipts and open boundaries |
 | `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` | This file: `PF-CM-*`, eleven-App spec, completion gate |
 | `control-center-web/PAWOS_FRONTEND_CONTINUATION_HANDOFF.md` | 2026-08-24 checkpoint of what landed and what remains |

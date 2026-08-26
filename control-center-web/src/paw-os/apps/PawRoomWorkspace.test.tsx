@@ -8,7 +8,8 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { previewRoomSnapshot } from '@/app/preview-room-data';
 import { TooltipProvider } from '@/components/primitives';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
-import type { ControlRequest } from '@/platform/transport';
+import { MockControlTransport } from '@/test/mock-transport';
+import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
@@ -23,7 +24,16 @@ vi.mock('./PawStarfield', async (importOriginal) => {
   return await importOriginal();
 });
 
-afterEach(cleanup);
+const transcriptScrollTo = vi.fn();
+Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+  configurable: true,
+  value: transcriptScrollTo,
+});
+
+afterEach(() => {
+  cleanup();
+  transcriptScrollTo.mockReset();
+});
 
 describe('PAWOS Room collaboration tools', () => {
   it('does not let a late send receipt steal the Room timeline from a reader', () => {
@@ -60,6 +70,77 @@ describe('PAWOS Room collaboration tools', () => {
     scheduled[1]?.(0);
     expect(scrollTo).toHaveBeenCalledOnce();
     expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: 'smooth' });
+  });
+
+  it('steers an explicitly mentioned participant and keeps an ack-only receipt until the Room event arrives', async () => {
+    const user = userEvent.setup();
+    const snapshot = activeRoomSnapshot('room-steer-target');
+    const room = snapshot.room as unknown as RoomSummary;
+    const transport = new MockControlTransport({ routes: {
+      'agent.room.snapshot': snapshot,
+      'agent.room.participant.steer': { ok: true },
+    } });
+    renderRoom(901, vi.fn(), room, [], transport);
+
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    await user.type(composer, '@Mars 请优先核对依赖边界');
+    await waitFor(() => expect(screen.getByRole('button', { name: '立即干预当前回合' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.room.participant.steer')).toBe(true));
+    const request = transport.requests.find(({ request }) => request.pathId === 'agent.room.participant.steer')?.request;
+    expect(request?.body).toMatchObject({
+      participantId: 'participant-firstlight',
+      message: '@Mars 请优先核对依赖边界',
+    });
+    expect(screen.getByRole('status', { name: '等待 Room 回执' })).toHaveTextContent('尚未送达伙伴 · Mars');
+    expect(screen.getByText('@Mars 请优先核对依赖边界')).toBeInTheDocument();
+
+    const clientActionId = String((request?.body as Record<string, unknown>).clientActionId);
+    transport.emit('agent.room.events', {
+      ...snapshot.events.at(-1),
+      eventId: 'room-steer-target:4',
+      sequence: 4,
+      eventType: 'user_message',
+      participantId: 'participant-firstlight',
+      sourceSessionId: 'session-room-firstlight',
+      payload: {
+        text: '@Mars 请优先核对依赖边界',
+        delivery: 'steer',
+        rootId: 'room-steer-target:turn-1',
+        clientActionId,
+      },
+      resumeToken: 'room-steer-target:4',
+    });
+
+    await waitFor(() => expect(screen.queryByRole('status', { name: '等待 Room 回执' })).not.toBeInTheDocument());
+    expect(within(screen.getByRole('log', { name: 'Room 公开对话时间线' })).getByText('@Mars 请优先核对依赖边界')).toBeInTheDocument();
+
+    await user.type(composer, '请继续同步');
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+    await waitFor(() => expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.participant.steer')).toHaveLength(2));
+    const defaultRequest = transport.requests.filter(({ request }) => request.pathId === 'agent.room.participant.steer').at(-1)?.request;
+    expect(defaultRequest?.body).toMatchObject({ participantId: 'participant-present', message: '请继续同步' });
+  });
+
+  it('rejects multiple active-turn mentions instead of silently choosing one participant', async () => {
+    const user = userEvent.setup();
+    const snapshot = activeRoomSnapshot('room-steer-ambiguous');
+    const room = snapshot.room as unknown as RoomSummary;
+    const transport = new MockControlTransport({ routes: {
+      'agent.room.snapshot': snapshot,
+      'agent.room.participant.steer': { ok: true },
+    } });
+    renderRoom(902, vi.fn(), room, [], transport);
+
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    await user.type(composer, '@Earth @Mars 请先对齐边界');
+    await waitFor(() => expect(screen.getByRole('button', { name: '立即干预当前回合' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('当前回合只能点名一位伙伴');
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.room.participant.steer')).toBe(false);
+    expect(composer).toHaveValue('@Earth @Mars 请先对齐边界');
   });
 
   it('opens as the same conversation-first workspace as Session and discloses collaboration on demand', async () => {
@@ -308,10 +389,10 @@ function renderRoom(
   openWindow = vi.fn(),
   record?: RoomSummary,
   personas: AgentPersonaV1[] = [],
+  transport: ControlTransport = createPreviewTransport(),
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
-  const transport = createPreviewTransport();
   const requests: { request: ControlRequest }[] = [];
   const send = transport.request.bind(transport);
   transport.request = (request: ControlRequest) => {
@@ -352,6 +433,22 @@ function renderRoom(
       </QueryClientProvider>,
     ),
     room,
+  };
+}
+
+function activeRoomSnapshot(roomId: string) {
+  const snapshot = previewRoomSnapshot(roomId);
+  const events = snapshot.events.slice(0, 3);
+  return {
+    ...snapshot,
+    room: {
+      ...snapshot.room,
+      lastEventSequence: events.length,
+    },
+    events,
+    firstSequence: 1,
+    lastSequence: events.length,
+    resumeToken: `${roomId}:${events.length}`,
   };
 }
 

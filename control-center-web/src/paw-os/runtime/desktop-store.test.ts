@@ -87,6 +87,37 @@ describe('PAWOS desktop store', () => {
     expect(state.stack.at(-1)).toBe(mainId);
   });
 
+  it('gives all eight supported Room participants distinct non-overlapping satellite frames', () => {
+    const store = createPawDesktopStore();
+    const room = { kind: 'room', id: 'room-eight', title: '八人协作' } as const;
+    store.getState().openApp('agent', { entityId: room.id, target: room, title: room.title });
+
+    const participantIds = Array.from({ length: 8 }, (_, index) => store.getState().openApp('agent', {
+      background: true,
+      entityId: `participant-${index + 1}`,
+      target: {
+        kind: 'participant',
+        id: `participant-${index + 1}`,
+        roomId: room.id,
+        title: `伙伴 ${index + 1}`,
+      },
+    }));
+    const bounds = participantIds.map((id) => store.getState().windows[id]!.bounds);
+
+    expect(new Set(bounds.map((frame) => `${frame.x}:${frame.y}:${frame.width}:${frame.height}`)).size).toBe(8);
+    for (let leftIndex = 0; leftIndex < bounds.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < bounds.length; rightIndex += 1) {
+        const left = bounds[leftIndex]!;
+        const right = bounds[rightIndex]!;
+        const overlaps = left.x < right.x + right.width
+          && left.x + left.width > right.x
+          && left.y < right.y + right.height
+          && left.y + left.height > right.y;
+        expect(overlaps, `participant ${leftIndex + 1} overlaps participant ${rightIndex + 1}`).toBe(false);
+      }
+    }
+  });
+
   it('binds an existing Agent window to the Room target without creating another main window', () => {
     const store = createPawDesktopStore();
     const mainId = store.getState().openApp('agent');

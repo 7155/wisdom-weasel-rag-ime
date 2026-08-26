@@ -136,7 +136,12 @@ export function SmoothDisclosureReveal({
       frameRef.current = 0;
       if (openRef.current !== open) return;
       setHeight(`${targetHeight}px`);
-      if (Math.abs(currentHeight - targetHeight) < 0.5) finish(open);
+      // A zero-height measurement can mean that layout is temporarily
+      // unavailable (for example while a parent is settling), not that a
+      // requested close has visibly finished. Keep closing children present
+      // until transition-end or the bounded fallback so evidence never
+      // disappears in the same interaction that collapses it.
+      if (open && Math.abs(currentHeight - targetHeight) < 0.5) finish(true);
     });
     fallbackTimerRef.current = window.setTimeout(
       () => finish(open),

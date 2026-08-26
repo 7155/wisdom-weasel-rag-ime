@@ -7,7 +7,7 @@ A cloud model with only this repository must start at
 **Read first**
 
 1. [../CLOUD_MODEL.md](../CLOUD_MODEL.md) — GitHub-only start file.
-2. [pawos/PAWOS_REQUIREMENTS.md](pawos/PAWOS_REQUIREMENTS.md) — complete user ledger (`UR-001`–`UR-132`).
+2. [pawos/PAWOS_REQUIREMENTS.md](pawos/PAWOS_REQUIREMENTS.md) — complete user ledger (`UR-001`–`UR-152`).
 3. [../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) — current frontend contract (`PF-CM-001`–`023`) and App-by-App spec.
 4. [../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) — latest checkpoint and unfinished lanes.
 5. [references/pawos-conversation-baseline.html](references/pawos-conversation-baseline.html) — Agent conversation visual/interaction baseline. Craft reference only; not implementation authority.

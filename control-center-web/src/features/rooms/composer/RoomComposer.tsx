@@ -76,7 +76,7 @@ export function RoomComposer({
   onPasteImages: (files: File[]) => void;
   onPasteFromClipboard: () => void;
   onPickAttachments: () => void;
-  onSend: (value: string) => void;
+  onSend: (value: string) => void | boolean | Promise<boolean>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -96,11 +96,6 @@ export function RoomComposer({
   const mentionCandidates = mention
     ? participants.filter((participant) => roomMentionMatches(participant, mention.query, participantAliases))
     : [];
-  const addressedParticipantId = roomMentionedParticipants(
-    participants,
-    composerDraft,
-    participantAliases,
-  )[0]?.id ?? '';
   const canSend = Boolean(
     roomCanSend
     && (pendingAnswerMode ? composerDraft.trim() : composerDraft.trim() || attachments.length)
@@ -221,8 +216,23 @@ export function RoomComposer({
   function submit(): void {
     if (!canSend) return;
     const value = composerDraft;
+    const result = onSend(value);
+    const restoreDraft = () => {
+      setComposerDraft(value);
+      setMention(undefined);
+      setActiveIndex(0);
+      publishDraft(value);
+    };
+    if (result === false) {
+      restoreDraft();
+      return;
+    }
     clearDraft();
-    onSend(value);
+    if (result && typeof result !== 'boolean') {
+      void result.then((accepted) => {
+        if (accepted === false) restoreDraft();
+      });
+    }
   }
 
   /* Queueing never reaches Runtime, so a refused draft must stay visible and
@@ -371,7 +381,9 @@ export function RoomComposer({
               className="room-composer__mention"
               label="点名一位伙伴"
               icon={<AtSign size={16} />}
-              aria-pressed={Boolean(addressedParticipantId)}
+              aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
+              aria-expanded={Boolean(mention && mentionCandidates.length)}
+              aria-haspopup="listbox"
               onClick={openMentionMenu}
               tooltip
             /> : null}

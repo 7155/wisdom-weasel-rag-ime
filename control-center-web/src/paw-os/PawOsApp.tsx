@@ -47,8 +47,36 @@ function PawOsRouteBridge() {
 export function syncPawOsRoute(api: PawDesktopStore) {
   const route = currentHashRoute();
   const app = pawAppForPath(route);
-  if (app) api.getState().openApp(app.id, { initialRoute: route });
-  else api.getState().showWayfinder();
+  if (!app) {
+    api.getState().showWayfinder();
+    return;
+  }
+  if (app.id === 'agent') {
+    const currentTarget = api.getState().windows.agent?.target;
+    const requestedTarget = agentRouteTarget(route);
+    if (
+      (currentTarget?.kind === 'session' || currentTarget?.kind === 'room')
+      && (
+        !requestedTarget
+        || requestedTarget.kind !== currentTarget.kind
+        || requestedTarget.id !== currentTarget.id
+      )
+    ) {
+      // A bound target is stronger than initialRoute inside PawAgentApp. Drop
+      // that stale binding before applying a different deep link; the App will
+      // bind the newly loaded Session or Room back after catalog resolution.
+      api.getState().bindAgentMain('agent');
+    }
+  }
+  api.getState().openApp(app.id, { initialRoute: route });
+}
+
+function agentRouteTarget(route: string): { kind: 'session' | 'room'; id: string } | null {
+  const query = new URLSearchParams(route.split('?', 2)[1] ?? '');
+  const roomId = query.get('room')?.trim();
+  if (roomId) return { kind: 'room', id: roomId };
+  const sessionId = (query.get('session') || query.get('sessionId'))?.trim();
+  return sessionId ? { kind: 'session', id: sessionId } : null;
 }
 
 function currentHashRoute(): string {

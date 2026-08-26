@@ -1879,6 +1879,30 @@ main[data-route-id='memory'] {
   transform: translate(-50%, -50%);
 }
 
+.memory-relation-canvas__error {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(360px, calc(100% - 32px));
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 38%, var(--color-border));
+  border-radius: var(--radius-3);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  transform: translate(-50%, -50%);
+  gap: 10px;
+  justify-items: start;
+}
+
+.memory-relation-canvas__error > svg { color: var(--color-danger); }
+.memory-relation-canvas__error > span { display: grid; gap: 2px; }
+.memory-relation-canvas__error strong { color: var(--color-text-primary); }
+
 .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface {
   animation: memory-graph-enter var(--motion-enter) var(--ease-standard) both;
 }

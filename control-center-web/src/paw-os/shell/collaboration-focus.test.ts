@@ -168,11 +168,16 @@ describe('PAWOS collaboration focus', () => {
     const frames = layoutCollaborationFocus(nodes, { width, height }, { modeBarHeight: 46, ledgerHeight });
 
     expect(frames.size).toBe(nodes.length);
-    const narrowRail = width < 720 && satelliteCount >= 5;
+    const satelliteFrames = [...frames.entries()]
+      .filter(([id]) => id !== 'main')
+      .map(([, frame]) => frame);
+    const horizontalRail = satelliteFrames.length >= 5
+      && new Set(satelliteFrames.map((frame) => frame.y)).size === 1
+      && Math.max(...satelliteFrames.map((frame) => frame.x + frame.width)) > width;
     for (const [id, frame] of frames) {
       expect(frame.y).toBeGreaterThanOrEqual(46);
       expect(frame.x).toBeGreaterThanOrEqual(0);
-      if (!narrowRail || id === 'main') expect(frame.x + frame.width).toBeLessThanOrEqual(width);
+      if (!horizontalRail || id === 'main') expect(frame.x + frame.width).toBeLessThanOrEqual(width);
       expect(frame.y + frame.height).toBeLessThanOrEqual(height - (satelliteCount ? ledgerHeight : 0));
     }
     const regions = [...frames.values()];
@@ -209,6 +214,24 @@ describe('PAWOS collaboration focus', () => {
     for (let index = 1; index < satellites.length; index += 1) {
       expect(satellites[index]!.x).toBeGreaterThanOrEqual(satellites[index - 1]!.x + satellites[index - 1]!.width);
     }
+    for (const satellite of satellites) expect(overlaps(main, satellite)).toBe(false);
+  });
+
+  it.each([5, 8])('keeps all $satelliteCount satellites above the window height floor in one rail at 800×720', (satelliteCount) => {
+    const nodes = [
+      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+      ...Array.from({ length: satelliteCount }, (_, index) => windowNode(`participant-${index}`, {
+        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
+      })),
+    ];
+    const frames = layoutCollaborationFocus(nodes, { width: 800, height: 720 }, { modeBarHeight: 46, ledgerHeight: 0 });
+    const main = frames.get('main')!;
+    const satellites = nodes.slice(1).map((node) => frames.get(node.id)!);
+
+    expect(main.height).toBeGreaterThanOrEqual(320);
+    expect(new Set(satellites.map((frame) => frame.y)).size).toBe(1);
+    expect(Math.min(...satellites.map((frame) => frame.height))).toBeGreaterThanOrEqual(210);
+    expect(Math.max(...satellites.map((frame) => frame.x + frame.width))).toBeGreaterThan(800);
     for (const satellite of satellites) expect(overlaps(main, satellite)).toBe(false);
   });
 

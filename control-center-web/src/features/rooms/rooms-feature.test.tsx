@@ -150,6 +150,58 @@ describe('Rooms experience', () => {
     });
   });
 
+  it('steers the explicitly mentioned partner during an active Room turn', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '点名干预')] },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '正在执行的任务' }),
+      ], '点名干预'),
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.participant.steer': { ok: true },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    await user.type(composer, '@Mars 先核对证据');
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.room.participant.steer'
+    ))).toBe(true));
+    expect(transport.requests.find((call) => (
+      call.request.pathId === 'agent.room.participant.steer'
+    ))?.request.body).toMatchObject({
+      message: '@Mars 先核对证据',
+      participantId: 'room-a:p2',
+      rootId: 'room-a:turn-1',
+    });
+  });
+
+  it('keeps an active-turn draft when more than one partner is mentioned', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '点名干预')] },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '正在执行的任务' }),
+      ], '点名干预'),
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.participant.steer': { ok: true },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    await user.type(composer, '@Earth @Mars 分别调整');
+    expect(composer).toHaveValue('@Earth @Mars 分别调整');
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+
+    await waitFor(() => expect(composer).toHaveValue('@Earth @Mars 分别调整'));
+    expect(transport.requests
+      .filter((call) => call.request.pathId === 'agent.room.participant.steer')
+      .map((call) => call.request.body)).toEqual([]);
+    expect(document.querySelector('.room-error-slot')).toHaveTextContent('当前回合只能点名一位伙伴，请只保留一个 @伙伴。');
+  });
+
   it('starts a new execution after refresh when the latest root is terminal despite an older stale running root', async () => {
     const staleRootId = 'room-a:stale-running';
     const latestRootId = 'room-a:latest-completed';

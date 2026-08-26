@@ -37,7 +37,13 @@ describe('RoomComposer macOS input methods', () => {
       </TooltipProvider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '点名一位伙伴' }));
+    const mentionTrigger = screen.getByRole('button', { name: '点名一位伙伴' });
+    expect(mentionTrigger).toHaveAttribute('aria-haspopup', 'listbox');
+    expect(mentionTrigger).toHaveAttribute('aria-expanded', 'false');
+    expect(mentionTrigger).not.toHaveAttribute('aria-pressed');
+    fireEvent.click(mentionTrigger);
+    expect(mentionTrigger).toHaveAttribute('aria-expanded', 'true');
+    expect(mentionTrigger).toHaveAttribute('aria-controls', 'room-mention-menu');
     const earth = screen.getByRole('option', { name: /Earth/ });
     expect(earth).toHaveTextContent('实现与验证');
     expect(earth).not.toHaveTextContent('Agent 1');
@@ -45,6 +51,24 @@ describe('RoomComposer macOS input methods', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveValue('@Earth ');
     expect(roomMentionedParticipants([participant], '@Earth 请复核', { 'participant-earth': 'Earth' }))
       .toEqual([participant]);
+  });
+
+  it('resolves every explicit planet mention so active-turn routing can reject ambiguity', () => {
+    const participants = [
+      {
+        id: 'participant-earth', sessionId: 'session-earth', roleId: 'implementer', roleVersion: '1',
+        displayName: 'Agent 1', status: 'active',
+      },
+      {
+        id: 'participant-mars', sessionId: 'session-mars', roleId: 'reviewer', roleVersion: '1',
+        displayName: 'Agent 2', status: 'active',
+      },
+    ];
+
+    expect(roomMentionedParticipants(participants, '@Earth @Mars 分别调整', {
+      'participant-earth': 'Earth',
+      'participant-mars': 'Mars',
+    })).toEqual(participants);
   });
 
   it('keeps marked text local and does not send the IME commit key', () => {

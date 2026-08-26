@@ -24,7 +24,7 @@ def status_document(payload: dict[str, object]) -> str:
 
 
 class PawosRequirementStatusTests(unittest.TestCase):
-    def test_repository_ledger_covers_ur_001_through_ur_149_without_completion_claims(self) -> None:
+    def test_repository_ledger_covers_ur_001_through_ur_152_with_three_scoped_closeouts(self) -> None:
         root = Path(__file__).resolve().parents[1]
         requirements_path = root / "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md"
         status_path = root / "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md"
@@ -32,11 +32,12 @@ class PawosRequirementStatusTests(unittest.TestCase):
         report = validate_requirement_status(requirements_path, status_path)
 
         self.assertEqual(report["errors"], [])
-        self.assertEqual(report["requirementCount"], 149)
+        self.assertEqual(report["requirementCount"], 152)
         self.assertEqual(report["firstRequirementId"], "UR-001")
-        self.assertEqual(report["lastRequirementId"], "UR-149")
-        self.assertEqual(report["assessmentCounts"], {"unassessed": 149})
-        self.assertEqual(report["completeCount"], 0)
+        self.assertEqual(report["lastRequirementId"], "UR-152")
+        self.assertEqual(report["assessmentCounts"], {"complete": 3, "unassessed": 149})
+        self.assertEqual(report["completeCount"], 3)
+        self.assertEqual(report["receiptCount"], 2)
 
     def test_current_or_checked_source_text_does_not_imply_complete(self) -> None:
         requirements = (

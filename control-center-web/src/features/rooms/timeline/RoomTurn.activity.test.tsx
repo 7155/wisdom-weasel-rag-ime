@@ -90,17 +90,18 @@ describe('RoomTurn public activity detail', () => {
   });
 
   it('keeps a closing activity feed mounted until its reveal transition finishes', async () => {
-    const user = userEvent.setup();
     const view = render(roomTurn(roomProjection()));
     const activity = view.container.querySelector<HTMLElement>('.room-agent-lane__activity');
     const summary = activity?.querySelector<HTMLElement>('summary');
+    const reveal = activity?.querySelector<HTMLElement>('.agent-smooth-reveal');
 
-    if (!activity || !summary) throw new Error('工作流 disclosure 缺少语义 summary');
+    if (!activity || !summary || !reveal) throw new Error('工作流 disclosure 缺少语义 summary');
     expect(activity).toHaveAttribute('open');
-    await user.click(summary);
+    fireEvent.click(summary);
     expect(summary).toHaveAttribute('aria-expanded', 'false');
     expect(activity).toHaveAttribute('open');
     expect(activity.querySelector('.room-agent-lane__activity-feed')).toBeInTheDocument();
+    fireEvent.transitionEnd(reveal, { propertyName: 'height' });
     await waitFor(() => {
       expect(activity).not.toHaveAttribute('open');
       expect(activity.querySelector('.room-agent-lane__activity-feed')).not.toBeInTheDocument();

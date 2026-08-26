@@ -102,6 +102,43 @@ describe('SmoothDisclosureReveal', () => {
     expect(screen.queryByText('真实工具证据')).not.toBeInTheDocument();
   });
 
+  it('waits for close completion when layout temporarily measures zero height', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      bottom: 0,
+      height: 0,
+      left: 0,
+      right: 0,
+      top: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }));
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get: () => 0,
+    });
+    const view = render(
+      <SmoothDisclosureReveal id="zero-height" open>
+        <p>仍在退出的证据</p>
+      </SmoothDisclosureReveal>,
+    );
+    const region = document.getElementById('zero-height')!;
+
+    view.rerender(
+      <SmoothDisclosureReveal id="zero-height" open={false}>
+        <p>仍在退出的证据</p>
+      </SmoothDisclosureReveal>,
+    );
+    await act(async () => { vi.advanceTimersByTime(17); });
+    expect(region).toHaveAttribute('data-state', 'closing');
+    expect(screen.getByText('仍在退出的证据')).toBeInTheDocument();
+
+    fireEvent.transitionEnd(region, { propertyName: 'height' });
+    expect(region).toHaveAttribute('data-state', 'closed');
+    expect(screen.queryByText('仍在退出的证据')).not.toBeInTheDocument();
+  });
+
   it('keeps keepMounted children in the DOM while closed yet hidden from readers', async () => {
     const onPresenceChange = vi.fn();
     const view = render(

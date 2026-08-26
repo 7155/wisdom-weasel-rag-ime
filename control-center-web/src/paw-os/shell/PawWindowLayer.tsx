@@ -108,7 +108,10 @@ export function PawWindowLayer() {
     [flowGroups],
   );
   const flowPulse = useWindowFlowPulse(flowGroups);
-  const roomFocusRail = useMemo(() => roomFocusRailMetrics(focusedRoomSatellites, focusFrames, viewport), [focusFrames, focusedRoomSatellites, viewport]);
+  const roomFocusRail = useMemo(
+    () => roomFocusRailMetrics(focusedRoomSatellites, focusFrames, viewport, { modeBarHeight: 46, ledgerHeight: 0 }),
+    [focusFrames, focusedRoomSatellites, viewport],
+  );
   const roomFocusRailIds = useMemo(() => new Set(roomFocusRail?.satelliteIds ?? []), [roomFocusRail]);
   useEffect(() => {
     setFocusFrameOverrides({});
@@ -666,24 +669,24 @@ export function layoutCollaborationFocus(
     frames.set(main.id, { x: inset, y: usableTop + inset, width: viewport.width - inset * 2, height: usableHeight - inset * 2 });
     return frames;
   }
+  if (usesHorizontalFocusRail(satellites.length, viewport.width, usableHeight, inset, gap)) {
+    const minimumSatelliteHeight = 220;
+    const maximumMainHeight = usableHeight - inset * 2 - gap - minimumSatelliteHeight;
+    const mainHeight = Math.max(320, Math.min(Math.round(usableHeight * .54), maximumMainHeight));
+    frames.set(main.id, { x: inset, y: usableTop + inset, width: viewport.width - inset * 2, height: mainHeight });
+    const auxiliaryTop = usableTop + inset + mainHeight + gap;
+    const auxiliaryHeight = Math.max(0, usableBottom - auxiliaryTop - inset);
+    const satelliteWidth = Math.min(300, Math.max(260, Math.round(viewport.width * .5)));
+    const satelliteHeight = Math.max(minimumSatelliteHeight, auxiliaryHeight - 12);
+    satellites.forEach((node, index) => frames.set(node.id, {
+      x: inset + index * (satelliteWidth + gap),
+      y: auxiliaryTop,
+      width: satelliteWidth,
+      height: satelliteHeight,
+    }));
+    return frames;
+  }
   if (viewport.width < 720) {
-    if (satellites.length >= 5) {
-      const minimumSatelliteHeight = 220;
-      const maximumMainHeight = usableHeight - inset * 2 - gap - minimumSatelliteHeight;
-      const mainHeight = Math.max(320, Math.min(Math.round(usableHeight * .54), maximumMainHeight));
-      frames.set(main.id, { x: inset, y: usableTop + inset, width: viewport.width - inset * 2, height: mainHeight });
-      const auxiliaryTop = usableTop + inset + mainHeight + gap;
-      const auxiliaryHeight = Math.max(0, usableBottom - auxiliaryTop - inset);
-      const satelliteWidth = Math.min(300, Math.max(260, Math.round(viewport.width * .5)));
-      const satelliteHeight = Math.max(minimumSatelliteHeight, auxiliaryHeight - 12);
-      satellites.forEach((node, index) => frames.set(node.id, {
-        x: inset + index * (satelliteWidth + gap),
-        y: auxiliaryTop,
-        width: satelliteWidth,
-        height: satelliteHeight,
-      }));
-      return frames;
-    }
     const mainRatio = satellites.length >= 5 ? .49 : .58;
     const mainHeight = satellites.length ? Math.max(210, Math.round(usableHeight * mainRatio)) : usableHeight - inset * 2;
     frames.set(main.id, { x: inset, y: usableTop + inset, width: viewport.width - inset * 2, height: mainHeight });
@@ -744,6 +747,22 @@ export function layoutCollaborationFocus(
   return frames;
 }
 
+function usesHorizontalFocusRail(
+  satelliteCount: number,
+  viewportWidth: number,
+  usableHeight: number,
+  inset = 10,
+  gap = 10,
+): boolean {
+  if (satelliteCount < 5) return false;
+  const columnCount = viewportWidth < 1_000 ? 1 : 2;
+  const longestColumn = Math.ceil(satelliteCount / columnCount);
+  const projectedHeight = (
+    usableHeight - inset * 2 - gap * Math.max(0, longestColumn - 1)
+  ) / longestColumn;
+  return viewportWidth < 720 || projectedHeight < PAW_WINDOW_MIN_HEIGHT;
+}
+
 type RoomFocusRailMetrics = {
   height: number;
   satelliteIds: string[];
@@ -755,8 +774,14 @@ function roomFocusRailMetrics(
   satellites: PawWindowNode[],
   frames: ReadonlyMap<string, PawWindowBounds>,
   viewport: { width: number; height: number },
+  reserved: { modeBarHeight?: number; ledgerHeight?: number } = {},
 ): RoomFocusRailMetrics | null {
-  if (viewport.width >= 720 || satellites.length < 5) return null;
+  const usableHeight = Math.max(0,
+    viewport.height
+    - Math.max(0, reserved.modeBarHeight ?? 0)
+    - Math.max(0, reserved.ledgerHeight ?? 0),
+  );
+  if (!usesHorizontalFocusRail(satellites.length, viewport.width, usableHeight)) return null;
   const satelliteFrames = satellites.flatMap((node) => {
     const frame = frames.get(node.id);
     return frame ? [{ id: node.id, frame }] : [];

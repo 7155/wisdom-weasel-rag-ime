@@ -2652,8 +2652,10 @@ details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child 
   .agent-conversation-nav { display: none; }
   .agent-user-message-shell { max-width: 92%; margin-bottom: 14px; }
   .agent-user-message-shell[data-actions='true'] { margin-bottom: 28px; }
-  .agent-assistant-turn { grid-template-columns: 50px minmax(0, 1fr); gap: 9px; }
-  .agent-assistant-turn > .agent-persona-avatar { width: 48px; height: 48px; }
+  /* Assistant identity now belongs to Session chrome. Keeping the retired
+     avatar column here placed the whole Turn sequence into a 50 px track and
+     collapsed Chinese copy to one character per line on phones. */
+  .agent-assistant-turn { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .agent-composer-wrap { padding: 5px 9px 8px; }
   .agent-user-input-card {
     width: calc(100% - 18px);

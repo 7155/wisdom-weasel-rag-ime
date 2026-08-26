@@ -1,5 +1,5 @@
 import type { EdgeData, ElementDatum, Graph, IElementEvent } from '@antv/g6';
-import { Focus, Maximize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { CircleAlert, Focus, Maximize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/primitives';
 
@@ -40,7 +40,9 @@ export const MemoryRelationCanvas = memo(function MemoryRelationCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const onSelectRef = useRef(onSelect);
+  const [graphError, setGraphError] = useState(false);
   const [readyVersion, setReadyVersion] = useState(0);
+  const [retryVersion, setRetryVersion] = useState(0);
   const graphData = useMemo(() => relationGraphData(nodes, edges), [edges, nodes]);
   const selectedNode = nodes.find((node) => node.id === selectedId) ?? null;
   onSelectRef.current = onSelect;
@@ -49,6 +51,7 @@ export const MemoryRelationCanvas = memo(function MemoryRelationCanvas({
     const container = containerRef.current;
     if (!enabled || !container || graphData.nodes.length === 0) return;
     let cancelled = false;
+    let failed = false;
     let initializing = false;
     let resizeFrame = 0;
     let settleFrame = 0;
@@ -76,13 +79,18 @@ export const MemoryRelationCanvas = memo(function MemoryRelationCanvas({
       fitted = true;
     };
 
+    setGraphError(false);
+    setReadyVersion(0);
+
     const initialize = async () => {
-      if (cancelled || initializing || graphRef.current || container.clientWidth < 2 || container.clientHeight < 2) return;
+      if (cancelled || failed || initializing || graphRef.current || container.clientWidth < 2 || container.clientHeight < 2) return;
       initializing = true;
-      const { Graph: G6Graph } = await import('../knowledge/g6-runtime');
-      if (cancelled) return;
-      const style = getComputedStyle(container);
-      const graph = new G6Graph({
+      let graph: Graph | null = null;
+      try {
+        const { Graph: G6Graph } = await import('../knowledge/g6-runtime');
+        if (cancelled) return;
+        const style = getComputedStyle(container);
+        const activeGraph = new G6Graph({
         container,
         width: container.clientWidth,
         height: container.clientHeight,
@@ -251,23 +259,35 @@ export const MemoryRelationCanvas = memo(function MemoryRelationCanvas({
             animation: motionDuration(140) > 0,
           },
         ],
-      });
-      graph.on('node:click', (event) => {
-        const id = eventTargetId((event as { target?: unknown }).target);
-        if (!id) return;
-        onSelectRef.current(id);
-        void focusNode(graph, id);
-      });
-      graph.on('node:dblclick', (event) => {
-        const id = eventTargetId((event as { target?: unknown }).target);
-        if (id) void focusNode(graph, id, true);
-      });
-      graph.on('canvas:click', () => onSelectRef.current(''));
-      await graph.render();
-      if (cancelled) { graph.destroy(); return; }
-      graphRef.current = graph;
-      await fitWhenVisible(graph);
-      setReadyVersion((value) => value + 1);
+        });
+        graph = activeGraph;
+        activeGraph.on('node:click', (event) => {
+          const id = eventTargetId((event as { target?: unknown }).target);
+          if (!id) return;
+          onSelectRef.current(id);
+          void focusNode(activeGraph, id);
+        });
+        activeGraph.on('node:dblclick', (event) => {
+          const id = eventTargetId((event as { target?: unknown }).target);
+          if (id) void focusNode(activeGraph, id, true);
+        });
+        activeGraph.on('canvas:click', () => onSelectRef.current(''));
+        await activeGraph.render();
+        if (cancelled) { activeGraph.destroy(); return; }
+        await fitWhenVisible(activeGraph);
+        if (cancelled) { activeGraph.destroy(); return; }
+        graphRef.current = activeGraph;
+        setReadyVersion((value) => value + 1);
+      } catch {
+        graph?.destroy();
+        container.replaceChildren();
+        if (!cancelled) {
+          failed = true;
+          setGraphError(true);
+        }
+      } finally {
+        initializing = false;
+      }
     };
 
     const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
@@ -292,7 +312,7 @@ export const MemoryRelationCanvas = memo(function MemoryRelationCanvas({
       graphRef.current = null;
       container.replaceChildren();
     };
-  }, [enabled, graphData]);
+  }, [enabled, graphData, retryVersion]);
 
   useEffect(() => {
     const graph = graphRef.current;
@@ -315,6 +335,7 @@ export const MemoryRelationCanvas = memo(function MemoryRelationCanvas({
       data-node-count={nodes.length}
       data-ready={ready || undefined}
       data-renderer="g6"
+      data-render-error={graphError || undefined}
     >
       <div className="memory-relation-canvas__surface" ref={containerRef} />
       {selectedNode ? (
@@ -341,7 +362,21 @@ export const MemoryRelationCanvas = memo(function MemoryRelationCanvas({
         <Button aria-label="定位所选节点" disabled={!ready || !selectedId} leadingIcon={<Focus size={15} />} onClick={() => selectedId && invoke((graph) => focusNode(graph, selectedId))} size="small" title="定位所选节点" variant="quiet" />
       </div>
       <span aria-hidden="true" className="memory-relation-canvas__hint">拖拽整理 · 滚轮缩放 · 悬浮预览 · 双击放大</span>
-      {!ready ? <span className="memory-relation-canvas__loading">正在布局关系…</span> : null}
+      {graphError ? (
+        <div className="memory-relation-canvas__error" role="alert">
+          <CircleAlert aria-hidden="true" size={18} />
+          <span>
+            <strong>关系图暂时无法布局。</strong>
+            左侧节点列表仍可使用。
+          </span>
+          <Button
+            aria-label="重新布局关系图"
+            onClick={() => setRetryVersion((value) => value + 1)}
+            size="small"
+            variant="secondary"
+          >重新布局</Button>
+        </div>
+      ) : !ready ? <span className="memory-relation-canvas__loading">正在布局关系…</span> : null}
     </div>
   );
 });

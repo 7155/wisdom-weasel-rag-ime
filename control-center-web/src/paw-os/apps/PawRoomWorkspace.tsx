@@ -64,6 +64,12 @@ export { PawRoomConversation } from './PawRoomConversation';
 
 type RoomToolPanel = 'focus' | 'governance';
 
+type OptimisticSteerReceipt = {
+  clientActionId: string;
+  message: string;
+  participantId: string;
+};
+
 const roomToolPanelLabels: Record<RoomToolPanel, string> = {
   focus: '态势',
   governance: '治理',
@@ -121,6 +127,8 @@ export function PawRoomWorkspace({
   const [draft, setDraft] = useState(initialDraft ?? '');
   const [attachments, setAttachments] = useState<RoomAttachmentReceipt[]>([]);
   const [sending, setSending] = useState(false);
+  const [optimisticSteer, setOptimisticSteer] = useState<OptimisticSteerReceipt | null>(null);
+  const optimisticSteerRef = useRef<OptimisticSteerReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(initialError ?? '');
   /* Match an ordinary Session on entry: the public conversation owns the
@@ -140,6 +148,23 @@ export function PawRoomWorkspace({
   useEffect(() => {
     setView('conversation');
     setPanel('none');
+  }, [recordId]);
+
+  const clearOptimisticSteer = useCallback((clientActionId: string) => {
+    if (optimisticSteerRef.current?.clientActionId !== clientActionId) return;
+    optimisticSteerRef.current = null;
+    setOptimisticSteer(null);
+  }, []);
+  const acknowledgeOptimisticSteer = useCallback((events: readonly unknown[]) => {
+    const pending = optimisticSteerRef.current;
+    if (!pending) return;
+    const acknowledged = events.some((event) => roomEventClientActionId(event) === pending.clientActionId);
+    if (acknowledged) clearOptimisticSteer(pending.clientActionId);
+  }, [clearOptimisticSteer]);
+
+  useEffect(() => {
+    optimisticSteerRef.current = null;
+    setOptimisticSteer(null);
   }, [recordId]);
 
   const projection = useRoomLiveStore((state) => state.projections[recordId]);
@@ -181,6 +206,7 @@ export function PawRoomWorkspace({
     transport,
     onLoadingChange: setLoading,
     onSnapshot: (_roomId, snapshot) => {
+      acknowledgeOptimisticSteer(snapshot.events);
       const room = asRoom(snapshot.room);
       if (room) onRoomUpdated(room);
     },
@@ -192,6 +218,7 @@ export function PawRoomWorkspace({
     onRecoveryState: (_roomId, state) => setRecoveryState(state),
     onConnectionError: (_roomId, reason, fallback) => setError(publicErrorText(reason, fallback)),
     onEvents: (_roomId, events) => {
+      acknowledgeOptimisticSteer(events);
       pulsePawCompositionForRuntimeEvents('room', events.map((event) => event.eventType));
       for (const event of events) {
         const runtimeWindow = runtimeToolWindow(event);
@@ -231,6 +258,22 @@ export function PawRoomWorkspace({
         message,
         participantAliases,
       );
+    if (steering && addressed.length > 1) {
+      if (!options.preserveDraft) setDraft(rawValue);
+      setError('当前回合只能点名一位伙伴，请只保留一个 @伙伴。');
+      return false;
+    }
+    const steerParticipantId = steering
+      ? addressed[0]?.id
+        ?? activeTurn?.participantIds[0]
+        ?? record.participants.find((item) => item.status === 'active')?.id
+        ?? ''
+      : '';
+    if (steering && !steerParticipantId) {
+      if (!options.preserveDraft) setDraft(rawValue);
+      setError('当前回合还没有可点名的伙伴，请稍后重试。');
+      return false;
+    }
     const selectedAttachments = answersQuestion ? [] : attachments;
     setSending(true);
     if (!options.preserveDraft) setDraft('');
@@ -245,6 +288,14 @@ export function PawRoomWorkspace({
         ...(answersQuestion && authoritativeQuestion ? { answerToPostId: authoritativeQuestion.postId } : {}),
         ...(options.retryOfRootId ? { retryOfRootId: options.retryOfRootId } : {}),
       });
+    } else {
+      const receipt = {
+        clientActionId: clientMessageId,
+        message,
+        participantId: steerParticipantId,
+      } satisfies OptimisticSteerReceipt;
+      optimisticSteerRef.current = receipt;
+      setOptimisticSteer(receipt);
     }
     try {
       const response = await transport.request<Record<string, unknown>>(steering && activeTurn
@@ -254,7 +305,7 @@ export function PawRoomWorkspace({
             body: {
               action: 'steer_participant',
               rootId: activeTurn.rootId ?? activeTurn.id,
-              participantId: activeTurn.participantIds[0] ?? '',
+              participantId: steerParticipantId,
               clientActionId: clientMessageId,
               message,
             },
@@ -274,6 +325,8 @@ export function PawRoomWorkspace({
             },
           });
       useRoomLiveStore.getState().acceptMessage(recordId, response);
+      const timelineEvents = asRecord(response).timelineEvents;
+      if (Array.isArray(timelineEvents)) acknowledgeOptimisticSteer(timelineEvents);
       const workItem = asWorkItem(asRecord(response).workItem);
       if (workItem) onRoomUpdated({
         ...record,
@@ -283,6 +336,7 @@ export function PawRoomWorkspace({
       return true;
     } catch (reason) {
       if (!steering) useRoomLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+      if (steering) clearOptimisticSteer(clientMessageId);
       if (!options.preserveDraft) setDraft(rawValue);
       if (!answersQuestion) setAttachments(selectedAttachments);
       setError(publicErrorText(reason, 'Room 消息没有发送，请重试。'));
@@ -457,6 +511,24 @@ export function PawRoomWorkspace({
                 empty={loading
                   ? <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div>
                   : <div className="paw-room-workspace__empty"><Users size={24} /><strong>Room 已准备好</strong><p>发送目标，伙伴会分工、执行并汇合结果。</p></div>}
+                {...(optimisticSteer ? {
+                  lead: (
+                    <article
+                      className="ccui-turn ccui-user-turn paw-room-workspace__optimistic-steer"
+                      data-client-action-id={optimisticSteer.clientActionId}
+                      data-delivery="sending"
+                    >
+                      <div className="ccui-user-bubble">
+                        <div className="ccui-user-text">{optimisticSteer.message}</div>
+                      </div>
+                      <div className="ccui-user-footer">
+                        <div aria-label="等待 Room 回执" aria-live="polite" className="ccui-steer-receipt" role="status">
+                          <span>尚未送达伙伴 · {roomPlanetName(record.participants.find((participant) => participant.id === optimisticSteer.participantId)?.ordinal ?? 0)}</span>
+                        </div>
+                      </div>
+                    </article>
+                  ),
+                } : {})}
                 onApprovalDecision={decideApproval}
                 onOpenProcessActivity={openProcessActivity}
                 onRetryTurn={(message, retryOfRootId) => void send(message, { retryOfRootId, preserveDraft: true })}
@@ -483,7 +555,7 @@ export function PawRoomWorkspace({
                     queueDepth={queue.queue.length}
                     onDraftChange={setDraft}
                     onQueue={queueFollowUp}
-                    onSend={(value) => void send(value, { question: pendingQuestion?.roomId === recordId ? pendingQuestion : undefined })}
+                    onSend={(value) => send(value, { question: pendingQuestion?.roomId === recordId ? pendingQuestion : undefined })}
                     onAttachmentsChange={setAttachments}
                     onPasteImages={(files) => void pasteFiles(files)}
                     onPasteFromClipboard={() => void pasteFiles()}
@@ -728,6 +800,28 @@ function asWorkItem(value: unknown): RoomWorkItem | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function roomEventClientActionId(value: unknown): string {
+  const event = asRecord(value);
+  const payload = asRecord(event.payload);
+  const message = asRecord(payload.message);
+  const post = asRecord(payload.post);
+  const publicationSource = asRecord(post.publicationSource);
+  const candidates = [
+    payload.clientActionId,
+    payload.clientMessageId,
+    payload.client_action_id,
+    payload.client_message_id,
+    message.clientActionId,
+    message.clientMessageId,
+    post.clientActionId,
+    post.clientMessageId,
+    publicationSource.kind === 'user' ? publicationSource.ref : undefined,
+  ];
+  return candidates.find((candidate): candidate is string => (
+    typeof candidate === 'string' && candidate.trim().length > 0
+  ))?.trim() ?? '';
 }
 
 function participantName(room: RoomSummary | undefined, participantId: string): string {
