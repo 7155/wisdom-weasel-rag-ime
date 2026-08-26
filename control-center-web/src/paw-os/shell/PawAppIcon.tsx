@@ -49,15 +49,16 @@ const APP_ACCENTS: Record<PawIdentityIconId, string> = {
 };
 
 /**
- * PAWOS identity silhouettes — one flat grammar shared by every placement.
+ * PAWOS identity plates — one OS grammar shared by every placement.
  *
  * The grammar: a 48×48 grid with content inside the 4–44 safe area; flat,
  * front-facing forms only (no isometric faces, no rotated stacks — the single
  * permitted rotation is Room's orbit line); each mark is one primary mass in
  * the identity colour, exactly one supporting element in the identity accent,
- * plus at most fine white detail cuts from the shared paper token. Every App
- * still owns a distinct outer contour — there is deliberately no shared
- * square, plate, rail, or sheen, and no white-tile-versus-transparent split.
+ * plus at most fine white detail cuts from the shared paper token. A complete,
+ * opaque identity-tinted squircle sits behind every mark so an App always reads
+ * as an OS object instead of a sticker. The plate geometry is shared; the
+ * figurative silhouette and palette remain distinct for every identity.
  * Line icons elsewhere remain actions, so a close/search/tool command can
  * never be mistaken for an App. Room keeps its purple collaboration identity
  * and speaks the Sol/orbit metaphor without becoming a top-level App.
@@ -88,6 +89,15 @@ export function PawAppIcon({ appId, className = '', size = 24, style, title, ...
       width={size}
     >
       {title ? <title>{title}</title> : null}
+      <rect
+        className="paw-app-icon__plate"
+        data-paw-icon-plate={appId}
+        height="46"
+        rx="11.5"
+        width="46"
+        x="1"
+        y="1"
+      />
       <g
         className="paw-app-icon__silhouette"
         data-paw-icon-silhouette={appId}

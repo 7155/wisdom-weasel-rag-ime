@@ -414,8 +414,8 @@
   }
 }
 
-/* App identities keep their own silhouettes. Motion only clarifies selection
- * and press state; it never grows a common tile around unrelated marks. */
+/* App identities keep their own silhouettes inside the one SVG-owned plate.
+ * Motion elevates that complete App object; no placement grows a second card. */
 .paw-app-icon,
 .paw-app-icon__shape {
   transition:

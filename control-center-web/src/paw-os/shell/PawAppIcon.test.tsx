@@ -9,24 +9,32 @@ afterEach(cleanup);
 const everyIdentity = () => [...pawApps.map((app) => app.id), 'room' as const];
 
 describe('PAWOS App identity icons', () => {
-  it('ships an independent colour silhouette for every App surface plus the Room mode', () => {
+  it('ships every colour silhouette on the same complete OS plate', () => {
     const identities = [...pawApps.map((app) => ({ id: app.id, label: app.label })), { id: 'room' as const, label: 'Room' }];
     const { container } = render(<>{identities.map((identity) => <PawAppIcon appId={identity.id} key={identity.id} title={identity.label} />)}</>);
     const icons = [...container.querySelectorAll<SVGElement>('[data-paw-app-icon]')];
+    const plates = icons.map((icon) => icon.querySelector<SVGRectElement>('[data-paw-icon-plate]'));
     expect(icons).toHaveLength(12);
     expect(new Set(icons.map((icon) => icon.getAttribute('data-paw-app-icon'))).size).toBe(12);
     expect(icons.every((icon) => icon.querySelector(`[data-paw-icon-silhouette="${icon.getAttribute('data-paw-app-icon')}"]`))).toBe(true);
     expect(new Set(icons.map((icon) => icon.querySelector('[data-paw-icon-silhouette]')?.innerHTML)).size).toBe(12);
     expect(new Set(icons.map((icon) => icon.getAttribute('data-paw-icon-color'))).size).toBe(12);
-    expect(container.querySelector('.paw-app-icon__tile, [data-paw-icon-sheen]')).toBeNull();
-    expect(container.querySelector('rect[width="45"][height="45"][rx="11.5"]')).toBeNull();
+    expect(plates.every((plate) => plate instanceof SVGElement)).toBe(true);
+    expect(plates.every((plate, index) => plate?.getAttribute('data-paw-icon-plate') === icons[index]?.getAttribute('data-paw-app-icon'))).toBe(true);
+    expect(new Set(plates.map((plate) => ['x', 'y', 'width', 'height', 'rx'].map((name) => plate?.getAttribute(name)).join(':')))).toEqual(new Set(['1:1:46:46:11.5']));
+    expect(container.querySelectorAll('.paw-app-icon__plate')).toHaveLength(12);
+    expect(container.querySelector('[data-paw-icon-sheen]')).toBeNull();
     expect(container.querySelector('[data-lucide]')).toBeNull();
     expect(container.querySelector('.paw-os-app-icon, .paw-app-glyph')).toBeNull();
   });
 
-  it('keeps every identity intentionally sparse without a shared container', () => {
+  it('keeps every figurative identity sparse inside its required plate', () => {
     const { container } = render(<>{[...pawApps.map((app) => app.id), 'room' as const].flatMap((appId) => [16, 32].map((size) => <PawAppIcon appId={appId} key={`${appId}-${size}`} size={size} />))}</>);
-    expect(container.querySelector('[class*="__tile"], [class*="__plate"], [class*="__rail"], [class*="__signal"], [class*="__sheen"]')).toBeNull();
+    const icons = [...container.querySelectorAll<SVGElement>('[data-paw-app-icon]')];
+    expect(icons).toHaveLength(24);
+    expect(icons.every((icon) => icon.querySelector(':scope > .paw-app-icon__plate'))).toBe(true);
+    expect(container.querySelectorAll('[data-paw-icon-plate]')).toHaveLength(24);
+    expect(container.querySelector('[class*="__tile"], [class*="__rail"], [class*="__signal"], [class*="__sheen"]')).toBeNull();
     for (const silhouette of container.querySelectorAll('[data-paw-icon-silhouette]')) {
       expect(silhouette.children.length).toBeGreaterThanOrEqual(2);
       expect(silhouette.children.length).toBeLessThanOrEqual(4);
@@ -163,13 +171,15 @@ describe('PAWOS App identity icons', () => {
     expect(small).toHaveAttribute('height', '16');
     expect(small).toHaveAttribute('data-paw-icon-scale', 'small');
     expect(large).not.toHaveAttribute('data-paw-icon-scale');
+    expect(small?.querySelector('[data-paw-icon-plate="memory"]')).toBeInTheDocument();
+    expect(large?.querySelector('[data-paw-icon-plate="memory"]')).toBeInTheDocument();
     expect(small?.querySelector('[data-paw-icon-silhouette="memory"]')).toHaveAttribute('data-paw-icon-variant', 'compact');
     expect(large?.querySelector('[data-paw-icon-silhouette="memory"]')).toHaveAttribute('data-paw-icon-variant', 'full');
     expect(small?.querySelector('[data-paw-icon-silhouette="memory"]')?.children.length).toBeGreaterThanOrEqual(2);
     expect(small).toHaveAttribute('focusable', 'false');
   });
 
-  it('preserves each independent silhouette and mark at every shipping size', () => {
+  it('preserves each independent silhouette and complete plate at every shipping size', () => {
     const sizes = [16, 24, 32, 48];
     const { container } = render(<>{pawApps.flatMap((app) => sizes.map((size) => (
       <PawAppIcon appId={app.id} key={`${app.id}-${size}`} size={size} />
@@ -181,7 +191,9 @@ describe('PAWOS App identity icons', () => {
       for (const [index, icon] of icons.entries()) {
         expect(icon).toHaveAttribute('width', String(sizes[index]));
         expect(icon.querySelector(`[data-paw-icon-silhouette="${app.id}"]`)).toBeInTheDocument();
-        expect(icon.querySelector('.paw-app-icon__tile, [data-paw-icon-sheen]')).toBeNull();
+        expect(icon.querySelector(`[data-paw-icon-plate="${app.id}"]`)).toBeInTheDocument();
+        expect(icon.querySelectorAll('.paw-app-icon__plate')).toHaveLength(1);
+        expect(icon.querySelector('[data-paw-icon-sheen]')).toBeNull();
       }
     }
   });
@@ -205,6 +217,7 @@ describe('PAWOS App identity icons', () => {
     expect(mark?.querySelectorAll('ellipse')).toHaveLength(4);
     expect(mark?.querySelectorAll('path')).toHaveLength(1);
     expect(mark?.hasAttribute('data-paw-app-icon')).toBe(false);
+    expect(mark?.querySelector('[data-paw-icon-plate]')).toBeNull();
     rerender(<PawBrandMark title="PAW" />);
     expect(getByRole('img', { name: 'PAW' })).toBeInTheDocument();
   });
