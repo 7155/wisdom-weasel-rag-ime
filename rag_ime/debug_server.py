@@ -31,6 +31,7 @@ from .active_rag_service import (
 )
 from .activity_timeline import DailyActivityTimelineStore
 from .agent_extensions import AgentExtensionService
+from .landing_forms import LandingFormService
 from .agent_lifecycle_hooks import AgentLifecycleHookService
 from .agent_runtime_driver import AgentRuntimeError
 from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvider
@@ -570,6 +571,12 @@ class DebugImeService:
                 / "plugin-inbox"
             ),
         )
+        forms_state = (
+            Path(config.db_path).expanduser().resolve(strict=False).parent
+            / "Agent"
+            / "landing-forms"
+        )
+        self.landing_forms = LandingFormService(state_root=forms_state)
         self.agent_lifecycle_hooks = AgentLifecycleHookService(config.db_path)
         self.agent_lifecycle_hooks.initialize()
         self.browser_control = BrowserControlService(config.db_path)
@@ -7994,6 +8001,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.agent_extensions.preview(payload))
             elif path == "/api/agent/extensions/apply":
                 self._write_json(HTTPStatus.OK, self.service.agent_extensions.apply(payload))
+            elif path == "/api/agent/forms/validate":
+                self._write_json(HTTPStatus.OK, self.service.landing_forms.validate(payload))
+            elif path == "/api/agent/forms/preview":
+                self._write_json(HTTPStatus.OK, self.service.landing_forms.preview(payload))
+            elif path == "/api/agent/forms/apply":
+                self._write_json(HTTPStatus.OK, self.service.landing_forms.apply(payload))
             elif path == "/api/agent/deep-search":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
             elif path == "/api/agent/surface/complete":

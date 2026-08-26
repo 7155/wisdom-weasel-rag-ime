@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "rag-ime.landing-form-catalog.v1",
+  "catalogVersion": "2026.08.26",
+  "entries": [
+    {
+      "id": "knowledge-qa",
+      "displayName": "知识库问答",
+      "description": "以 Knowledge + Agent 为主的问答落地形态，自举可切换与回滚。",
+      "publisher": "Personal Agent Workbench",
+      "source": {
+        "kind": "bundled",
+        "label": "Product bundle",
+        "url": "https://github.com/7155/personal-agent-workbench"
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "sourcePath": "bundled_forms/knowledge-qa/1.0.0",
+          "releasedAt": "2026-08-26",
+          "notes": "MVP Form: Dock/Launchpad filter + document_library binding."
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
+import { dockAppIdsForForm, launchpadAppIdsForForm, useActiveLandingForm } from '@/features/paw-os/active-form';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import { dockMagnetics } from './dock-magnification';
@@ -61,6 +62,11 @@ export function PawDesktop() {
    * focus and live drag/resize keep their own suspension rules. */
   const documentHidden = useDocumentHidden();
   const ambientPaused = documentHidden || Boolean(activeWindowId) || launchpadOpen || overviewOpen;
+  const { form: activeLandingForm } = useActiveLandingForm();
+  const formDockAppIds = useMemo(
+    () => dockAppIdsForForm(activeLandingForm),
+    [activeLandingForm],
+  );
   const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
@@ -408,12 +414,19 @@ export function PawDesktop() {
       ><X size={14} />退出协作聚焦</button> : null}
       <PawDock
         activeAppId={activeAppId}
+        dockAppIds={formDockAppIds}
         onLaunchpad={toggleLaunchpad}
         onOpen={openApp}
         onOverview={toggleOverview}
         overviewOpen={overviewOpen}
       />
-      {launchpadOpen ? <PawLaunchpad onClose={closeLaunchpad} onOpen={openApp} /> : null}
+      {launchpadOpen ? (
+        <PawLaunchpad
+          activeForm={activeLandingForm}
+          onClose={closeLaunchpad}
+          onOpen={openApp}
+        />
+      ) : null}
       {contextMenu ? (
         <PawContextMenu
           anchor={contextMenu.kind === 'menubar' ? menuAppRef : undefined}
@@ -559,8 +572,9 @@ function usePawRunningApps(): { open: ReadonlySet<PawAppId>; visible: ReadonlySe
  * writes, so React only owns its resting content: which App is current, which
  * are running, whether the overview is open. Everything else on the desktop
  * re-renders without touching it. */
-const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }: {
+const PawDock = memo(function PawDock({ activeAppId, dockAppIds = pawDockAppIds, onLaunchpad, onOpen, onOverview, overviewOpen }: {
   activeAppId: PawAppId | null;
+  dockAppIds?: readonly PawAppId[];
   onLaunchpad: () => void;
   onOpen: (id: PawAppId) => void;
   onOverview: () => void;
@@ -571,7 +585,7 @@ const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOver
   const dockState = usePawRunningApps();
   return (
     <nav aria-label="PAWOS 工具架" className="paw-dock" ref={dockRef}>
-      {pawDockAppIds.map((appId) => {
+      {dockAppIds.map((appId) => {
         const minimizedOnly = dockState.open.has(appId) && !dockState.visible.has(appId);
         return (
           <button
@@ -676,16 +690,29 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
   }, [dockRef]);
 }
 
-function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: PawAppId) => void }) {
+function PawLaunchpad({
+  activeForm = null,
+  onClose,
+  onOpen,
+}: {
+  activeForm?: ReturnType<typeof useActiveLandingForm>['form'];
+  onClose: () => void;
+  onOpen: (id: PawAppId) => void;
+}) {
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
+  const visibleIds = useMemo(
+    () => new Set(launchpadAppIdsForForm(activeForm, pawApps.map((app) => app.id))),
+    [activeForm],
+  );
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return pawApps.filter((app) => {
+      if (!visibleIds.has(app.id)) return false;
       if (!needle) return true;
       return [app.label, app.shortLabel, app.tagline, app.id].some((part) => part.toLowerCase().includes(needle));
     });
-  }, [query]);
+  }, [query, visibleIds]);
   const groups = useMemo(() => {
     // A running index across groups drives the cascade arrival: each group
     // header takes its own beat and its tiles follow, so the archive opens as
