@@ -5,6 +5,7 @@ import subagentLaunchCss from '../../features/agent/delegation/subagent-launch.c
 import evidenceEchoCss from '../../features/evidence-echo/evidence-echo.css?raw';
 import configurationCss from '../../features/configuration/configuration.css?raw';
 import contextDebugCss from '../../features/context-debug/context-debug.css?raw';
+import projectFieldCss from '../../features/project-field/project-field.css?raw';
 import diagnosticsCss from '../../features/diagnostics/diagnostics.css?raw';
 import filesCss from '../../features/files/paw-os-files-app.css?raw';
 import filesSource from '../../features/files/PawOsFilesApp.tsx?raw';
@@ -497,6 +498,7 @@ describe('PAWOS semantic type roles', () => {
     ['configuration', configurationCss],
     ['rooms', roomsCss],
     ['context-debug', contextDebugCss],
+    ['project-field', projectFieldCss],
   ])('%s final owner declares readable roles at the owning selectors', (_surface, css) => {
     expect(css).not.toMatch(/font-size:\s*(?:9|9\.5|10|10\.5|11|11\.5)px/);
     expect(css).not.toContain('UR-087 readable typography floor');
