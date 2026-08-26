@@ -5,6 +5,8 @@ import { MarkdownBody } from './MarkdownRenderer';
 import {
   INITIAL_SCAN_STATE,
   scanIncrementalMarkdown,
+  settleScannedMarkdown,
+  splitSettledMarkdown,
 } from './progressive-markdown';
 import {
   advanceToSafeBoundary,
@@ -33,6 +35,41 @@ describe('progressive markdown streaming path', () => {
     // Chunk object identity is the contract React.memo freezes on.
     expect(second.chunks[0]).toBe(first.chunks[0]);
     expect(second.chunks[1]?.text).toBe('第二段还在生成，现在完成。');
+  });
+
+  it('settles by carrying committed chunks over by identity instead of re-scanning from zero', () => {
+    const midStream = scanIncrementalMarkdown(
+      INITIAL_SCAN_STATE,
+      '第一段。\n\n第二段。\n\n第三段还在生成',
+    );
+    const finalText = '第一段。\n\n第二段。\n\n第三段完成了。\n\n第四段收尾。';
+    const streamed = scanIncrementalMarkdown(midStream, finalText);
+
+    const settled = settleScannedMarkdown(streamed, finalText);
+
+    // The committed prefix keeps the exact objects React.memo froze on; only
+    // the unscanned suffix is walked once more at settle.
+    expect(settled[0]).toBe(streamed.chunks[0]);
+    expect(settled[1]).toBe(streamed.chunks[1]);
+    // The settled partition is byte-for-byte what a from-zero scan would say.
+    expect(settled.map((chunk) => ({ ...chunk }))).toEqual(
+      splitSettledMarkdown(finalText).map((chunk) => ({ ...chunk })),
+    );
+  });
+
+  it('rebuilds the settled partition from zero when the final text is not an append', () => {
+    const streamed = scanIncrementalMarkdown(
+      INITIAL_SCAN_STATE,
+      '旧的第一段。\n\n旧的第二段还在生成',
+    );
+    const rewritten = '全新的第一段。\n\n全新的第二段。';
+
+    const settled = settleScannedMarkdown(streamed, rewritten);
+
+    expect(settled.map((chunk) => ({ ...chunk }))).toEqual(
+      splitSettledMarkdown(rewritten).map((chunk) => ({ ...chunk })),
+    );
+    expect(settled.some((chunk) => chunk.text.includes('旧的'))).toBe(false);
   });
 
   it('does not treat headings inside a fenced block as commit boundaries', () => {
