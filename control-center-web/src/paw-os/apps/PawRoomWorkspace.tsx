@@ -29,7 +29,7 @@ import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomComposer, roomMentionedParticipants } from '@/features/rooms/composer/RoomComposer';
-import { roomCollaborationRoleLabel } from '@/features/rooms/room-copy';
+import { roomCollaborationRoleLabel, roomPlanetName } from '@/features/rooms/room-copy';
 import { latestPendingGroupedRoomInput, type PendingRoomQuestion } from '@/features/rooms/room-question';
 import {
   roomExecutionModeLabel,
@@ -53,7 +53,7 @@ import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 /* 星空按钮按下之前，星空代码不进入 Room 默认对话的 bundle 路径。 */
 import { LazyPawRoomStarfield } from './PawStarfieldLazy';
 import { buildRoomFocusProjection, roomFocusHasCoordinator, roomFocusOriginLabel, type RoomFocusProjection } from './room-focus-projection';
-import { roomAutoSatelliteRequests, roomPlanetWindowRequest } from './room-satellite-auto-open';
+import { roomPlanetWindowRequest } from './room-satellite-auto-open';
 /* Shared conversation modules (tool result panels, diff reader) style the
  * Room's tool receipts too; the Room window must not depend on a Session
  * window having loaded them first. */
@@ -73,6 +73,31 @@ const roomToolPanelIcons: Record<RoomToolPanel, LucideIcon> = {
   focus: Focus,
   governance: Settings2,
 };
+
+/* This is the active-participant ceiling enforced by agent-room.v1 and
+   AgentRoomService. The displayed count still comes only from the current
+   Room snapshot; this constant is a capacity rule, not a second roster. */
+const ROOM_PARTICIPANT_LIMIT = 8;
+const ROOM_TIMELINE_END_THRESHOLD_PX = 96;
+
+export function followRoomTimelineIfReaderAtEnd(
+  timeline: HTMLElement | null,
+  scheduleFrame: (callback: FrameRequestCallback) => number = requestAnimationFrame,
+): boolean {
+  if (!timeline) return false;
+  const readerIsAtEnd = () => (
+    timeline.scrollHeight - timeline.clientHeight - timeline.scrollTop
+    <= ROOM_TIMELINE_END_THRESHOLD_PX
+  );
+  if (!readerIsAtEnd()) return false;
+  scheduleFrame(() => {
+    // The receipt and this layout frame are separated by user-observable time.
+    // Recheck so a wheel/touch gesture in that gap keeps ownership of the view.
+    if (!readerIsAtEnd()) return;
+    timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
+  });
+  return true;
+}
 
 export function PawRoomWorkspace({
   initialDraft,
@@ -98,7 +123,10 @@ export function PawRoomWorkspace({
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(initialError ?? '');
-  const [panel, setPanel] = useState<RoomToolPanel | 'none'>('focus');
+  /* Match an ordinary Session on entry: the public conversation owns the
+   * stage. Collaboration tools and partner windows are explicit disclosure,
+   * never a wall of windows opened on the reader's behalf. */
+  const [panel, setPanel] = useState<RoomToolPanel | 'none'>('none');
   const [view, setView] = useState<'conversation' | 'starfield'>('conversation');
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
   const [recoveryState, setRecoveryState] = useState<'recovering' | 'failed' | 'synced'>('recovering');
@@ -111,6 +139,7 @@ export function PawRoomWorkspace({
 
   useEffect(() => {
     setView('conversation');
+    setPanel('none');
   }, [recordId]);
 
   const projection = useRoomLiveStore((state) => state.projections[recordId]);
@@ -250,7 +279,7 @@ export function PawRoomWorkspace({
         ...record,
         workItems: [...(record.workItems ?? []).filter((item) => item.id !== workItem.id), workItem],
       });
-      requestAnimationFrame(() => timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' }));
+      followRoomTimelineIfReaderAtEnd(timelineRef.current);
       return true;
     } catch (reason) {
       if (!steering) useRoomLiveStore.getState().discardOptimistic(recordId, clientMessageId);
@@ -372,17 +401,6 @@ export function PawRoomWorkspace({
     if (!desktop || !record) return;
     desktop.bindRoomMain?.({ kind: 'room', id: record.id, title: record.title, subtitle: record.description });
   }, [desktop, record]);
-  /* UR-054：进入 Room 自动展开活跃伙伴卫星窗（后台，不抢主 Room 焦点）。
-     每位伙伴每次进入只展开一次，用户关闭后不会被循环重开。 */
-  const autoExpandedParticipantIds = useRef(new Set<string>());
-  useEffect(() => { autoExpandedParticipantIds.current = new Set(); }, [recordId]);
-  useEffect(() => {
-    if (!desktop || !record || record.id !== recordId) return;
-    for (const request of roomAutoSatelliteRequests(record, autoExpandedParticipantIds.current)) {
-      if (request.target.kind === 'participant') autoExpandedParticipantIds.current.add(request.target.id);
-      desktop.openWindow(request);
-    }
-  }, [desktop, record, recordId]);
   /* status overlay 克制：为 0 的计数是噪音，状态行只亮出真实存在的工作。 */
   const signalChips = ([
     ['active', focusProjection?.counts.active ?? 0, '进行'],
@@ -612,6 +630,8 @@ function PawRoomGovernanceInner({
   const [executionMode, setExecutionMode] = useState<RoomExecutionMode>(room.executionMode ?? 'per_action');
   const activeParticipants = room.participants.filter((item) => item.status === 'active');
   const availablePersonas = personas.filter((persona) => !activeParticipants.some((item) => item.roleId === persona.roleId && item.roleVersion === persona.version));
+  const participantLimitReached = activeParticipants.length >= ROOM_PARTICIPANT_LIMIT;
+  const nextPlanetName = roomPlanetName(Math.max(-1, ...room.participants.map((participant) => participant.ordinal)) + 1);
 
   async function mutate(key: string, request: ControlRequest): Promise<void> {
     setBusyKey(key);
@@ -656,14 +676,14 @@ function PawRoomGovernanceInner({
   return <div className="paw-room-governance">
     <header><span><strong>Room 治理</strong><small>伙伴、话题、工作项与边界</small></span><button onClick={() => void onRefresh()} type="button">刷新</button></header>
     <section>
-      <header><span><Users size={15} /><strong>伙伴与分工</strong></span><small>{activeParticipants.length}/4</small></header>
+      <header><span><Users size={15} /><strong>伙伴与分工</strong></span><small>{activeParticipants.length}/{ROOM_PARTICIPANT_LIMIT}</small></header>
       <div className="paw-room-governance__members">{activeParticipants.map((participant) => <article key={participant.id}>
         <span aria-hidden="true" className="paw-room-governance__member-mark"><Users size={14} /></span>
-        <span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
-        {room.roomKind !== 'roleplay' ? <Select aria-label={`${participant.displayName} 的分工`} disabled={Boolean(busyKey)} onValueChange={(collaborationRole) => void mutate(`role:${participant.id}`, { pathId: 'agent.room.participant.update', params: { roomId: room.id }, body: { participantId: participant.id, collaborationRole } })} options={collaborationRoleOptions} value={participant.collaborationRole ?? 'implementer'} /> : null}
-        <button aria-label={`移出 ${participant.displayName}`} disabled={Boolean(busyKey) || activeParticipants.length <= 2 || participant.id === room.moderatorParticipantId} onClick={() => void mutate(`remove:${participant.id}`, { pathId: 'agent.room.participant.remove', params: { roomId: room.id }, body: { participantId: participant.id } })} type="button">{busyKey === `remove:${participant.id}` ? <LoaderCircle className="ui-spin" size={14} /> : <UserMinus size={14} />}</button>
+        <span><strong>{roomPlanetName(participant.ordinal)}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
+        {room.roomKind !== 'roleplay' ? <Select aria-label={`${roomPlanetName(participant.ordinal)} 的分工`} disabled={Boolean(busyKey)} onValueChange={(collaborationRole) => void mutate(`role:${participant.id}`, { pathId: 'agent.room.participant.update', params: { roomId: room.id }, body: { participantId: participant.id, collaborationRole } })} options={collaborationRoleOptions} value={participant.collaborationRole ?? 'implementer'} /> : null}
+        <button aria-label={`移出 ${roomPlanetName(participant.ordinal)}`} disabled={Boolean(busyKey) || activeParticipants.length <= 2 || participant.id === room.moderatorParticipantId} onClick={() => void mutate(`remove:${participant.id}`, { pathId: 'agent.room.participant.remove', params: { roomId: room.id }, body: { participantId: participant.id } })} type="button">{busyKey === `remove:${participant.id}` ? <LoaderCircle className="ui-spin" size={14} /> : <UserMinus size={14} />}</button>
       </article>)}</div>
-      {availablePersonas.length && activeParticipants.length < 4 ? <div className="paw-room-governance__invite"><span aria-hidden="true"><UserPlus size={14} />邀请伙伴</span><Select aria-label="邀请伙伴" disabled={Boolean(busyKey)} onValueChange={(key) => { const persona = personas.find((item) => `${item.roleId}:${item.version}` === key); if (persona) void mutate(`add:${persona.roleId}`, { pathId: 'agent.room.participant.add', params: { roomId: room.id }, body: { roleId: persona.roleId, roleVersion: persona.version, collaborationRole: 'implementer' } }); }} options={availablePersonas.map((persona) => ({ value: `${persona.roleId}:${persona.version}`, label: persona.displayName }))} placeholder="选择伙伴…" value="" /></div> : null}
+      {availablePersonas.length ? <div className="paw-room-governance__invite"><span aria-hidden="true"><UserPlus size={14} />邀请伙伴</span><Select aria-label="邀请伙伴" disabled={Boolean(busyKey) || participantLimitReached} onValueChange={(key) => { if (participantLimitReached) return; const persona = personas.find((item) => `${item.roleId}:${item.version}` === key); if (persona) void mutate(`add:${persona.roleId}`, { pathId: 'agent.room.participant.add', params: { roomId: room.id }, body: { roleId: persona.roleId, roleVersion: persona.version, collaborationRole: 'implementer' } }); }} options={participantLimitReached ? [{ value: '', label: `已达 ${ROOM_PARTICIPANT_LIMIT} 人上限` }] : availablePersonas.map((persona) => ({ value: `${persona.roleId}:${persona.version}`, label: `${nextPlanetName} · ${persona.tagline || '协作伙伴'}` }))} placeholder={participantLimitReached ? `已达 ${ROOM_PARTICIPANT_LIMIT} 人上限` : `选择 ${nextPlanetName} 的分工…`} value="" /></div> : null}
     </section>
 
     <section>
@@ -674,8 +694,8 @@ function PawRoomGovernanceInner({
 
     <section>
       <header><span><GitBranch size={15} /><strong>工作项</strong></span><small>{room.workItems?.length ?? 0}</small></header>
-      <div className="paw-room-governance__work">{(room.workItems ?? []).map((work) => <article data-state={work.state} key={work.id}><span><strong>{work.objective}</strong><small>{roomWorkStateLabel(work.state)} · {participantName(room, work.currentOwnerParticipantId)}</small></span><Select aria-label={`重新分配 ${work.objective}`} disabled={Boolean(busyKey) || ['done', 'failed', 'cancelled'].includes(work.state)} onValueChange={(targetParticipantId) => void mutate(`work:${work.id}`, { pathId: 'agent.room.workItem.reassign', params: { roomId: room.id, workItemId: work.id }, body: { actorParticipantId: room.moderatorParticipantId || activeParticipants[0]?.id, targetParticipantId, reason: '用户在 Room 治理面板重新分配' } })} options={activeParticipants.map((participant) => ({ value: participant.id, label: participant.displayName }))} value={work.currentOwnerParticipantId} /></article>)}</div>
-      <div className="paw-room-governance__form"><input aria-label="工作项目标" maxLength={500} onChange={(event) => setWorkObjective(event.target.value)} placeholder="要完成什么" value={workObjective} /><input aria-label="工作项交付" maxLength={500} onChange={(event) => setWorkOutput(event.target.value)} placeholder="期望交付" value={workOutput} /><Select aria-label="工作项负责人" onValueChange={setWorkOwner} options={activeParticipants.map((participant) => ({ value: participant.id, label: participant.displayName }))} placeholder="选择负责人" value={workOwner} /><button disabled={!workObjective.trim() || !workOutput.trim() || Boolean(busyKey)} onClick={() => void createWorkItem()} type="button"><Plus size={14} />创建</button></div>
+      <div className="paw-room-governance__work">{(room.workItems ?? []).map((work) => <article data-state={work.state} key={work.id}><span><strong>{work.objective}</strong><small>{roomWorkStateLabel(work.state)} · {participantName(room, work.currentOwnerParticipantId)}</small></span><Select aria-label={`重新分配 ${work.objective}`} disabled={Boolean(busyKey) || ['done', 'failed', 'cancelled'].includes(work.state)} onValueChange={(targetParticipantId) => void mutate(`work:${work.id}`, { pathId: 'agent.room.workItem.reassign', params: { roomId: room.id, workItemId: work.id }, body: { actorParticipantId: room.moderatorParticipantId || activeParticipants[0]?.id, targetParticipantId, reason: '用户在 Room 治理面板重新分配' } })} options={activeParticipants.map((participant) => ({ value: participant.id, label: roomPlanetName(participant.ordinal) }))} value={work.currentOwnerParticipantId} /></article>)}</div>
+      <div className="paw-room-governance__form"><input aria-label="工作项目标" maxLength={500} onChange={(event) => setWorkObjective(event.target.value)} placeholder="要完成什么" value={workObjective} /><input aria-label="工作项交付" maxLength={500} onChange={(event) => setWorkOutput(event.target.value)} placeholder="期望交付" value={workOutput} /><Select aria-label="工作项负责人" onValueChange={setWorkOwner} options={activeParticipants.map((participant) => ({ value: participant.id, label: roomPlanetName(participant.ordinal) }))} placeholder="选择负责人" value={workOwner} /><button disabled={!workObjective.trim() || !workOutput.trim() || Boolean(busyKey)} onClick={() => void createWorkItem()} type="button"><Plus size={14} />创建</button></div>
     </section>
 
     <section>
@@ -711,5 +731,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function participantName(room: RoomSummary | undefined, participantId: string): string {
-  return room?.participants.find((item) => item.id === participantId)?.displayName ?? '未分配';
+  const participant = room?.participants.find((item) => item.id === participantId);
+  return participant ? roomPlanetName(participant.ordinal) : '未分配';
 }

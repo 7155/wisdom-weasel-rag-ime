@@ -51,6 +51,7 @@ export interface PublicToolResultView {
   };
   language?: string;
   sources: string[];
+  sourceLinks?: Array<{ label: string; href: string }>;
   preview?: PublicToolSemanticPreview;
   error?: string;
   recovery?: 'approval' | 'permission';
@@ -399,9 +400,9 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     for (const field of collaboration.fields) append(field.id, field.label, field.value);
   }
 
-  const sources = toolId === 'knowledge'
-    ? safeKnowledgeSourceLabels(items)
-    : safeSourceLabels(payload.sources ?? payload.documents ?? payload.books);
+  const knowledgeSources = toolId === 'knowledge' ? safeKnowledgeSources(items) : undefined;
+  const sources = knowledgeSources?.labels
+    ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books);
   const preview = semanticToolPreview(toolId, operation, layers);
   const resultKind = publicToolResultKind(toolId, Boolean(preview));
   const projectedItems = publicToolResultItems(resultKind, layers, codeResult.output?.text ?? '');
@@ -446,6 +447,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     ...(rawResult ? { rawResult } : {}),
     ...(resultKind === 'code' && codeResult.file ? { language: publicCodeLanguage(codeResult.file) } : {}),
     sources,
+    ...(knowledgeSources?.links.length ? { sourceLinks: knowledgeSources.links } : {}),
     ...(preview ? { preview } : {}),
     ...(error ? { error } : {}),
     ...(recovery ? { recovery } : {}),
@@ -1774,8 +1776,12 @@ function publicToolRecovery(
   return undefined;
 }
 
-function safeKnowledgeSourceLabels(items: unknown[]): string[] {
+function safeKnowledgeSources(items: unknown[]): {
+  labels: string[];
+  links: Array<{ label: string; href: string }>;
+} {
   const labels: string[] = [];
+  const links: Array<{ label: string; href: string }> = [];
   for (const value of items) {
     const item = record(value);
     const fileName = publicFileName(item.fileName ?? item.name ?? item.title);
@@ -1790,10 +1796,30 @@ function safeKnowledgeSourceLabels(items: unknown[]): string[] {
         ? `${startLine}${endLine !== undefined && endLine > startLine ? `-${endLine}` : ''} 行`
         : '';
     const label = location ? `${fileName} · ${location}` : fileName;
-    if (!labels.includes(label)) labels.push(label);
+    if (!labels.includes(label)) {
+      labels.push(label);
+      const baseId = safeKnowledgeRouteId(item.kbId ?? item.baseId ?? citation.kbId ?? citation.baseId);
+      const documentId = safeKnowledgeRouteId(
+        item.fileId ?? item.documentId ?? citation.fileId ?? citation.documentId,
+      );
+      if (documentId) {
+        const base = baseId ? `base=${encodeURIComponent(baseId)}&` : '';
+        links.push({
+          label,
+          href: `#/knowledge?${base}document=${encodeURIComponent(documentId)}&tab=viewer`,
+        });
+      }
+    }
     if (labels.length >= 8) break;
   }
-  return labels;
+  return { labels, links };
+}
+
+function safeKnowledgeRouteId(value: unknown): string {
+  const normalized = text(value);
+  if (!normalized || normalized.length > 240 || /[\\/\u0000-\u001f]/u.test(normalized)) return '';
+  if (/(?:api.?key|authorization|cookie|password|secret|bearer\s)/iu.test(normalized)) return '';
+  return normalized;
 }
 
 function publicFileName(value: unknown): string {

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import type {
   MemoryReferenceV1,
@@ -147,10 +147,11 @@ export function useMemoryReference(
   });
 }
 
-export function useActivityTimeline(date: string, enabled: boolean) {
+export function useActivityTimeline(date: string, enabled: boolean, catchUpTargetDate = date) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
   const [buildJobId, setBuildJobId] = useState('');
+  const buildRequestRef = useRef<Promise<unknown> | null>(null);
   const queryKey = memoryQueryKeys.activityTimeline(date);
   const month = date.slice(0, 7);
   const capabilities = useQuery({
@@ -185,6 +186,15 @@ export function useActivityTimeline(date: string, enabled: boolean) {
       signal,
     }),
   });
+  const calendarPayload = useMemo(() => asRecord(calendar.data), [calendar.data]);
+  const calendarJob = useMemo(
+    () => asRecord(asRecord(calendarPayload.automation).job),
+    [calendarPayload],
+  );
+  const discoveredBuildJobId = activityTimelineJobMatchesDate(calendarJob, date, catchUpTargetDate)
+    ? stringValue(calendarJob.jobId)
+    : '';
+  const trackedBuildJobId = buildJobId || discoveredBuildJobId;
   const settle = async (payload: unknown) => {
     const response = asRecord(payload);
     const nextTimeline = asRecord(response.timeline);
@@ -205,11 +215,33 @@ export function useActivityTimeline(date: string, enabled: boolean) {
     await queryClient.invalidateQueries({ queryKey: memoryQueryKeys.summary() });
   };
   const build = useMutation({
-    mutationFn: async ({ targetDate, throughToday = false }: { targetDate: string; throughToday?: boolean }) => {
-      const payload = await transport.request({
+    mutationFn: async ({
+      targetDate,
+      throughToday = false,
+      rangeStartDate = '',
+    }: {
+      targetDate: string;
+      throughToday?: boolean;
+      rangeStartDate?: string;
+    }) => {
+      // One UI gesture owns one transport admission. React Query does not
+      // deduplicate mutations, so a double activation must reuse the exact
+      // in-flight request instead of asking the Gateway for a second job.
+      const pending = buildRequestRef.current ?? transport.request({
         pathId: 'memory.activityTimeline.build',
-        body: { date: targetDate, throughToday },
+        body: {
+          date: targetDate,
+          throughToday,
+          ...(rangeStartDate ? { rangeStartDate } : {}),
+        },
       });
+      buildRequestRef.current = pending;
+      let payload: unknown;
+      try {
+        payload = await pending;
+      } finally {
+        if (buildRequestRef.current === pending) buildRequestRef.current = null;
+      }
       const response = asRecord(payload);
       const nextJobId = stringValue(response.jobId);
       if (!nextJobId) {
@@ -220,11 +252,11 @@ export function useActivityTimeline(date: string, enabled: boolean) {
     onSuccess: (payload) => setBuildJobId(stringValue(asRecord(payload).jobId)),
   });
   const buildJob = useQuery({
-    enabled: enabled && Boolean(buildJobId),
-    queryKey: memoryQueryKeys.curationJob(buildJobId),
+    enabled: enabled && Boolean(trackedBuildJobId),
+    queryKey: memoryQueryKeys.curationJob(trackedBuildJobId),
     queryFn: ({ signal }) => transport.request({
       pathId: 'agent.memoryMaintenance.run',
-      query: { jobId: buildJobId },
+      query: { jobId: trackedBuildJobId },
       signal,
     }),
     refetchInterval: (query) => {
@@ -232,9 +264,13 @@ export function useActivityTimeline(date: string, enabled: boolean) {
       return state === 'completed' || state === 'failed' ? false : 1_200;
     },
   });
-  const buildJobPayload = useMemo(() => asRecord(buildJob.data), [buildJob.data]);
+  const buildJobPayload = useMemo(() => {
+    const queried = asRecord(buildJob.data);
+    return Object.keys(queried).length ? queried : calendarJob;
+  }, [buildJob.data, calendarJob]);
   const buildJobState = stringValue(buildJobPayload.state);
   const buildJobProgress = asRecord(buildJobPayload.progress);
+  const buildJobResult = asRecord(buildJobPayload.result);
   const buildJobError = buildJob.error
     ?? (buildJobState === 'failed'
       ? new Error(stringValue(buildJobPayload.error, '当天语义整理未通过校验。'))
@@ -270,7 +306,9 @@ export function useActivityTimeline(date: string, enabled: boolean) {
     build,
     buildJob,
     buildJobError,
+    buildJobId: trackedBuildJobId,
     buildJobProgress,
+    buildJobResult,
     buildJobState,
     calendar,
     canRead,
@@ -280,6 +318,32 @@ export function useActivityTimeline(date: string, enabled: boolean) {
     reject,
     timeline,
   };
+}
+
+function activityTimelineJobMatchesDate(
+  job: Record<string, unknown>,
+  date: string,
+  catchUpTargetDate: string,
+): boolean {
+  if (!stringValue(job.jobId)) return false;
+  const mode = stringValue(job.mode);
+  if (!['manual_catch_up', 'automatic_catch_up', 'single_day'].includes(mode)) return false;
+  const progress = asRecord(job.progress);
+  const result = asRecord(job.result);
+  const target = stringValue(
+    job.targetDate
+      ?? progress.throughDate
+      ?? result.throughDate
+      ?? progress.currentDate
+      ?? result.failedDate,
+  );
+  // Queued jobs may not have emitted their first progress callback yet. The
+  // calendar route has already scoped this projection to the current project,
+  // so mode + identity are the most truthful recovery evidence available.
+  if (!target) return true;
+  if (mode === 'single_day') return target === date;
+  if (mode === 'manual_catch_up') return target === catchUpTargetDate;
+  return ['queued', 'running'].includes(stringValue(job.state));
 }
 
 export function useMemoryGraphQueries(

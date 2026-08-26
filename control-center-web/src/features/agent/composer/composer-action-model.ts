@@ -25,6 +25,7 @@ export interface ComposerActionModelInput {
   /** Text alone, without attachments. The client-side queue holds a string;
    *  the Runtime deliveries carry the whole draft. */
   draftHasText: boolean;
+  draftHasAttachments: boolean;
   sending: boolean;
   stopping: boolean;
   modelChanging: boolean;
@@ -117,17 +118,20 @@ export function projectComposerActionModel(
   }
 
   if (input.busy) {
-    /* 排队 holds a draft in the client as a string, so an attachment-only
-       draft has nothing for it to hold. Offering the button anyway made the
-       press a silent no-op; 干预 and 接续 hand the whole draft to Runtime and
-       still carry the attachment. */
-    const queueWithoutText = effectiveBusyDelivery === 'queue' && !input.draftHasText;
+    /* The local follow-up hold is text-only. Any draft containing attachments
+       stays intact by falling through to Pi's native follow-up; an
+       attachment-only draft also avoids turning Enter into a silent no-op. */
+    const localQueueCannotCarryDraft = effectiveBusyDelivery === 'queue'
+      && (!input.draftHasText || input.draftHasAttachments);
+    const deliverableBusyDelivery = localQueueCannotCarryDraft
+      ? 'followUp'
+      : effectiveBusyDelivery;
     return {
-      primary: effectiveBusyDelivery,
-      primaryDisabled: queueWithoutText,
-      effectiveBusyDelivery,
+      primary: deliverableBusyDelivery,
+      primaryDisabled: false,
+      effectiveBusyDelivery: deliverableBusyDelivery,
       busyDeliveries,
-      blockedReason: queueWithoutText ? 'queue-needs-text' : null,
+      blockedReason: null,
       mode: 'busy',
     };
   }

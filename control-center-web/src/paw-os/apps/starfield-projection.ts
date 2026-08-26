@@ -26,6 +26,7 @@ import type { RoomSummary } from '@/features/rooms/room-types';
 import {
   roomFocusStateLabel,
   roomFocusHasCoordinator,
+  type RoomFocusPartner,
   type RoomFocusProjection,
   type RoomFocusState,
 } from './room-focus-projection';
@@ -138,7 +139,7 @@ export interface RoomStarfieldPlanet {
   sessionId: string;
   celestialName: string;
   displayName: string;
-  collaborationRole?: string;
+  collaborationRole?: RoomFocusPartner['collaborationRole'];
   state: RoomFocusState;
   stateLabel: string;
   /** running | waiting | review — live collaboration motion. */

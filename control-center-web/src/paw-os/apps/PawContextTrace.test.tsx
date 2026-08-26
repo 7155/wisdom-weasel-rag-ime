@@ -1,13 +1,24 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawContextTrace, projectionTraceTurns } from './PawContextTrace';
 
-afterEach(cleanup);
+beforeEach(() => {
+  // This file verifies the animated exit contract explicitly. A prior test
+  // worker may leave the global reduced-motion attribute enabled, which takes
+  // the valid synchronous exit branch and makes the transition assertion
+  // nondeterministic in the full install gate.
+  document.documentElement.dataset.reduceMotion = 'false';
+});
+
+afterEach(() => {
+  cleanup();
+  delete document.documentElement.dataset.reduceMotion;
+});
 
 describe('PawContextTrace evidence access', () => {
   it('opens a trace node without captured body to its real capture record with a safe copy', async () => {

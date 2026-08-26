@@ -164,9 +164,9 @@ export function createPreviewTransport(): MockControlTransport {
     previewSession('session-work-disclosure', '过程折叠验收', 'companion-present-v1', Date.now() - 90_000, '1', { messageCount: 3, lastMessagePreview: '最终结果保持可见，推理与工具过程可按需展开。', workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'] }),
   ];
   const roomSessions: Record<string, unknown>[] = [
-    previewRoomSession('session-room-present', '迁移作战室 · Agent 1', 'companion-present-v1', 'participant-present'),
-    previewRoomSession('session-room-firstlight', '迁移作战室 · Agent 2', 'companion-firstlight-v1', 'participant-firstlight'),
-    previewRoomSession('session-room-future', '迁移作战室 · Agent 3', 'companion-future-v1', 'participant-future'),
+    previewRoomSession('session-room-present', '迁移作战室 · Earth', 'companion-present-v1', 'participant-present'),
+    previewRoomSession('session-room-firstlight', '迁移作战室 · Mars', 'companion-firstlight-v1', 'participant-firstlight'),
+    previewRoomSession('session-room-future', '迁移作战室 · Venus', 'companion-future-v1', 'participant-future'),
   ];
   let personas: AgentPersonaV1[] = previewPersonas.map((persona) => ({
     ...persona,

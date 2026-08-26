@@ -4,6 +4,7 @@ import type { PiModelOption } from '../model-catalog-options';
 import type { ModelCatalog } from '../types';
 import {
   countModelChoices,
+  filterModelChoiceGroups,
   firstModelChoiceKey,
   modelChoiceGroupsFromCatalog,
   modelChoiceGroupsFromPiOptions,
@@ -82,5 +83,15 @@ describe('model choice projection', () => {
     expect(modelChoiceGroupsFromCatalog(undefined)).toEqual([]);
     expect(firstModelChoiceKey([])).toBe('');
     expect(countModelChoices([])).toBe(0);
+  });
+
+  it('filters the model list by model or provider without changing Runtime order', () => {
+    const groups = modelChoiceGroupsFromCatalog(catalog());
+
+    expect(filterModelChoiceGroups(groups, 'swift')[0]?.options.map((option) => option.modelId))
+      .toEqual(['gpt-5.6-swift']);
+    expect(filterModelChoiceGroups(groups, 'openai codex')).toEqual(groups);
+    expect(filterModelChoiceGroups(groups, 'missing')).toEqual([]);
+    expect(filterModelChoiceGroups(groups, '   ')).toBe(groups);
   });
 });

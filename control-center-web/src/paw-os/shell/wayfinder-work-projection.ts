@@ -3,7 +3,7 @@
  * and Rooms at desktop density.
  *
  * The raw directory is a web-length list: every repeated goal prompt and every
- * Room partner clone ("… · Agent 1/2/3") arrives as its own record. A desktop
+ * A legacy Room partner clone with a numbered suffix arrives as its own record. A desktop
  * home must stay a short, grouped, bounded surface, so this module folds the
  * raw records before anything renders:
  *
@@ -19,6 +19,8 @@
  *
  * Pure data → data. The owning component decides fetch, expansion and clicks.
  */
+
+import { ROOM_PLANET_NAMES, roomPlanetName } from '@/features/rooms/room-copy';
 
 export type WayfinderWorkKind = 'session' | 'room';
 export type WayfinderWorkActivity = 'running' | 'attention' | 'idle';
@@ -91,7 +93,7 @@ const BUCKET_PREVIEW: Record<WayfinderWorkBucketId, number> = {
   earlier: 0,
 };
 
-const AGENT_SUFFIX = /\s*[·•・\-–—]\s*(Agent\s*\d+|伙伴\s*\d+)\s*$/i;
+const PARTNER_SUFFIX = /\s*[·•・\-–—]\s*(Agent\s*\d+|伙伴\s*\d+|Earth|Mars|Venus|Jupiter|Saturn|Mercury|Neptune|Uranus|Planet\s*\d+)\s*$/i;
 
 export function projectWayfinderWork({
   nowMs,
@@ -174,7 +176,7 @@ function roomRow(room: WayfinderWorkRoomSource): WayfinderWorkItem {
     agents: (room.participants ?? [])
       .filter((participant) => participant.status !== 'removed')
       .sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0))
-      .map((participant) => participant.displayName?.trim() ?? '')
+      .map((participant) => roomPlanetName(participant.ordinal ?? 0))
       .filter(Boolean),
     repeats: [],
   };
@@ -194,23 +196,40 @@ function orphanPartnerRooms(
   return [...byRoom.entries()].map(([roomId, members]) => {
     const newest = members.reduce((left, right) => (right.updatedAtMs > left.updatedAtMs ? right : left));
     const agents = members
-      .map((member) => member.title.match(AGENT_SUFFIX)?.[1]?.replace(/\s+/g, ' ').trim() ?? '')
-      .filter(Boolean)
-      .sort((left, right) => left.localeCompare(right, 'zh-CN', { numeric: true }));
+      .map((member, index) => roomPlanetName(legacyPartnerOrdinal(member.title) ?? index))
+      .sort((left, right) => roomPlanetOrdinal(left) - roomPlanetOrdinal(right));
     return {
       key: `room:${roomId}`,
       kind: 'room' as const,
       id: roomId,
-      title: newest.title.replace(AGENT_SUFFIX, '').trim() || newest.title,
+      title: newest.title.replace(PARTNER_SUFFIX, '').trim() || newest.title,
       project: projectLeaf(newest.workspaceRoots),
       updatedAtMs: newest.updatedAtMs,
       activity: members.some((member) => member.status === 'busy')
         ? 'running' as const
         : members.some((member) => member.status === 'faulted') ? 'attention' as const : 'idle' as const,
-      agents: agents.length === members.length ? agents : members.map((_, index) => `Agent ${index + 1}`),
+      agents,
       repeats: [],
     };
   });
+}
+
+function legacyPartnerOrdinal(title: string): number | undefined {
+  const identity = title.match(PARTNER_SUFFIX)?.[1]?.trim();
+  if (!identity) return undefined;
+  const known = ROOM_PLANET_NAMES.findIndex((name) => name.toLowerCase() === identity.toLowerCase());
+  if (known >= 0) return known;
+  const matched = identity.match(/\d+/u)?.[0];
+  if (!matched) return undefined;
+  const ordinal = Number(matched) - 1;
+  return Number.isInteger(ordinal) && ordinal >= 0 ? ordinal : undefined;
+}
+
+function roomPlanetOrdinal(name: string): number {
+  const known = ROOM_PLANET_NAMES.indexOf(name as typeof ROOM_PLANET_NAMES[number]);
+  if (known >= 0) return known;
+  const fallback = Number(name.match(/\d+/u)?.[0]);
+  return Number.isInteger(fallback) ? fallback - 1 : Number.MAX_SAFE_INTEGER;
 }
 
 function normalizedTitle(title: string): string {

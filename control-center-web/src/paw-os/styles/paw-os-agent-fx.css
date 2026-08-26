@@ -662,14 +662,6 @@
   --paw-planet-shade: color-mix(in srgb, var(--paw-chat-text-tertiary) 92%, #0b1220);
 }
 
-/* A live mark carries its own halo on this surface: the pill stays a quiet
-   capsule while the planet inside it is the only thing that moves. */
-.paw-desktop-root .paw-chatfx .paw-conv-planet[data-live='true'] .paw-conv-planet__body {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--paw-planet-core) 26%, transparent),
-    0 0 8px color-mix(in srgb, var(--paw-planet-core) 22%, transparent);
-}
-
 /* In a status pill the tone is the authority on colour and the planet is the
    authority on motion: an identical body reads ok / run / wait / danger /
    subagent-violet without a second vocabulary of coloured dots. */
@@ -984,21 +976,22 @@
    等待条、空态、加载态、回到最新——同一张冷白工作面上的四件小器物。
    只投影真实 reducer/加载状态，不虚构进度。 */
 
-/* 正在工作：一枚安静的白胶囊——旋转刻度环、扫光标签、真实耗时、波点收尾。
-   替换构成主义红方块光标（组合 8 遗产）为对话自己的语汇。 */
+/* 正在工作：内容宽度的轻量状态行。只有状态环运动；文字、背景和省略号
+   都保持静止，避免高频 rerender 看起来像一张反复闪烁的卡片。 */
 .paw-desktop-root .paw-chatfx .agent-assistant-pending {
   display: inline-flex;
-  min-height: 34px;
+  width: fit-content;
+  min-height: 0;
   max-width: 100%;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   margin: 2px 0 4px;
-  padding: 5px 13px 5px 9px;
-  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 18%, var(--paw-chat-border));
-  border-radius: 999px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 5px;
   color: var(--paw-chat-text-secondary);
-  background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 4px 14px rgb(47 107 255 / 6%);
+  background: transparent;
+  box-shadow: none;
 }
 
 .paw-desktop-root .paw-chatfx .agent-assistant-pending::after {
@@ -1022,20 +1015,9 @@
   flex: 0 0 auto;
   align-items: baseline;
   gap: 7px;
-  color: transparent;
-  background:
-    linear-gradient(
-      100deg,
-      var(--paw-chat-text) 10%,
-      var(--paw-chat-text) 36%,
-      var(--paw-chat-accent) 50%,
-      var(--paw-chat-text) 64%,
-      var(--paw-chat-text) 90%
-    );
-  background-clip: text;
-  background-size: 230% 100%;
-  -webkit-background-clip: text;
-  animation: paw-agent-fx-text-sweep 1.85s ease-in-out infinite;
+  color: var(--paw-chat-text);
+  background: none;
+  animation: none;
   font-size: 13.5px;
   font-weight: 620;
 }
@@ -1059,6 +1041,24 @@
 
 .paw-desktop-root .paw-chatfx .agent-working-dots b {
   background: var(--paw-chat-accent);
+}
+
+.paw-desktop-root .paw-chatfx .agent-working-dots { display: none; }
+
+/* Failure is a recoverable transcript annotation, not a second dialog. The
+   thin signal rule and clear actions retain urgency without boxing the copy. */
+.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn__failure {
+  display: inline-grid;
+  width: fit-content;
+  max-width: min(100%, 620px);
+  min-height: 0;
+  margin: 4px 0 8px 20px;
+  padding: 6px 7px;
+  border: 0;
+  border-left: 2px solid var(--paw-chat-danger);
+  border-radius: 0 5px 5px 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* 空态：居中的邀请卡——环形图标、一句话主张、可行动的下一步。 */

@@ -19,6 +19,7 @@ import {
   type FocusEvent,
   type KeyboardEvent,
 } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import type { AgentActivityProjection, AgentMessageProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
@@ -31,7 +32,14 @@ import {
 } from '@/features/agent/composer/AgentComposer';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
 import { PermissionMark, WorkspaceMark } from '@/features/agent/marks/ConversationMarks';
-import { publicAgentErrorText } from '@/features/agent/public-error';
+import {
+  isAgentCommandPending,
+  isAgentSessionIdleFailure,
+  isAgentTurnConflict,
+  isAmbiguousAgentPromptFailure,
+  isUnresolvedAgentCommandPending,
+  publicAgentErrorText,
+} from '@/features/agent/public-error';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { pulsePawCompositionForRuntimeEvent } from '../runtime/composition-pulse';
 import {
@@ -84,6 +92,30 @@ import '@/features/agent/agent.css';
 type WorkbenchPanel = 'none' | 'files' | 'subagents' | 'status';
 type SessionWorkspaceView = 'conversation' | 'trace' | 'starfield';
 
+export function sessionWorkspaceProjectionSlice(
+  state: ReturnType<typeof useAgentLiveStore.getState>,
+  sessionId: string,
+) {
+  const projection = state.projections[sessionId];
+  return {
+    activeTurnId: latestActiveTurnId(projection),
+    hasTurns: Boolean(projection?.turnOrder.length),
+    pendingMemoryReview: latestWaitingActivity(
+      projection,
+      (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind === 'memory_review',
+    ),
+    pendingGenericInput: latestWaitingActivity(
+      projection,
+      (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind !== 'memory_review',
+    ),
+    pendingApproval: latestWaitingActivity(
+      projection,
+      (activity) => activity.kind === 'approval_required' && approvalNeedsHumanDecision(activity.payload),
+    ),
+    telemetry: projection?.telemetry,
+  };
+}
+
 export function PawSessionWorkspace({
   persona,
   record,
@@ -109,7 +141,9 @@ export function PawSessionWorkspace({
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
-  const projection = useAgentLiveStore((state) => state.projections[recordId]);
+  const projectionSlice = useAgentLiveStore(useShallow(
+    (state) => sessionWorkspaceProjectionSlice(state, recordId),
+  ));
   const [catalog, setCatalog] = useState<ModelCatalog>();
   const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [tools, setTools] = useState<ToolManifest[]>([]);
@@ -128,6 +162,7 @@ export function PawSessionWorkspace({
   const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>(traceFocusNodeId ? 'trace' : 'conversation');
   const [error, setError] = useState('');
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
+  const [thinkingPickerRequest, setThinkingPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
   const [helpRequest, setHelpRequest] = useState(0);
@@ -154,7 +189,7 @@ export function PawSessionWorkspace({
     setToolMenuOpen(false);
   }, [recordId, traceFocusNodeId]);
 
-  const busy = Boolean(latestActiveTurnId(projection));
+  const busy = Boolean(projectionSlice.activeTurnId);
   /* A held follow-up is the composer's own queue, not a Runtime delivery.
      干预/接续 hand the message to Pi immediately; a queued draft never leaves
      the client until this turn settles, which is what keeps it editable,
@@ -164,18 +199,9 @@ export function PawSessionWorkspace({
     conversationId: recordId,
     send: (text) => { void send('prompt', text); },
   });
-  const pendingMemoryReview = latestWaitingActivity(
-    projection,
-    (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind === 'memory_review',
-  );
-  const pendingGenericInput = latestWaitingActivity(
-    projection,
-    (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind !== 'memory_review',
-  );
-  const pendingApproval = latestWaitingActivity(
-    projection,
-    (activity) => activity.kind === 'approval_required' && approvalNeedsHumanDecision(activity.payload),
-  );
+  const pendingMemoryReview = projectionSlice.pendingMemoryReview;
+  const pendingGenericInput = projectionSlice.pendingGenericInput;
+  const pendingApproval = projectionSlice.pendingApproval;
   const imageSupport = selectedModelImageSupport(catalog);
 
   const loadSnapshot = useCallback(async (quiet = false): Promise<boolean> => {
@@ -202,8 +228,21 @@ export function PawSessionWorkspace({
         recent = undefined;
       }
       if (isRecentAgentSnapshot(recent)) {
+        const cachedProjection = useAgentLiveStore.getState().projections[recordId];
+        const hasCachedConversation = Boolean(cachedProjection?.messageOrder.length);
         if (recentAgentSnapshotIsPresentable(recent)) {
-          useAgentLiveStore.getState().hydrate(recordId, recent);
+          // A recent snapshot is intentionally partial. Rebuilding the reducer
+          // from an empty/bounded recent transcript would make durable history
+          // already cached for this Session disappear until the full archive
+          // arrives. Keep that stronger local projection visible and only use
+          // recent as the first paint for a genuinely empty store.
+          if (!hasCachedConversation) {
+            useAgentLiveStore.getState().hydrate(recordId, recent);
+          }
+          // The recent snapshot is the first truthful, usable view. Do not
+          // keep the conversation in a loading state while the full archive
+          // continues restoring in the background.
+          setLoading(false);
         }
         setContextSnapshotState('restoring');
         try {
@@ -214,7 +253,7 @@ export function PawSessionWorkspace({
           useAgentLiveStore.getState().hydrate(recordId, full);
           setContextSnapshotState(undefined);
         } catch (reason) {
-          if (!recentAgentSnapshotIsPresentable(recent)) throw reason;
+          if (!recentAgentSnapshotIsPresentable(recent) && !hasCachedConversation) throw reason;
           setContextSnapshotState('partial');
         }
       } else {
@@ -275,6 +314,7 @@ export function PawSessionWorkspace({
   useEffect(() => {
     let active = true;
     let unsubscribe: () => void = () => {};
+    let terminalSnapshotTimer: number | undefined;
     useAgentLiveStore.getState().ensure(recordId);
     // Streaming text_delta bursts coalesce into one store commit per batching
     // interval (same contract as the standalone Agent feature). Every
@@ -307,11 +347,37 @@ export function PawSessionWorkspace({
               return;
             }
             batcher.push(event);
+            const completedMessage = asRecord(asRecord(event.payload).message);
+            if (
+              event.eventType === 'message_completed'
+              && completedMessage.role === 'assistant'
+              && completedMessage.status === 'completed'
+            ) {
+              // `message_completed` and `turn_completed` are adjacent durable
+              // Runtime events. A reconnect in that narrow gap can show the
+              // final answer while leaving the optimistic user turn spinning.
+              // Give the terminal event one paint to arrive; if it does not,
+              // a quiet authoritative snapshot reconciles the orphan without
+              // guessing that every assistant message ends a Tool Loop.
+              if (terminalSnapshotTimer !== undefined) {
+                window.clearTimeout(terminalSnapshotTimer);
+              }
+              terminalSnapshotTimer = window.setTimeout(() => {
+                terminalSnapshotTimer = undefined;
+                if (active) void loadSnapshot(true);
+              }, 350);
+            }
             const runtimeWindow = runtimeToolWindow(event);
             if (runtimeWindow && shouldAutoOpenRuntimeToolWindow(runtimeWindow)) {
               desktop?.openWindow(runtimeWindow);
             }
-            if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') onSessionActivity?.();
+            if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
+              if (terminalSnapshotTimer !== undefined) {
+                window.clearTimeout(terminalSnapshotTimer);
+                terminalSnapshotTimer = undefined;
+              }
+              onSessionActivity?.();
+            }
           },
           error: (reason) => {
             if (!active) return;
@@ -323,6 +389,7 @@ export function PawSessionWorkspace({
     })();
     return () => {
       active = false;
+      if (terminalSnapshotTimer !== undefined) window.clearTimeout(terminalSnapshotTimer);
       batcher.clear();
       unsubscribe();
     };
@@ -336,6 +403,68 @@ export function PawSessionWorkspace({
   function turnFailureIsVisible(clientMessageId: string): boolean {
     return workspaceView === 'conversation'
       && timelineOwnsTurnFailure(agentProjection(recordId), clientMessageId);
+  }
+
+  /* One settle path for every prompt admission failure, shared by send and
+     retry. It mirrors the standalone Agent feature: a pending/unresolved
+     receipt keeps the optimistic message visible in that state (the Runtime
+     may still execute it, so the input must not come back for a double send),
+     an ambiguous transport loss marks the message retriable-by-verification,
+     and a turn conflict returns the input instead of inventing a failed turn.
+     Nothing here awaits a snapshot; recovery refreshes stay quiet. */
+  function settlePromptAdmissionFailure(
+    clientMessageId: string,
+    reason: unknown,
+    options: {
+      restoreInput?: () => void;
+      onAdmissionRolledBack?: () => void;
+      replayAmbiguousAdmission?: boolean;
+    } = {},
+  ): void {
+    const store = useAgentLiveStore.getState();
+    if (isAgentCommandPending(reason)) {
+      if (agentProjection(recordId).optimisticByClientMessageId[clientMessageId]) {
+        store.failOptimistic(
+          recordId,
+          clientMessageId,
+          errorText(reason),
+          Date.now(),
+          isUnresolvedAgentCommandPending(reason) ? 'unresolved' : 'pending',
+        );
+      }
+      return;
+    }
+    if (isAmbiguousAgentPromptFailure(reason)) {
+      store.failOptimistic(
+        recordId,
+        clientMessageId,
+        '暂时无法确认是否已接收。系统不会自动重试；手动重试会核对同一条消息。',
+        Date.now(),
+        'ambiguous',
+      );
+      options.onAdmissionRolledBack?.();
+      return;
+    }
+    if (isAgentTurnConflict(reason)) {
+      store.discardOptimistic(recordId, clientMessageId);
+      void loadSnapshot(true);
+      options.restoreInput?.();
+      options.onAdmissionRolledBack?.();
+      setError('上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
+      return;
+    }
+    store.failOptimistic(
+      recordId,
+      clientMessageId,
+      errorText(reason),
+      Date.now(),
+      options.replayAmbiguousAdmission ? 'ambiguous' : undefined,
+    );
+    options.restoreInput?.();
+    options.onAdmissionRolledBack?.();
+    if (!turnFailureIsVisible(clientMessageId)) {
+      setError(errorText(reason));
+    }
   }
 
   async function send(delivery: AgentMessageDelivery, rawDraft: string): Promise<void> {
@@ -373,7 +502,9 @@ export function PawSessionWorkspace({
             clientMessageId,
           },
         });
-        await loadSnapshot(true);
+        /* The rewrite is accepted; rebuilding the visible history is the quiet
+           snapshot's job and never holds the composer. */
+        void loadSnapshot(true);
       } catch (reason) {
         useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
         await loadSnapshot(true).catch(() => undefined);
@@ -443,29 +574,79 @@ export function PawSessionWorkspace({
         ? {}
         : { turnId: latestActiveTurnId(agentProjection(recordId)), delivery: effectiveDelivery }),
     });
-    try {
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId: recordId },
-        body: {
-          message,
-          attachments: selectedAttachments.map((item) => item.id),
-          clientMessageId,
-          ...(effectiveDelivery === 'prompt' ? {} : { delivery: effectiveDelivery }),
-        },
-      });
-      useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
-      await loadSnapshot(true);
-    } catch (reason) {
-      useAgentLiveStore.getState().failOptimistic(recordId, clientMessageId, errorText(reason), Date.now());
-      setDraft(value);
-      setAttachments(selectedAttachments);
-      if (!turnFailureIsVisible(clientMessageId)) {
-        setError(errorText(reason));
+    /* The input only comes back if the reader has not already started the next
+       thought; a fresh draft never gets clobbered by an old failure. */
+    const restoreInput = (): void => {
+      setDraft((current) => (current.trim() ? current : value));
+      setAttachments((current) => (current.length ? current : selectedAttachments));
+    };
+    // Admission and the optimistic turn are synchronous. Restoring a Pi
+    // Session, refreshing context, or starting a Provider can still make the
+    // HTTP receipt slow, but must not make the click itself feel stalled —
+    // and the quiet snapshot refresh never holds the composer at all.
+    void (async () => {
+      try {
+        const response = await transport.request<Record<string, unknown>>({
+          pathId: 'agent.session.prompt',
+          params: { sessionId: recordId },
+          body: {
+            message,
+            attachments: selectedAttachments.map((item) => item.id),
+            clientMessageId,
+            ...(effectiveDelivery === 'prompt' ? {} : { delivery: effectiveDelivery }),
+          },
+        });
+        if (isCancelledPromptAdmission(response)) {
+          useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+          void loadSnapshot(true);
+          return;
+        }
+        useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
+        void loadSnapshot(true);
+      } catch (reason) {
+        if (effectiveDelivery !== 'prompt' && isAgentSessionIdleFailure(reason)) {
+          // The projection can be one terminal event behind the Runtime. If a
+          // message was auto-routed as Steer/Follow-up but Pi proves the turn
+          // is already idle, the rejected receipt is safe to supersede once
+          // as a new prompt. Keep explicit lineage; never replay an unknown or
+          // pending admission.
+          useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+          const retryClientMessageId = `paw-retry-${crypto.randomUUID()}`;
+          useAgentLiveStore.getState().appendOptimistic(recordId, {
+            clientMessageId: retryClientMessageId,
+            retryOfClientMessageId: clientMessageId,
+            text: message,
+            attachments: selectedAttachments.map((item) => item.id),
+            nowMs: Date.now(),
+          });
+          try {
+            const retryResponse = await transport.request<Record<string, unknown>>({
+              pathId: 'agent.session.prompt',
+              params: { sessionId: recordId },
+              body: {
+                message,
+                attachments: selectedAttachments.map((item) => item.id),
+                clientMessageId: retryClientMessageId,
+                retryOfClientMessageId: clientMessageId,
+              },
+            });
+            if (isCancelledPromptAdmission(retryResponse)) {
+              useAgentLiveStore.getState().discardOptimistic(recordId, retryClientMessageId);
+              void loadSnapshot(true);
+              return;
+            }
+            useAgentLiveStore.getState().acknowledgeOptimistic(recordId, retryClientMessageId, Date.now());
+            void loadSnapshot(true);
+          } catch (retryReason) {
+            settlePromptAdmissionFailure(retryClientMessageId, retryReason, { restoreInput });
+          }
+          return;
+        }
+        settlePromptAdmissionFailure(clientMessageId, reason, { restoreInput });
+      } finally {
+        setSending(false);
       }
-    } finally {
-      setSending(false);
-    }
+    })();
   }
 
   async function stop(): Promise<void> {
@@ -507,15 +688,15 @@ export function PawSessionWorkspace({
       setError('找不到这轮的原始输入，无法安全重试。');
       return false;
     }
-    void replayTurnMessage(userMessage, message || '请查看附件。', onAdmissionRolledBack);
+    replayTurnMessage(userMessage, message || '请查看附件。', onAdmissionRolledBack);
     return true;
   }
 
-  async function replayTurnMessage(
+  function replayTurnMessage(
     userMessage: AgentMessageProjection,
     message: string,
     onAdmissionRolledBack?: () => void,
-  ): Promise<void> {
+  ): void {
     const replayAmbiguousAdmission = userMessage.admissionState === 'ambiguous' && Boolean(userMessage.clientMessageId);
     const clientMessageId = replayAmbiguousAdmission
       ? userMessage.clientMessageId!
@@ -534,28 +715,36 @@ export function PawSessionWorkspace({
         nowMs: Date.now(),
       });
     }
-    try {
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId: recordId },
-        body: {
-          message,
-          attachments: userMessage.attachments,
-          clientMessageId,
-          ...(retryOfClientMessageId ? { retryOfClientMessageId } : {}),
-        },
-      });
-      useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
-      await loadSnapshot(true);
-    } catch (reason) {
-      useAgentLiveStore.getState().failOptimistic(recordId, clientMessageId, errorText(reason), Date.now(), replayAmbiguousAdmission ? 'ambiguous' : undefined);
-      onAdmissionRolledBack?.();
-      if (!turnFailureIsVisible(clientMessageId)) {
-        setError(errorText(reason));
+    // Same admission contract as send: the retry click settles synchronously,
+    // the HTTP receipt releases the composer, the snapshot refresh stays quiet.
+    void (async () => {
+      try {
+        const response = await transport.request<Record<string, unknown>>({
+          pathId: 'agent.session.prompt',
+          params: { sessionId: recordId },
+          body: {
+            message,
+            attachments: userMessage.attachments,
+            clientMessageId,
+            ...(retryOfClientMessageId ? { retryOfClientMessageId } : {}),
+          },
+        });
+        if (isCancelledPromptAdmission(response)) {
+          useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+          void loadSnapshot(true);
+          return;
+        }
+        useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
+        void loadSnapshot(true);
+      } catch (reason) {
+        settlePromptAdmissionFailure(clientMessageId, reason, {
+          onAdmissionRolledBack,
+          replayAmbiguousAdmission,
+        });
+      } finally {
+        setSending(false);
       }
-    } finally {
-      setSending(false);
-    }
+    })();
   }
 
   function continueTurn(turnId: string): boolean {
@@ -566,7 +755,7 @@ export function PawSessionWorkspace({
   }
 
   function openForkDialog(initialEntryId = ''): void {
-    setForkDialogNodes(conversationNodes(projection));
+    setForkDialogNodes(conversationNodes(agentProjection(recordId)));
     setForkDialogInitialEntryId(initialEntryId);
     setForkDialogOpen(true);
   }
@@ -776,7 +965,8 @@ export function PawSessionWorkspace({
     if (command === 'new') onNewWork();
     else if (command === 'resume') setPanel('none');
     else if (command === 'branch') openForkDialog();
-    else if (command === 'model' || command === 'thinking') setModelPickerRequest((value) => value + 1);
+    else if (command === 'model') setModelPickerRequest((value) => value + 1);
+    else if (command === 'thinking') setThinkingPickerRequest((value) => value + 1);
     else if (command === 'permissions') setPermissionPickerRequest((value) => value + 1);
     else if (command === 'tools') setToolPickerRequest((value) => value + 1);
     else if (command === 'status' || command === 'session') setPanel('status');
@@ -1000,7 +1190,7 @@ export function PawSessionWorkspace({
             >
               <div aria-hidden="true" className="agent-fx-fade agent-fx-fade--top" />
               <div aria-hidden="true" className="agent-fx-fade agent-fx-fade--bottom" />
-              {loading && !projection?.turnOrder.length ? <div className="paw-session-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复完整 Session</div> : null}
+              {loading && !projectionSlice.hasTurns ? <div className="paw-session-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复完整 Session</div> : null}
               <AgentTimeline
                 activityPresentation="grouped"
                 presentation="fx"
@@ -1033,10 +1223,9 @@ export function PawSessionWorkspace({
               data-active={workspaceView === 'trace' || undefined}
               inert={workspaceView !== 'trace'}
             >
-              <PawContextTrace
+              <SessionContextTrace
                 active={workspaceView === 'trace'}
                 focusNodeId={traceFocusNodeId}
-                projection={projection}
                 sessionId={recordId}
               />
             </main>
@@ -1085,13 +1274,18 @@ export function PawSessionWorkspace({
                 capabilityPolicyPending={capabilityMutation?.status === 'pending'}
                 catalog={catalog}
                 commands={commands}
-                contextUsage={projection?.telemetry?.context ?? null}
+                contextUsage={projectionSlice.telemetry ? {
+                  ...projectionSlice.telemetry.context,
+                  compactionCount: projectionSlice.telemetry.compactionCount,
+                  latestCompaction: projectionSlice.telemetry.latestCompaction,
+                } : null}
                 draft={draft}
                 helpRequest={helpRequest}
                 imageSupport={imageSupport}
                 editState={editState}
                 modelChanging={modelChanging}
                 modelPickerRequest={modelPickerRequest}
+                thinkingPickerRequest={thinkingPickerRequest}
                 permissionPickerRequest={permissionPickerRequest}
                 persona={persona}
                 sending={sending}
@@ -1210,6 +1404,28 @@ export function PawSessionWorkspace({
   );
 }
 
+function SessionContextTrace({
+  active,
+  focusNodeId,
+  sessionId,
+}: {
+  active: boolean;
+  focusNodeId: string;
+  sessionId: string;
+}) {
+  const projection = useAgentLiveStore((state) => (
+    active ? state.projections[sessionId] : undefined
+  ));
+  return (
+    <PawContextTrace
+      active={active}
+      focusNodeId={focusNodeId}
+      projection={projection}
+      sessionId={sessionId}
+    />
+  );
+}
+
 function conversationNodes(projection?: AgentProjectionState): ConversationNode[] {
   if (!projection) return [];
   return projection.messageOrder
@@ -1229,6 +1445,15 @@ function conversationText(blocks: Array<{ type: string; data: Record<string, unk
     const candidates = [block.data.text, block.data.markdown, block.data.code, block.data.message, block.data.summary];
     return candidates.find((item): item is string => typeof item === 'string' && item.trim().length > 0) ?? '';
   }).filter(Boolean).join('\n').replace(/\s+/gu, ' ').trim().slice(0, 480);
+}
+
+/** Same receipt shape the standalone Agent feature reads: Stop raced the
+ *  admission and won, so the optimistic message must vanish, not acknowledge. */
+function isCancelledPromptAdmission(value: unknown): boolean {
+  return isRecord(value)
+    && value.accepted === false
+    && value.cancelled === true
+    && value.admissionCancelled === true;
 }
 
 /** True when the latest turn is the one this optimistic message failed, so the

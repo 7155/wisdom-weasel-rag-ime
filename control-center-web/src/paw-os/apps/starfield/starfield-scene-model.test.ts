@@ -46,7 +46,7 @@ function roomModel(options: { hosted?: boolean; hostState?: RoomStarfieldModel['
     participantId: string,
     state: RoomStarfieldModel['planets'][number]['state'],
     orbitIndex: number,
-    collaborationRole = orbitIndex === 0 && hosted ? 'coordinator' : 'implementer',
+    collaborationRole: RoomStarfieldModel['planets'][number]['collaborationRole'] = orbitIndex === 0 && hosted ? 'coordinator' : 'implementer',
   ): RoomStarfieldModel['planets'][number] => ({
     participantId,
     sessionId: `session:${participantId}`,
@@ -173,7 +173,7 @@ describe('starfield scene model', () => {
     // Settled partners keep their identity and orbit, but read as quiet.
     expect(mars).toMatchObject({ task: '等待新的工作项', idle: true });
     // The task is part of the accessible name, not only a visual line.
-    expect(sceneBodyAriaLabel('room', earth!)).toBe('Earth，participant-earth 伙伴 · 进行中，正在实现投影');
+    expect(sceneBodyAriaLabel('room', earth!)).toBe('Earth，最终汇合与回复 · 进行中，正在实现投影');
 
     // Only handoffs actually in flight are named on their beam.
     expect(liveBeamLinks(scene).map((link) => link.label)).toEqual(['交接复核']);

@@ -108,6 +108,13 @@ export function isAgentTurnConflict(value: unknown): boolean {
   );
 }
 
+export function isAgentSessionIdleFailure(value: unknown): boolean {
+  return (
+    agentCommandReceiptFailure(value)?.causeCode
+    === 'SESSION_IDLE'
+  );
+}
+
 export function publicAgentErrorText(
   value: unknown,
   fallback = '本轮没有完成，请重试或切换模型。',

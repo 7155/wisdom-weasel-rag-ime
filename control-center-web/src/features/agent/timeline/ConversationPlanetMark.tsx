@@ -6,11 +6,10 @@ export type ConversationPlanetState =
   | 'done'
   | 'failed';
 
-/* The vendored conversation surface marks live work with a single pulsing dot
-   (`ccui-thinking-dot`, `ccui-tool-status`). PAWOS keeps that rhythm but gives
-   the dot a body: a lit sphere, and — only while the state is actually live —
-   an orbit carrying one moon. A settled state keeps the sphere and drops the
-   orbit, so motion in the transcript always means the Runtime is still working. */
+/* One stable DOM tree covers every state. The outer ring is visually hidden
+   when work settles, but it is never mounted/unmounted during live updates;
+   this prevents streaming rerenders from restarting the indicator or making
+   it blink. Motion remains a state signal, not decoration. */
 const liveStates = new Set<ConversationPlanetState>(['thinking', 'running', 'waiting']);
 
 export function ConversationPlanetMark({
@@ -36,7 +35,7 @@ export function ConversationPlanetMark({
       role={label ? 'img' : undefined}
     >
       <span className="paw-conv-planet__body" />
-      {live ? <span className="paw-conv-planet__orbit" /> : null}
+      <span className="paw-conv-planet__orbit" />
     </span>
   );
 }

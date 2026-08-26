@@ -101,6 +101,24 @@
   animation: daily-journal-spin 1s linear infinite;
 }
 
+.activity-calendar__organize-status > span {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.activity-calendar__organize-status > span strong { font-weight: 650; }
+.activity-calendar__organize-status > span small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font: 12px/1.35 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-calendar__organize-status > .ui-button { flex: 0 0 auto; }
+.activity-calendar__organize-status > svg.lucide-check { animation: none; color: var(--color-success); }
+
 .activity-calendar__organize-status[data-tone='danger'] {
   border-bottom-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
   background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
@@ -108,6 +126,29 @@
 }
 
 .activity-calendar__organize-status[data-tone='danger'] svg { animation: none; color: var(--color-danger); }
+
+.ui-dialog.activity-calendar__organize-preview { width: min(520px, calc(100vw - 28px)); }
+.activity-calendar__organize-scope {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-subtle);
+}
+.activity-calendar__organize-scope > strong { color: var(--color-text-primary); font-size: 15px; }
+.activity-calendar__organize-scope > span,
+.activity-calendar__organize-scope > p,
+.activity-calendar__organize-scope small { margin: 0; color: var(--color-text-secondary); font-size: 13px; }
+.activity-calendar__organize-scope ul { display: grid; gap: 5px; margin: 4px 0 0; padding: 0; list-style: none; }
+.activity-calendar__organize-scope li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.activity-calendar__organize-scope time { color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
 
 .activity-calendar__summary {
   display: flex;

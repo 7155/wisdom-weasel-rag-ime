@@ -24,7 +24,6 @@ export interface RoomFocusMeshNode {
   y: number;
   state: RoomFocusState;
   label: string;
-  sublabel: string;
   responsibility: string;
   tone: number;
 }
@@ -89,7 +88,6 @@ export function buildRoomFocusMesh(focus: RoomFocusProjection): RoomFocusMesh {
     y: round(ROW_TOP + Math.floor(index / columns) * ROW_HEIGHT),
     state: partner.state,
     label: partner.celestialName,
-    sublabel: partner.displayName,
     responsibility: partnerResponsibility(partner, focus.workItems),
     tone: index % 4,
   }));

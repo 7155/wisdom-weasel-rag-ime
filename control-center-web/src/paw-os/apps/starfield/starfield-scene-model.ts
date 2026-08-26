@@ -16,6 +16,7 @@ import {
   type RoomStarfieldModel,
   type SessionStarfieldModel,
 } from '../starfield-projection';
+import { roomCollaborationRoleLabel } from '@/features/rooms/room-copy';
 import {
   galaxySystemMotion,
   roomBodyMotion,
@@ -215,7 +216,7 @@ export function buildRoomSceneModel(
     id: planet.participantId,
     kind: 'planet',
     title: planet.celestialName,
-    subtitle: `${planet.displayName} · ${planet.stateLabel}`,
+    subtitle: `${roomCollaborationRoleLabel(planet.collaborationRole)} · ${planet.stateLabel}`,
     detail: planet.currentAction,
     // What this partner is actually working on — the headline of the sky.
     task: planet.currentAction.trim(),

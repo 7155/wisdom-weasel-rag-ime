@@ -38,14 +38,20 @@ describe('ContextXraySections', () => {
       'Lifecycle Hook',
       'Session Memory',
       'Timeline',
+      '压缩摘要',
       'Skills',
       'Tools',
-      'History',
+      '用户消息',
+      'Agent 消息',
+      '工具调用',
+      '其他消息',
       'Tool Results',
     ]) {
       expect(within(layers).getByText(label)).toBeVisible();
     }
-    expect(within(layers).getAllByText('已接收')).toHaveLength(12);
+    expect(within(layers).getAllByText('已接收')).toHaveLength(15);
+    expect(within(layers).getAllByText(/Token 未单独统计/u).length).toBeGreaterThan(0);
+    expect(within(layers).getByText('其他消息').closest('li')).toHaveTextContent('本轮未注入');
     expect(screen.getByText('68%')).toBeVisible();
     expect(screen.getByText('12.0K → 4.2K')).toBeVisible();
     expect(screen.queryByText('ROLE_BOOK_PRIVATE_TEXT')).not.toBeInTheDocument();
@@ -134,7 +140,9 @@ describe('buildContextXraySnapshot', () => {
 
     expect(snapshot.providerCaptured).toBe(true);
     expect(snapshot.providerStatus).toBeNull();
-    expect(snapshot.layers.every((layer) => layer.providerDelivery === 'pending')).toBe(true);
+    expect(snapshot.layers.filter((layer) => layer.state === 'present').every(
+      (layer) => layer.providerDelivery === 'pending',
+    )).toBe(true);
   });
 
   it('accepts Pi message-end usage as a completed provider receipt', () => {
@@ -152,7 +160,9 @@ describe('buildContextXraySnapshot', () => {
     const snapshot = buildContextXraySnapshot(normalizeDebugContextResponse(response));
 
     expect(snapshot.providerStatus).toBeNull();
-    expect(snapshot.layers.every((layer) => layer.providerDelivery === 'delivered')).toBe(true);
+    expect(snapshot.layers.filter((layer) => layer.state === 'present').every(
+      (layer) => layer.providerDelivery === 'delivered',
+    )).toBe(true);
   });
 
   it('reports Pi-loaded project rules as their own layer instead of hiding them in System', () => {
@@ -169,6 +179,39 @@ describe('buildContextXraySnapshot', () => {
       }),
     );
     expect(system?.characters).toBe('BASE_SYSTEM_PROMPT'.length);
+  });
+
+  it('separates reliably typed user, assistant, and tool-result messages without guessing unknown roles', () => {
+    const snapshot = buildContextXraySnapshot(normalizeDebugContextResponse(debugResponse()));
+
+    expect(snapshot.layers.find((layer) => layer.id === 'user-messages')?.content).toContain('CURRENT_USER_TEXT');
+    expect(snapshot.layers.find((layer) => layer.id === 'user-messages')?.content).toContain('HISTORY_USER_TEXT');
+    expect(snapshot.layers.find((layer) => layer.id === 'assistant-messages')?.content).toContain('HISTORY_ASSISTANT_TEXT');
+    expect(snapshot.layers.find((layer) => layer.id === 'assistant-messages')?.content).not.toContain('read_file');
+    expect(snapshot.layers.find((layer) => layer.id === 'tool-calls')?.content).toContain('read_file');
+    expect(snapshot.layers.find((layer) => layer.id === 'tool-results')?.content).toContain('PRIVATE_TOOL_RESULT');
+    expect(snapshot.layers.find((layer) => layer.id === 'compaction-summary')?.content).toContain('COMPACTED_HISTORY_TEXT');
+    expect(snapshot.layers.find((layer) => layer.id === 'history')?.state).toBe('absent');
+  });
+
+  it('uses Pi final provider-neutral context when the bounded RPC projection omits wire payloads', () => {
+    const response = debugResponse();
+    const context = response.context as Record<string, unknown>;
+    const modelCalls = context.modelCalls as Array<Record<string, unknown>>;
+    const call = modelCalls[0]!;
+    call.providerContext = {
+      systemPrompt: context.systemPrompt,
+      tools: context.toolSchemas,
+    };
+    const exchanges = call.providerExchanges as Array<Record<string, unknown>>;
+    delete exchanges[0]?.payload;
+    context.providerRequestReceipts = [{ index: 1, usage: { input: 18_000 } }];
+
+    const snapshot = buildContextXraySnapshot(normalizeDebugContextResponse(response));
+
+    expect(snapshot.providerCaptured).toBe(true);
+    expect(snapshot.layers.find((layer) => layer.id === 'system')?.providerDelivery).toBe('delivered');
+    expect(snapshot.layers.find((layer) => layer.id === 'user-messages')?.providerDelivery).toBe('delivered');
   });
 });
 
@@ -212,8 +255,12 @@ function debugResponse(): Record<string, unknown> {
     parameters: { type: 'object' },
   }];
   const messages = [
+    { role: 'compactionSummary', summary: 'COMPACTED_HISTORY_TEXT', tokensBefore: 12_000 },
     { role: 'user', content: 'HISTORY_USER_TEXT' },
-    { role: 'assistant', content: 'HISTORY_ASSISTANT_TEXT' },
+    { role: 'assistant', content: [
+      { type: 'text', text: 'HISTORY_ASSISTANT_TEXT' },
+      { type: 'toolCall', id: 'call-1', name: 'read_file', arguments: { path: 'src/app.ts' } },
+    ] },
     { role: 'toolResult', content: 'PRIVATE_TOOL_RESULT' },
     { role: 'user', content: 'CURRENT_USER_TEXT' },
   ];

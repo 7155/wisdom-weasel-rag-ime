@@ -514,8 +514,8 @@ describe('Rooms experience', () => {
 
     const parent = await screen.findByRole('combobox', { name: '子 Agent 父 Session' });
     expect(parent).toHaveValue('room-a:s1');
-    expect(within(parent).getByRole('option', { name: /澄 · Root 主持/ })).toBeInTheDocument();
-    expect(within(parent).getByRole('option', { name: /澄·初/ })).toBeInTheDocument();
+    expect(within(parent).getByRole('option', { name: /Earth · Root 主持/ })).toBeInTheDocument();
+    expect(within(parent).getByRole('option', { name: /Mars/ })).toBeInTheDocument();
     expect(await screen.findByRole('radio', { name: /^审阅者/ })).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(true);
   });
@@ -601,12 +601,12 @@ describe('Rooms experience', () => {
     expect(within(workflow).getAllByText('分派')).toHaveLength(2);
     expect(within(workflow).getByText('依赖')).toBeInTheDocument();
     expect(within(cockpit).getByRole('heading', { name: /Partner 调用/ })).toBeInTheDocument();
-    expect(cockpit).toHaveTextContent('@ 澄 → @ 澄·初');
+    expect(cockpit).toHaveTextContent('@ Earth → @ Mars');
     expect(cockpit).toHaveTextContent('复核并行结果');
     expect(cockpit).toHaveTextContent('复核已返回');
     expect(within(cockpit).getAllByRole('button', { name: /执行节点/ })).toHaveLength(3);
     await user.click(within(cockpit).getByRole('button', { name: /接续复核两路交付/ }));
-    expect(within(cockpit).getByRole('region', { name: '@ 澄 的节点详情' })).toHaveTextContent('接续复核两路交付');
+    expect(within(cockpit).getByRole('region', { name: '@ Earth 的节点详情' })).toHaveTextContent('接续复核两路交付');
   });
 
   it('marks only a real Room wave as parallel and exposes its delivery contract', async () => {
@@ -692,7 +692,7 @@ describe('Rooms experience', () => {
     expect(cockpit).toHaveTextContent('2 路并行');
     expect(container.querySelector('.room-cockpit__flow-phase')).toHaveAttribute('data-parallel', 'true');
     await user.click(within(cockpit).getByRole('button', { name: /核对运行时契约/ }));
-    const inspector = within(cockpit).getByRole('region', { name: '@ 澄 的节点详情' });
+    const inspector = within(cockpit).getByRole('region', { name: '@ Earth 的节点详情' });
     expect(inspector).toHaveTextContent('契约证据');
     expect(inspector).toHaveTextContent('给出调用链');
     expect(inspector).toHaveTextContent('运行时契约已核对');
@@ -1005,9 +1005,9 @@ describe('Rooms experience', () => {
     expect(details).not.toHaveTextContent('执行人');
     await user.click(within(details).getByRole('button', { name: /查看分工依据与验收条件/ }));
     expect(details).toHaveTextContent('执行人');
-    expect(details).toHaveTextContent('澄·初');
+    expect(details).toHaveTextContent('Mars');
     expect(details).toHaveTextContent('复核人');
-    expect(details).toHaveTextContent('澄');
+    expect(details).toHaveTextContent('Earth');
     expect(details).toHaveTextContent('可展开核对的任务详情');
     expect(details).toHaveTextContent('空 Room 不画伪任务图');
     expect(details).toHaveTextContent('显示负责人和当前进度');
@@ -1020,11 +1020,11 @@ describe('Rooms experience', () => {
     expect(details).toHaveTextContent('验证 HTML 报告');
     expect(details).toHaveTextContent('evidence:task-view');
     expect(details).toHaveTextContent('artifact:task-view');
-    expect(within(details).getByRole('link', { name: '打开澄·初的对话' })).toHaveAttribute(
+    expect(within(details).getByRole('link', { name: '打开Mars的对话' })).toHaveAttribute(
       'href',
       '#/agent?session=room-a%3As2',
     );
-    expect(within(details).getByRole('link', { name: '打开 @ 澄·初 对话' })).toHaveAttribute(
+    expect(within(details).getByRole('link', { name: '打开 @ Mars 对话' })).toHaveAttribute(
       'href',
       '#/agent?session=room-a%3As2',
     );
@@ -1077,7 +1077,7 @@ describe('Rooms experience', () => {
 
     expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
     expect(screen.queryByText(/正在完成任务/)).not.toBeInTheDocument();
-    expect(screen.getByText(/已阻塞 · 澄·初 · 核对失败证据/)).toBeInTheDocument();
+    expect(screen.getByText(/已阻塞 · Mars · 核对失败证据/)).toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: '协作消息' });
     expect(composer).toBeEnabled();
     await userEvent.type(composer, '请按阻塞证据继续');
@@ -1469,7 +1469,7 @@ describe('Rooms experience', () => {
     );
 
     expect(await within(screen.getByLabelText('协作对话时间线')).findByText('交付已经完成。')).toBeInTheDocument();
-    expect(screen.getByText('已交接给 澄·初')).toBeInTheDocument();
+    expect(screen.getByText('已交接给 Mars')).toBeInTheDocument();
     expect(Array.from(container.querySelectorAll('.room-agent-lane__post-kind')).map(
       (element) => element.textContent,
     )).toEqual(['最终答复', '交接说明', '等待说明', '遇到的问题']);
@@ -2306,14 +2306,14 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
     expect(screen.getByRole('button', { name: '开始协作' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: /Agent 3/ })).toHaveAccessibleName(/Agent 3.*最终汇合与回复/);
-    expect(screen.getByRole('checkbox', { name: /Agent 3/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Agent 1/ })).toHaveAccessibleName(/Agent 1.*实现与验证/);
-    expect(screen.getByRole('checkbox', { name: /Agent 1/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Agent 2/ })).toHaveAccessibleName(/Agent 2.*实现与验证/);
+    expect(screen.getByRole('checkbox', { name: /Earth/ })).toHaveAccessibleName(/Earth.*最终汇合与回复/);
+    expect(screen.getByRole('checkbox', { name: /Earth/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Mars/ })).toHaveAccessibleName(/Mars.*实现与验证/);
+    expect(screen.getByRole('checkbox', { name: /Mars/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Venus/ })).toHaveAccessibleName(/Venus.*实现与验证/);
     expect(screen.getByText(/所有伙伴地位平等，可以直接互相 @、提问和回复/)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /Agent 2/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Agent 4/ })).toHaveAccessibleName(/Agent 4.*实现与验证/);
+    expect(screen.getByRole('checkbox', { name: /Venus/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Jupiter/ })).toHaveAccessibleName(/Jupiter.*实现与验证/);
     expect(screen.getByRole('radio', { name: /全自动/ })).toBeChecked();
     expect(screen.queryByRole('combobox', { name: '主持伙伴' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: '发言方式' })).not.toBeInTheDocument();
@@ -2423,13 +2423,13 @@ describe('Rooms experience', () => {
     await user.type(composer, '说说你的看法');
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: '点名一位伙伴' }));
-    await user.click(screen.getByRole('option', { name: /澄·初/ }));
-    expect(composer).toHaveValue('说说你的看法 @澄·初 ');
+    await user.click(screen.getByRole('option', { name: /Mars/ }));
+    expect(composer).toHaveValue('说说你的看法 @Mars ');
     await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
-      message: '说说你的看法 @澄·初',
+      message: '说说你的看法 @Mars',
       participantIds: ['room-invite:p2'],
     });
     expect(composer).toHaveValue('');
@@ -2452,15 +2452,15 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const composer = await screen.findByRole('textbox', { name: '协作消息' });
-    await user.type(composer, '@初');
-    expect(await screen.findByRole('option', { name: /澄·初/ })).toBeInTheDocument();
+    await user.type(composer, '@Mar');
+    expect(await screen.findByRole('option', { name: /Mars/ })).toBeInTheDocument();
     await user.keyboard('{Enter}');
-    expect(composer).toHaveValue('@澄·初 ');
+    expect(composer).toHaveValue('@Mars ');
 
     await user.type(composer, '核对记忆召回{Enter}');
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
-      message: '@澄·初 核对记忆召回',
+      message: '@Mars 核对记忆召回',
       participantIds: ['room-mention:p2'],
     });
   });
@@ -2482,7 +2482,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const composer = await screen.findByRole('textbox', { name: '协作消息' });
-    await user.type(composer, '@澄 @澄·初 分别检查实现和证据');
+    await user.type(composer, '@Earth @Mars 分别检查实现和证据');
     await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(
@@ -2492,7 +2492,7 @@ describe('Rooms experience', () => {
       transport.requests.find((call) => call.request.pathId === 'agent.room.message')
         ?.request.body,
     ).toMatchObject({
-      message: '@澄 @澄·初 分别检查实现和证据',
+      message: '@Earth @Mars 分别检查实现和证据',
       participantIds: ['room-duo:p1', 'room-duo:p2'],
     });
   });
@@ -2589,9 +2589,8 @@ describe('Rooms experience', () => {
     });
   });
 
-  it('adds Agent 3 to an existing Room and can remove the member again', async () => {
+  it('adds Venus to an existing Room and can remove the member again', async () => {
     const initial = roomSummary('room-members', '成员管理 Room');
-    const futurePersona = previewPersonas.find((persona) => persona.roleId === 'companion-future-v1')!;
     const futureParticipant = {
       id: 'room-members:p3', sessionId: 'room-members:s3', roleId: 'companion-future-v1', roleVersion: '1',
       displayName: '澄·远', collaborationRole: 'implementer' as const, status: 'active', ordinal: 2,
@@ -2616,7 +2615,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
-    const invite = screen.getByRole('button', { name: `邀请 ${futurePersona.displayName}` });
+    const invite = screen.getByRole('button', { name: '邀请 Venus 分工' });
     expect(invite).toBeEnabled();
     expect(screen.getByText(/不会补读此前的完整对话/)).toBeInTheDocument();
     await user.click(invite);
@@ -2626,7 +2625,7 @@ describe('Rooms experience', () => {
       params: { roomId: initial.id },
       body: { roleId: 'companion-future-v1', roleVersion: '1', collaborationRole: 'implementer' },
     });
-    const remove = await screen.findByRole('button', { name: '移出 Agent 3' });
+    const remove = await screen.findByRole('button', { name: '移出 Venus' });
     expect(remove).toBeEnabled();
     await user.click(remove);
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.remove')).toBe(true));
@@ -2654,7 +2653,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
-    await user.click(screen.getByRole('combobox', { name: 'Agent 2 负责什么' }));
+    await user.click(screen.getByRole('combobox', { name: 'Mars 负责什么' }));
     await user.click(screen.getByRole('option', { name: '最终独立复核' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.update')).toBe(true));
@@ -2662,7 +2661,7 @@ describe('Rooms experience', () => {
       params: { roomId: room.id },
       body: { participantId: target.id, collaborationRole: 'reviewer' },
     });
-    expect(screen.getByRole('combobox', { name: 'Agent 2 负责什么' })).toHaveTextContent('最终独立复核');
+    expect(screen.getByRole('combobox', { name: 'Mars 负责什么' })).toHaveTextContent('最终独立复核');
   });
 
   it('permanently deletes only an archived Room after exact-title confirmation', async () => {
@@ -2896,13 +2895,13 @@ describe('Rooms experience', () => {
     await user.type(composer, '核对角色创建契约');
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: '点名一位伙伴' }));
-    await user.click(screen.getByRole('option', { name: /澄·初/ }));
-    expect(composer).toHaveValue('核对角色创建契约 @澄·初 ');
+    await user.click(screen.getByRole('option', { name: /Mars/ }));
+    expect(composer).toHaveValue('核对角色创建契约 @Mars ');
     await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
-      message: '核对角色创建契约 @澄·初',
+      message: '核对角色创建契约 @Mars',
       participantIds: ['room-a:p2'],
     });
   });
@@ -2965,9 +2964,9 @@ describe('Rooms experience', () => {
     expect(create).toBeEnabled();
     await user.click(create);
     expect(screen.getByRole('dialog', { name: '开始一起做事' })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /Agent 1/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Agent 2/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Agent 3/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Earth/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Mars/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Venus/ })).toBeChecked();
   });
 
   it('keeps a Room creation failure inside the dialog and preserves the draft', async () => {
@@ -3194,7 +3193,7 @@ describe('Rooms experience', () => {
       (call) => call.request.pathId === 'agent.sessions.list',
     ).length;
     await user.click((await screen.findAllByRole('button', { name: '查看能做什么' }))[0]!);
-    expect(await screen.findByRole('dialog', { name: /澄能做什么/ })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: /Earth能做什么/ })).toBeInTheDocument();
     expect(transport.requests.filter(
       (call) => call.request.pathId === 'agent.sessions.list',
     )).toHaveLength(sessionListRequestsBeforeBoundary);
@@ -3674,7 +3673,7 @@ describe('Rooms experience', () => {
     expect(lane).not.toHaveAttribute('open');
     expect(work).toHaveTextContent('入口已修改，正在核对调用方');
     expect(work).toHaveTextContent('3 条运行记录');
-    expect(work).toHaveTextContent('澄');
+    expect(work).toHaveTextContent('Earth');
     await user.click(lane.querySelector('summary')!);
     expect(lane).toHaveAttribute('open');
     expect(rows).toHaveLength(3);
@@ -4290,7 +4289,7 @@ describe('Rooms experience', () => {
     />;
 
     const view = render(roomTurn());
-    expect(screen.getAllByText('澄 正在等待第 2 次尝试')).toHaveLength(2);
+    expect(screen.getAllByText('Earth 正在等待第 2 次尝试')).toHaveLength(2);
     expect(screen.getByText(/1s 后重试/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '停止本轮任务' }));
     expect(onAbortTurn).toHaveBeenCalledWith(rootTurnId);
@@ -4536,8 +4535,8 @@ describe('Rooms experience', () => {
       .map((element) => element.closest<HTMLElement>('.room-status-work__item'))
       .find(Boolean)!;
     expect(within(workRow).getAllByText('等待汇合')).not.toHaveLength(0);
-    expect(within(workRow).getByText('澄·初')).toBeInTheDocument();
-    expect(within(workRow).getByText('澄')).toBeInTheDocument();
+    expect(within(workRow).getByText('Mars')).toBeInTheDocument();
+    expect(within(workRow).getByText('Earth')).toBeInTheDocument();
     expect(within(workRow).getByText('第 1 次')).toBeInTheDocument();
     expect(within(workRow).getByText('测试与风险说明')).toBeInTheDocument();
     const acceptanceSummary = within(workRow).getByText('查看验收条件').closest('summary')!;
@@ -4567,10 +4566,10 @@ describe('Rooms experience', () => {
     );
 
     await user.click(screen.getByRole('button', { name: '伙伴状态 2' }));
-    await user.click(screen.getByRole('button', { name: '打开澄伙伴窗口' }));
+    await user.click(screen.getByRole('button', { name: '打开 Earth 伙伴窗口' }));
 
-    /* planet 窗口统一铭牌：标题是行星名，真实姓名与分工进副标题，
-       不再携带机器 Session id。 */
+    /* planet 窗口统一铭牌：标题是行星名，分工进副标题，
+       不再携带旧角色名或机器 Session id。 */
     expect(requests).toEqual([{
       appId: 'agent',
       background: false,
@@ -4579,7 +4578,7 @@ describe('Rooms experience', () => {
         id: 'room-a:p1',
         roomId: 'room-a',
         title: 'Earth',
-        subtitle: '澄 · 最终汇合与回复',
+        subtitle: '最终汇合与回复',
       }),
     }]);
   });

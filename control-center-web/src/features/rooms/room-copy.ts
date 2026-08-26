@@ -1,6 +1,27 @@
 import type { RoomParticipantPublicProgressProjection } from '@/contracts/room-reducer';
 import { publicToolName } from '../agent/tool-presentation';
 
+/**
+ * Stable public identity for Room participants. Runtime keeps participant and
+ * Session ids plus the original persona display name; every collaboration
+ * surface derives the one user-facing name from the persisted ordinal.
+ */
+export const ROOM_PLANET_NAMES = [
+  'Earth',
+  'Mars',
+  'Venus',
+  'Jupiter',
+  'Saturn',
+  'Mercury',
+  'Neptune',
+  'Uranus',
+] as const;
+
+export function roomPlanetName(ordinal: number): string {
+  const normalized = Number.isInteger(ordinal) && ordinal >= 0 ? ordinal : 0;
+  return ROOM_PLANET_NAMES[normalized] ?? `Planet ${normalized + 1}`;
+}
+
 export const ROOM_PUBLIC_PROGRESS_KIND_LABELS: Record<
   RoomParticipantPublicProgressProjection['kind'],
   string

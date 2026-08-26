@@ -115,7 +115,8 @@ describe('PAWOS Agent App', () => {
       }),
     }));
 
-    expect(await screen.findByRole('button', { name: /GPT-5\.6 Sol · Max/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '模型 · GPT-5.6 Sol' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '推理强度 · Max' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument();
   });
 
@@ -304,10 +305,11 @@ describe('PAWOS Agent App', () => {
 
     await user.click(screen.getByRole('radio', { name: 'Room' }));
     const roomBrief = within(document.getElementById(briefId) as HTMLElement);
-    expect(roomBrief.getByText('将加入的伙伴')).toBeInTheDocument();
-    expect(roomBrief.getByText('构建者')).toBeInTheDocument();
+    expect(roomBrief.getByText('任务建议 2 位')).toBeInTheDocument();
+    expect(roomBrief.getByRole('group', { name: 'Room 伙伴数量' })).toHaveTextContent('2');
+    expect(roomBrief.getByText('Earth')).toBeInTheDocument();
     expect(roomBrief.getByText('协调')).toBeInTheDocument();
-    expect(roomBrief.getByText('审阅者')).toBeInTheDocument();
+    expect(roomBrief.getByText('Mars')).toBeInTheDocument();
     expect(roomBrief.getByText('审阅')).toBeInTheDocument();
   });
 
@@ -318,7 +320,7 @@ describe('PAWOS Agent App', () => {
     await user.type(await screen.findByRole('textbox', { name: '描述你想完成的工作' }), '只有一位伙伴');
     await user.click(screen.getByRole('radio', { name: 'Room' }));
 
-    expect(screen.getByText('Room 需要至少 2 位可用伙伴，当前只有 1 位，暂时无法开始。')).toBeInTheDocument();
+    expect(screen.getByText('Room Runtime 当前要求至少 2 位伙伴；你可以预览 1 位，但需增加后才能开始。')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '开始 Room' })).toBeDisabled();
   });
 

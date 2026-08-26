@@ -171,22 +171,27 @@ describe('PawRoomFocusOverview', () => {
 
     expect(screen.getByRole('region', { name: 'Sol 协作态势' })).toHaveTextContent('任务图依赖验证');
     const mesh = screen.getByRole('group', { name: '协作网状图' });
-    expect(within(mesh).getByRole('button', { name: 'Earth，Agent 1，职责：实现任务图交互，已完成' })).toBeInTheDocument();
-    expect(within(mesh).getByRole('button', { name: 'Mars，Agent 2，职责：实现依赖数据投影，进行中' })).toBeInTheDocument();
+    expect(within(mesh).getByRole('button', { name: 'Earth，职责：实现任务图交互，已完成' })).toBeInTheDocument();
+    expect(within(mesh).getByRole('button', { name: 'Mars，职责：实现依赖数据投影，进行中' })).toBeInTheDocument();
     expect(within(mesh).queryByRole('img', { name: /^Sol，/ })).not.toBeInTheDocument();
     expect(mesh.querySelector('.paw-room-focus-overview__mesh-node--work')).toBeNull();
-    // The real Earth → Mars handoff is a directed dashed edge, not a list row.
-    expect(container.querySelector('.paw-room-focus-overview__mesh-edge[data-kind="handoff"][data-state="dispatched"]')).not.toBeNull();
+    const relations = within(mesh).getByRole('list', { name: '协作关系' });
+    expect(relations.querySelector('li[data-kind="handoff"][data-state="dispatched"]')).not.toBeNull();
+    expect(relations).toHaveTextContent('Earth');
+    expect(relations).toHaveTextContent('Mars');
+    expect(mesh.querySelector(':scope > svg, .paw-room-focus-overview__mesh-edge-label')).toBeNull();
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
+    expect(screen.queryByText(/Agent [123]/)).not.toBeInTheDocument();
   });
 
   it('keeps planet responsibility labels aligned on the stable partner grid', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
     const mesh = screen.getByRole('group', { name: '协作网状图' });
-    const planets = within(mesh).getAllByRole('button');
+    const partners = within(mesh).getByRole('list', { name: '行星伙伴' });
+    const planets = within(partners).getAllByRole('button');
     expect(planets).toHaveLength(3);
-    expect(new Set(planets.map((planet) => planet.style.top))).toHaveLength(1);
-    expect(new Set(planets.map((planet) => planet.style.left))).toHaveLength(3);
+    expect(within(partners).getAllByRole('listitem')).toHaveLength(3);
+    for (const planet of planets) expect(planet).not.toHaveAttribute('style');
     expect(within(mesh).getByText('实现任务图交互')).toBeInTheDocument();
     expect(within(mesh).getByText('实现依赖数据投影')).toBeInTheDocument();
     expect(within(mesh).getByText('整合 Room 任务图')).toBeInTheDocument();
@@ -252,7 +257,7 @@ describe('PawRoomFocusOverview', () => {
     expect(plan).toHaveTextContent('explicit_invite · 1.0');
   });
 
-  it('projects the pulse meter and partner-only dependency and handoff edges', () => {
+  it('projects the pulse meter and partner-only dependency and handoff relations', () => {
     const { container } = render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
     // Pulse: proportional segments plus the exact numbers (进行1 复核1 完成1).
@@ -264,15 +269,14 @@ describe('PawRoomFocusOverview', () => {
     const mesh = screen.getByRole('group', { name: '协作网状图' });
     expect(within(mesh).getByText('实现任务图交互')).toBeInTheDocument();
     expect(within(mesh).getByText('实现依赖数据投影')).toBeInTheDocument();
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="dependency"]')).toHaveLength(2);
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="handoff"]')).toHaveLength(1);
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="review"]')).toHaveLength(0);
+    const relations = within(mesh).getByRole('list', { name: '协作关系' });
+    expect(relations.querySelectorAll('li[data-kind="dependency"]')).toHaveLength(2);
+    expect(relations.querySelectorAll('li[data-kind="handoff"]')).toHaveLength(1);
+    expect(relations.querySelectorAll('li[data-kind="review"]')).toHaveLength(0);
     expect(container.querySelector('.paw-room-focus-overview__mesh-node--work')).toBeNull();
-    const legend = screen.getByRole('list', { name: '关系图例' });
-    expect(legend).toHaveTextContent('任务依赖');
-    expect(legend).toHaveTextContent('交接');
-    expect(legend).not.toHaveTextContent('职责');
-    expect(legend).not.toHaveTextContent('复核');
+    expect(relations).toHaveTextContent('任务依赖');
+    expect(relations).toHaveTextContent('交接');
+    expect(screen.queryByRole('list', { name: '关系图例' })).not.toBeInTheDocument();
   });
 
   it('answers the dual-axis review verdict inside the inspector', () => {
@@ -313,7 +317,7 @@ describe('PawRoomFocusOverview', () => {
     const unhosted = {
       ...focus,
       partners: focus.partners.map((partner) => partner.collaborationRole === 'coordinator'
-        ? { ...partner, collaborationRole: 'reviewer' }
+        ? { ...partner, collaborationRole: 'reviewer' as const }
         : partner),
     };
     const { container } = render(<PawRoomFocusOverview focus={unhosted} onOpenParticipant={vi.fn()} />);

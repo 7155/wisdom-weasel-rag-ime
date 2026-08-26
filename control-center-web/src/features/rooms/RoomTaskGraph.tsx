@@ -46,7 +46,7 @@ import {
   useRoomTaskSessionFacts,
 } from './use-room-task-session-facts';
 import { RoomModulePanel } from './RoomModulePanel';
-import { roomCollaborationRoleLabel } from './room-copy';
+import { roomCollaborationRoleLabel, roomPlanetName } from './room-copy';
 import { useRoomSurfaceModules } from './room-surface-modules';
 import {
   useRoomNavigationDocuments,
@@ -391,7 +391,7 @@ function roomSubagentParents(room: RoomSummary) {
     })
     .map((participant) => ({
       sessionId: participant.sessionId,
-      label: participant.displayName,
+      label: roomPlanetName(participant.ordinal),
       detail: participant.id === room.moderatorParticipantId
         ? 'Root 主持'
         : roomCollaborationRoleLabel(participant.collaborationRole),
@@ -1009,7 +1009,7 @@ function buildPartnerProjections(
     const combinedMessages = [...(existing?.messages ?? []), ...messages];
     result.set(participant.id, {
       participantId: participant.id,
-      name: participant.displayName,
+      name: roomPlanetName(participant.ordinal),
       sessionId: participant.sessionId || lane.sourceSessionId,
       assignment: participant.id === room.moderatorParticipantId
         ? 'Root 汇合与最终答复'
@@ -1040,7 +1040,7 @@ function buildPartnerProjections(
     if (!participant) continue;
     result.set(participantId, {
       participantId,
-      name: participant.displayName,
+      name: roomPlanetName(participant.ordinal),
       sessionId: participant.sessionId,
       assignment: workItem.objective,
       state: workItemState(workItem.state),
@@ -1627,7 +1627,7 @@ function roomPeerParticipants(
     .filter((participant) => participant.status === 'active')
     .map((participant) => partners.find((partner) => partner.participantId === participant.id) ?? {
       participantId: participant.id,
-      name: participant.displayName,
+      name: roomPlanetName(participant.ordinal),
       assignment: '等待直接通信或分工',
       state: participant.id === room.moderatorParticipantId ? 'active' : 'waiting',
     });
@@ -1881,7 +1881,8 @@ function knowledgeReferenceLabel(reference: string): string {
 }
 
 function roomParticipantName(room: RoomSummary, participantId: string): string {
-  return room.participants.find((participant) => participant.id === participantId)?.displayName || '待接收';
+  const participant = room.participants.find((item) => item.id === participantId);
+  return participant ? roomPlanetName(participant.ordinal) : '待接收';
 }
 
 function unique(values: string[]): string[] {

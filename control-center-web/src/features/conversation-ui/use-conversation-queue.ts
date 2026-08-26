@@ -103,14 +103,15 @@ export function useConversationQueue({
   }, []);
 
   const sendNow = useCallback((id: string) => {
-    setQueue((current) => {
-      const item = current.find((candidate) => candidate.id === id);
-      if (!item) return current;
-      sendRef.current(item.text);
-      return removeQueuedDraft(current, id);
-    });
+    const item = queue.find((candidate) => candidate.id === id);
+    if (!item) return;
+    // React may invoke state updater functions twice in StrictMode. Dispatching
+    // from inside the updater therefore sent one human action to Runtime twice.
+    // Resolve the immutable queued draft first, then keep the updater pure.
+    setQueue((current) => removeQueuedDraft(current, id));
     setCapReached(false);
-  }, []);
+    sendRef.current(item.text);
+  }, [queue]);
 
   const restoreToDraft = useCallback((currentText: string) => {
     const restored = mergeQueueBackToDraft(queue, currentText);

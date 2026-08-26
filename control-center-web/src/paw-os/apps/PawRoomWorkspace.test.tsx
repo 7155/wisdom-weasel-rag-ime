@@ -10,8 +10,9 @@ import { TooltipProvider } from '@/components/primitives';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
-import { PawRoomWorkspace } from './PawRoomWorkspace';
+import { followRoomTimelineIfReaderAtEnd, PawRoomWorkspace } from './PawRoomWorkspace';
 
 /* Lazy-bundle proof: this flag flips only when the PawStarfield module is
  * actually evaluated. Rendering the Room conversation must never flip it;
@@ -25,7 +26,43 @@ vi.mock('./PawStarfield', async (importOriginal) => {
 afterEach(cleanup);
 
 describe('PAWOS Room collaboration tools', () => {
-  it('opens one purpose-built Sol collaboration view instead of four duplicate summaries', async () => {
+  it('does not let a late send receipt steal the Room timeline from a reader', () => {
+    const timeline = document.createElement('div');
+    const scrollTo = vi.fn();
+    const scheduled: FrameRequestCallback[] = [];
+    Object.defineProperties(timeline, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_200 },
+      scrollTo: { configurable: true, value: scrollTo },
+    });
+
+    timeline.scrollTop = 240;
+    expect(followRoomTimelineIfReaderAtEnd(timeline, (callback) => {
+      scheduled.push(callback);
+      return scheduled.length;
+    })).toBe(false);
+    expect(scheduled).toHaveLength(0);
+
+    timeline.scrollTop = 800;
+    expect(followRoomTimelineIfReaderAtEnd(timeline, (callback) => {
+      scheduled.push(callback);
+      return scheduled.length;
+    })).toBe(true);
+    timeline.scrollTop = 300;
+    scheduled[0]?.(0);
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    timeline.scrollTop = 800;
+    followRoomTimelineIfReaderAtEnd(timeline, (callback) => {
+      scheduled.push(callback);
+      return scheduled.length;
+    });
+    scheduled[1]?.(0);
+    expect(scrollTo).toHaveBeenCalledOnce();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: 'smooth' });
+  });
+
+  it('opens as the same conversation-first workspace as Session and discloses collaboration on demand', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
     const { container, room } = renderRoom(900, openWindow);
@@ -33,30 +70,31 @@ describe('PAWOS Room collaboration tools', () => {
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
     expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(3);
-    expect(within(primaryNavigation).getByRole('button', { name: '公开对话' })).toHaveAttribute('aria-pressed', 'false');
-    expect(within(primaryNavigation).getByRole('button', { name: '协作态势' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(primaryNavigation).getByRole('button', { name: '公开对话' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(primaryNavigation).getByRole('button', { name: '协作态势' })).toHaveAttribute('aria-pressed', 'false');
     expect(within(primaryNavigation).getByRole('button', { name: '星空' })).toHaveAttribute('aria-pressed', 'false');
-    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'focus');
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
+    expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
+    expect(openWindow).not.toHaveBeenCalled();
 
-    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
-    expect(within(tools).getAllByRole('tab')).toHaveLength(2);
-    expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
-    expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
     const timeline = screen.getByRole('log', { name: 'Room 公开对话时间线' });
     const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
     expect(userMessage).not.toBeNull();
     expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();
     const earthMessage = within(timeline).getByText('我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。').closest('article');
     expect(within(earthMessage!).getByText('Earth')).toBeInTheDocument();
-    /* UR-054：进入 Room 只自动展开后台伙伴卫星窗，主 Room 保持焦点，
-       不会有任何前台窗口调用。 */
-    expect(openWindow.mock.calls.length).toBeGreaterThan(0);
-    for (const [request] of openWindow.mock.calls) {
-      expect(request).toMatchObject({ background: true, target: expect.objectContaining({ kind: 'participant' }) });
-    }
-    expect(new Set(openWindow.mock.calls.map(([request]) => request.target.id)).size).toBe(openWindow.mock.calls.length);
+    expect(container.querySelector('.room-turn, .room-agent-lane')).toBeNull();
 
+    await user.click(within(primaryNavigation).getByRole('button', { name: '协作态势' }));
+
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    expect(within(tools).getAllByRole('tab')).toHaveLength(2);
+    expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
+    const mesh = within(tools).getByRole('group', { name: '协作网状图' });
+    expect(mesh).toHaveTextContent('实现 Room 依赖数据投影');
+    expect(mesh.querySelector(':scope > svg, .paw-room-focus-overview__mesh-edge-label')).toBeNull();
+    expect(within(mesh).getByRole('list', { name: '协作关系' })).toBeInTheDocument();
     /* PF-CM-013/PF-CM-020：态势弹出是真实可达的卫星入口，指向 focus 面板。 */
     await user.click(within(tools).getByRole('button', { name: '在卫星窗中打开协作态势' }));
     expect(openWindow).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -131,6 +169,7 @@ describe('PAWOS Room collaboration tools', () => {
     renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
+    await user.click(screen.getByRole('button', { name: '协作态势' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     const mesh = within(tools).getByRole('group', { name: '协作网状图' });
     await user.click(within(mesh).getByRole('button', { name: /^Mars，/ }));
@@ -138,21 +177,20 @@ describe('PAWOS Room collaboration tools', () => {
 
     expect(screen.queryByRole('button', { name: /铺开 .* 位/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
-    /* 自动展开只允许 background 调用；唯一的前台调用来自用户点击 Mars。 */
-    const foregroundCalls = openWindow.mock.calls.filter(([request]) => request.background === false);
-    expect(foregroundCalls).toHaveLength(1);
-    expect(foregroundCalls[0]?.[0]).toMatchObject({
+    expect(openWindow).toHaveBeenCalledTimes(1);
+    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
       target: expect.objectContaining({
         id: 'participant-firstlight',
         title: 'Mars',
-        subtitle: expect.stringContaining('Agent 2'),
+        subtitle: '调研与证据',
       }),
-    });
+    }));
   });
   it('opens the tools panel on the same edge as the control that opens it', async () => {
     /* 按钮在右、面板在左 was the complaint: the 协作态势 control portals into
        the titlebar's trailing chrome slot, so the aside it opens has to land
        on the trailing edge too — declared, not left to DOM order. */
+    const user = userEvent.setup();
     const { container } = renderRoom(900);
     await screen.findByRole('textbox', { name: '协作消息' });
 
@@ -161,6 +199,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(chromeSlot.querySelector('.paw-room-window-chrome')).not.toBeNull();
     expect(container.querySelector('.paw-window-leading-slot .paw-room-window-chrome')).toBeNull();
 
+    await user.click(screen.getByRole('button', { name: '协作态势' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     expect(tools).toHaveAttribute('data-side', 'trailing');
     const body = container.querySelector('.paw-room-workspace__body')!;
@@ -202,6 +241,7 @@ describe('PAWOS Room collaboration tools', () => {
     const { container, transport } = renderRoom(900);
     await screen.findByRole('textbox', { name: '协作消息' });
 
+    await user.click(screen.getByRole('button', { name: '协作态势' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     await user.click(within(tools).getByRole('tab', { name: '治理' }));
     const governance = container.querySelector('.paw-room-governance') as HTMLElement;
@@ -230,9 +270,45 @@ describe('PAWOS Room collaboration tools', () => {
       && (request.body as { collaborationRole?: string }).collaborationRole === 'reviewer'
     ))).toBe(true));
   });
+
+  it.each([1, 7])('keeps the invite entry enabled with %i active participants', async (participantCount) => {
+    const user = userEvent.setup();
+    const room = roomWithParticipantCount(participantCount);
+    const { container } = renderRoom(900, vi.fn(), room, [persona('candidate')]);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    await user.click(screen.getByRole('button', { name: '协作态势' }));
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    await user.click(within(tools).getByRole('tab', { name: '治理' }));
+    const governance = container.querySelector('.paw-room-governance') as HTMLElement;
+
+    expect(within(governance).getByText(`${participantCount}/8`)).toBeInTheDocument();
+    expect(within(governance).getByRole('combobox', { name: '邀请伙伴' })).toBeEnabled();
+  });
+
+  it('keeps the invite entry visible but disables it at the eight-participant backend limit', async () => {
+    const user = userEvent.setup();
+    const room = roomWithParticipantCount(8);
+    const { container } = renderRoom(900, vi.fn(), room, [persona('candidate')]);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    await user.click(screen.getByRole('button', { name: '协作态势' }));
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    await user.click(within(tools).getByRole('tab', { name: '治理' }));
+    const governance = container.querySelector('.paw-room-governance') as HTMLElement;
+
+    expect(within(governance).getByText('8/8')).toBeInTheDocument();
+    expect(within(governance).getByRole('combobox', { name: '邀请伙伴' })).toBeDisabled();
+    expect(within(governance).getByRole('combobox', { name: '邀请伙伴' })).toHaveTextContent('已达 8 人上限');
+  });
 });
 
-function renderRoom(width: number, openWindow = vi.fn(), record?: RoomSummary) {
+function renderRoom(
+  width: number,
+  openWindow = vi.fn(),
+  record?: RoomSummary,
+  personas: AgentPersonaV1[] = [],
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
   const transport = createPreviewTransport();
@@ -264,7 +340,7 @@ function renderRoom(width: number, openWindow = vi.fn(), record?: RoomSummary) {
                 zIndex={10}
               >
                 <PawRoomWorkspace
-                  personas={[]}
+                  personas={personas}
                   record={room}
                   recordId={room.id}
                   onRoomUpdated={vi.fn()}
@@ -276,5 +352,42 @@ function renderRoom(width: number, openWindow = vi.fn(), record?: RoomSummary) {
       </QueryClientProvider>,
     ),
     room,
+  };
+}
+
+function roomWithParticipantCount(count: number): RoomSummary {
+  const base = previewRoomSnapshot('room-capacity').room as unknown as RoomSummary;
+  const seed = base.participants[0]!;
+  return {
+    ...base,
+    moderatorParticipantId: 'participant-0',
+    participants: Array.from({ length: count }, (_, ordinal) => ({
+      ...seed,
+      id: `participant-${ordinal}`,
+      sessionId: `session-${ordinal}`,
+      roleId: `role-${ordinal}`,
+      displayName: `Agent ${ordinal + 1}`,
+      ordinal,
+    })),
+  };
+}
+
+function persona(roleId: string): AgentPersonaV1 {
+  return {
+    schemaVersion: 'rag-ime.agent-persona.v1',
+    roleId,
+    version: '1',
+    displayName: '候选伙伴',
+    tagline: '候选',
+    summary: '可邀请的候选伙伴',
+    traits: ['协作'],
+    visualProfile: { avatarAssetId: 'candidate', symbolName: 'person', accentToken: 'blue' },
+    defaults: { modelPolicy: 'default', memoryPolicy: 'default', toolProfileVersion: '1' },
+    runtimeCharacteristics: {
+      intelligence: 'balanced', speed: 'balanced', context: 'balanced',
+      suitableTasks: ['协作'], unsuitableTasks: ['无'], isDefault: false,
+    },
+    safetyPolicyVersion: 'agent-core-v2',
+    selectableModes: ['assistant'],
   };
 }

@@ -1,6 +1,7 @@
 import { act, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentFilePreviewV1 } from '@/contracts/generated/agent-file-preview.v1';
+import { ControlTransportHttpError } from '@/platform/http-transport';
 import type { ControlRequest } from '@/platform/transport';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import type { FilePreviewRequest } from './file-descriptor';
@@ -70,6 +71,24 @@ describe('file preview store', () => {
         content: '# recovered',
       }),
     });
+  });
+
+  it('explains when the receipt exists but external media storage is unavailable', async () => {
+    const transport = new StubControlTransport('mock', {
+      'agent.media.preview': () => {
+        throw new ControlTransportHttpError(
+          'agent.media.preview',
+          400,
+          'agent media object is unavailable',
+        );
+      },
+    });
+
+    act(() => useFilePreviewStore.getState().openPreview(requestOne, transport, 'inline'));
+
+    await waitFor(() => expect(useFilePreviewStore.getState().status).toBe('error'));
+    expect(useFilePreviewStore.getState().error)
+      .toBe('文件收据仍在，但原始文件当前不可用。请检查外置存储是否已连接后重试。');
   });
 
   it('caches verified immutable receipts and does not read the same digest twice', async () => {

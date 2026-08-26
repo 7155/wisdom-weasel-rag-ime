@@ -1,9 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { SessionSummary } from '@/features/agent/types';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { PiModelOption } from '@/features/agent/model-catalog-options';
+import type { ControlRequest } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { MockControlTransport } from '@/test/mock-transport';
 import agentNextCss from '../styles/paw-os-agent-next.css?raw';
@@ -41,6 +45,13 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(agentNextCss).toMatch(/\.an-menu\s*\{[^}]*top:\s*calc\(100% \+ 8px\);/s);
   });
 
+  it('uses one focus edge and a content-driven prompt instead of a double glow around empty space', () => {
+    expect(agentNextCss).not.toContain('.an-composer::before');
+    expect(agentNextCss).not.toContain('conic-gradient');
+    expect(agentNextCss).toMatch(/\.an-composer:focus-within\s*\{[^}]*border-color:[^}]*box-shadow:/s);
+    expect(agentNextCss).toMatch(/\.an-composer textarea\s*\{[^}]*min-height:\s*64px;[^}]*max-height:\s*148px;[^}]*field-sizing:\s*content;/s);
+  });
+
   it('collapses home composer chips to semantic marks before words vanish from the accessibility tree', async () => {
     renderHome();
 
@@ -53,27 +64,108 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(agentNextCss).toMatch(/@container an-home-composer \(max-width: 420px\)/);
     expect(agentNextCss).toMatch(/\.an-chip-text/);
   });
+
+  it('keeps model and thinking as adjacent independent menus', async () => {
+    const user = userEvent.setup();
+    renderHome({
+      modelReference: 'gpt/gpt-5.6-luna',
+      models: [model('gpt-5.6-luna', 'GPT-5.6 Luna')],
+    });
+
+    const controls = await screen.findByRole('group', { name: '模型与推理设置' });
+    const modelTrigger = within(controls).getByRole('button', { name: '模型 · GPT-5.6 Luna' });
+    const thinkingTrigger = within(controls).getByRole('button', { name: '推理强度 · 高' });
+    await user.click(modelTrigger);
+    const modelMenu = screen.getByRole('menu', { name: '选择模型' });
+    expect(within(modelMenu).queryByText('推理强度')).not.toBeInTheDocument();
+
+    await user.click(thinkingTrigger);
+    const thinkingMenu = screen.getByRole('menu', { name: '选择推理强度' });
+    expect(within(thinkingMenu).queryByText('GPT-5.6 Luna')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(thinkingTrigger).toHaveFocus();
+  });
+
+  it('recomputes the visible Room team from a task suggestion and sends the adjusted participants', async () => {
+    const user = userEvent.setup();
+    const { transport } = renderHome({
+      personas: Array.from({ length: 8 }, (_, index) => persona(`partner-${index + 1}`, `伙伴 ${index + 1}`)),
+    });
+
+    await user.click(screen.getByRole('radio', { name: 'Room' }));
+    await user.type(
+      screen.getByRole('textbox', { name: '描述你想完成的工作' }),
+      '并行检查前端、后端、测试和发布流程',
+    );
+    expect(screen.getByText('任务建议 4 位')).toBeInTheDocument();
+    const planned = screen.getAllByTestId('room-planned-participant');
+    expect(planned).toHaveLength(4);
+    expect(planned.map((item) => item.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining('Earth'),
+      expect.stringContaining('Mars'),
+      expect.stringContaining('Venus'),
+      expect.stringContaining('Jupiter'),
+    ]));
+    expect(planned.some((item) => /伙伴 [1-4]/.test(item.textContent ?? ''))).toBe(false);
+
+    const decrease = screen.getByRole('button', { name: '减少 Room 伙伴' });
+    await user.click(decrease);
+    await user.click(decrease);
+    await user.click(decrease);
+    expect(screen.getAllByTestId('room-planned-participant')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '开始 Room' })).toBeDisabled();
+
+    const increase = screen.getByRole('button', { name: '增加 Room 伙伴' });
+    await user.click(increase);
+    await user.click(increase);
+    await user.click(increase);
+    await user.click(increase);
+    expect(screen.getAllByTestId('room-planned-participant')).toHaveLength(5);
+    await user.click(screen.getByRole('button', { name: '开始 Room' }));
+
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create')).toBe(true));
+    const create = transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')?.request;
+    expect((create?.body as { participants?: unknown[] }).participants).toHaveLength(5);
+    expect(create?.body).toMatchObject({ routingConfig: { maxResponders: 5 } });
+  });
 });
 
-function renderHome() {
+function renderHome({
+  modelReference = 'inherit',
+  models = [],
+  personas = [],
+}: {
+  modelReference?: string;
+  models?: PiModelOption[];
+  personas?: AgentPersonaV1[];
+} = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const transport = new MockControlTransport({
     routes: {
       'configuration.settings': {
         ok: true,
-        settings: { agent: { defaults: { modelReference: 'inherit', thinkingLevel: 'high', executionMode: 'per_action' } } },
+        settings: { agent: { defaults: { modelReference, thinkingLevel: 'high', executionMode: 'per_action' } } },
         runtimeConfig: { runtimeRevision: 7 },
       },
+      'agent.rooms.create': (request: ControlRequest) => ({
+        ok: true,
+        room: {
+          id: 'room-created',
+          title: 'Room',
+          participants: (request.body as { participants?: unknown[] }).participants ?? [],
+        },
+      }),
+      'agent.room.message': { ok: true },
     },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <ControlTransportProvider transport={transport}>
         <TooltipProvider>
           <PawAgentHome
             defaultModel="gpt/gpt-5.6-luna"
-            models={[]}
-            personas={[]}
+            models={models}
+            personas={personas}
             projectRoots={['/work/paw']}
             rooms={[room()]}
             sessions={[session()]}
@@ -85,6 +177,34 @@ function renderHome() {
       </ControlTransportProvider>
     </QueryClientProvider>,
   );
+  return { ...rendered, transport };
+}
+
+function model(id: string, name: string): PiModelOption {
+  return { id, name, provider: 'gpt', reference: `gpt/${id}`, thinkingLevels: ['off', 'medium', 'high'] };
+}
+
+function persona(roleId: string, displayName: string): AgentPersonaV1 {
+  return {
+    schemaVersion: 'rag-ime.agent-persona.v1',
+    roleId,
+    version: '1',
+    displayName,
+    tagline: `${displayName}伙伴`,
+    summary: '',
+    traits: ['协作'],
+    selectableModes: ['assistant', 'coordinator'],
+    defaults: {
+      modelPolicy: 'inherit', memoryPolicy: 'inherit', thinkingLevel: 'high',
+      toolProfileVersion: 'control-center-v1',
+    },
+    runtimeCharacteristics: {
+      intelligence: 'balanced', speed: 'balanced', context: 'workspace',
+      suitableTasks: ['协作'], unsuitableTasks: ['无'], isDefault: false,
+    },
+    visualProfile: { accentToken: 'blue', avatarAssetId: '', symbolName: 'bot' },
+    safetyPolicyVersion: 'agent-core-v2',
+  };
 }
 
 function session(): SessionSummary {

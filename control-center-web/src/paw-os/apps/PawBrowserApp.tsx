@@ -34,6 +34,7 @@ import { BrowserTabStrip, type BrowserTabItem } from '@/features/browser/Browser
 import {
   PAW_BROWSER_PARTITION,
   guestNavigationState,
+  guestZoomFactor,
   loadPawBrowserUrl,
   pawBrowserHost,
   type PawBrowserGuestFailLoadEvent,
@@ -244,7 +245,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     setFindDraft('');
     setFindMatch(null);
     const webview = hostWebviews.current.get(selectedHostTabId);
-    const factor = typeof webview?.getZoomFactor === 'function' ? webview.getZoomFactor() : null;
+    const factor = guestZoomFactor(webview ?? null);
     setZoomPercent(typeof factor === 'number' && Number.isFinite(factor) ? Math.round(factor * 100) : 100);
   }, [electronHost, selectedHostTabId]);
 
@@ -799,7 +800,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
               onClick={() => {
                 const next = !showBrowserMenu;
                 if (next) {
-                  const factor = selectedWebview()?.getZoomFactor?.();
+                  const factor = guestZoomFactor(selectedWebview());
                   if (typeof factor === 'number') setZoomPercent(Math.round(factor * 100));
                 }
                 setShowBrowserMenu(next);

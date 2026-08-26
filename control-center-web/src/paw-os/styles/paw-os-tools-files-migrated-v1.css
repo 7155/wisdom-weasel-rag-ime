@@ -1,11 +1,10 @@
 /*
- * PAWOS Browser migration v1 — cockpit glass pass.
+ * PAWOS Browser migration v1
  *
- * Final desktop owner of the real Browser surface. The page stays dominant:
- * human chrome reads as calm teal porcelain, while a live Agent takeover is
- * projected as an aurora execution field. Tabs, history, settings, traces,
- * errors, and lifecycle remain owned by the existing PAW transport. Files and
- * Terminal live entirely in their feature stylesheets.
+ * Owns the real Browser surface whose page remains dominant. Archive fixtures
+ * supplied composition and state grammar only; tabs, history, settings,
+ * traces, errors, and lifecycle remain owned by the existing PAW transport.
+ * Files and Terminal now live entirely in their feature stylesheets.
  */
 
 /* --------------------------------------------------------------------------
@@ -13,21 +12,16 @@
    -------------------------------------------------------------------------- */
 
 .paw-desktop-root .paw-direct-browser {
-  --paw-browser-chrome: var(--paw-app-nav, #f2f6f7);
+  --paw-browser-chrome: var(--paw-app-nav, #f4f6f9);
   --paw-browser-control: var(--paw-app-surface-strong, #fff);
-  --paw-browser-hover: var(--paw-app-selection, rgb(18 96 106 / 7%));
-  --paw-browser-line: rgb(23 42 48 / 10%);
-  --paw-browser-ink: #16232a;
-  --paw-browser-muted: #64737d;
-  --paw-browser-accent: var(--paw-app-accent, #146f7b);
-  --paw-browser-glow: rgb(20 143 158 / 26%);
-  /* App window skeleton. Each chrome row is sized by the control it actually
-     carries and floored by its own min-height, and exactly one track absorbs
-     whatever height the window has left. Pinning the toolbar to a fixed pixel
-     row clipped the omnibox into the strip above and the page below as soon as
-     the toolbar's real padding exceeded it, and a bare `1fr` guest track let a
-     tall page push the chrome out of the window instead of scrolling. */
-  grid-template-rows: auto minmax(0, 1fr);
+  --paw-browser-hover: var(--paw-app-selection, rgb(24 32 44 / 6%));
+  --paw-browser-line: rgb(24 32 44 / 10%);
+  --paw-browser-ink: #18202c;
+  --paw-browser-muted: #687180;
+  --paw-browser-agent-blue: #5b8cff;
+  --paw-browser-agent-violet: #8b5cf6;
+  --paw-browser-agent-cyan: #52d7ff;
+  grid-template-rows: 42px 1fr;
   background: var(--paw-app-surface, #fff);
   color: var(--paw-browser-ink);
   font-family: var(--font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
@@ -35,58 +29,48 @@
 }
 
 .paw-desktop-root .paw-direct-browser:not([data-tabs-in-window-chrome]) {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: 38px 42px minmax(0, 1fr);
 }
 
-/* Window titlebar carrying the live tab deck. */
 .paw-desktop-root .paw-window-titlebar[data-window-chrome='browser-tabs'] {
-  --paw-browser-chrome: #f1f5f6;
+  --paw-browser-chrome: #f4f6f9;
   --paw-browser-control: #fff;
-  --paw-browser-hover: rgb(18 96 106 / 7%);
-  grid-template-columns: var(--paw-titlebar-lead, 76px) minmax(54px, 86px) minmax(0, 1fr);
+  --paw-browser-hover: rgb(24 32 44 / 6%);
+  grid-template-columns: 76px minmax(54px, 86px) minmax(0, 1fr);
   gap: 7px;
-  border-bottom-color: rgb(23 42 48 / 9%);
-  background: linear-gradient(180deg, rgb(249 251 251 / 97%), rgb(242 246 247 / 97%));
-  box-shadow: 0 1px 0 rgb(255 255 255 / 82%) inset;
+  border-bottom-color: rgb(24 32 44 / 9%);
+  background: rgb(247 248 250 / 96%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 78%) inset;
 }
 
 .paw-desktop-root .paw-window-titlebar[data-window-chrome='browser-tabs'] .paw-window-title {
-  color: #5d6b73;
+  color: #5f6875;
 }
 
-/* Tab deck: floating porcelain pills, the active page carried as a lit card. */
 .paw-desktop-root .paw-browser-tabstrip {
-  align-items: center;
-  padding: 0 5px;
+  align-items: end;
+  padding: 4px 4px 0;
   border: 0;
   background: transparent;
 }
 
-.paw-desktop-root .paw-direct-browser:not([data-tabs-in-window-chrome]) .paw-browser-tabstrip {
-  min-height: 38px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--paw-browser-line);
-  background: var(--paw-browser-chrome);
-}
-
 .paw-desktop-root .paw-browser-tabs-live {
-  align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .paw-desktop-root .paw-browser-tab {
   min-width: 104px;
-  max-width: 236px;
-  height: 30px;
-  flex-basis: 186px;
+  max-width: 232px;
+  height: 34px;
+  flex-basis: 174px;
   border: 1px solid transparent;
-  border-radius: 9px;
-  color: #6d7a83;
+  border-radius: 10px 10px 0 0;
+  color: #737b88;
   box-shadow: none;
 }
 
 .paw-desktop-root .paw-browser-tab-main {
-  grid-template-columns: 15px minmax(0, 1fr);
+  grid-template-columns: 14px minmax(0, 1fr);
   gap: 7px;
   padding: 0 30px 0 10px;
   border: 0;
@@ -99,27 +83,12 @@
 }
 
 .paw-desktop-root .paw-browser-tab[data-active] {
-  border-color: rgb(23 42 48 / 8%);
+  border-color: rgb(24 32 44 / 10%);
+  border-bottom-color: #fff;
   background: #fff;
   color: var(--paw-browser-ink);
-  box-shadow:
-    0 1px 1px rgb(16 36 42 / 5%),
-    0 3px 10px rgb(15 66 76 / 9%),
-    inset 0 1px 0 rgb(255 255 255 / 90%);
-  transform: none;
-}
-
-/* The active pill carries one quiet accent thread instead of a whole colour. */
-.paw-desktop-root .paw-browser-tab[data-active]::after {
-  position: absolute;
-  right: 9px;
-  bottom: 2px;
-  left: 9px;
-  height: 2px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--paw-browser-accent) 68%, transparent), transparent);
-  content: '';
-  pointer-events: none;
+  box-shadow: 0 -1px 2px rgb(15 23 42 / 3%);
+  transform: translateY(1px);
 }
 
 .paw-desktop-root .paw-browser-tab-close,
@@ -130,28 +99,19 @@
 .paw-desktop-root .paw-browser-new-tab {
   width: 28px;
   height: 28px;
-  margin-bottom: 0;
+  margin-bottom: 3px;
 }
 
-/* Navigation deck: satin gradient with one machined hairline. The row keeps a
-   floor rather than a fixed height so the omnibox capsule and its padding
-   always fit inside the deck instead of bleeding over the strip and page. */
 .paw-desktop-root .paw-browser-toolbar {
-  min-height: 44px;
-  flex-wrap: nowrap;
   gap: 7px;
-  padding: 5px 10px;
+  padding: 5px 10px 7px;
   border-bottom-color: var(--paw-browser-line);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-browser-chrome) 42%, #fff), var(--paw-browser-chrome));
-  box-shadow: 0 1px 0 rgb(255 255 255 / 88%) inset;
+  background: #f7f8fa;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 86%) inset;
 }
 
-/* Primary navigation is the last thing a narrow window may give up: the two
-   control clusters keep their measured width and the address capsule is the
-   only toolbar child that yields. */
 .paw-desktop-root .paw-nav-buttons,
 .paw-desktop-root .paw-toolbar-actions {
-  flex: 0 0 auto;
   gap: 3px;
 }
 
@@ -159,30 +119,18 @@
 .paw-desktop-root .paw-toolbar-actions > button {
   width: 29px;
   height: 29px;
-  flex: 0 0 auto;
-  border-radius: 9px;
-  color: #5c6a73;
+  border-radius: 8px;
+  color: #626c79;
 }
 
-.paw-desktop-root .paw-toolbar-actions > button[data-active] {
-  background: color-mix(in srgb, var(--paw-browser-accent) 12%, #fff);
-  color: var(--paw-browser-accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paw-browser-accent) 24%, transparent);
-}
-
-/* Omnibox: one floating capsule that lights up under the hand. It absorbs the
-   toolbar's spare width in both directions but never collapses to a sliver. */
 .paw-desktop-root .paw-omnibox-form {
   height: 34px;
-  min-width: 96px;
-  flex: 1 1 auto;
   gap: 7px;
   padding-inline: 12px;
   border: 1px solid var(--paw-browser-line);
   border-radius: 17px;
   background: #fff;
-  box-shadow: 0 1px 2px rgb(15 23 42 / 5%), inset 0 1px 0 rgb(255 255 255 / 85%);
-  transition: border-color 150ms ease, box-shadow 200ms ease;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
 }
 
 /* The form owns the address field chrome. Older Browser composition rules
@@ -203,11 +151,8 @@
 }
 
 .paw-desktop-root .paw-omnibox-form:focus-within {
-  border-color: color-mix(in srgb, var(--paw-browser-accent) 55%, transparent);
-  box-shadow:
-    0 0 0 3px var(--paw-browser-glow),
-    0 8px 22px rgb(15 84 93 / 10%),
-    inset 0 1px 0 rgb(255 255 255 / 85%);
+  border-color: rgb(20 184 200 / 62%);
+  box-shadow: 0 0 0 3px rgb(20 184 200 / 12%), 0 1px 2px rgb(15 23 42 / 5%);
 }
 
 .paw-desktop-root .paw-omnibox-form input {
@@ -218,40 +163,17 @@
   color: #1f9d4d;
 }
 
-/* Page-first workspace: one column and one row at every size, so opening the
-   trace panel or a sheet can never re-flow the guest into a second track. */
 .paw-desktop-root .paw-browser-workspace,
 .paw-desktop-root .paw-browser-workspace[data-show-agent] {
   position: relative;
-  min-width: 0;
-  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
   isolation: isolate;
   background: #fff;
 }
 
 .paw-desktop-root .paw-browser-viewport {
-  min-width: 0;
-  min-height: 0;
-  grid-template-rows: minmax(0, 1fr);
   background: #fff;
-}
-
-/* Every page surface — the real guest, the CDP projection, the blank sheet,
-   the reload prompt, and the transport failure card — shares the single guest
-   cell. Letting any of them open an implicit second row would size the guest
-   by its siblings and push the bottom of the page out of the window. */
-.paw-desktop-root .paw-browser-native-webview,
-.paw-desktop-root .paw-browser-blank-page,
-.paw-desktop-root .paw-browser-live-view,
-.paw-desktop-root .paw-browser-awaiting,
-.paw-desktop-root .paw-browser-error {
-  grid-area: 1 / 1;
-  min-width: 0;
-  min-height: 0;
 }
 
 .paw-desktop-root .paw-browser-error {
@@ -266,71 +188,12 @@
   border: 1px solid rgb(197 27 47 / 18%);
   border-radius: 12px;
   background: #fff;
-  color: #64737d;
+  color: #687180;
   box-shadow: 0 12px 32px rgb(15 23 42 / 10%);
 }
 
 .paw-desktop-root .paw-browser-error > svg {
   color: #c51b2f;
-}
-
-/* The awaiting state kept its pre-migration dark-surface ink (#94a3b8 copy on
-   a near-white #e2e8f0 button) while the page behind it became white, leaving
-   an unreadable control floating on a blank sheet. It is the same kind of card
-   as the failure above, so it is paired the same way. */
-.paw-desktop-root .paw-browser-awaiting {
-  width: min(460px, calc(100% - 32px));
-  height: max-content;
-  align-self: center;
-  justify-self: center;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid var(--paw-browser-line);
-  border-radius: 12px;
-  background: #fff;
-  color: #64737d;
-  text-align: left;
-  box-shadow: 0 12px 32px rgb(15 23 42 / 10%);
-}
-
-.paw-desktop-root .paw-browser-awaiting > svg { color: var(--paw-browser-ink); }
-
-.paw-desktop-root .paw-browser-awaiting > span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.paw-desktop-root .paw-browser-awaiting strong {
-  color: var(--paw-browser-ink);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.paw-desktop-root .paw-browser-awaiting small {
-  color: #64737d;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.paw-desktop-root .paw-browser-awaiting button {
-  min-height: 30px;
-  padding-inline: 11px;
-  border: 1px solid var(--paw-browser-line);
-  border-radius: 8px;
-  background: #f3f6f7;
-  color: var(--paw-browser-ink);
-  font-size: 13px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.paw-desktop-root .paw-browser-awaiting button:disabled {
-  color: #8a97a0;
-  cursor: default;
 }
 
 .paw-desktop-root .paw-browser-error strong {
@@ -344,7 +207,7 @@
   padding-inline: 11px;
   border: 1px solid var(--paw-browser-line);
   border-radius: 8px;
-  background: #f3f6f7;
+  background: #f4f6f8;
   color: var(--paw-browser-ink);
   font-size: 13px;
   font-weight: 650;
@@ -352,181 +215,13 @@
 }
 
 .paw-desktop-root .paw-browser-live-view {
-  background: #e8edf0;
+  background: #e9edf2;
 }
 
 .paw-desktop-root .paw-browser-live-canvas {
   box-shadow: 0 1px 4px rgb(15 23 42 / 12%);
 }
 
-/* New-tab start field: Chrome-like calm sheet; agent takeover adds aurora via data-live. */
-.paw-desktop-root .paw-browser-start {
-  position: absolute;
-  z-index: 5;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 6px;
-  overflow: hidden;
-  /* Optical lift measured against the Browser window, not the screen: a `vh`
-     inset ignored the App frame entirely and pushed the start block off a
-     short window while leaving a maximized one barely lifted. */
-  padding-bottom: min(5cqw, 34px);
-  background: #fff;
-  color: #5f6368;
-  text-align: center;
-  pointer-events: none;
-}
-
-.paw-desktop-root .paw-browser-start-logo {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  margin-bottom: 12px;
-  border-radius: 50%;
-  background: #f1f3f4;
-  color: #4285f4;
-}
-
-.paw-desktop-root .paw-browser-start-halo {
-  display: none;
-  position: relative;
-  width: 76px;
-  height: 76px;
-  place-items: center;
-  margin-bottom: 9px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 28%, #fff 0%, rgb(255 255 255 / 0%) 58%),
-    conic-gradient(from 210deg, rgb(20 143 158 / 22%), rgb(72 104 189 / 26%), rgb(82 197 226 / 20%), rgb(20 143 158 / 22%));
-  box-shadow:
-    0 14px 34px rgb(15 84 93 / 16%),
-    inset 0 1px 0 rgb(255 255 255 / 85%),
-    0 0 0 1px rgb(20 111 123 / 12%);
-  color: #0f6570;
-  animation: paw-browser-start-breathe 4.4s ease-in-out infinite;
-}
-
-.paw-desktop-root .paw-browser-start::before {
-  display: none;
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(circle, rgb(20 111 123 / 34%) 1px, transparent 1.4px);
-  background-size: 22px 22px;
-  content: '';
-  opacity: .3;
-  -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
-  mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, transparent 68%);
-}
-
-/* One comet rides a thin orbit around the halo — agent takeover only. */
-.paw-desktop-root .paw-browser-start-halo::after {
-  position: absolute;
-  inset: -8px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 76%, rgb(20 143 158 / 55%) 90%, transparent 100%);
-  content: '';
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
-  animation: paw-browser-start-orbit 7s linear infinite;
-}
-
-/* Decorative start-page motion spends frames only in the focused window: an
-   unfocused Browser keeps the halo visible but still, so several open App
-   windows never multiply idle animation work on the compositor. Status
-   signals (agent runner, live traces) are information and keep running. */
-.paw-desktop-root .paw-window-shell:not([data-active]) .paw-browser-start-halo,
-.paw-desktop-root .paw-window-shell:not([data-active]) .paw-browser-start-halo::after {
-  animation-play-state: paused;
-}
-
-.paw-desktop-root .paw-browser-start > strong {
-  color: #202124;
-  font-size: 18px;
-  line-height: 1.4;
-  font-weight: 500;
-  letter-spacing: .01em;
-}
-
-.paw-desktop-root .paw-browser-start-hint {
-  font-size: 13px;
-  line-height: 1.5;
-  color: #80868b;
-}
-
-.paw-desktop-root .paw-browser-start[data-live] {
-  color: var(--paw-browser-muted);
-  background:
-    radial-gradient(560px 320px at 50% 26%, rgb(20 143 158 / 8%), transparent 70%),
-    radial-gradient(760px 460px at 84% 92%, rgb(72 104 189 / 7%), transparent 64%),
-    radial-gradient(520px 380px at 8% 84%, rgb(82 197 226 / 6%), transparent 58%),
-    linear-gradient(180deg, #fdfefe, #f5f8f9);
-}
-
-.paw-desktop-root .paw-browser-start[data-live]::before {
-  display: block;
-}
-
-.paw-desktop-root .paw-browser-start[data-live] .paw-browser-start-logo {
-  display: none;
-}
-
-.paw-desktop-root .paw-browser-start[data-live] .paw-browser-start-halo {
-  display: grid;
-}
-
-.paw-desktop-root .paw-browser-start[data-live] > strong {
-  color: var(--paw-browser-ink);
-  font-weight: 650;
-}
-
-.paw-desktop-root .paw-browser-extension-list {
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.paw-desktop-root .paw-browser-extension-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--paw-browser-line);
-}
-
-.paw-desktop-root .paw-browser-extension-list li:last-child {
-  border-bottom: 0;
-}
-
-.paw-desktop-root .paw-browser-extension-list strong {
-  display: block;
-  color: var(--paw-browser-ink);
-  font-size: 14px;
-}
-
-.paw-desktop-root .paw-browser-extension-list small {
-  color: #64737d;
-  font-size: 12px;
-}
-
-.paw-desktop-root .paw-browser-extension-empty {
-  margin-top: 8px;
-}
-
-.paw-desktop-root .paw-browser-extension-actions {
-  margin-top: 12px;
-}
-
-.paw-desktop-root .paw-browser-extension-actions > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* Agent trace card (on demand). */
 .paw-desktop-root .paw-browser-agent-stream {
   position: absolute;
   display: grid;
@@ -565,7 +260,7 @@
   padding-inline: 7px;
   border-color: transparent;
   background: transparent;
-  color: #64737d;
+  color: #687180;
   font-size: 12px;
 }
 
@@ -610,7 +305,7 @@
   width: 20px;
   height: 20px;
   border-radius: 6px;
-  background: #edf1f3;
+  background: #eef1f5;
 }
 
 .paw-desktop-root .paw-browser-agent-stream article strong {
@@ -623,7 +318,7 @@
 .paw-desktop-root .paw-browser-agent-stream article small {
   display: block;
   margin-top: 1px;
-  color: #6d7a83;
+  color: #737b88;
   font-size: 14px;
   line-height: 1.45;
 }
@@ -631,14 +326,14 @@
 .paw-desktop-root .paw-browser-trace-steps {
   margin-top: 6px;
   padding-top: 6px;
-  border-top-color: rgb(23 42 48 / 8%);
+  border-top-color: rgb(24 32 44 / 8%);
 }
 
 .paw-desktop-root .paw-browser-trace-step-window__meta {
   display: grid;
   gap: 4px;
   margin-top: 6px;
-  color: #6d7a83;
+  color: #737b88;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
@@ -673,7 +368,7 @@
 .paw-desktop-root .paw-browser-trace-steps-toggle:hover { color: #0f6d78; text-decoration: underline; }
 
 .paw-desktop-root .paw-browser-trace-steps li {
-  color: #6d7a83;
+  color: #737b88;
   font-size: 14px;
   line-height: 1.45;
 }
@@ -681,8 +376,8 @@
 .paw-desktop-root .paw-browser-agent-stream > footer {
   padding: 8px 12px;
   border-top-color: var(--paw-browser-line);
-  background: rgb(246 249 249 / 86%);
-  color: #6d7a83;
+  background: rgb(247 248 250 / 86%);
+  color: #737b88;
   font-size: 13px;
   line-height: 1.4;
 }
@@ -692,86 +387,33 @@
   box-shadow: 0 0 0 4px rgb(20 184 200 / 13%);
 }
 
-/* Toolbar menu: the shared .paw-menu language owns material and the
-   white-on-cobalt selection; this owner keeps only placement and width. */
 .paw-desktop-root .paw-browser-menu {
   top: 35px;
-  width: min(220px, calc(100cqw - 12px));
-  /* The App window clips its own overflow, so a short Browser window must be
-     able to reach every menu item by scrolling the popover rather than losing
-     the rows below the window edge. */
-  max-height: 320px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border-color: var(--paw-menu-line);
-  border-radius: var(--paw-menu-radius);
-  background: var(--paw-menu-bg);
-  box-shadow: var(--paw-menu-shadow);
+  width: 220px;
+  border-color: var(--paw-browser-line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 46px rgb(15 23 42 / 18%), 0 1px 0 rgb(255 255 255 / 78%) inset;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
+.paw-desktop-root .paw-toolbar-actions .paw-browser-menu > button,
 .paw-desktop-root .paw-browser-menu-zoom {
-  color: var(--paw-menu-ink);
+  color: var(--paw-browser-ink);
   font-size: 13px;
 }
 
-/* The zoom row is a control group, not a menu item: its buttons keep compact
-   geometry while inheriting the shared selection colours. */
-.paw-desktop-root .paw-browser-menu .paw-browser-menu-zoom button {
-  width: 100%;
-  min-height: 26px;
-  height: 26px;
-  justify-content: center;
-  padding: 0;
-  border-radius: 7px;
-}
-
-/* History and Settings only fold into the menu once their toolbar buttons are
-   gone. The shared strip paints every menu row with `.paw-toolbar-actions
-   .paw-browser-menu > button`, which outranked a plain narrow-only class, so
-   both folded rows were in fact showing at every width and duplicating the
-   toolbar buttons still standing beside them. */
-.paw-desktop-root .paw-toolbar-actions .paw-browser-menu > .paw-browser-menu-narrow-only {
+.paw-desktop-root .paw-browser-menu-narrow-only {
   display: none;
-}
-
-/* CDP-mode failure detail keeps muted evidence ink on the desktop skin. */
-.paw-desktop-root .paw-browser-error small {
-  color: var(--paw-browser-muted);
-}
-
-/* The omnibox commit preview is menu-like, so a highlighted commit row uses
-   the same solid selection pair as every OS menu. */
-.paw-desktop-root .paw-omnibox-commit-hint > button:is(:hover, :focus-visible) {
-  background: var(--paw-menu-selected-bg);
-  color: var(--paw-menu-selected-ink);
-  outline: 0;
-}
-
-.paw-desktop-root .paw-omnibox-commit-hint > button:is(:hover, :focus-visible) :is(.paw-omnibox-commit-icon, .paw-omnibox-commit-text > span, .paw-omnibox-commit-text small) {
-  color: rgb(255 255 255 / 86%);
-}
-
-.paw-desktop-root .paw-omnibox-commit-hint > button:is(:hover, :focus-visible) kbd {
-  border-color: rgb(255 255 255 / 34%);
-  background: rgb(255 255 255 / 14%);
-  color: rgb(255 255 255 / 88%);
 }
 
 .paw-desktop-root .paw-browser-find {
   border-color: var(--paw-browser-line);
   border-radius: 11px;
   background: #fff;
-  transition: border-color 150ms ease, box-shadow 200ms ease;
 }
 
-.paw-desktop-root .paw-browser-find:focus-within {
-  border-color: color-mix(in srgb, var(--paw-browser-accent) 55%, transparent);
-  box-shadow: 0 0 0 3px var(--paw-browser-glow), 0 14px 36px rgb(15 23 42 / 16%);
-}
-
-/* History and Settings: one calm sheet over the page. */
 .paw-desktop-root .paw-browser-history,
 .paw-desktop-root .paw-browser-settings {
   position: absolute;
@@ -780,10 +422,7 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   place-items: start center;
-  /* Sheet inset follows the Browser window width, so a narrow App window keeps
-     its History and Settings cards readable instead of inheriting a screen
-     inset that only ever fitted a maximized window. */
-  padding: clamp(16px, 6cqw, 52px) 14px 14px;
+  padding: clamp(28px, 7vh, 58px) 14px 14px;
   overflow: hidden;
   border: 0;
   border-radius: 0;
@@ -799,7 +438,7 @@
   display: grid;
   grid-template-rows: 50px auto minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid rgb(23 42 48 / 8%);
+  border: 1px solid rgb(24 32 44 / 8%);
   border-radius: 16px;
   background: #fff;
   box-shadow: 0 24px 70px rgb(15 23 42 / 22%), 0 1px 0 rgb(255 255 255 / 80%) inset;
@@ -830,7 +469,7 @@
   height: 28px;
   padding-inline: 8px;
   border-radius: 8px;
-  color: #64737d;
+  color: #687180;
   cursor: pointer;
 }
 
@@ -845,7 +484,7 @@
 .paw-desktop-root .paw-browser-history-search {
   margin: 8px 16px 5px;
   border: 1px solid var(--paw-browser-line);
-  background: #f3f6f7;
+  background: #f4f6f8;
 }
 
 .paw-desktop-root .paw-browser-history ol {
@@ -867,7 +506,7 @@
 
 .paw-desktop-root .paw-browser-history .paw-browser-surface-card > p {
   margin: auto;
-  color: #6d7a83;
+  color: #737b88;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -894,7 +533,7 @@
 
 .paw-desktop-root .paw-browser-settings-body p,
 .paw-desktop-root .paw-browser-setting-row {
-  color: #64737d;
+  color: #687180;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -903,7 +542,7 @@
 .paw-desktop-root .paw-browser-setting-row button {
   border-color: var(--paw-browser-line);
   border-radius: 9px;
-  background: #f3f6f7;
+  background: #f4f6f8;
 }
 
 .paw-desktop-root .paw-browser-action-receipt {
@@ -912,27 +551,8 @@
   color: var(--paw-browser-ink);
 }
 
-/* In-place destructive confirmations speak the shared OS button pair: quiet
-   bordered cancel, solid danger commit. Placed after the surface-card and
-   setting-row owners so the shared recipe wins their generic button paint. */
-.paw-desktop-root .paw-browser-confirm button {
-  border-color: var(--paw-control-line);
-  border-radius: var(--paw-control-radius);
-  background: var(--paw-control-bg);
-  color: var(--paw-control-ink);
-}
-
-.paw-desktop-root .paw-browser-confirm button[data-danger] {
-  border-color: var(--paw-button-danger-bg);
-  background: var(--paw-button-danger-bg);
-  color: var(--paw-button-danger-ink);
-}
-
-/* --------------------------------------------------------------------------
-   Ego-style execution projection. Driven only by a real Agent trace; the page
-   remains the Browser and the full trace stays on demand.
-   -------------------------------------------------------------------------- */
-
+/* Ego-style execution projection. It is driven only by a real Agent trace;
+   the page remains the Browser and the full trace stays on demand. */
 .paw-desktop-root .paw-browser-viewport[data-agent-state='active'] {
   box-shadow:
     inset 0 0 0 1px rgb(91 140 255 / 60%),
@@ -985,26 +605,8 @@
     0 0 36px rgb(91 140 255 / 31%);
 }
 
-/* One luminous runner rides the top edge while the Agent is actually working. */
-.paw-desktop-root .paw-browser-agent-signal::before {
-  position: absolute;
-  top: 0;
-  left: -34%;
-  width: 34%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #7ea4ff 42%, #c0a4ff 62%, transparent);
-  content: '';
-  opacity: 0;
-  filter: drop-shadow(0 0 6px rgb(126 164 255 / 85%));
-}
-
 .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal {
   animation: paw-browser-agent-signal-live 1.8s ease-in-out infinite;
-}
-
-.paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal::before {
-  opacity: 1;
-  animation: paw-browser-agent-runner 2.8s linear infinite;
 }
 
 .paw-desktop-root .paw-browser-agent-field[data-state='settled']::before,
@@ -1053,16 +655,16 @@
   padding: 8px 8px 8px 13px;
   border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 21px;
-  background: rgb(25 27 34 / 91%);
+  background: rgb(27 28 34 / 90%);
   box-shadow:
-    0 18px 54px rgb(12 17 38 / 34%),
-    0 0 0 1px rgb(91 140 255 / 9%),
-    0 0 38px rgb(91 116 255 / 22%),
+    0 18px 54px rgb(12 17 38 / 32%),
+    0 0 0 1px rgb(91 140 255 / 8%),
+    0 0 34px rgb(91 116 255 / 21%),
     inset 0 1px 0 rgb(255 255 255 / 12%);
   color: #f7f8ff;
   pointer-events: auto;
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
-  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+  backdrop-filter: blur(22px) saturate(135%);
   animation: paw-browser-agent-capsule-in 240ms cubic-bezier(.16, 1, .3, 1) both;
 }
 
@@ -1182,25 +784,12 @@
   50% { opacity: 1; }
 }
 
-@keyframes paw-browser-agent-runner {
-  to { left: 100%; }
-}
-
 @keyframes paw-browser-agent-capsule-in {
   from { opacity: 0; transform: translate3d(-50%, 10px, 0) scale(.97); }
   to { opacity: 1; transform: translate3d(-50%, 0, 0) scale(1); }
 }
 
 @keyframes paw-browser-agent-spark {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes paw-browser-start-breathe {
-  0%, 100% { box-shadow: 0 14px 34px rgb(15 84 93 / 16%), inset 0 1px 0 rgb(255 255 255 / 85%), 0 0 0 1px rgb(20 111 123 / 12%); }
-  50% { box-shadow: 0 16px 40px rgb(15 84 93 / 22%), inset 0 1px 0 rgb(255 255 255 / 85%), 0 0 0 7px rgb(20 143 158 / 7%); }
-}
-
-@keyframes paw-browser-start-orbit {
   to { transform: rotate(360deg); }
 }
 
@@ -1227,53 +816,11 @@
   }
   .paw-desktop-root .paw-browser-agent-mark { width: 22px; height: 22px; }
   .paw-desktop-root .paw-browser-agent-capsule-actions > button { padding-inline: 8px; }
-  /* Narrow windows: History and Settings become full-height sheets and the
-     page keeps its full width underneath. */
-  .paw-desktop-root .paw-browser-history,
-  .paw-desktop-root .paw-browser-settings { padding: 8px; }
-  .paw-desktop-root .paw-browser-surface-card { width: 100%; max-height: 100%; border-radius: 13px; }
-  .paw-desktop-root .paw-toolbar-actions .paw-browser-menu > .paw-browser-menu-narrow-only { display: flex; }
-  .paw-desktop-root .paw-browser-start-halo { width: 62px; height: 62px; }
-  .paw-desktop-root .paw-browser-start > strong { font-size: 17px; }
-}
-
-/* At the App window's minimum width the toolbar has already dropped Home,
-   History, and Settings into the menu. What is left — back, forward, reload,
-   the address, the trace toggle, and the menu — is the primary navigation and
-   must all stay on one unwrapped row, so the remaining controls tighten
-   instead of the address collapsing or a control leaving the deck. */
-@container paw-browser (max-width: 420px) {
-  .paw-desktop-root .paw-browser-toolbar { gap: 3px; padding-inline: 5px; }
-  .paw-desktop-root .paw-nav-buttons,
-  .paw-desktop-root .paw-toolbar-actions { gap: 2px; }
-  .paw-desktop-root .paw-nav-buttons button,
-  .paw-desktop-root .paw-toolbar-actions > button { width: 26px; height: 26px; }
-  .paw-desktop-root .paw-omnibox-form { min-width: 84px; gap: 5px; padding-inline: 9px; }
-  .paw-desktop-root .paw-browser-agent-stream { width: calc(100% - 10px); top: 5px; right: 5px; max-height: calc(100% - 10px); }
-  .paw-desktop-root .paw-browser-menu { width: calc(100cqw - 10px); }
-}
-
-/* The tab deck is portalled into the window titlebar, which lives outside the
-   Browser App container, so its narrow behaviour has to be asked of the window
-   container. Without this the desktop tab floor stayed at its wide 104px and
-   overrode the shared strip's narrow floor by specificity alone. */
-@container paw-window (max-width: 620px) {
-  .paw-desktop-root .paw-browser-tab { min-width: 92px; flex-basis: 132px; }
-  .paw-desktop-root .paw-browser-tab-main { padding: 0 28px 0 8px; gap: 6px; }
+  .paw-desktop-root .paw-browser-surface-card { border-radius: 13px; }
+  .paw-desktop-root .paw-browser-menu-narrow-only { display: flex; }
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .paw-desktop-root .paw-browser-tab:not([data-active]):hover {
-    background: rgb(255 255 255 / 62%);
-    color: var(--paw-browser-ink);
-    box-shadow: inset 0 0 0 1px rgb(23 42 48 / 6%);
-  }
-  .paw-desktop-root .paw-nav-buttons button:hover:not(:disabled),
-  .paw-desktop-root .paw-toolbar-actions > button:hover:not(:disabled) {
-    background: var(--paw-browser-hover);
-    color: var(--paw-browser-ink);
-    box-shadow: inset 0 0 0 1px rgb(23 42 48 / 6%);
-  }
   .paw-desktop-root .paw-browser-agent-capsule-actions > button:hover {
     background: rgb(255 255 255 / 9%);
     color: #fff;
@@ -1289,35 +836,21 @@
   }
   .paw-desktop-root .paw-browser-agent-stream article:hover,
   .paw-desktop-root .paw-browser-history li > button:first-child:hover,
-  .paw-desktop-root .paw-browser-surface-card > header button:hover {
+  .paw-desktop-root .paw-browser-surface-card > header button:hover,
+  .paw-desktop-root .paw-toolbar-actions .paw-browser-menu > button:hover {
     background: var(--paw-browser-hover);
-  }
-
-  .paw-desktop-root .paw-browser-confirm button:hover:not(:disabled) {
-    border-color: var(--paw-control-line-strong);
-    background: var(--paw-control-bg-soft);
-    color: var(--paw-control-ink);
-  }
-
-  .paw-desktop-root .paw-browser-confirm button[data-danger]:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--paw-button-danger-bg) 86%, #000);
-    background: color-mix(in srgb, var(--paw-button-danger-bg) 86%, #000);
-    color: var(--paw-button-danger-ink);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-browser-agent-field,
   .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal,
-  .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-signal::before,
   .paw-desktop-root .paw-browser-agent-field[data-state='active'] .paw-browser-agent-mark svg,
   .paw-desktop-root .paw-browser-agent-counter svg,
   .paw-desktop-root .paw-browser-agent-capsule,
   .paw-desktop-root .paw-browser-agent-capsule-actions > button,
   .paw-desktop-root .paw-browser-agent-stream,
   .paw-desktop-root .paw-browser-agent-stream article,
-  .paw-desktop-root .paw-browser-start-halo,
-  .paw-desktop-root .paw-browser-start-halo::after,
   .paw-desktop-root .paw-browser-history,
   .paw-desktop-root .paw-browser-settings,
   .paw-desktop-root .paw-browser-tab {
@@ -1325,5 +858,4 @@
     transition: none;
   }
   .paw-desktop-root .paw-browser-agent-capsule { transform: translate3d(-50%, 0, 0); }
-  .paw-desktop-root .paw-browser-agent-signal::before { opacity: 0; }
 }

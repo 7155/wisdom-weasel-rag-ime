@@ -215,6 +215,12 @@
 .paw-session-workspace[data-status='stopping'] .paw-session-workspace__runtime i { background: var(--paw-warning); animation: none; }
 .paw-session-workspace__runtime button { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 9px; color: var(--paw-danger); cursor: pointer; }
 .paw-session-workspace__runtime button:hover { background: color-mix(in srgb, var(--paw-danger) 9%, transparent); }
+/* 回合的开始与结束不许推挤同一行的视图切换与工具簇：状态词按常见四字状态
+   （已同步/正在执行/正在停止）保留宽度并向右对齐，让文字换词时右缘钉住；
+   停止钮缺席时由同尺寸占位补上，挂载与卸载都发生在已经空出的格子里。
+   恢复上下文等长状态词仍可合法变宽——那是一次性的装载事实，不是每轮抖动。 */
+.paw-session-workspace__runtime > span { min-width: calc(4em + 12px); justify-content: flex-end; }
+.paw-session-workspace__runtime:not(:has(> button))::after { width: 29px; height: 29px; flex: none; content: ''; }
 
 .paw-session-workspace__body { min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; transition: grid-template-columns 220ms var(--paw-ease-out); }
 .paw-session-workspace[data-panel='status'] .paw-session-workspace__body,
@@ -330,6 +336,9 @@
 .paw-room-workspace[data-status='stopping'] .paw-room-workspace__runtime i { background: var(--paw-warning); animation: none; }
 .paw-room-workspace__runtime button { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 9px; color: var(--paw-danger); cursor: pointer; }
 .paw-room-workspace__runtime button:hover { background: color-mix(in srgb, var(--paw-danger) 9%, transparent); }
+/* 与 Session 同一条稳定合同：协作轮次的开始与结束不推挤 Room 头部。 */
+.paw-room-workspace__runtime > span { min-width: calc(4em + 12px); justify-content: flex-end; }
+.paw-room-workspace__runtime:not(:has(> button))::after { width: 29px; height: 29px; flex: none; content: ''; }
 
 .paw-room-workspace__body { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; background: color-mix(in srgb, var(--paw-panel-soft) 42%, transparent); }
 .paw-room-workspace__main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; background: var(--paw-panel-strong); }

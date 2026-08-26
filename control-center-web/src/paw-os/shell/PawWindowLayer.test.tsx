@@ -5,7 +5,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { createRoomProjection, type RoomActivityProjection } from '@/contracts/room-reducer';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { pawApps, type PawAppId } from '../runtime/app-registry';
-import { pawWindowArea, type PawWindowBounds, type PawWindowNode } from '../runtime/desktop-store';
+import { fitReachablePawWindowBounds, pawWindowArea, type PawWindowBounds, type PawWindowNode } from '../runtime/desktop-store';
 import { PawDesktopProvider } from '../runtime/desktop-context';
 import { usePawDesktopApi } from '../runtime/desktop-context';
 import { PawWindowChromePortal } from './PawWindowChrome';
@@ -301,7 +301,7 @@ describe('PAWOS compositor window frame', () => {
     expect(resizeWindowBounds(bounds, 'west', -900, 0).x).toBe(0);
   });
 
-  it('tracks the pointer 1:1 while dragging and stops the window at the desktop edge', () => {
+  it('tracks the pointer 1:1 while dragging and keeps a recoverable titlebar grip on screen', () => {
     const commit = vi.fn();
     // The gesture paints inside one rAF slot per frame; running that slot
     // inline is what lets the assertion read the frame mid-drag.
@@ -325,15 +325,17 @@ describe('PAWOS compositor window frame', () => {
       // no rounding, no lag between the grab point and the window.
       fireEvent.pointerMove(window, { clientX: 464, clientY: 342, pointerId: 31 });
       expect(shell.style.transform).toBe('translate3d(84px, 72px, 0)');
-      // Past the edge it stops with the same rule fitWindowsToViewport
-      // applies, so release never snaps the window somewhere the pointer
-      // never visited.
+      // Past the edge the frame may remain partially outside the OS canvas,
+      // but a stable titlebar grip stays reachable so the user can pull it
+      // back without an artificial full-window clamp.
       fireEvent.pointerMove(window, { clientX: -600, clientY: -600, pointerId: 31 });
-      expect(shell.style.transform).toBe(`translate3d(${area.x}px, ${area.y}px, 0)`);
+      const reachable = fitReachablePawWindowBounds({ x: -980, y: -870, width: 760, height: 560 }, area);
+      expect(reachable.x).toBeLessThan(area.x);
+      expect(shell.style.transform).toBe(`translate3d(${reachable.x}px, ${reachable.y}px, 0)`);
       fireEvent.pointerUp(window, { clientX: -600, clientY: -600, pointerId: 31 });
 
-      expect(commit).toHaveBeenLastCalledWith({ x: area.x, y: area.y, width: 760, height: 560 });
-      expect(shell.style.transform).toBe(`translate3d(${area.x}px, ${area.y}px, 0)`);
+      expect(commit).toHaveBeenLastCalledWith(reachable);
+      expect(shell.style.transform).toBe(`translate3d(${reachable.x}px, ${reachable.y}px, 0)`);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -372,7 +374,7 @@ describe('PAWOS compositor window frame', () => {
     }
   });
 
-  it('refits every window into the chrome-aware window area after the viewport shrinks', () => {
+  it('refits window size after viewport shrink while preserving a recoverable partial offset', () => {
     const windows = {
       agent: { ...desktopWindowNode('agent', 'agent'), bounds: { x: 40, y: 40, width: 1180, height: 900 } },
     };
@@ -397,14 +399,14 @@ describe('PAWOS compositor window frame', () => {
         const area = pawWindowArea();
         const bounds = capturedDesktopApi!.getState().windows.agent!.bounds;
 
-        expect(bounds.x).toBeGreaterThanOrEqual(area.x);
+        expect(bounds.x).toBeLessThanOrEqual(area.x + area.width - 120);
         expect(bounds.y).toBeGreaterThanOrEqual(area.y);
-        expect(bounds.x + bounds.width).toBeLessThanOrEqual(area.x + area.width);
-        expect(bounds.y + bounds.height).toBeLessThanOrEqual(area.y + area.height);
-        // The menu bar above and the Dock gutter below are chrome, never
-        // window area: a refitted window keeps its bottom edge — and the
-        // resize handle on it — above the shelf rather than behind it.
-        expect(bounds.y + bounds.height).toBeLessThanOrEqual(640 - 34 - 76);
+        expect(bounds.width).toBeLessThanOrEqual(area.width);
+        expect(bounds.height).toBeLessThanOrEqual(area.height);
+        // Viewport fitting no longer erases a deliberate partial offset; it
+        // only guarantees a 120px horizontal grip and one titlebar row.
+        expect(bounds.x + bounds.width).toBeGreaterThanOrEqual(area.x + 120);
+        expect(bounds.y).toBeLessThanOrEqual(area.y + area.height - 40);
       });
     });
   });

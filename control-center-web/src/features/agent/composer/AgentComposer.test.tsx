@@ -157,7 +157,7 @@ describe('AgentComposer macOS input methods', () => {
     const trigger = screen.getByRole('button', { name: '这段对话可用工具：1 个' });
     fireEvent.click(trigger);
     const dialog = screen.getByRole('dialog', { name: '当前对话能力' });
-    expect(within(dialog).getByRole('combobox', { name: '规划与任务的当前对话披露' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('combobox', { name: '规划与任务的当前对话使用' })).toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     fireEvent.click(within(dialog).getByRole('button', { name: '关闭当前对话能力' }));
     expect(screen.queryByRole('dialog', { name: '当前对话能力' })).not.toBeInTheDocument();
@@ -290,7 +290,7 @@ describe('AgentComposer macOS input methods', () => {
     expect(onEditPrevious).toHaveBeenCalledTimes(1);
   });
 
-  it('sends native steering and follow-up messages while keeping stop separate', () => {
+  it('sends a native follow-up without exposing a permanent delivery-mode switch', () => {
     const onSend = vi.fn();
     const onStop = vi.fn();
     const { container } = render(
@@ -323,22 +323,14 @@ describe('AgentComposer macOS input methods', () => {
     const view = within(container);
     const composer = view.getByRole('textbox', { name: '消息' });
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
-    expect(onSend).toHaveBeenLastCalledWith('steer', '补充要求');
-
-    fireEvent.change(composer, { target: { value: '补充要求' } });
-    fireEvent.click(view.getByRole('radio', { name: '接续' }));
-    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
-
-    fireEvent.change(composer, { target: { value: '补充要求' } });
-    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', altKey: true });
-    expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
+    expect(view.queryByRole('radiogroup', { name: '消息投递方式' })).not.toBeInTheDocument();
     fireEvent.click(view.getByRole('button', { name: '停止本轮' }));
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(view.getByRole('button', { name: '添加附件' })).toBeEnabled();
   });
 
-  it('does not offer 排队 for a draft the queue cannot hold', () => {
+  it('sends an attachment follow-up directly when the local text hold cannot carry it', () => {
     const onQueue = vi.fn(() => true);
     const onSend = vi.fn();
     const { container } = render(
@@ -370,18 +362,51 @@ describe('AgentComposer macOS input methods', () => {
     );
 
     const view = within(container);
-    fireEvent.click(view.getByRole('radio', { name: '排队' }));
-    expect(
-      view.getByRole('button', { name: '排队，当前回合结束后发送（排队只保留文字，附件请用干预或接续直接发送）' }),
-    ).toBeDisabled();
-
     const composer = view.getByRole('textbox', { name: '消息' });
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onQueue).not.toHaveBeenCalled();
-
-    // 接续 does carry the attachment, so Alt+Enter still has somewhere to go.
-    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', altKey: true });
     expect(onSend).toHaveBeenLastCalledWith('followUp', '');
+    expect(view.queryByRole('radiogroup', { name: '消息投递方式' })).not.toBeInTheDocument();
+  });
+
+  it('does not split text from attachments when a running turn has a text-only local queue', () => {
+    const onQueue = vi.fn(() => true);
+    const onSend = vi.fn();
+    const { container } = render(
+      <TooltipProvider>
+        <AgentComposer
+          draft="请结合设计稿继续"
+          attachments={[{ id: 'a1', name: '设计稿.png', mimeType: 'image/png', byteSize: 2048, source: 'picker' }]}
+          session={previewSessions[0]}
+          commands={[]}
+          tools={[]}
+          toolCatalogStatus="ready"
+          imageSupport="supported"
+          busy
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={() => {}}
+          onToolSelect={() => {}}
+          onProductCommand={() => {}}
+          onSend={onSend}
+          onStop={() => {}}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
+          onModelChange={() => {}}
+          onQueue={onQueue}
+        />
+      </TooltipProvider>,
+    );
+
+    fireEvent.keyDown(within(container).getByRole('textbox', { name: '消息' }), {
+      key: 'Enter',
+      code: 'Enter',
+    });
+
+    expect(onQueue).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledWith('followUp', '请结合设计稿继续');
   });
 
   it('accepts pasted non-image files and shows a type badge instead of a broken thumbnail', () => {

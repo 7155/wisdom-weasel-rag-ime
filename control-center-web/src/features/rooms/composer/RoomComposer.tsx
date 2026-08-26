@@ -243,9 +243,7 @@ export function RoomComposer({
         <header><AtSign size={14} /><span><strong>想请谁加入</strong><small>继续输入名字可以筛选</small></span></header>
         {mentionCandidates.map((participant, index) => {
           const mentionName = roomParticipantMentionName(participant, participantAliases);
-          const secondary = mentionName === participant.displayName
-            ? roomCollaborationRoleLabel(participant.collaborationRole)
-            : `${participant.displayName} · ${roomCollaborationRoleLabel(participant.collaborationRole)}`;
+          const secondary = roomCollaborationRoleLabel(participant.collaborationRole);
           return <button
           type="button"
           id={`room-mention-${participant.id}`}

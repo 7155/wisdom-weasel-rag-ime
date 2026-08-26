@@ -8,8 +8,8 @@ export const ROOM_AUTO_SATELLITE_LIMIT = 5;
 
 /**
  * planet 窗口统一铭牌：无论从主 Room、协作态势、星空还是自动展开进来，
- * 同一位伙伴永远得到同一扇窗——标题是行星名，副标题只留人读得懂的
- * 「谁 · 分工」。Session id 是机器序号，去完整 Session 的入口在窗内
+ * 同一位伙伴永远得到同一扇窗——标题是行星名，副标题只留当前分工。
+ * Session id 与旧 persona 名都是内部事实，去完整 Session 的入口在窗内
  * 状态行，不占窗口铭牌。
  */
 export function roomPlanetWindowRequest(
@@ -25,7 +25,7 @@ export function roomPlanetWindowRequest(
       id: participant.id,
       roomId,
       title: roomFocusCelestialName(participant.ordinal),
-      subtitle: `${participant.displayName} · ${roomCollaborationRoleLabel(participant.collaborationRole)}`,
+      subtitle: roomCollaborationRoleLabel(participant.collaborationRole),
     },
   };
 }

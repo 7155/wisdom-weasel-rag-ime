@@ -839,7 +839,7 @@ export function PawRoomStarfield({
     return (
       <>
         <header className="paw-sf__card-head">
-          <strong>{planet.celestialName} · {planet.displayName}</strong>
+          <strong>{planet.celestialName}</strong>
           <span data-tone={planet.attention ? 'attention' : planet.state === 'running' ? 'working' : 'done'}>{planet.stateLabel}</span>
         </header>
         <p className="paw-sf__card-task">{planet.currentAction}</p>

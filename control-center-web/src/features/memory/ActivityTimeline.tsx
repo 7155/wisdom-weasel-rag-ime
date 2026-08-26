@@ -125,12 +125,15 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
     setSelectedTaskId('');
     setSelectedReference(null);
   }, [initialDate, today]);
+  const organizeRange = useMemo(() => monthRange(date, today), [date, today]);
   const {
     approve,
     build,
     buildJob,
     buildJobError,
+    buildJobId,
     buildJobProgress,
+    buildJobResult,
     buildJobState,
     calendar,
     canRead,
@@ -139,7 +142,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
     capabilities,
     reject,
     timeline,
-  } = useActivityTimeline(date, true);
+  } = useActivityTimeline(date, true, organizeRange.end);
   const payload = asRecord(timeline.data);
   const calendarPayload = asRecord(calendar.data);
   const calendarSummary = asRecord(calendarPayload.summary);
@@ -156,7 +159,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const timelineId = stringValue(item.timelineId);
   const status = stringValue(item.status);
-  const buildRunning = Boolean(buildJobState) && buildJobState !== 'completed' && buildJobState !== 'failed';
+  const buildRunning = buildJobState === 'queued' || buildJobState === 'running';
   const buildAwaitingStatus = buildJob.isFetching && !buildJobState;
   const buildActive = build.isPending || buildAwaitingStatus || buildRunning;
   const busy = buildActive || approve.isPending || reject.isPending;
@@ -168,11 +171,16 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
       ? '正在提交整理任务…'
       : buildAwaitingStatus
         ? '整理任务已受理，正在读取进度…'
-        : buildRunning && stringValue(buildJobProgress.phase) === 'activity_timeline_catch_up'
+        : buildRunning && [
+          'activity_timeline_catch_up',
+          'activity_timeline_auto_catch_up',
+        ].includes(stringValue(buildJobProgress.phase))
           ? catchUpProgressCopy(buildJobProgress)
           : buildRunning
             ? '整理任务已进入队列，等待开始…'
-            : '';
+            : buildJobState === 'completed'
+              ? catchUpCompletedCopy(buildJobProgress, buildJobResult)
+              : '';
   const semanticReady = timelineId
     ? calendarDays.some((day) => (
       day.date === date && day.organized && day.modelOrganized
@@ -362,9 +370,16 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             error={calendar.error as Error | null}
             isLoading={capabilities.isPending || (canReadCalendar && calendar.isPending)}
             onMoveMonth={moveMonth}
-            onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
+            onOrganizeMonth={() => build.mutate({
+              targetDate: organizeRange.end,
+              throughToday: true,
+              rangeStartDate: organizeRange.start,
+            })}
+            organizeRange={organizeRange}
             organizeActive={buildActive}
             organizeFailed={Boolean(buildError)}
+            organizeJobId={buildJobId}
+            organizeJobState={buildJobState}
             organizeMessage={buildProgressMessage}
             onSelect={chooseDate}
             summary={calendarSummary}
@@ -585,9 +600,12 @@ function ActivityTimelineCalendar({
   error,
   isLoading,
   onMoveMonth,
-  onOrganizeThroughToday,
+  onOrganizeMonth,
+  organizeRange,
   organizeActive,
   organizeFailed,
+  organizeJobId,
+  organizeJobState,
   organizeMessage,
   onSelect,
   summary,
@@ -601,9 +619,12 @@ function ActivityTimelineCalendar({
   error: Error | null;
   isLoading: boolean;
   onMoveMonth: (offset: number) => void;
-  onOrganizeThroughToday: () => void;
+  onOrganizeMonth: () => void;
+  organizeRange: { start: string; end: string };
   organizeActive: boolean;
   organizeFailed: boolean;
+  organizeJobId: string;
+  organizeJobState: string;
   organizeMessage: string;
   onSelect: (date: string) => void;
   summary: Record<string, unknown>;
@@ -614,6 +635,18 @@ function ActivityTimelineCalendar({
   const cells = calendarCells(month);
   const byDate = new Map(days.map((day) => [day.date, day]));
   const canMoveForward = month < today.slice(0, 7);
+  const [organizePreviewOpen, setOrganizePreviewOpen] = useState(false);
+  const pendingDays = days.filter((day) => (
+    day.date <= today && (!day.organized || day.needsRefresh)
+  ));
+  const pendingDayCount = Math.max(
+    pendingDays.length,
+    numberValue(summary.waitingDayCount) + numberValue(summary.outdatedDayCount),
+  );
+  const pendingSourceCount = pendingDays.reduce(
+    (total, day) => total + day.sourceEventCount,
+    0,
+  );
 
   return (
     <section className="activity-calendar" aria-labelledby="activity-calendar-title">
@@ -628,11 +661,11 @@ function ActivityTimelineCalendar({
             disabled={busy || !canWrite}
             leadingIcon={<Sparkles size={15} />}
             loading={organizeActive}
-            onClick={onOrganizeThroughToday}
+            onClick={() => setOrganizePreviewOpen(true)}
             size="small"
             variant="primary"
           >
-            {organizeActive ? '正在整理' : '整理到今天'}
+            {organizeActive ? '正在整理' : '整理本月'}
           </Button>
           <IconButton
             icon={<ChevronLeft size={16} />}
@@ -667,10 +700,62 @@ function ActivityTimelineCalendar({
           data-tone={organizeFailed ? 'danger' : 'info'}
           role={organizeFailed ? 'alert' : 'status'}
         >
-          {organizeFailed ? <X aria-hidden="true" size={15} /> : <RefreshCw aria-hidden="true" size={15} />}
-          <span>{organizeMessage}</span>
+          {organizeFailed
+            ? <X aria-hidden="true" size={15} />
+            : organizeJobState === 'completed'
+              ? <Check aria-hidden="true" size={15} />
+              : <RefreshCw aria-hidden="true" size={15} />}
+          <span>
+            <strong>{organizeMessage}</strong>
+            {organizeJobId ? <small>任务 {organizeJobId}</small> : null}
+          </span>
+          {organizeFailed ? (
+            <Button onClick={() => setOrganizePreviewOpen(true)} size="small" variant="quiet">重新检查范围</Button>
+          ) : null}
         </div>
       ) : null}
+
+      <Dialog open={organizePreviewOpen} onOpenChange={setOrganizePreviewOpen}>
+        <DialogContent className="activity-calendar__organize-preview">
+          <DialogHeader>
+            <DialogTitle>整理本月</DialogTitle>
+            <DialogDescription>
+              以当前月历返回的待处理范围为准；本次只整理这个月，不会带入其他月份，也不会改写来源记录。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="activity-calendar__organize-scope">
+            <strong>{pendingDayCount} 天待整理 · {pendingSourceCount} 条来源</strong>
+            <span>范围：{organizeRange.start} 至 {organizeRange.end}</span>
+            {pendingDays.length ? (
+              <div>
+                <small>待整理日期示例</small>
+                <ul>
+                  {pendingDays.slice(0, 3).map((day) => (
+                    <li key={day.date}>
+                      <time>{day.date}</time>
+                      <span>{day.needsRefresh ? '有新来源，需重新整理' : '尚未整理'} · {day.sourceEventCount} 条来源</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : <p>当前月历未返回待整理日期。</p>}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setOrganizePreviewOpen(false)} variant="quiet">取消</Button>
+            <Button
+              disabled={organizeActive || pendingDayCount === 0}
+              loading={organizeActive}
+              onClick={() => {
+                setOrganizePreviewOpen(false);
+                onOrganizeMonth();
+              }}
+              variant="primary"
+            >
+              确认整理本月
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="activity-calendar__summary" aria-live="polite">
         <span><strong>{numberValue(summary.activityDayCount)}</strong> 天有活动</span>
@@ -1477,6 +1562,17 @@ function shiftMonth(value: string, offset: number): string {
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 }
 
+function monthRange(value: string, today: string): { start: string; end: string } {
+  const month = value.slice(0, 7);
+  const [year, monthNumber] = month.split('-').map(Number);
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+  return {
+    start: `${month}-01`,
+    end: month === today.slice(0, 7) ? today : monthEnd,
+  };
+}
+
 function formatMonthHeading(value: string): string {
   const [year, month] = value.split('-').map(Number);
   return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(new Date(year, month - 1, 1));
@@ -1488,6 +1584,18 @@ function catchUpProgressCopy(progress: Record<string, unknown>): string {
   const currentDate = stringValue(progress.currentDate);
   const count = total ? `已完成 ${completed} / ${total} 天` : '正在计算待整理日期';
   return `正在整理历史日记：${count}${currentDate ? `，当前 ${currentDate}` : ''}。`;
+}
+
+function catchUpCompletedCopy(
+  progress: Record<string, unknown>,
+  result: Record<string, unknown>,
+): string {
+  const completed = numberValue(result.completedDayCount, numberValue(progress.completedDayCount));
+  const total = numberValue(progress.totalDayCount, numberValue(result.batchDayCount, completed));
+  const remaining = numberValue(result.remainingDayCount, numberValue(progress.remainingDayCount));
+  return total
+    ? `整理完成：已完成 ${completed} / ${total} 天，剩余 ${remaining} 天。`
+    : '整理任务已完成，月历状态已刷新。';
 }
 
 function formatDateHeading(value: string): string {

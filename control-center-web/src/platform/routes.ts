@@ -1086,7 +1086,7 @@ export const CONTROL_ROUTES = {
   'memory.activityTimeline.build': {
     method: 'POST',
     path: '/api/memory/activity-timeline/build',
-    body: ['date', 'throughToday'],
+    body: ['date', 'throughToday', 'rangeStartDate'],
     requiredBody: ['date'],
   },
   'memory.activityTimeline.approve': {

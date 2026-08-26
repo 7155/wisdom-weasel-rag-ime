@@ -27,7 +27,7 @@ describe('conversation logo-first compact chrome', () => {
       agentCss.indexOf('@container paw-composer-toolbar (max-width: 460px)'),
     );
     expect(detailStep).toMatch(/\.agent-composer__picker-detail\s*\{\s*display:\s*none;/s);
-    expect(detailStep).toMatch(/\.agent-composer__picker\s*\{[^}]*max-width:\s*168px;/s);
+    expect(detailStep).toMatch(/\.agent-composer__picker\s*\{[^}]*max-width:\s*136px;/s);
 
     const iconOnlyStep = agentCss.slice(
       agentCss.indexOf('@container paw-composer-toolbar (max-width: 460px)'),
@@ -80,10 +80,20 @@ describe('conversation logo-first compact chrome', () => {
     expect(permissionPickerSource).toContain('<PermissionMark mode={current.executionMode}');
     expect(permissionPickerSource).not.toContain('ShieldCheck size={15}');
     expect(modelPickerSource).toContain('<ProviderMark');
-    expect(modelPickerSource).not.toContain('BrainCircuit');
+    expect(modelPickerSource).toMatch(/leadingIcon=\{<BrainCircuit size=\{15\} \/>\}[\s\S]*?>\s*<span className="agent-composer__thinking-label">/s);
     expect(toolPickerSource).toContain('<CapabilityMark');
     expect(toolPickerSource).not.toContain('Wrench');
     // A pending model switch still needs its own motion, so the loader stays.
     expect(modelPickerSource).toContain('<LoaderCircle className="ui-spin" size={15} />');
+  });
+
+  it('keeps narrow controls scrollable without restoring the retired full composer glow', () => {
+    const narrowStep = agentCss.slice(
+      agentCss.indexOf('@container paw-composer-toolbar (max-width: 360px)'),
+    );
+    expect(narrowStep).toMatch(/\.agent-composer__controls\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(agentMigratedCss).not.toContain('conic-gradient');
+    expect(agentMigratedCss).not.toContain('paw-composer-glow');
+    expect(agentCss).toMatch(/\.agent-composer\[data-busy\]::before\s*\{[^}]*height:\s*2px;/s);
   });
 });

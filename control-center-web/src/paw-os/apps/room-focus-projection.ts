@@ -4,7 +4,8 @@ import type {
   RoomProjectionState,
 } from '@/contracts/room-reducer';
 import { roomActivityFlowKind, roomFlowRefs } from '@/features/rooms/room-flow-projection';
-import type { RoomSummary, RoomWorkItem, RoomWorkState } from '@/features/rooms/room-types';
+import { roomPlanetName } from '@/features/rooms/room-copy';
+import type { RoomCollaborationRole, RoomSummary, RoomWorkItem, RoomWorkState } from '@/features/rooms/room-types';
 import {
   roomDispatchPlanFromActivity,
   roomDispatchPlans,
@@ -79,7 +80,7 @@ export interface RoomFocusPartner {
   sessionId: string;
   displayName: string;
   celestialName: string;
-  collaborationRole?: string;
+  collaborationRole?: RoomCollaborationRole;
   state: RoomFocusState;
   ownedWorkItemIds: string[];
   currentAction: string;
@@ -150,10 +151,8 @@ export interface RoomFocusProjection {
   };
 }
 
-const celestialNames = ['Earth', 'Mars', 'Venus', 'Jupiter', 'Saturn', 'Mercury', 'Neptune', 'Uranus'];
-
 export function roomFocusCelestialName(ordinal: number): string {
-  return celestialNames[ordinal] ?? `Planet ${ordinal + 1}`;
+  return roomPlanetName(ordinal);
 }
 
 export function buildRoomFocusProjection(
@@ -483,7 +482,7 @@ function focusFlowPackets(
      * root dispatch is Sol's own gravity. */
     const planSource = plan ? roomDispatchSourceParticipantId(plan, dispatchPlans) : '';
     const planSummary = plan
-      ? roomDispatchPlanSummary(plan, celestialByParticipant.get(plan.targetParticipantId) ?? plan.targetDisplayName)
+      ? roomDispatchPlanSummary(plan, celestialByParticipant.get(plan.targetParticipantId) ?? '未知行星')
       : '';
     packets.push({
       id: `activity:${activity.id}`,

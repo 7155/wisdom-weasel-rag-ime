@@ -474,25 +474,25 @@ const modelRouteDefinitions: ReadonlyArray<{
   },
   {
     id: 'toolAgent',
-    label: 'Tool Agent',
-    caption: '承担可写执行与工具循环；失败后把报告交回上级继续决策。',
+    label: '私有 Tool Agent',
+    caption: '作为当前 Session 的私有执行卫星，承担可写工具循环；结果交回上级继续决策。',
     inheritLabel: '继承父 Session 模型',
   },
   {
     id: 'subagent',
-    label: '调研与复核 Agent',
-    caption: '承担只读调研、代码核对和独立复核。',
+    label: '私有调研卫星',
+    caption: '作为当前 Session 的私有只读卫星，承担调研、代码核对和独立复核。',
     inheritLabel: '继承父 Session 模型',
   },
   {
     id: 'roomCoordinator',
-    label: 'Room 协调 Agent',
-    caption: '主持多人协作、分派工作并组织验收。',
+    label: 'Room 行星伙伴',
+    caption: '用于 Room 中用户可见的行星伙伴；参与协作、分派工作并组织验收。',
     inheritLabel: '沿用 Room 伙伴模型',
   },
 ];
 
-function ModelRoutingPanel({
+export function ModelRoutingPanel({
   catalog,
   onOpenSettings,
   onSave,

@@ -134,7 +134,11 @@ describe('MemoryFeature relations', () => {
           },
         },
         'memory.activityTimeline.build': (request: ControlRequest) => {
-          expect(request.body).toEqual({ date, throughToday: true });
+          expect(request.body).toEqual({
+            date,
+            rangeStartDate: `${date.slice(0, 7)}-01`,
+            throughToday: true,
+          });
           return new Promise((resolve) => { acceptBuild = resolve; });
         },
         'agent.memoryMaintenance.run': {
@@ -153,8 +157,12 @@ describe('MemoryFeature relations', () => {
     renderMemory(transport);
 
     await user.click(await screen.findByRole('tab', { name: '时间线' }));
-    const organizeButton = await screen.findByRole('button', { name: '整理到今天' });
+    const organizeButton = await screen.findByRole('button', { name: '整理本月' });
     await user.click(organizeButton);
+    const preview = await screen.findByRole('dialog', { name: '整理本月' });
+    expect(preview).toHaveTextContent('1 天待整理 · 8 条来源');
+    expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.build')).toHaveLength(0);
+    await user.click(within(preview).getByRole('button', { name: '确认整理本月' }));
 
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.build')).toHaveLength(1);
     expect(organizeButton).toHaveAttribute('aria-busy', 'true');
@@ -1767,6 +1775,8 @@ describe('MemoryFeature preferences', () => {
     const user = userEvent.setup();
     let stablePreferenceHalfLifeDays = 365;
     let includeAgentDialogue = true;
+    let timelineEnabled = true;
+    let timelineMaxItems = 2;
     let settingsReads = 0;
     const payloadSha256 = 'a'.repeat(64);
     const transport = new MockControlTransport({
@@ -1787,7 +1797,7 @@ describe('MemoryFeature preferences', () => {
               memory: {
                 timeDecay: { temporaryHalfLifeDays: 14, stablePreferenceHalfLifeDays },
                 automaticOrganization: { includeAgentDialogue },
-                recall: { detailLevel: 'compact' },
+                recall: { detailLevel: 'compact', timelineEnabled, timelineMaxItems },
               },
             },
             runtimeConfig: { runtimeRevision: 12 },
@@ -1797,6 +1807,8 @@ describe('MemoryFeature preferences', () => {
           expect(request.body).toEqual({
             changes: {
               'memory.automaticOrganization.includeAgentDialogue': false,
+              'memory.recall.timelineEnabled': false,
+              'memory.recall.timelineMaxItems': 4,
               'memory.timeDecay.stablePreferenceHalfLifeDays': 730,
             },
             expectedRuntimeRevision: 12,
@@ -1818,6 +1830,8 @@ describe('MemoryFeature preferences', () => {
           expect(body).toMatchObject({
             changes: {
               'memory.automaticOrganization.includeAgentDialogue': false,
+              'memory.recall.timelineEnabled': false,
+              'memory.recall.timelineMaxItems': 4,
               'memory.timeDecay.stablePreferenceHalfLifeDays': 730,
             },
             expectedRuntimeRevision: 12,
@@ -1827,6 +1841,8 @@ describe('MemoryFeature preferences', () => {
           });
           stablePreferenceHalfLifeDays = 730;
           includeAgentDialogue = false;
+          timelineEnabled = false;
+          timelineMaxItems = 4;
           return {
             schemaVersion: 'rag-ime.management-work-receipt.v1',
             ok: true,
@@ -1847,12 +1863,18 @@ describe('MemoryFeature preferences', () => {
     await user.click(screen.getByRole('combobox', { name: '稳定偏好' }));
     await user.click(await screen.findByRole('option', { name: '优先记住' }));
     await user.click(screen.getByRole('switch', { name: '让 Agent 对话摘要参与整理' }));
+    await user.click(screen.getByRole('switch', { name: '按需召回时间线' }));
+    await user.click(screen.getByRole('combobox', { name: '时间线召回上限' }));
+    await user.click(await screen.findByRole('option', { name: '4 条' }));
     await user.click(screen.getByRole('button', { name: '保存记忆偏好' }));
 
     expect(await screen.findByText('记忆偏好已保存')).toBeInTheDocument();
     expect(settingsReads).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('combobox', { name: '稳定偏好' })).toHaveTextContent('优先记住');
     expect(screen.getByRole('switch', { name: '让 Agent 对话摘要参与整理' })).not.toBeChecked();
+    expect(screen.getByRole('switch', { name: '按需召回时间线' })).not.toBeChecked();
+    expect(screen.getByRole('combobox', { name: '时间线召回上限' })).toHaveTextContent('4 条');
+    expect(screen.getByText('每个压缩周期最多调用一次')).toBeInTheDocument();
   });
 
   it('keeps unsaved choices visible and reports an authority write failure', async () => {

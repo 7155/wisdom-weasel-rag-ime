@@ -57,7 +57,7 @@ describe('projectWayfinderWork', () => {
       title: '迁移作战室',
       activity: 'running',
     });
-    expect(row!.agents).toEqual(['Agent 1', 'Agent 2', 'Agent 3']);
+    expect(row!.agents).toEqual(['Earth', 'Mars', 'Venus']);
   });
 
   it('keeps partner Sessions off the list entirely when their Room record exists', () => {
@@ -85,7 +85,7 @@ describe('projectWayfinderWork', () => {
     const titles = view.buckets[0]!.items.map((item) => item.title);
     expect(titles).toEqual(['独立调查', '迁移作战室']);
     const roomItem = view.buckets[0]!.items.find((item) => item.kind === 'room');
-    expect(roomItem?.agents).toEqual(['Agent 1', 'Agent 2']);
+    expect(roomItem?.agents).toEqual(['Mars', 'Venus']);
     expect(roomItem?.activity).toBe('running');
   });
 
@@ -165,7 +165,8 @@ describe('projectWayfinderWork', () => {
     };
 
     expect(projectWayfinderWork({ ...sources, query: 'control-center' }).rowCount).toBe(1);
-    expect(projectWayfinderWork({ ...sources, query: 'kimi' }).rowCount).toBe(1);
+    expect(projectWayfinderWork({ ...sources, query: 'mars' }).rowCount).toBe(1);
+    expect(projectWayfinderWork({ ...sources, query: 'kimi' }).rowCount).toBe(0);
     expect(projectWayfinderWork({ ...sources, query: '重构' }).rowCount).toBe(1);
     expect(projectWayfinderWork({ ...sources, query: '不存在' }).rowCount).toBe(0);
   });

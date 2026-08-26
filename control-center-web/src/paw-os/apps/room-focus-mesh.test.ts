@@ -101,7 +101,8 @@ describe('buildRoomFocusMesh', () => {
 
   it('keeps planet identity and a readable responsibility on every node', () => {
     const mesh = buildRoomFocusMesh(focus);
-    expect(mesh.nodes[0]).toMatchObject({ label: 'Earth', sublabel: 'Agent Earth', responsibility: '整合协作图', tone: 0 });
+    expect(mesh.nodes[0]).toMatchObject({ label: 'Earth', responsibility: '整合协作图', tone: 0 });
+    expect(mesh.nodes[0]).not.toHaveProperty('sublabel');
     expect(mesh.nodes[1]).toMatchObject({ label: 'Mars', responsibility: '实现关系投影', tone: 1 });
     expect(mesh.nodes[2]).toMatchObject({ label: 'Venus', responsibility: '独立复核', tone: 2 });
   });

@@ -126,7 +126,7 @@ async function loadPreview(
     set({
       status: 'error',
       preview: null,
-      error: '文件预览读取失败。请确认文件仍属于这个对话后重试。',
+      error: publicFilePreviewError(error),
       controller: null,
     });
   }
@@ -189,4 +189,30 @@ function isAbortError(error: unknown): boolean {
 
 function normalizedMime(value: string): string {
   return value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+}
+
+function publicFilePreviewError(error: unknown): string {
+  const status = transportErrorStatus(error);
+  if (status !== null && error instanceof Error) {
+    const message = error.message.toLowerCase();
+    if (message.includes('object is unavailable')) {
+      return '文件收据仍在，但原始文件当前不可用。请检查外置存储是否已连接后重试。';
+    }
+    if (message.includes('digest') || message.includes('hash') || message.includes('byte size')) {
+      return '文件内容已发生变化，旧预览收据不能继续使用。请重新生成这份文件结果。';
+    }
+    if (message.includes('not found for this session') || message.includes('does not belong')) {
+      return '这份文件不属于当前 Session，无法跨对话读取。';
+    }
+    return `文件预览读取失败（HTTP ${status}）。请重试。`;
+  }
+  if (error instanceof TypeError && /authority|digest|receipt|mime|content url|renderer|bounded/iu.test(error.message)) {
+    return '文件预览收据校验失败。请重新生成这份文件结果。';
+  }
+  return '文件预览读取失败。请重试。';
+}
+
+function transportErrorStatus(error: unknown): number | null {
+  if (!(error instanceof Error) || !('status' in error)) return null;
+  return typeof error.status === 'number' ? error.status : null;
 }

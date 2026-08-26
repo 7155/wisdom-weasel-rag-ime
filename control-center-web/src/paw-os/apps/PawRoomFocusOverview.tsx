@@ -15,7 +15,6 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Disclosure } from '@/components/primitives';
 import {
   buildRoomFocusMesh,
-  roomFocusMeshEdgeKindLabel,
   type RoomFocusMeshNode,
 } from './room-focus-mesh';
 import {
@@ -187,79 +186,56 @@ function FocusMeshGraph({
           aria-label="协作网状图"
           className="paw-room-focus-overview__mesh-canvas"
           role="group"
-          style={{ aspectRatio: `100 / ${mesh.height}` }}
         >
-          <svg aria-hidden="true" focusable="false" preserveAspectRatio="none" viewBox={`0 0 100 ${mesh.height}`}>
-            {mesh.edges.map((edge) => (
-              <g
-                className="paw-room-focus-overview__mesh-edge"
-                data-kind={edge.kind}
-                data-state={edge.state}
-                key={edge.id}
-              >
-                <path d={edge.path} vectorEffect="non-scaling-stroke" />
-                <circle cx={edge.tip.x} cy={edge.tip.y} r="1.1" />
-              </g>
-            ))}
-          </svg>
-          {mesh.edges.map((edge) => (
-            <span
-              aria-hidden="true"
-              className="paw-room-focus-overview__mesh-edge-label"
-              data-kind={edge.kind}
-              key={`${edge.id}:label`}
-              style={{ left: `${edge.labelX}%`, top: `${(edge.labelY / mesh.height) * 100}%` }}
-            >{edge.label}</span>
-          ))}
-          {mesh.nodes.map((node) => <FocusMeshNode
-            canvasHeight={mesh.height}
-            key={node.id}
-            node={node}
-            selected={selection.kind === 'partner' && selection.id === node.refId}
-            onSelect={onSelect}
-          />)}
+          <div aria-label="行星伙伴" className="paw-room-focus-overview__mesh-nodes" role="list">
+            {mesh.nodes.map((node) => <div key={node.id} role="listitem"><FocusMeshNode
+              node={node}
+              selected={selection.kind === 'partner' && selection.id === node.refId}
+              onSelect={onSelect}
+            /></div>)}
+          </div>
+          {mesh.edges.length ? <ul aria-label="协作关系" className="paw-room-focus-overview__mesh-relations">
+            {mesh.edges.map((edge) => {
+              const source = mesh.nodes.find((node) => node.id === edge.sourceId);
+              const target = mesh.nodes.find((node) => node.id === edge.targetId);
+              if (!source || !target) return null;
+              return <li data-kind={edge.kind} data-state={edge.state} key={edge.id}>
+                <i aria-hidden="true" />
+                <span><strong>{source.label}</strong><ArrowRight aria-hidden="true" size={12} /><strong>{target.label}</strong></span>
+                <small>{edge.label}</small>
+              </li>;
+            })}
+          </ul> : <p className="paw-room-focus-overview__mesh-empty">伙伴已就位；出现真实分工或交接后，这里会列出关系。</p>}
         </div>
       ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，协作网会从这里生长。</p>}
-      {mesh.edgeKinds.length ? (
-        <ul aria-label="关系图例" className="paw-room-focus-overview__mesh-legend">
-          {mesh.edgeKinds.map((kind) => (
-            <li data-kind={kind} key={kind}><i aria-hidden="true" />{roomFocusMeshEdgeKindLabel(kind)}</li>
-          ))}
-        </ul>
-      ) : null}
     </section>
   );
 }
 
 function FocusMeshNode({
-  canvasHeight,
   node,
   onSelect,
   selected,
 }: {
-  canvasHeight: number;
   node: RoomFocusMeshNode;
   onSelect: (selection: FocusSelection) => void;
   selected: boolean;
 }) {
-  const position = { left: `${node.x}%`, top: `${Math.round((node.y / canvasHeight) * 10000) / 100}%` };
   const stateLabel = roomFocusStateLabel(node.state);
   return (
     <button
-      aria-label={`${node.label}，${node.sublabel}，职责：${node.responsibility}，${stateLabel}`}
+      aria-label={`${node.label}，职责：${node.responsibility}，${stateLabel}`}
       aria-pressed={selected}
       className="paw-room-focus-overview__mesh-node paw-room-focus-overview__mesh-node--partner"
       data-tone={node.tone}
       data-state={node.state}
       onClick={() => onSelect({ kind: 'partner', id: node.refId })}
-      style={position}
-      title={`${node.label} · ${node.sublabel} · ${node.responsibility}`}
+      title={`${node.label} · ${node.responsibility}`}
       type="button"
     >
       <i aria-hidden="true" />
       <span>
         <strong>{node.label}</strong>
-        <small>{node.sublabel}</small>
         <em>{node.responsibility}</em>
       </span>
     </button>
@@ -368,7 +344,7 @@ function FocusDispatchPlan({
   plan: RoomDispatchPlan;
   workItems: RoomFocusWorkItem[];
 }) {
-  const targetName = plan.targetParticipantId ? actorName(plan.targetParticipantId) : plan.targetDisplayName || '伙伴';
+  const targetName = plan.targetParticipantId ? actorName(plan.targetParticipantId) : '伙伴';
   const objective = workItems.find((item) => item.id === plan.workItemId)?.objective;
   const selectedCandidates = plan.candidates.filter((candidate) => candidate.selected);
   return (
@@ -377,7 +353,6 @@ function FocusDispatchPlan({
         <b>{actorName(packet.sourceParticipantId)}</b>
         <ArrowRight aria-hidden="true" size={12} />
         <b>{targetName}</b>
-        {plan.targetDisplayName ? <small>{plan.targetDisplayName}</small> : null}
       </span>
       <dl>
         <div><dt>方式</dt><dd>{plan.reasonLabel}{plan.routingPolicyLabel ? ` · ${plan.routingPolicyLabel}` : ''}</dd></div>
@@ -395,7 +370,6 @@ function FocusDispatchPlan({
             {plan.candidates.map((candidate) => (
               <li data-selected={candidate.selected || undefined} key={candidate.participantId}>
                 <strong>{actorName(candidate.participantId)}</strong>
-                <small>{candidate.displayName}</small>
                 <span>{candidate.signals.length ? candidate.signals.join('、') : '无信号'} · {candidate.score.toFixed(1)}</span>
               </li>
             ))}
@@ -445,7 +419,7 @@ function FocusInspector({
       ) : null}
       {partner ? (
         <dl>
-          <div><dt>负责人</dt><dd>{partner.celestialName} · {partner.displayName}</dd></div>
+          <div><dt>负责人</dt><dd>{partner.celestialName}</dd></div>
           {partner.latestReceipt ? <div><dt>最近回执</dt><dd>{partner.latestReceipt}</dd></div> : null}
         </dl>
       ) : null}
