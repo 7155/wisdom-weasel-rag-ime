@@ -55,6 +55,20 @@ describe('projectComposerActionModel', () => {
     expect(composerActionLabel(model.primary)).toBe('排队，当前回合结束后发送');
   });
 
+  it('names the anchor resolution honestly while historical editing opens', () => {
+    // The host raises `sending` for this state too; the dedicated flag must
+    // win so the reason never claims an earlier message is in flight.
+    const model = projectComposerActionModel({ ...ready, sending: true, editResolving: true });
+    expect(model).toMatchObject({
+      primary: 'prompt',
+      primaryDisabled: true,
+      blockedReason: 'edit-resolving',
+      mode: 'sending',
+    });
+    expect(composerBlockedReasonLabel(model.blockedReason)).toBe('正在定位历史消息');
+    expect(composerSubmitMode(model)).toBeNull();
+  });
+
   it('blocks with the same reasons the send label used to hide', () => {
     expect(composerBlockedReasonLabel(
       projectComposerActionModel({ ...ready, hasSession: false }).blockedReason,

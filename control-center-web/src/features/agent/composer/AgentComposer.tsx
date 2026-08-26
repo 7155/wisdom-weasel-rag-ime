@@ -269,6 +269,7 @@ export function AgentComposer({
     draftHasText: Boolean(composerDraft.trim()),
     busy,
     sending,
+    editResolving: Boolean(editState?.resolving),
     stopping,
     modelChanging,
     preferredBusyDelivery: busyDelivery,

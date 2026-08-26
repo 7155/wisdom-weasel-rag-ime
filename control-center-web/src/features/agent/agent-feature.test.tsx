@@ -749,7 +749,9 @@ describe('Agent experience', () => {
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue(
       '读取输入法工具书，并把结果作为可展开卡片保留。',
     );
-    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
+    // A blocked action names why: the button carries the resolving state
+    // instead of pretending an earlier message is still in flight.
+    expect(screen.getByRole('button', { name: '发送（正在定位历史消息）' })).toBeDisabled();
 
     pendingForkCatalog.resolve(forkListFixture());
     expect(await screen.findByText('发送后将从这里重新生成后续对话')).toBeInTheDocument();
@@ -2429,7 +2431,9 @@ describe('Agent experience', () => {
 
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('working'));
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById[failedTurnId]?.status).toBe('failed');
-    expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled();
+    // The failed turn unlocks the composer: the primary action is plain 发送
+    // again (blocked only on the empty draft), never a stale 干预.
+    expect(await screen.findByRole('button', { name: '发送（先输入内容或添加附件）' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重试本轮' })).toBeEnabled();
     expect(screen.getByText('模型服务请求失败，请重试或切换模型。')).toBeInTheDocument();
