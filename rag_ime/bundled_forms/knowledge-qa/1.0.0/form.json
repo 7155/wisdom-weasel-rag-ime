@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "rag-ime.landing-form.v1",
+  "id": "knowledge-qa",
+  "displayName": "知识库问答",
+  "version": "1.0.0",
+  "description": "以企业知识库问答为主落地形态：Agent 与 Knowledge 前置，开发者 App 收起。",
+  "tagline": "问库得据，可追溯",
+  "dockAppIds": ["agent", "knowledge", "files", "app-center"],
+  "launchpadAppIds": [
+    "agent",
+    "knowledge",
+    "memory",
+    "files",
+    "app-center",
+    "system-settings"
+  ],
+  "defaultLandingAppId": "knowledge",
+  "defaultPersona": {
+    "roleId": "companion-present-v1",
+    "version": "1"
+  },
+  "knowledgeBindings": [
+    {
+      "knowledgeDomain": "document_library",
+      "scopeKind": "user",
+      "visibility": "private"
+    }
+  ],
+  "policyPreset": "default",
+  "packageRefs": []
+}
