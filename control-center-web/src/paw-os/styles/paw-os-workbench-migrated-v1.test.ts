@@ -94,4 +94,32 @@ describe('Project Workbench lays out as a window, not a document', () => {
       /@container paw-native-stage \(max-width: 520px\)[\s\S]*?\.paw-wb-chrome__commands button > span \{ display: none;/,
     );
   });
+
+  it('gives the wrapped deck an auto chrome row instead of a fixed 36px track', () => {
+    // A wrapping deck inside a pinned 36px grid row clips its own second row.
+    // The row is auto; the single-row minimum stays the shared 36px strip.
+    expect(workbenchCss).toMatch(
+      /\.paw-workbench-migrated\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\);/s,
+    );
+    expect(workbenchCss).toMatch(
+      /\.paw-wb-chrome\s*\{[^}]*min-height:\s*36px;/s,
+    );
+    expect(workbenchCss).not.toMatch(
+      /\.paw-workbench-migrated\s*\{[^}]*grid-template-rows:\s*36px/s,
+    );
+  });
+
+  it('keeps toolbars off hidden scrollports that clip button labels', () => {
+    // Window scrollbars are suppressed shell-wide (paw-os.css), so any
+    // overflow-x toolbar reads as half-cut buttons. Toolbars wrap instead.
+    const baseCss = workbenchCss.slice(0, workbenchCss.indexOf('@container paw-native-stage'));
+    expect(baseCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*flex-wrap:\s*wrap;/s);
+    expect(baseCss).toMatch(
+      /\.paw-wb-planning-tools__date,\s*\.paw-workbench-migrated \.paw-wb-planning-tools__actions\s*\{[^}]*flex-wrap:\s*wrap;/s,
+    );
+    expect(baseCss).not.toMatch(/\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(baseCss).toMatch(/\.paw-wb-metrics\s*\{[^}]*flex-wrap:\s*wrap;/s);
+    expect(baseCss).not.toMatch(/\.paw-wb-metrics\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(baseCss).not.toMatch(/\.paw-wb-chrome__commands\s*\{[^}]*overflow-x:\s*auto;/s);
+  });
 });

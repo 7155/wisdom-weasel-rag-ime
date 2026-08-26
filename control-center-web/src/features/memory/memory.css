@@ -482,7 +482,10 @@ main[data-route-id='memory'] {
 .memory-view-tabs > .ui-tabs__list {
   margin-bottom: var(--space-3);
   padding-inline: 2px;
-  overflow-x: auto;
+  /* PAW windows hide scrollbars, so an overflow-x scrollport silently cut
+     view names mid-label. The tab row wraps; every view stays readable. */
+  flex-wrap: wrap;
+  row-gap: 0;
 }
 
 /* ============================== catalog ============================== */

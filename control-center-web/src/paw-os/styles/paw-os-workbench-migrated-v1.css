@@ -34,9 +34,11 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  /* 36px chrome: the same strip height as Terminal and the system Apps, so
-     switching windows never shifts the working plane. */
-  grid-template-rows: 36px minmax(0, 1fr);
+  /* 36px chrome in the common single-row case — the same strip height as
+     Terminal and the system Apps. The row is auto, not fixed: when the deck
+     legitimately wraps to a second row, the chrome grows instead of clipping
+     its own wrapped commands against a pinned track. */
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   background:
     radial-gradient(1200px 560px at 8% -14%, rgb(49 94 172 / 10%), transparent 62%),
@@ -92,11 +94,12 @@
    quiet anchor on the right instead of leading the bar. */
 .paw-workbench-migrated .paw-wb-chrome {
   min-width: 0;
+  min-height: 36px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  padding: 8px 12px;
+  gap: 4px 12px;
+  padding: 3px 12px;
   border-bottom: 1px solid var(--paw-wb-line);
   /* The deck is fixed chrome — opaque, no glass. It may wrap to a second row
      before any command label is half-clipped by a single crowded strip. */
@@ -593,16 +596,16 @@
 .paw-workbench-migrated .paw-wb-ledger__identity small { color: var(--paw-wb-muted); font-size: 12px; line-height: 1.4; }
 
 .paw-workbench-migrated .paw-wb-metrics {
+  /* Window scrollbars are hidden shell-wide, so a scrollport here silently
+     cut the truthful counters mid-chip. The ledger wraps instead. */
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
+  justify-content: flex-end;
+  gap: 4px 5px;
   margin-left: auto;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-
-.paw-workbench-migrated .paw-wb-metrics::-webkit-scrollbar { display: none; }
 
 .paw-workbench-migrated .paw-wb-metrics > div {
   display: flex;
@@ -673,16 +676,17 @@
   min-width: 0;
   min-height: 40px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 4px 10px;
   padding: 5px 10px;
   border-bottom: 1px solid var(--paw-wb-line);
   /* Fixed toolbar row over the flat panel — blur here was invisible cost. */
   background: rgb(255 255 255 / 96%);
 }
 .paw-workbench-migrated .paw-wb-planning-tools__date,
-.paw-workbench-migrated .paw-wb-planning-tools__actions { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.paw-workbench-migrated .paw-wb-planning-tools__actions { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 5px; }
 .paw-workbench-migrated .paw-wb-planning-tools__date > svg { flex: 0 0 auto; margin-right: 2px; color: var(--paw-wb-accent); }
 .paw-workbench-migrated .paw-wb-planning-tools button,
 .paw-workbench-migrated .paw-wb-planning-tools input {
@@ -698,8 +702,10 @@
 .paw-workbench-migrated .paw-wb-planning-tools button:hover { background: var(--paw-wb-fill); color: var(--paw-wb-ink); }
 .paw-workbench-migrated .paw-wb-planning-tools button:disabled { cursor: not-allowed; opacity: .45; }
 .paw-workbench-migrated .paw-wb-planning-tools input { width: 128px; padding: 3px 7px; }
-.paw-workbench-migrated .paw-wb-planning-tools__actions { overflow-x: auto; scrollbar-width: none; }
-.paw-workbench-migrated .paw-wb-planning-tools__actions::-webkit-scrollbar { display: none; }
+/* No hidden scrollport at working widths: window scrollbars are suppressed
+   shell-wide, so overflow-x here read as half-cut toolbar buttons. The action
+   cluster wraps with the toolbar instead. */
+.paw-workbench-migrated .paw-wb-planning-tools__actions { justify-content: flex-end; }
 
 .paw-workbench-migrated .paw-wb-orchestration {
   min-width: 0;
