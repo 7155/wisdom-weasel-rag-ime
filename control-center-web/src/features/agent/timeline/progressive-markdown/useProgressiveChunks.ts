@@ -51,11 +51,13 @@ export function useProgressiveChunks(options: {
   }
 
   if (isStreaming) stateRef.current.hasEverStreamed = true;
-  const nextScan = scanIncrementalMarkdown(
-    stateRef.current.scanState,
-    text,
-    enabled && isStreaming,
-  );
+  // Advance the scanner only while streaming. At settle the accumulated state
+  // is kept, not reset: settleScannedMarkdown carries the committed chunks
+  // over by identity and walks only the still-unscanned suffix.
+  const nextScan =
+    enabled && isStreaming
+      ? scanIncrementalMarkdown(stateRef.current.scanState, text, true)
+      : stateRef.current.scanState;
   stateRef.current.scanState = nextScan;
 
   const hasEverStreamed = stateRef.current.hasEverStreamed;

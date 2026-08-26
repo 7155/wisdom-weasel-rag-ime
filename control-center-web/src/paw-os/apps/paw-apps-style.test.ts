@@ -682,11 +682,11 @@ describe('PAWOS semantic type roles', () => {
   it('keeps the imported Room owner at a 12px metadata floor and 14–16px reading/control roles', () => {
     expect(roomMigratedCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
     expect(roomFocusCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
-    // The Room reading size matches the Session assistant text (16px/24px),
-    // one conversation type scale across both streams. The Room now reaches it
-    // by theming the shared conversation surface rather than by owning a
-    // second set of message rules.
-    expect(roomMigratedCss).toMatch(/\.ccui-assistant-body\s*\{[^}]*font-size:\s*16px;[^}]*line-height:\s*24px;/s);
+    // The Room reading size matches the Session assistant text (15px/22px —
+    // the denser zip-demo reading surface), one conversation type scale across
+    // both streams. The Room reaches it by theming the shared conversation
+    // surface rather than by owning a second set of message rules.
+    expect(roomMigratedCss).toMatch(/\.ccui-assistant-body\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*22px;/s);
     expect(roomMigratedCss).toMatch(/\.paw-room-workspace--migrated-v1 \.ccui-conversation-surface\s*\{[^}]*--ccui-text:\s*var\(--paw-chat-text\);/s);
     expect(roomMigratedCss).not.toContain('.paw-room-chronology');
     expect(roomMigratedCss).toMatch(/@container paw-room-workspace \(max-width: 520px\)[\s\S]*?\.paw-room-workspace__objective > div > small\s*\{[^}]*font-size:\s*12px;/s);
@@ -701,7 +701,9 @@ describe('PAWOS semantic type roles', () => {
     expect(appCss).not.toContain('.paw-room-workspace__tool-content');
     expect(appCss).toMatch(/\.paw-room-governance article strong\s*\{[^}]*font-size:\s*14px;/s);
     expect(appCss).toMatch(/\.paw-room-governance article small\s*\{[^}]*font-size:\s*12px;/s);
-    expect(appCss).toMatch(/\.paw-room-governance select, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
+    // Governance dropdowns moved from native <select> onto the shared Select
+    // primitive; the readable 13px control floor rides its trigger now.
+    expect(appCss).toMatch(/\.paw-room-governance \.ui-select__trigger, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
   });
 
   it('keeps Room panel and participant satellites at the 12px metadata floor', () => {
@@ -826,7 +828,10 @@ describe('PAWOS semantic type roles', () => {
   });
 
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
-    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    // The denser five-track Launchpad shelf deliberately sets its captions at
+    // 12.5px/1.5 (still above the 12px metadata floor) so all four archive
+    // bands land on one screen.
+    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*12\.5px;[^}]*line-height:\s*1\.5;/s);
     expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
     expect(systemMigratedCss).toMatch(/\.paw-agent-mode__copy small\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.55;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);

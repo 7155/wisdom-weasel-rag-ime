@@ -406,7 +406,7 @@
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn + .agent-turn {
-  margin-top: 16px;
+  margin-top: 28px;
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message-shell {
@@ -420,12 +420,12 @@
   max-width: calc(95% - 40px);
   padding: 7px 14px;
   border: 0;
-  border-radius: 16px;
+  border-radius: 16px 16px 5px 16px;
   color: var(--paw-chat-text);
   background: var(--paw-chat-user-bubble);
   box-shadow: none;
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 15px;
+  line-height: 22px;
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message__delivery {
@@ -440,14 +440,14 @@
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body {
   width: 100%;
-  gap: 18px;
+  gap: 14px;
 }
 
 /* The fx timeline no longer emits the repeated "Agent/状态" caption row
    (UR-075): message side is the identity, so no hide rule is needed here. */
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn-sequence {
-  gap: 18px;
+  gap: 14px;
   padding-left: 4px;
 }
 
@@ -469,8 +469,8 @@
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-message {
   padding: 0 4px;
   color: var(--paw-chat-text);
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 15px;
+  line-height: 22px;
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-markdown {
@@ -737,8 +737,8 @@
   padding: 13px 15px 41px;
   color: var(--paw-chat-text);
   caret-color: var(--paw-chat-accent);
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 15px;
+  line-height: 22px;
 }
 
 /* Send is the composer's one primary action: a filled accent circle
@@ -1754,13 +1754,13 @@
 }
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message .agent-markdown {
   display: block;
-  padding: 8px 15px;
-  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
-  border-radius: 18px 18px 6px 18px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
-  font-size: 16px;
-  line-height: 24px;
+  padding: 8px 14px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 16px 16px 5px 16px;
+  background: var(--paw-chat-user-bubble);
+  box-shadow: none;
+  font-size: 15px;
+  line-height: 22px;
 }
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message > small {
   display: block;
@@ -1771,10 +1771,10 @@
   color: var(--paw-chat-text-tertiary);
 }
 
-/* 对话正文排版：签收稿 16px/24px 平实正文 */
+/* 对话正文排版：15px/22px 平实正文——对齐 zip 稿更密的阅读面 */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn .agent-markdown {
-  font-size: 16px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 22px;
 }
 
 /* 所有结果块与活动组吃满列宽：左右缘与气泡/正文对齐同一列网格 */

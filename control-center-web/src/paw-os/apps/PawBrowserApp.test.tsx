@@ -537,7 +537,11 @@ describe('PAW Browser App', () => {
     expect(start).not.toBeNull();
     expect(start).toHaveTextContent('新标签页');
     expect(start).toHaveTextContent('在地址栏输入网址或搜索内容');
-    expect(start.querySelector('.paw-browser-start-logo')).not.toBeNull();
+    // The new-tab hero wears the Browser App's own identity, not a stock globe
+    // glyph in another product's blue.
+    const startLogo = start.querySelector('.paw-browser-start-logo');
+    expect(startLogo?.querySelector('[data-paw-app-icon="browser"]')).not.toBeNull();
+    expect(startLogo?.querySelector('[data-lucide], svg.lucide')).toBeNull();
     expect(start).not.toHaveAttribute('data-live');
     expect(document.querySelector('.paw-browser-agent-field')).toBeNull();
     unmount();
