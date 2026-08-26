@@ -682,11 +682,11 @@ describe('PAWOS semantic type roles', () => {
   it('keeps the imported Room owner at a 12px metadata floor and 14–16px reading/control roles', () => {
     expect(roomMigratedCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
     expect(roomFocusCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
-    // The Room reading size matches the Session assistant text (16px/24px),
-    // one conversation type scale across both streams. The Room now reaches it
-    // by theming the shared conversation surface rather than by owning a
-    // second set of message rules.
-    expect(roomMigratedCss).toMatch(/\.ccui-assistant-body\s*\{[^}]*font-size:\s*16px;[^}]*line-height:\s*24px;/s);
+    // The Room reading size matches the Session assistant text (15px/22px —
+    // the denser zip-demo reading surface), one conversation type scale across
+    // both streams. The Room reaches it by theming the shared conversation
+    // surface rather than by owning a second set of message rules.
+    expect(roomMigratedCss).toMatch(/\.ccui-assistant-body\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*22px;/s);
     expect(roomMigratedCss).toMatch(/\.paw-room-workspace--migrated-v1 \.ccui-conversation-surface\s*\{[^}]*--ccui-text:\s*var\(--paw-chat-text\);/s);
     expect(roomMigratedCss).not.toContain('.paw-room-chronology');
     expect(roomMigratedCss).toMatch(/@container paw-room-workspace \(max-width: 520px\)[\s\S]*?\.paw-room-workspace__objective > div > small\s*\{[^}]*font-size:\s*12px;/s);
