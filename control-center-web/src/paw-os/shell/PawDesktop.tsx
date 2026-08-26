@@ -408,6 +408,7 @@ export function PawDesktop() {
       ><X size={14} />退出协作聚焦</button> : null}
       <PawDock
         activeAppId={activeAppId}
+        launchpadOpen={launchpadOpen}
         onLaunchpad={toggleLaunchpad}
         onOpen={openApp}
         onOverview={toggleOverview}
@@ -559,8 +560,9 @@ function usePawRunningApps(): { open: ReadonlySet<PawAppId>; visible: ReadonlySe
  * writes, so React only owns its resting content: which App is current, which
  * are running, whether the overview is open. Everything else on the desktop
  * re-renders without touching it. */
-const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }: {
+const PawDock = memo(function PawDock({ activeAppId, launchpadOpen, onLaunchpad, onOpen, onOverview, overviewOpen }: {
   activeAppId: PawAppId | null;
+  launchpadOpen: boolean;
   onLaunchpad: () => void;
   onOpen: (id: PawAppId) => void;
   onOverview: () => void;
@@ -593,7 +595,7 @@ const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOver
       })}
       <i aria-hidden="true" />
       <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /><span aria-hidden="true" className="paw-dock-tip">窗口总览</span></button>
-      <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
+      <button aria-label="全部 App" aria-pressed={launchpadOpen} className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
     </nav>
   );
 });

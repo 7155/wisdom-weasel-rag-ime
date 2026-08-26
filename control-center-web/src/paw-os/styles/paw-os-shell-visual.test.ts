@@ -138,6 +138,80 @@ describe('PAWOS shell visual language', () => {
     expect(contrast(hexToRgb('#171a21'), hexToRgb('#ffffff'))).toBeGreaterThanOrEqual(7);
   });
 
+  it('keeps the shelf running indicator on the shelf while the tile magnifies', () => {
+    // The button resolves its magnification and press into one scale, so the
+    // label and the running pill invert exactly what the tile applied instead
+    // of each re-deriving the product from the two raw inputs.
+    const button = rule(pawOsCss, '.paw-dock button');
+    expect(button).toContain('--paw-dock-scale: calc((1 + var(--paw-dock-mag, 0) * .32) * var(--paw-dock-press, 1))');
+    expect(button).toContain('scale(var(--paw-dock-scale))');
+    expect(pawOsCss.match(/--paw-dock-scale:/g), '--paw-dock-scale is resolved once').toHaveLength(1);
+    // Running state is machine state, not decoration: it holds one shelf line
+    // and one size while the pointer lifts and grows the tile above it.
+    const indicator = rule(pawOsCss, '.paw-dock button[data-open]::after');
+    expect(indicator).toContain('/ var(--paw-dock-scale, 1)');
+    expect(indicator).toContain('scale: calc(1 / var(--paw-dock-scale, 1))');
+    expect(rule(pawOsCss, '.paw-dock-tip')).toContain('scale: calc(1 / var(--paw-dock-scale, 1))');
+    // With the tile pinned by reduced motion there is nothing left to invert.
+    expect(pawOsCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-dock button\[data-open\]::after \{ scale: none; \}/,
+    );
+  });
+
+  it('presses every shell tile on one clock that is shorter than any other feedback', () => {
+    const press = motionCss.match(/--paw-motion-press:\s*(\d+)ms;/)?.[1];
+    const feedback = motionCss.match(/--paw-motion-feedback:\s*(\d+)ms;/)?.[1];
+    expect(press, '--paw-motion-press').toBeTruthy();
+    expect(Number(press)).toBeLessThan(Number(feedback));
+    // Shelf tile, launcher tile, desktop identity and the system mark all dip
+    // on that one clock, so "I pressed that" is a single learned sensation.
+    for (const surface of [
+      '.paw-dock button:active',
+      '.paw-launchpad section > div > button:active',
+      '.paw-desktop-shortcuts button:active > span',
+      '.paw-system-mark:active',
+    ]) expect(motionCss, `${surface} presses on --paw-motion-press`)
+      .toMatch(new RegExp(`${surface.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^{]*\\{[^}]*transition-duration: var\\(--paw-motion-press\\)`, 's'));
+    // The Dock's own dip is deep enough to read at shelf size.
+    expect(rule(pawOsCss, '.paw-dock button:active')).toContain('--paw-dock-press: .93');
+  });
+
+  it('speaks one keyboard-focus language across every shell surface', () => {
+    // Ring colour, width and air are one token set, declared once…
+    for (const token of ['--paw-focus-ring:', '--paw-focus-ring-w:', '--paw-focus-ring-gap:']) {
+      expect(shellCss.split(token), `${token} declared once`).toHaveLength(2);
+    }
+    const blanket = rule(shellCss, ".paw-desktop-root :is(button, [role='button'], a, input, textarea, select):focus-visible");
+    expect(blanket).toContain('outline: var(--paw-focus-ring-w) solid var(--paw-focus-ring)');
+    expect(blanket).toContain('outline-offset: var(--paw-focus-ring-gap)');
+    // …and no shell owner may re-invent a ring with its own literal colour or
+    // width, which is exactly how a desktop ends up wearing three focus states.
+    for (const [name, css] of Object.entries({
+      'paw-os.css': pawOsCss,
+      'paw-os-motion.css': motionCss,
+      'paw-os-shell-migrated-v1.css': shellCss,
+    })) {
+      for (const declaration of [...css.matchAll(/outline:\s*([^;]+);/g)].map((match) => match[1]!.trim())) {
+        if (declaration === '0' || declaration === 'none') continue;
+        expect(declaration, `${name} ring "${declaration}" resolves the shared ring token`)
+          .toContain('var(--paw-focus-ring');
+      }
+    }
+    // A tile that already draws its own ground rings just inside that ground.
+    expect(rule(pawOsCss, '.paw-desktop-root :is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:focus-visible'))
+      .toContain('outline-offset: -1px');
+    // Anything you type into keeps the shared field language instead of a
+    // per-surface cobalt of its own.
+    for (const field of [
+      '.paw-desktop-root .paw-wayfinder-work__search:focus-within',
+      ".paw-desktop-root .paw-launchpad section > header input[type='search']:focus",
+    ]) {
+      const body = rule(shellCss, field);
+      expect(body, `${field} border`).toContain('var(--paw-focus-line)');
+      expect(body, `${field} halo`).toContain('var(--paw-focus-halo)');
+    }
+  });
+
   it('binds every identity placement to the one size ladder and one paper token', () => {
     // Five steps, defined once; a placement may only resolve a ladder step,
     // so identical surfaces can never drift apart by a stray pixel value.
@@ -250,6 +324,54 @@ describe('PAWOS shell visual language', () => {
     expect(rule(shellCss, ".paw-desktop-root .paw-window-shell:not([data-active]):not([data-overview]):not([data-collaboration-role]) .paw-window"))
       .toContain('box-shadow: var(--paw-shadow-rest)');
     expect(shellCss).toMatch(/\.paw-window-shell\[data-active\]\[data-app\] \.paw-window-titlebar\s*\{[^}]*border-bottom-color:\s*color-mix\(in srgb, var\(--paw-app-accent/s);
+  });
+
+  it('raises the focused window on elevation alone, never on a coloured halo', () => {
+    // Which window has the keyboard is answered by depth and edge ink. A
+    // spread ring in the App accent reads as a web card in a selected state,
+    // so the active tier carries no zero-blur spread layer at all.
+    const active = rule(shellCss, '.paw-desktop-root .paw-window-shell[data-active] .paw-window');
+    expect(active, 'no halo ring under the active frame').not.toMatch(/0 0 0 \d+px/);
+    // Key shadow plus contact shadow, over the inset top light — the two
+    // tiers must actually separate, so the resting key blur stays well below
+    // the active one rather than merely dimming.
+    expect(active).toMatch(/inset,\s*\n?\s*0 \d+px (\d+)px/);
+    const activeKeyBlur = Number(active.match(/inset,\s*\n?\s*0 \d+px (\d+)px/)?.[1]);
+    const restKeyBlur = Number(shellToken('paw-shadow-rest').match(/0 \d+px (\d+)px/)?.[1]);
+    expect(activeKeyBlur).toBeGreaterThan(restKeyBlur * 2);
+  });
+
+  it('gives a hovered launcher tile one ring and one shadow instead of a stack', () => {
+    const hovered = rule(
+      shellCss,
+      '.paw-desktop-root .paw-launchpad section > div > button:hover,\n.paw-desktop-root .paw-launchpad section > div > button:focus-visible',
+    );
+    expect(hovered).toContain('var(--paw-identity-ring)');
+    // The identity ring plus exactly one ambient shadow: a third layer under a
+    // hovered tile is what makes a grid read as a page of cards.
+    expect(hovered.match(/\d+px -\d+px/g), 'one ambient layer beside the ring').toHaveLength(1);
+    // Pressing a launcher tile dips exactly as far as a shelf tile does.
+    expect(rule(shellCss, '.paw-desktop-root .paw-launchpad section > div > button:active'))
+      .toContain('scale(.97)');
+  });
+
+  it('lets the system strip report quietly instead of parking an App control in the menu bar', () => {
+    // The shared connection indicator arrives from the web Control Center
+    // wearing a bordered surface pill. Inside a 34px OS menu bar that reads as
+    // App chrome, so the desktop strips it back to plain chrome ink and lets
+    // only its state icon carry colour.
+    const quiet = rule(
+      shellCss,
+      ".paw-desktop-root .paw-menu-status .global-connection,\n.paw-desktop-root .paw-menu-status .global-connection[data-state='mock']",
+    );
+    expect(quiet).toContain('border: 0');
+    expect(quiet).toContain('background: transparent');
+    expect(quiet).toContain('color: var(--paw-chrome-muted)');
+    // A narrow strip gives up words before it gives up the time.
+    expect(pawOsCss).toMatch(
+      /@media \(max-width: 820px\)[\s\S]*?\.paw-menu-status \.global-connection span \{ display: none; \}/,
+    );
+    expect(pawOsCss, 'the clock survives every width').not.toMatch(/\.paw-menu-status > span \{ display: none;/);
   });
 
   it('separates overview windows with the shared quiet plane instead of a second dimmer', () => {
