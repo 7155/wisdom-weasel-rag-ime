@@ -263,6 +263,63 @@ describe('PawSystemAppsMigrated', () => {
     expect(transport.requests.map(({ request }) => request.pathId)).toContain('configuration.settings');
   });
 
+  it('configures Room planets separately from private satellites through the model-routing owner', async () => {
+    const user = userEvent.setup();
+    const transport = baseTransport({
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'openai-codex',
+          displayName: 'OpenAI Codex',
+          models: [{
+            provider: 'openai-codex',
+            id: 'gpt-5.6-terra',
+            name: 'GPT-5.6 Terra',
+            api: 'responses',
+            reasoning: true,
+            thinkingLevels: ['off', 'medium', 'high'],
+            supportsImages: true,
+            contextWindow: 128_000,
+            maxTokens: 32_000,
+          }],
+        }],
+      },
+      'agent.configuration.get': systemModelRoutingConfiguration(21),
+      'agent.configuration.update': systemModelRoutingConfiguration(22, {
+        roomCoordinator: {
+          modelProfile: 'openai-codex/gpt-5.6-terra',
+          thinkingLevel: 'high',
+        },
+      }),
+    });
+    renderSystemApp('system-settings', '/configuration?view=agent', transport);
+
+    expect(await screen.findByText('配置 #21')).toBeInTheDocument();
+    expect(screen.getByLabelText('Room 行星伙伴默认模型')).toBeInTheDocument();
+    expect(screen.getByLabelText('私有 Tool Agent默认模型')).toBeInTheDocument();
+    expect(screen.getByLabelText('私有调研卫星默认模型')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Room 行星伙伴默认模型'));
+    await user.click(await screen.findByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' }));
+    await user.click(screen.getByLabelText('Room 行星伙伴默认推理强度'));
+    await user.click(await screen.findByRole('option', { name: '高' }));
+    await user.click(screen.getByRole('button', { name: '保存Room 行星伙伴模型分工' }));
+
+    await waitFor(() => expect(transport.requests.find(
+      ({ request }) => request.pathId === 'agent.configuration.update',
+    )?.request.body).toEqual({
+      expectedRevision: 21,
+      changes: {
+        'modelRouting.roomCoordinator': {
+          modelProfile: 'openai-codex/gpt-5.6-terra',
+          thinkingLevel: 'high',
+        },
+      },
+      updatedBy: 'system-agent-settings-ui',
+    }));
+    expect(await screen.findByText('配置 #22')).toBeInTheDocument();
+  });
+
   it('saves Agent defaults through the governed configuration authority and re-reads them', async () => {
     const user = userEvent.setup();
     let executionMode = 'per_action';
@@ -520,5 +577,31 @@ function agentPreferenceSettings(executionMode: string) {
       },
     },
     runtimeConfig: { runtimeRevision: 7 },
+  };
+}
+
+function systemModelRoutingConfiguration(
+  revision: number,
+  overrides: Partial<Record<'primary' | 'toolAgent' | 'subagent' | 'roomCoordinator', {
+    modelProfile: string;
+    thinkingLevel: string;
+  }>> = {},
+) {
+  const inherited = { modelProfile: 'inherit', thinkingLevel: 'inherit' };
+  return {
+    ok: true,
+    configuration: {
+      revision,
+      configuration: {
+        sessionDefaults: { capabilityDisclosurePreferences: {} },
+        capabilityDisclosure: { projectPreferences: {} },
+        modelRouting: {
+          primary: { ...inherited, ...overrides.primary },
+          toolAgent: { ...inherited, ...overrides.toolAgent },
+          subagent: { ...inherited, ...overrides.subagent },
+          roomCoordinator: { ...inherited, ...overrides.roomCoordinator },
+        },
+      },
+    },
   };
 }

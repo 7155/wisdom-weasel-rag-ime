@@ -19,6 +19,7 @@ import {
   type FocusEvent,
   type KeyboardEvent,
 } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import type { AgentActivityProjection, AgentMessageProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
@@ -33,6 +34,7 @@ import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagen
 import { PermissionMark, WorkspaceMark } from '@/features/agent/marks/ConversationMarks';
 import {
   isAgentCommandPending,
+  isAgentSessionIdleFailure,
   isAgentTurnConflict,
   isAmbiguousAgentPromptFailure,
   isUnresolvedAgentCommandPending,
@@ -90,6 +92,30 @@ import '@/features/agent/agent.css';
 type WorkbenchPanel = 'none' | 'files' | 'subagents' | 'status';
 type SessionWorkspaceView = 'conversation' | 'trace' | 'starfield';
 
+export function sessionWorkspaceProjectionSlice(
+  state: ReturnType<typeof useAgentLiveStore.getState>,
+  sessionId: string,
+) {
+  const projection = state.projections[sessionId];
+  return {
+    activeTurnId: latestActiveTurnId(projection),
+    hasTurns: Boolean(projection?.turnOrder.length),
+    pendingMemoryReview: latestWaitingActivity(
+      projection,
+      (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind === 'memory_review',
+    ),
+    pendingGenericInput: latestWaitingActivity(
+      projection,
+      (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind !== 'memory_review',
+    ),
+    pendingApproval: latestWaitingActivity(
+      projection,
+      (activity) => activity.kind === 'approval_required' && approvalNeedsHumanDecision(activity.payload),
+    ),
+    telemetry: projection?.telemetry,
+  };
+}
+
 export function PawSessionWorkspace({
   persona,
   record,
@@ -115,7 +141,9 @@ export function PawSessionWorkspace({
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
-  const projection = useAgentLiveStore((state) => state.projections[recordId]);
+  const projectionSlice = useAgentLiveStore(useShallow(
+    (state) => sessionWorkspaceProjectionSlice(state, recordId),
+  ));
   const [catalog, setCatalog] = useState<ModelCatalog>();
   const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [tools, setTools] = useState<ToolManifest[]>([]);
@@ -134,6 +162,7 @@ export function PawSessionWorkspace({
   const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>(traceFocusNodeId ? 'trace' : 'conversation');
   const [error, setError] = useState('');
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
+  const [thinkingPickerRequest, setThinkingPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
   const [helpRequest, setHelpRequest] = useState(0);
@@ -160,7 +189,7 @@ export function PawSessionWorkspace({
     setToolMenuOpen(false);
   }, [recordId, traceFocusNodeId]);
 
-  const busy = Boolean(latestActiveTurnId(projection));
+  const busy = Boolean(projectionSlice.activeTurnId);
   /* A held follow-up is the composer's own queue, not a Runtime delivery.
      干预/接续 hand the message to Pi immediately; a queued draft never leaves
      the client until this turn settles, which is what keeps it editable,
@@ -170,18 +199,9 @@ export function PawSessionWorkspace({
     conversationId: recordId,
     send: (text) => { void send('prompt', text); },
   });
-  const pendingMemoryReview = latestWaitingActivity(
-    projection,
-    (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind === 'memory_review',
-  );
-  const pendingGenericInput = latestWaitingActivity(
-    projection,
-    (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind !== 'memory_review',
-  );
-  const pendingApproval = latestWaitingActivity(
-    projection,
-    (activity) => activity.kind === 'approval_required' && approvalNeedsHumanDecision(activity.payload),
-  );
+  const pendingMemoryReview = projectionSlice.pendingMemoryReview;
+  const pendingGenericInput = projectionSlice.pendingGenericInput;
+  const pendingApproval = projectionSlice.pendingApproval;
   const imageSupport = selectedModelImageSupport(catalog);
 
   const loadSnapshot = useCallback(async (quiet = false): Promise<boolean> => {
@@ -208,8 +228,21 @@ export function PawSessionWorkspace({
         recent = undefined;
       }
       if (isRecentAgentSnapshot(recent)) {
+        const cachedProjection = useAgentLiveStore.getState().projections[recordId];
+        const hasCachedConversation = Boolean(cachedProjection?.messageOrder.length);
         if (recentAgentSnapshotIsPresentable(recent)) {
-          useAgentLiveStore.getState().hydrate(recordId, recent);
+          // A recent snapshot is intentionally partial. Rebuilding the reducer
+          // from an empty/bounded recent transcript would make durable history
+          // already cached for this Session disappear until the full archive
+          // arrives. Keep that stronger local projection visible and only use
+          // recent as the first paint for a genuinely empty store.
+          if (!hasCachedConversation) {
+            useAgentLiveStore.getState().hydrate(recordId, recent);
+          }
+          // The recent snapshot is the first truthful, usable view. Do not
+          // keep the conversation in a loading state while the full archive
+          // continues restoring in the background.
+          setLoading(false);
         }
         setContextSnapshotState('restoring');
         try {
@@ -220,7 +253,7 @@ export function PawSessionWorkspace({
           useAgentLiveStore.getState().hydrate(recordId, full);
           setContextSnapshotState(undefined);
         } catch (reason) {
-          if (!recentAgentSnapshotIsPresentable(recent)) throw reason;
+          if (!recentAgentSnapshotIsPresentable(recent) && !hasCachedConversation) throw reason;
           setContextSnapshotState('partial');
         }
       } else {
@@ -281,6 +314,7 @@ export function PawSessionWorkspace({
   useEffect(() => {
     let active = true;
     let unsubscribe: () => void = () => {};
+    let terminalSnapshotTimer: number | undefined;
     useAgentLiveStore.getState().ensure(recordId);
     // Streaming text_delta bursts coalesce into one store commit per batching
     // interval (same contract as the standalone Agent feature). Every
@@ -313,11 +347,37 @@ export function PawSessionWorkspace({
               return;
             }
             batcher.push(event);
+            const completedMessage = asRecord(asRecord(event.payload).message);
+            if (
+              event.eventType === 'message_completed'
+              && completedMessage.role === 'assistant'
+              && completedMessage.status === 'completed'
+            ) {
+              // `message_completed` and `turn_completed` are adjacent durable
+              // Runtime events. A reconnect in that narrow gap can show the
+              // final answer while leaving the optimistic user turn spinning.
+              // Give the terminal event one paint to arrive; if it does not,
+              // a quiet authoritative snapshot reconciles the orphan without
+              // guessing that every assistant message ends a Tool Loop.
+              if (terminalSnapshotTimer !== undefined) {
+                window.clearTimeout(terminalSnapshotTimer);
+              }
+              terminalSnapshotTimer = window.setTimeout(() => {
+                terminalSnapshotTimer = undefined;
+                if (active) void loadSnapshot(true);
+              }, 350);
+            }
             const runtimeWindow = runtimeToolWindow(event);
             if (runtimeWindow && shouldAutoOpenRuntimeToolWindow(runtimeWindow)) {
               desktop?.openWindow(runtimeWindow);
             }
-            if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') onSessionActivity?.();
+            if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
+              if (terminalSnapshotTimer !== undefined) {
+                window.clearTimeout(terminalSnapshotTimer);
+                terminalSnapshotTimer = undefined;
+              }
+              onSessionActivity?.();
+            }
           },
           error: (reason) => {
             if (!active) return;
@@ -329,6 +389,7 @@ export function PawSessionWorkspace({
     })();
     return () => {
       active = false;
+      if (terminalSnapshotTimer !== undefined) window.clearTimeout(terminalSnapshotTimer);
       batcher.clear();
       unsubscribe();
     };
@@ -543,6 +604,44 @@ export function PawSessionWorkspace({
         useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
         void loadSnapshot(true);
       } catch (reason) {
+        if (effectiveDelivery !== 'prompt' && isAgentSessionIdleFailure(reason)) {
+          // The projection can be one terminal event behind the Runtime. If a
+          // message was auto-routed as Steer/Follow-up but Pi proves the turn
+          // is already idle, the rejected receipt is safe to supersede once
+          // as a new prompt. Keep explicit lineage; never replay an unknown or
+          // pending admission.
+          useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+          const retryClientMessageId = `paw-retry-${crypto.randomUUID()}`;
+          useAgentLiveStore.getState().appendOptimistic(recordId, {
+            clientMessageId: retryClientMessageId,
+            retryOfClientMessageId: clientMessageId,
+            text: message,
+            attachments: selectedAttachments.map((item) => item.id),
+            nowMs: Date.now(),
+          });
+          try {
+            const retryResponse = await transport.request<Record<string, unknown>>({
+              pathId: 'agent.session.prompt',
+              params: { sessionId: recordId },
+              body: {
+                message,
+                attachments: selectedAttachments.map((item) => item.id),
+                clientMessageId: retryClientMessageId,
+                retryOfClientMessageId: clientMessageId,
+              },
+            });
+            if (isCancelledPromptAdmission(retryResponse)) {
+              useAgentLiveStore.getState().discardOptimistic(recordId, retryClientMessageId);
+              void loadSnapshot(true);
+              return;
+            }
+            useAgentLiveStore.getState().acknowledgeOptimistic(recordId, retryClientMessageId, Date.now());
+            void loadSnapshot(true);
+          } catch (retryReason) {
+            settlePromptAdmissionFailure(retryClientMessageId, retryReason, { restoreInput });
+          }
+          return;
+        }
         settlePromptAdmissionFailure(clientMessageId, reason, { restoreInput });
       } finally {
         setSending(false);
@@ -656,7 +755,7 @@ export function PawSessionWorkspace({
   }
 
   function openForkDialog(initialEntryId = ''): void {
-    setForkDialogNodes(conversationNodes(projection));
+    setForkDialogNodes(conversationNodes(agentProjection(recordId)));
     setForkDialogInitialEntryId(initialEntryId);
     setForkDialogOpen(true);
   }
@@ -866,7 +965,8 @@ export function PawSessionWorkspace({
     if (command === 'new') onNewWork();
     else if (command === 'resume') setPanel('none');
     else if (command === 'branch') openForkDialog();
-    else if (command === 'model' || command === 'thinking') setModelPickerRequest((value) => value + 1);
+    else if (command === 'model') setModelPickerRequest((value) => value + 1);
+    else if (command === 'thinking') setThinkingPickerRequest((value) => value + 1);
     else if (command === 'permissions') setPermissionPickerRequest((value) => value + 1);
     else if (command === 'tools') setToolPickerRequest((value) => value + 1);
     else if (command === 'status' || command === 'session') setPanel('status');
@@ -1090,7 +1190,7 @@ export function PawSessionWorkspace({
             >
               <div aria-hidden="true" className="agent-fx-fade agent-fx-fade--top" />
               <div aria-hidden="true" className="agent-fx-fade agent-fx-fade--bottom" />
-              {loading && !projection?.turnOrder.length ? <div className="paw-session-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复完整 Session</div> : null}
+              {loading && !projectionSlice.hasTurns ? <div className="paw-session-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复完整 Session</div> : null}
               <AgentTimeline
                 activityPresentation="grouped"
                 presentation="fx"
@@ -1123,10 +1223,9 @@ export function PawSessionWorkspace({
               data-active={workspaceView === 'trace' || undefined}
               inert={workspaceView !== 'trace'}
             >
-              <PawContextTrace
+              <SessionContextTrace
                 active={workspaceView === 'trace'}
                 focusNodeId={traceFocusNodeId}
-                projection={projection}
                 sessionId={recordId}
               />
             </main>
@@ -1175,13 +1274,18 @@ export function PawSessionWorkspace({
                 capabilityPolicyPending={capabilityMutation?.status === 'pending'}
                 catalog={catalog}
                 commands={commands}
-                contextUsage={projection?.telemetry?.context ?? null}
+                contextUsage={projectionSlice.telemetry ? {
+                  ...projectionSlice.telemetry.context,
+                  compactionCount: projectionSlice.telemetry.compactionCount,
+                  latestCompaction: projectionSlice.telemetry.latestCompaction,
+                } : null}
                 draft={draft}
                 helpRequest={helpRequest}
                 imageSupport={imageSupport}
                 editState={editState}
                 modelChanging={modelChanging}
                 modelPickerRequest={modelPickerRequest}
+                thinkingPickerRequest={thinkingPickerRequest}
                 permissionPickerRequest={permissionPickerRequest}
                 persona={persona}
                 sending={sending}
@@ -1297,6 +1401,28 @@ export function PawSessionWorkspace({
       />
       </section>
     </>
+  );
+}
+
+function SessionContextTrace({
+  active,
+  focusNodeId,
+  sessionId,
+}: {
+  active: boolean;
+  focusNodeId: string;
+  sessionId: string;
+}) {
+  const projection = useAgentLiveStore((state) => (
+    active ? state.projections[sessionId] : undefined
+  ));
+  return (
+    <PawContextTrace
+      active={active}
+      focusNodeId={focusNodeId}
+      projection={projection}
+      sessionId={sessionId}
+    />
   );
 }
 

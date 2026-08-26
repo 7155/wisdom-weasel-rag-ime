@@ -1,12 +1,12 @@
-/* PAWOS App identity system — one visual language for every placement.
-   Full-colour identities live here; navigation and command icons stay
-   monochrome. The identity is always the bare silhouette on a transparent
-   ground with one shared shadow: no placement may wrap it in a white tile,
-   recolour it, or invent its own selected state. */
+/* PAWOS App identity system — the approved 2026-08-23 full-colour icon wall.
+   App identities are deterministic colour tiles; navigation and command
+   icons stay monochrome. Placement may size the asset, but never redraw it,
+   recolour it, or add a second plate around it. */
 
 /* One size ladder. Every shell placement resolves one of these five steps,
    so identical surfaces can never drift apart by a pixel or two. */
 :root {
+  --paw-icon-paper: #fff;
   --paw-icon-step-xs: 16px; /* menu bar App identity */
   --paw-icon-step-sm: 20px; /* window titlebar */
   --paw-icon-step-md: 28px; /* overview targets, App runtime headers, Wayfinder list rows */
@@ -15,40 +15,31 @@
 }
 
 .paw-app-icon {
-  /* The single paper white for every internal detail cut. */
-  --paw-icon-paper: rgb(255 255 255 / .94);
-
   display: block;
   flex: 0 0 auto;
   overflow: visible;
-  filter: drop-shadow(0 2px 3px rgb(15 23 42 / .16));
+  filter: drop-shadow(0 1px 2px rgb(15 23 42 / .15));
   shape-rendering: geometricPrecision;
   transition: filter 180ms ease, transform 180ms cubic-bezier(.2, .8, .2, 1);
 }
 
-/* One ink set: primary mass, one accent element, paper detail cuts. */
-.paw-app-icon__silhouette { transform-origin: center; }
-.paw-app-icon__primary { fill: var(--paw-app-icon-color); }
-.paw-app-icon__secondary { fill: var(--paw-app-icon-accent); }
-.paw-app-icon__paper { fill: var(--paw-icon-paper); }
-.paw-app-icon__stroke { fill: none; stroke: var(--paw-app-icon-color); }
-.paw-app-icon__stroke-accent { fill: none; stroke: var(--paw-app-icon-accent); }
-.paw-app-icon__ring { fill: none; stroke: color-mix(in srgb, var(--paw-app-icon-color) 42%, white); }
-.paw-app-icon__outlined { stroke: var(--paw-icon-paper); }
+/* The source wall already owns its only material highlight. Keep it restrained
+   on cold-white system chrome instead of adding a gloss or outer frame. */
+.paw-app-icon__sheen { opacity: .82; }
 
 /* The PAW system mark is monochrome and follows the surrounding text colour. */
 .paw-brand-mark { display: block; flex: 0 0 auto; }
 .paw-desktop-root .paw-system-mark { display: inline-flex; gap: 6px; align-items: center; }
 .paw-launchpad-title .paw-brand-mark { align-self: center; }
 
-/* Small placements retain the same geometry; only the shadow tightens so the
+/* Small placements retain the exact drawing; only the shadow tightens so the
    identity stays crisp at 16px instead of blooming. */
 .paw-app-icon[data-paw-icon-scale='small'] {
   filter: drop-shadow(0 1px 1px rgb(15 23 42 / .2));
 }
 
-/* The placement owns spacing only; the identity itself owns its colour and
-   silhouette, so every ground under an icon is transparent. */
+/* The placement owns spacing only. The icon already contains its approved
+   colour tile, so shells must not add another white tile. */
 .paw-desktop-shortcuts button > span,
 .paw-launchpad section > div > button > span,
 .paw-native-app .paw-native-nav > header > span {
@@ -91,8 +82,8 @@
 .paw-app-loading > .paw-app-icon { flex: 0 0 auto; }
 
 :is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:hover .paw-app-icon {
-  filter: drop-shadow(0 5px 8px rgb(15 23 42 / .24));
-  transform: translateY(-1px) scale(1.035);
+  filter: drop-shadow(0 3px 5px rgb(15 23 42 / .2));
+  transform: translateY(-1px) scale(1.02);
 }
 .paw-desktop-root :is(button:disabled, [aria-disabled='true']) .paw-app-icon {
   opacity: .42;

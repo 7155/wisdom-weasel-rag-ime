@@ -848,7 +848,7 @@ describe('InputMethodFeature', () => {
     }));
 
     expect(await screen.findByText('读取失败')).toBeInTheDocument();
-    expect(screen.getByText('上屏后联想')).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: '上屏后联想' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^输入体验/ }));
     expect(screen.getByRole('switch', { name: '上屏后联想' })).toBeChecked();
   });
@@ -866,7 +866,7 @@ describe('InputMethodFeature', () => {
     });
     renderFeature(transport);
 
-    await screen.findByText('上屏后联想');
+    await screen.findByRole('listitem', { name: '上屏后联想' });
     const before = new Map(
       ['input.source.get', 'overview.get', 'configuration.settings', 'configuration.schema']
         .map((pathId) => [pathId, transport.requests.filter((call) => call.request.pathId === pathId).length]),
@@ -1198,6 +1198,117 @@ describe('InputMethodFeature', () => {
     expect(document.body).not.toHaveTextContent('base-completion');
     // 模型配置健康时不出现多余的应用控件。
     expect(screen.queryByText('应用联想模型')).not.toBeInTheDocument();
+  });
+
+  it('separates saved prediction choices from effective runtime clamps and exposes the live MLX model', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': {
+          ok: true,
+          profile: '安全模式',
+          runtimeConfig: {
+            composition: { aiEnabled: false, showOnlyRime: true },
+            postCommit: { enabled: true },
+            safetyClamps: ['composition_ai_disabled_by_profile', 'composition_rime_only'],
+          },
+        },
+        'diagnostics.models': {
+          ok: true,
+          schemaVersion: 'rag-ime.models-status.v4',
+          configurationPending: false,
+          predictor: {
+            providerName: 'local-mlx',
+            capabilityProbe: { ok: true, modelLoaded: true },
+          },
+          activeConfig: {
+            modelId: 'minimind-ime-100m-user-daily-core-v1',
+            profileId: 'minimind_ime_v2',
+          },
+          availableModels: [],
+          healthAgreement: { ok: true, mlxMatchesRegistry: true },
+        },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 14,
+          settings: {
+            interaction: {
+              composition: { showPrediction: true, showOnlyRime: false },
+              postCommit: { enabled: true, showPendingStatus: true },
+            },
+          },
+        },
+        'configuration.schema': {
+          ok: true,
+          sections: [{
+            id: 'interaction',
+            fields: [
+              { key: 'interaction.composition.showPrediction', type: 'boolean', applyMode: 'reload_input_method' },
+              { key: 'interaction.composition.showOnlyRime', type: 'boolean', applyMode: 'reload_input_method' },
+              { key: 'interaction.postCommit.showPendingStatus', type: 'boolean', applyMode: 'live' },
+              { key: 'interaction.postCommit.enabled', type: 'boolean', applyMode: 'live' },
+            ],
+          }],
+        },
+      },
+    });
+    renderFeature(transport);
+
+    const facts = await screen.findByRole('list', { name: '输入预测运行事实' });
+    const composition = within(facts).getByRole('listitem', { name: '输入拼音时预测' });
+    expect(composition).toHaveTextContent('已保存开启');
+    expect(composition).toHaveTextContent('运行未生效');
+    expect(composition).toHaveTextContent('当前运行模式关闭了 AI 拼音候选');
+    expect(composition).toHaveTextContent('Rime 独占拼音候选');
+    const postCommit = within(facts).getByRole('listitem', { name: '上屏后联想' });
+    expect(postCommit).toHaveTextContent('已保存开启');
+    expect(postCommit).toHaveTextContent('运行已生效');
+    const mlx = within(facts).getByRole('listitem', { name: 'MLX 本机模型' });
+    expect(mlx).toHaveTextContent('local-mlx');
+    expect(mlx).toHaveTextContent('MiniMind IME 100M User Daily Core v1');
+    expect(mlx).toHaveTextContent('模型已加载');
+    expect(mlx).toHaveTextContent('注册配置一致');
+    expect(facts).toHaveTextContent('Rime 负责拼音解码与原生候选');
+    expect(document.body).not.toHaveTextContent('/Models/');
+
+    await userEvent.click(screen.getByRole('button', { name: /^输入体验/ }));
+    expect(screen.getByRole('switch', { name: '输入拼音时预测' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: '输入拼音时只显示 Rime 候选' })).not.toBeChecked();
+    expect(screen.getByRole('switch', { name: '预测开始时显示状态' })).toBeChecked();
+
+    await waitFor(() => {
+      for (const pathId of [
+        'input.source.get',
+        'overview.get',
+        'diagnostics.models',
+        'configuration.settings',
+        'configuration.schema',
+      ]) {
+        expect(transport.requests.filter(({ request }) => request.pathId === pathId)).toHaveLength(1);
+      }
+    });
+  });
+
+  it('keeps prediction facts and setting switches readable across desktop and narrow app widths', () => {
+    expect(inputMethodCss).toMatch(
+      /\.input-prediction-facts\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/s,
+    );
+    expect(inputMethodCss).toMatch(
+      /@media \(max-width: 980px\)[\s\S]*?\.input-prediction-facts\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/s,
+    );
+    expect(inputMethodCss).toMatch(
+      /@media \(max-width: 620px\)[\s\S]*?\.input-prediction-facts\s*\{[^}]*minmax\(0, 1fr\)/s,
+    );
+    expect(inputMethodCss).toMatch(
+      /@container paw-window \(max-width: 900px\)[\s\S]*?\.input-prediction-facts\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/s,
+    );
+    expect(inputMethodCss).toMatch(
+      /@container paw-window \(max-width: 560px\)[\s\S]*?\.input-prediction-facts\s*\{[^}]*minmax\(0, 1fr\)/s,
+    );
+    expect(inputMethodCss).toMatch(/\.input-prediction-fact\s*\{[^}]*min-width:\s*0/s);
+    expect(inputMethodCss).toMatch(/\.input-prediction-fact__copy\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+    expect(inputMethodCss).toMatch(/\.input-setting-editor-row \.ui-switch-field__copy\s*\{[^}]*min-width:\s*0/s);
+    expect(inputMethodCss).toMatch(/\.input-setting-editor-row \.ui-switch\s*\{[^}]*flex-shrink:\s*0/s);
   });
 
   it('keeps the generation stage honest when completion and recall are switched off', async () => {

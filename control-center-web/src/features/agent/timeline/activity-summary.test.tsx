@@ -12,6 +12,166 @@ afterEach(() => {
 });
 
 describe('Agent tool activity details', () => {
+  it('estimates public reasoning but never invents Tool usage from visible result text', () => {
+    const reasoning: AgentActivityProjection = {
+      id: 'reasoning-receipt-estimate',
+      turnId: 'turn-receipt-estimate',
+      kind: 'reasoning_summary',
+      status: 'completed',
+      summary: '你好abcdefgh',
+      payload: {
+        source: 'provider_reasoning_summary',
+        items: ['你好abcdefgh'],
+        durationMs: 2_500,
+      },
+      createdAtMs: 1_000,
+      updatedAtMs: 3_500,
+    };
+    const tool = {
+      ...toolActivity('tool_finished', 'completed', {
+        toolCallId: 'call-receipt-estimate',
+        toolName: 'workspace_shell',
+        durationMs: 1_200,
+        publicResult: { outputPreview: 'abcdefghijkl' },
+      }),
+      createdAtMs: 1_000,
+      updatedAtMs: 2_200,
+    };
+
+    const { container } = render(<FxActivityStack activities={[reasoning, tool]} />);
+    const receipts = [...container.querySelectorAll<HTMLElement>('.fx-meta')];
+
+    expect(receipts[0]).toHaveTextContent('2.5s · 约 4 token');
+    expect(receipts[1]).toHaveTextContent('1.2s · 无独立统计');
+    expect(receipts[1]).not.toHaveTextContent('约');
+  });
+
+  it('prefers activity-scoped real output usage over a visible-content estimate', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-real-usage',
+      toolName: 'overview',
+      durationMs: 800,
+      usage: { input: 900, output: 37, totalTokens: 937 },
+      result: { details: { ok: true, result: { summary: 'x'.repeat(400) } } },
+    });
+
+    const { container } = render(<FxActivityStack activities={[activity]} />);
+    const receipt = container.querySelector('.fx-meta');
+
+    expect(receipt).toHaveTextContent('0.8s · 937 token');
+    expect(receipt).not.toHaveTextContent('约');
+    expect(receipt).not.toHaveTextContent('900 token');
+  });
+
+  it('does not attribute an input-bearing Provider total to one Tool return', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-provider-input-usage',
+      toolName: 'workspace_shell',
+      durationMs: 800,
+      usage: { input: 900, totalTokens: 937 },
+      publicResult: { outputPreview: 'abcdefgh' },
+    });
+
+    const { container } = render(<FxActivityStack activities={[activity]} />);
+    const receipt = container.querySelector('.fx-meta');
+
+    expect(receipt).toHaveTextContent('0.8s · 937 token');
+    expect(receipt).not.toHaveTextContent('约');
+  });
+
+  it('places the reasoning receipt in the compact status column', () => {
+    const reasoning: AgentActivityProjection = {
+      id: 'reasoning-compact-receipt',
+      turnId: 'turn-reasoning-compact-receipt',
+      kind: 'reasoning_summary',
+      status: 'completed',
+      summary: '已核对公开上下文',
+      payload: {
+        source: 'provider_reasoning_summary',
+        items: ['已核对公开上下文'],
+        durationMs: 1_500,
+        usage: { totalTokens: 9 },
+      },
+      createdAtMs: 1_000,
+      updatedAtMs: 2_500,
+    };
+
+    render(<ReasoningActivitySummary activities={[reasoning]} />);
+
+    expect(screen.getByText('完成 · 1 项 · 1.5s · 9 token')).toHaveClass('agent-reasoning-feed__meta');
+  });
+
+  it('labels an old Tool receipt without usage instead of displaying zero', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-no-token-detail',
+      toolName: 'overview',
+      durationMs: 600,
+    });
+
+    const { container } = render(<FxActivityStack activities={[activity]} />);
+    const receipt = container.querySelector('.fx-meta');
+
+    expect(receipt).toHaveTextContent('0.6s');
+    expect(receipt).toHaveTextContent('无独立统计');
+    expect(receipt).not.toHaveTextContent('0 token');
+  });
+
+  it('keeps status before the non-shrinking receipt while the long hint owns flexible width', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-receipt-layout',
+      toolName: 'overview',
+      durationMs: 1_000,
+      usage: { outputTokens: 12 },
+      result: { details: { ok: true, result: { summary: '很长的可见结果'.repeat(80) } } },
+    });
+
+    const { container } = render(<FxActivityStack activities={[activity]} />);
+    const row = container.querySelector('.paw-activity__row')!;
+    const status = row.querySelector('.fx-pill')!;
+    const receipt = row.querySelector('.fx-meta')!;
+
+    expect(row.querySelector('.paw-activity__hint')).toBeInTheDocument();
+    expect(status.compareDocumentPosition(receipt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(receipt).toHaveTextContent('1.0s · 12 token');
+  });
+
+  it('keeps running, completed, and failed Tool receipts compact and folded', () => {
+    const running = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-running-receipt',
+      toolName: 'workspace_shell',
+      durationMs: 1_300,
+      usage: { outputTokens: 5 },
+      publicResult: { outputPreview: 'partial output' },
+    });
+    const completed = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-completed-receipt',
+      toolName: 'workspace_shell',
+      durationMs: 900,
+      publicResult: { outputPreview: '已完成' },
+    });
+    const failed = toolActivity('tool_finished', 'failed', {
+      toolCallId: 'call-failed-receipt',
+      toolName: 'workspace_search',
+      durationMs: 700,
+      isError: true,
+      result: { details: { error: '搜索参数超出允许范围' } },
+    });
+
+    const { container } = render(<FxActivityStack activities={[running, completed, failed]} />);
+    const nodes = [...container.querySelectorAll<HTMLElement>('.paw-activity-node')];
+
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0]!.querySelector('.fx-pill')).toHaveTextContent('进行中');
+    expect(nodes[0]!.querySelector('.fx-meta')).toHaveTextContent('1.3s · 5 token');
+    expect(nodes[1]!.querySelector('.fx-pill')).toHaveTextContent('完成');
+    expect(nodes[1]!.querySelector('.fx-meta')).toHaveTextContent('0.9s · 无独立统计');
+    expect(nodes[2]!.querySelector('.fx-pill')).toHaveTextContent('失败');
+    expect(nodes[2]!.querySelector('.fx-meta')).toHaveTextContent('0.7s · 无独立统计');
+    for (const node of nodes) {
+      expect(node.querySelector('.paw-activity')).toHaveAttribute('aria-expanded', 'false');
+    }
+  });
+
   it('renders only authoritative bounded Tool progress as a compact meter', () => {
     const counted = {
       ...toolActivity('tool_progress', 'running', {
@@ -256,6 +416,9 @@ describe('Agent tool activity details', () => {
     expect(group).toHaveAttribute('data-state', 'mixed');
     fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
+    const failedToolSummary = screen.getByText('搜索项目内容').closest('summary')!;
+    expect(failedToolSummary).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(failedToolSummary);
     expect(screen.getByLabelText('工具失败')).toHaveTextContent('搜索参数超出允许范围');
     expect(screen.getByLabelText('工具失败')).toHaveTextContent('失败原因');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
@@ -403,19 +566,19 @@ describe('Agent tool activity details', () => {
     const done = render(<ActivitySummary activities={[settled]} inline />);
     const doneSummary = done.container.querySelector('details.agent-activity--inline > summary')!;
     expect(doneSummary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
-    // A settled group keeps its Tool glyph in front and a still planet in the
-    // pill: the same body as a live row, without the orbit.
+    // A settled group keeps its Tool glyph in front and the same stable mark
+    // tree in the pill; data-live, rather than DOM removal, stops the ring.
     const donePill = doneSummary.querySelector('.agent-activity__inline-status .paw-conv-planet[data-state="done"]')!;
     expect(donePill).toBeInTheDocument();
     expect(donePill).not.toHaveAttribute('data-live');
-    expect(donePill.querySelector('.paw-conv-planet__orbit')).toBeNull();
+    expect(donePill.querySelector('.paw-conv-planet__orbit')).toBeInTheDocument();
     cleanup();
 
     const tree = render(<FxActivityStack activities={[running, settled]} />);
     const pills = [...tree.container.querySelectorAll('.fx-pill')];
     expect(pills[0]!.querySelector('.paw-conv-planet[data-state="running"][data-size="sm"] .paw-conv-planet__orbit')).toBeInTheDocument();
     expect(pills[1]!.querySelector('.paw-conv-planet[data-state="done"]')).toBeInTheDocument();
-    expect(pills[1]!.querySelector('.paw-conv-planet__orbit')).toBeNull();
+    expect(pills[1]!.querySelector('.paw-conv-planet__orbit')).toBeInTheDocument();
   });
 
   it('turns the public feed slower for a live thought than for a live Tool call', () => {
@@ -997,12 +1160,16 @@ describe('Agent tool activity details', () => {
             summary: '文档知识库返回 2 条引用证据',
             items: [
               {
+                kbId: 'kb-paw',
+                fileId: 'doc-acceptance',
                 fileName: 'acceptance.md',
                 content: '不应在时间线详情里展开的文档原文',
                 sourcePath: '/Users/private/acceptance.md',
                 citation: { startLine: 41, endLine: 57 },
               },
               {
+                kbId: 'kb-paw',
+                fileId: 'doc-design',
                 fileName: 'design.pdf',
                 content: '另一段不应展示的原文',
                 citation: { page: 3 },
@@ -1020,6 +1187,14 @@ describe('Agent tool activity details', () => {
     expect(screen.getByText('信息来源')).toBeInTheDocument();
     expect(screen.getByText('acceptance.md · 41-57 行')).toBeInTheDocument();
     expect(screen.getByText('design.pdf · 第 3 页')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'acceptance.md · 41-57 行' })).toHaveAttribute(
+      'href',
+      '#/knowledge?base=kb-paw&document=doc-acceptance&tab=viewer',
+    );
+    expect(screen.getByRole('link', { name: 'design.pdf · 第 3 页' })).toHaveAttribute(
+      'href',
+      '#/knowledge?base=kb-paw&document=doc-design&tab=viewer',
+    );
     expect(screen.getByRole('link', { name: '打开知识库' })).toHaveAttribute('href', '#/knowledge');
     expect(container).not.toHaveTextContent('不应在时间线详情里展开');
     expect(container).not.toHaveTextContent('/Users/private');

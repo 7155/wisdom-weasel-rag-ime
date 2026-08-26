@@ -67,6 +67,7 @@ describe('UR-104 PAWOS App color identities', () => {
     expect(pawOsCss).toContain(".paw-window-shell[data-app='files'] .paw-files-app");
     expect(pawOsCss).not.toContain(".paw-window-shell[data-app='browser'] .paw-direct-browser");
     expect(pawOsCss).toContain(".paw-window-shell[data-app='terminal'] .paw-terminal-app");
+    expect(pawOsCss).toContain(".paw-window-shell[data-app='terminal'] .paw-window-titlebar .paw-terminal-tab-new");
   });
 
   it('keeps the deferred theme variants from owning current shell geometry', () => {

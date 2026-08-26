@@ -18,6 +18,11 @@ import { AgentBlocks } from './BlockRenderer';
 import { conversationMarkerIndexes } from './conversation-markers';
 import { AgentTurnWorkDisclosure } from './AgentTurnWorkDisclosure';
 import { ConversationPlanetMark } from './ConversationPlanetMark';
+import {
+  MemoryRecallReceipt,
+  useMemoryRecallReceipts,
+  type MemoryRecallReceiptView,
+} from './MemoryRecallReceipt';
 import { SettledTurnAnnouncer } from './SettledTurnAnnouncer';
 import {
   FOLLOWING_TRANSCRIPT,
@@ -397,6 +402,11 @@ export function AgentTimeline({
     if (!projection) return emptyIds;
     return visibleAgentTurnIds(projection);
   }));
+  const hasActiveTurn = useAgentLiveStore((state) => turnOrder.some((turnId) => {
+    const status = state.projections[sessionId]?.turnsById[turnId]?.status;
+    return status === 'queued' || status === 'running' || status === 'waiting';
+  }));
+  const memoryRecallReceipts = useMemoryRecallReceipts(sessionId, turnOrder, hasActiveTurn);
   const activeTurnIndex = Math.floor(
     (visibleRange.startIndex + visibleRange.endIndex) / 2,
   );
@@ -507,7 +517,8 @@ export function AgentTimeline({
   }, []);
   useEffect(() => {
     if (!timelineScroller) return;
-    let pointerScrollActive = false;
+    let userScrollActive = false;
+    let userScrollEndTimer = 0;
     let anchorFrame = 0;
     const leaveLiveFollow = () => {
       dispatchFollow({ type: 'user-detached', reason: 'user-scroll' });
@@ -519,21 +530,47 @@ export function AgentTimeline({
         if (followStateRef.current.mode === 'detached') captureAnchor();
       });
     };
+    const keepUserScrollActive = () => {
+      userScrollActive = true;
+      window.clearTimeout(userScrollEndTimer);
+      userScrollEndTimer = window.setTimeout(() => {
+        userScrollActive = false;
+      }, 180);
+    };
     const handleWheel = (event: WheelEvent) => {
-      if (event.deltaY < 0) leaveLiveFollow();
+      if (event.deltaX === 0 && event.deltaY === 0) return;
+      keepUserScrollActive();
+      leaveLiveFollow();
     };
     const handlePointerDown = () => {
-      pointerScrollActive = true;
+      userScrollActive = true;
     };
     const handlePointerEnd = () => {
-      pointerScrollActive = false;
+      userScrollActive = false;
+    };
+    const handleTouchMove = () => {
+      keepUserScrollActive();
+      leaveLiveFollow();
     };
     const handleScroll = () => {
-      if (pointerScrollActive && !scrollerIsAtBottom(timelineScroller)) {
-        leaveLiveFollow();
-      }
+      if (!userScrollActive) return;
+      if (scrollerIsAtBottom(timelineScroller)) dispatchFollow({ type: 'reached-end' });
+      else leaveLiveFollow();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      const scrollKey = (
+        event.key === 'ArrowUp'
+        || event.key === 'ArrowDown'
+        || event.key === 'PageUp'
+        || event.key === 'PageDown'
+        || event.key === 'Home'
+        || event.key === 'End'
+        || event.key === 'k'
+        || event.key === 'K'
+        || event.key === ' '
+      );
+      if (!scrollKey) return;
+      keepUserScrollActive();
       if (
         event.key === 'ArrowUp'
         || event.key === 'PageUp'
@@ -547,6 +584,7 @@ export function AgentTimeline({
     };
     timelineScroller.addEventListener('wheel', handleWheel, { passive: true });
     timelineScroller.addEventListener('pointerdown', handlePointerDown);
+    timelineScroller.addEventListener('touchmove', handleTouchMove, { passive: true });
     timelineScroller.addEventListener('scroll', handleScroll, { passive: true });
     timelineScroller.addEventListener('keydown', handleKeyDown);
     window.addEventListener('pointerup', handlePointerEnd);
@@ -554,10 +592,12 @@ export function AgentTimeline({
     return () => {
       timelineScroller.removeEventListener('wheel', handleWheel);
       timelineScroller.removeEventListener('pointerdown', handlePointerDown);
+      timelineScroller.removeEventListener('touchmove', handleTouchMove);
       timelineScroller.removeEventListener('scroll', handleScroll);
       timelineScroller.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('pointerup', handlePointerEnd);
       window.removeEventListener('pointercancel', handlePointerEnd);
+      window.clearTimeout(userScrollEndTimer);
       window.cancelAnimationFrame(anchorFrame);
     };
   }, [captureAnchor, dispatchFollow, timelineScroller]);
@@ -598,7 +638,12 @@ export function AgentTimeline({
     };
   }, [dispatchFollow, sessionId, timelineScroller]);
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    if (atBottom) dispatchFollow({ type: 'reached-end' });
+    // Virtuoso also emits this while a streaming row is being measured or
+    // reconciled. That passive layout signal cannot prove the reader returned
+    // to the end; only the user-driven scroll handler above may reattach.
+    if (atBottom && followStateRef.current.mode === 'following') {
+      dispatchFollow({ type: 'reached-end' });
+    }
   }, [dispatchFollow]);
   useEffect(() => {
     if (scrollToLatestRequest <= 0 || turnOrder.length === 0) return;
@@ -732,6 +777,7 @@ export function AgentTimeline({
             activityPresentation={activityPresentation}
             dayStartLabel={dayStartLabels[turnId] ?? ''}
             presentation={presentation}
+            memoryRecallReceipt={memoryRecallReceipts[turnId]}
           />
         )}
       />
@@ -853,6 +899,7 @@ export const AgentTurn = memo(function AgentTurn({
   activityPresentation = 'grouped',
   dayStartLabel = '',
   presentation = 'default',
+  memoryRecallReceipt,
 }: {
   assistantName?: string;
   sessionId: string;
@@ -877,6 +924,7 @@ export const AgentTurn = memo(function AgentTurn({
   activityPresentation?: 'grouped' | 'atomic';
   dayStartLabel?: string;
   presentation?: 'default' | 'fx';
+  memoryRecallReceipt?: MemoryRecallReceiptView;
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
   const stopping = useAgentLiveStore((state) => {
@@ -1020,7 +1068,7 @@ export const AgentTurn = memo(function AgentTurn({
     <article className="agent-turn" data-agent-turn-id={turnId} data-turn-status={turn.status}>
       {dayStartLabel ? <div aria-hidden="true" className="agent-fx-day"><span>{dayStartLabel}</span></div> : null}
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
-      {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
+      {assistantMessages.length > 0 || activities.length > 0 || memoryRecallReceipt || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <div className="agent-assistant-turn__body">
             {/* fx keeps message side as identity (UR-075): no repeated
@@ -1029,6 +1077,7 @@ export const AgentTurn = memo(function AgentTurn({
             {presentation === 'fx' ? null : (
               <header><strong>Agent</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
             )}
+            {memoryRecallReceipt ? <MemoryRecallReceipt receipt={memoryRecallReceipt} /> : null}
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
             {presentation === 'fx' ? (
               <AgentTurnWorkDisclosure

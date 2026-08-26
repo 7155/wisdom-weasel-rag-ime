@@ -164,73 +164,37 @@
 .paw-desktop-root .paw-room-focus-overview__inspector > header strong { font-size: 12px; font-weight: 650; }
 .paw-desktop-root .paw-room-focus-overview__section > header small { color: #9197a1; font-size: 12px; font-variant-numeric: tabular-nums; }
 
-/* Partner-only collaboration graph. Four stable columns keep all eight named
- * planets and their responsibility copy aligned without introducing Sol or
- * WorkItem pseudo-participants. */
+/* Partner-only collaboration graph. Partners occupy a stable two-column
+ * ledger and real relations get their own rows. Labels and paths never float
+ * above the same pixels, so the narrow Room tool rail remains readable. */
 .paw-desktop-root .paw-room-focus-overview__mesh-canvas {
-  position: relative;
   width: 100%;
-  max-width: 500px;
-  margin: 0 auto;
-  overflow: hidden;
+  display: grid;
+  gap: 8px;
+  padding: 6px 10px 10px;
 }
 
-.paw-desktop-root .paw-room-focus-overview__mesh-canvas > svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
+.paw-desktop-root .paw-room-focus-overview__mesh-nodes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 12px;
 }
 
-.paw-desktop-root .paw-room-focus-overview__mesh-edge { color: #9aa1ac; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge > path { fill: none; stroke: currentColor; stroke-width: 1.4px; opacity: .72; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge > circle { fill: currentColor; opacity: .82; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='responsibility'] > path { stroke-width: 1.7px; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='dependency'] > path { stroke-dasharray: 5 3; stroke-width: 1.2px; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='review'] > path { stroke-dasharray: 1.5 3.5; stroke-linecap: round; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='handoff'] > path { stroke-dasharray: 7 4; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='question'] > path { stroke-dasharray: 2 3; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='answer'] > path { stroke-width: 1.7px; }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge-label {
-  position: absolute;
-  z-index: 2;
-  padding: 1px 5px;
-  border: 1px solid rgb(42 45 52 / .1);
-  border-radius: 999px;
-  color: #68717d;
-  background: rgb(255 255 255 / .94);
-  box-shadow: 0 1px 4px rgb(42 45 52 / .06);
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 14px;
-  white-space: nowrap;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-}
-
-/* Edge state colors follow the same palette as every state dot. Handoff
- * lifecycle states map onto the same hues (dispatched/offered read as live). */
-.paw-desktop-root .paw-room-focus-overview__mesh-edge:is([data-state='running'], [data-state='dispatched'], [data-state='offered']) { color: var(--focus-blue); }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge:is([data-state='review'], [data-state='waiting']) { color: var(--focus-amber); }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge:is([data-state='blocked'], [data-state='failed']) { color: var(--focus-red); }
-.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-state='completed'] { color: var(--focus-green); }
+.paw-desktop-root .paw-room-focus-overview__mesh-nodes > [role='listitem'] { min-width: 0; }
 
 .paw-desktop-root .paw-room-focus-overview__mesh-node {
-  position: absolute;
-  z-index: 1;
-  width: min(112px, 22vw);
-  max-width: 112px;
+  width: 100%;
+  min-width: 0;
   display: grid;
-  justify-items: center;
-  gap: 3px;
-  padding: 3px;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 7px 4px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 6px;
   color: inherit;
   background: transparent;
-  text-align: center;
-  transform: translate(-50%, -50%);
+  text-align: left;
   cursor: pointer;
   transition: background-color 120ms ease;
 }
@@ -238,10 +202,10 @@
 .paw-desktop-root button.paw-room-focus-overview__mesh-node[aria-pressed='true'] { background: rgb(39 131 222 / .085); box-shadow: inset 0 0 0 1px rgb(39 131 222 / .18); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: 1px; }
 
-.paw-desktop-root .paw-room-focus-overview__mesh-node > span { width: 100%; min-width: 0; display: grid; gap: 0; padding: 2px 4px 3px; border-radius: 6px; background: rgb(250 250 250 / .9); }
+.paw-desktop-root .paw-room-focus-overview__mesh-node > span { width: 100%; min-width: 0; display: grid; gap: 1px; }
 .paw-desktop-root .paw-room-focus-overview__mesh-node > span > strong { overflow: hidden; font-size: 12px; font-weight: 640; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node > span > small { overflow: hidden; color: #858c97; font-size: 12px; line-height: 15px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node > span > em { display: -webkit-box; overflow: hidden; color: #59616e; font-size: 10.5px; font-style: normal; font-weight: 570; line-height: 14px; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node > span > small { display: none; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node > span > em { overflow: hidden; color: #727a86; font-size: 12px; font-style: normal; font-weight: 500; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Planet marks keep their identity colors; the state ring is live state. */
 .paw-desktop-root .paw-room-focus-overview__mesh-node > i { width: 10px; height: 10px; border-radius: 50%; background: #9198a3; box-shadow: 0 0 0 2.5px rgb(145 152 163 / .16); }
@@ -255,6 +219,35 @@
 .paw-desktop-root .paw-room-focus-overview__mesh-node:is([data-state='blocked'], [data-state='failed']) > i { box-shadow: 0 0 0 2.5px rgb(198 71 71 / .34); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node[data-state='completed'] > i { box-shadow: 0 0 0 2.5px rgb(36 138 77 / .26); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-state='disconnected'] { opacity: .55; }
+
+.paw-desktop-root .paw-room-focus-overview__mesh-relations {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 5px 0 0;
+  border-top: 1px solid rgb(42 45 52 / .07);
+  list-style: none;
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-relations > li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+  color: #59616e;
+  font-size: 12px;
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-relations i { width: 8px; height: 1px; background: #9aa1ac; }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations li:is([data-state='running'], [data-state='dispatched'], [data-state='offered']) i { background: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations li:is([data-state='review'], [data-state='waiting']) i { background: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations li:is([data-state='blocked'], [data-state='failed']) i { background: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations li[data-state='completed'] i { background: var(--focus-green); }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations span { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations strong { overflow: hidden; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations svg { flex: 0 0 auto; color: #a0a6af; }
+.paw-desktop-root .paw-room-focus-overview__mesh-relations small { color: #858c97; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__mesh-empty { margin: 0; padding-top: 7px; border-top: 1px solid rgb(42 45 52 / .07); color: #858c97; font-size: 12px; line-height: 17px; }
 
 .paw-desktop-root .paw-room-focus-overview__mesh-legend {
   display: flex;

@@ -9,7 +9,7 @@ import {
   Select,
 } from '@/components/primitives';
 import {
-  capabilityPreferenceOptions,
+  capabilityScopeLabel,
   type CapabilityCatalog,
   type CapabilityPreference,
 } from '@/features/plugins/capability-policy';
@@ -103,6 +103,7 @@ export function ToolPicker({
         <div>
           {tools.map((tool) => {
             const available = toolAvailableForCurrentSession(tool, session);
+            const presentation = toolPresentation(tool);
             const capability = capabilityCatalog?.items.find(
               (item) => item.kind === 'tool' && item.id === tool.id,
             );
@@ -116,28 +117,59 @@ export function ToolPicker({
                     onSelect(tool);
                   }}
                 >
-                  <span><strong>{tool.displayName}</strong><small>{tool.description}</small></span>
+                  <span><strong>{presentation.name}</strong><small>{presentation.description}</small></span>
                   <i data-risk={tool.riskLevel}>
                     {available ? riskLabel(tool.riskLevel) : '当前对话不可用'}
                   </i>
                 </button>
                 {capability ? (
-                  <Select
-                    aria-label={`${tool.displayName}的当前对话披露`}
-                    disabled={adjustmentDisabled || capabilityPolicyPending}
-                    onValueChange={(preference) => onCapabilityPreferenceChange(capability.canonicalId, preference)}
-                    options={capabilityPreferenceOptions}
-                    value={capabilityCatalog?.sessionPolicy?.disclosurePreferences.session[capability.canonicalId] ?? 'inherit'}
-                  />
+                  <div className="agent-tool-picker__preference">
+                    <span
+                      className="agent-tool-picker__effective"
+                      data-effective={capability.disclosure.effective}
+                    >
+                      <strong>{capability.disclosure.effective === 'enabled' ? '已启用' : '已关闭'}</strong>
+                      <small>作用域：{capabilityScopeLabel(capability.effectiveScope)}</small>
+                    </span>
+                    <Select
+                      aria-label={`${presentation.name}的当前对话使用`}
+                      disabled={adjustmentDisabled || capabilityPolicyPending}
+                      onValueChange={(preference) => onCapabilityPreferenceChange(capability.canonicalId, preference)}
+                      options={capabilityUsagePreferenceOptions}
+                      value={capabilityCatalog?.sessionPolicy?.disclosurePreferences.session[capability.canonicalId] ?? 'inherit'}
+                    />
+                  </div>
                 ) : null}
               </article>
             );
           })}
         </div>
         <p className="agent-picker-popover__note">
-          披露不等于授权；更改从下一次打开或下一轮开始生效，也不会停止正在运行的后台任务。
+          这里控制当前对话是否使用这些能力，不改变执行授权；更改从下一轮开始生效，也不会停止正在运行的后台任务。
         </p>
       </PopoverContent>
     </Popover>
   );
+}
+
+const capabilityUsagePreferenceOptions = [
+  { value: 'inherit', label: '跟随默认' },
+  { value: 'enabled', label: '当前对话启用' },
+  { value: 'disabled', label: '当前对话关闭' },
+] as const;
+
+function toolPresentation(tool: ToolManifest): { name: string; description: string } {
+  if (tool.id === 'memory') {
+    return {
+      name: '记忆召回',
+      description: '控制当前对话的自动个人记忆装配，也允许 Agent 显式调用记忆工具。',
+    };
+  }
+  if (tool.id === 'knowledge') {
+    return {
+      name: '知识库 / Agent RAG',
+      description: '启用后，Agent 可按当前问题反复检索已允许的知识库。',
+    };
+  }
+  return { name: tool.displayName, description: tool.description };
 }

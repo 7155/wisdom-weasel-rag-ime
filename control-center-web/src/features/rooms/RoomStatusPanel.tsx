@@ -27,7 +27,7 @@ import type {
 import type { RoomParticipantPublicProgressProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from './room-types';
 import { useAgentLiveStore } from '../agent/state/live-store';
-import { ROOM_PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleDescription, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from './room-copy';
+import { ROOM_PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleDescription, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary, roomPlanetName } from './room-copy';
 import { roomActivityNeedsSessionAction } from './runtime/room-execution-lanes';
 import { roomProjection, useRoomLiveStore } from './state/live-store';
 import { publicToolName } from '../agent/tool-presentation';
@@ -141,7 +141,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
               <RoomActivityIcon status={status} />
               <span>
                 <span className="room-status-activity__heading">
-                  <strong>{participant?.displayName ?? '协作成员'} · {presentation.title}</strong>
+                  <strong>{participant ? roomPlanetName(participant.ordinal) : '协作成员'} · {presentation.title}</strong>
                   <i>{roomActivityStatusLabel(status)}</i>
                 </span>
                 <small>{presentation.detail}{group.count > 1 ? ` · 合并 ${group.count} 次更新` : ''}</small>
@@ -317,7 +317,7 @@ function RoomParticipantPublicLanes({
         <header>
           <Bot size={16} />
           <span>
-            <strong>{participant?.displayName ?? '协作成员'}</strong>
+            <strong>{participant ? roomPlanetName(participant.ordinal) : '协作成员'}</strong>
             <small>{roleSummary}</small>
           </span>
           <i>{ROOM_STATUS_PARTICIPANT_STATE_LABELS[state]}</i>
@@ -351,9 +351,10 @@ function RoomParticipantPublicLanes({
 
 function RoomParticipantTelemetry({ participant, roomId }: { participant: NonNullable<RoomSummary['participants']>[number]; roomId: string }) {
   const pawOsDesktop = usePawOsDesktop();
+  const participantName = roomPlanetName(participant.ordinal);
   const telemetry = useAgentLiveStore((state) => state.projections[participant.sessionId]?.telemetry);
   if (!telemetry) {
-    return <article className="room-participant-telemetry room-participant-telemetry--quiet"><header><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {participant.status === 'active' ? '已加入' : '暂未参与'}</small></span>{pawOsDesktop ? <IconButton label={`打开${participant.displayName}伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetWindowRequest(participant, roomId))} tooltip /> : null}</header></article>;
+    return <article className="room-participant-telemetry room-participant-telemetry--quiet"><header><span><strong>{participantName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {participant.status === 'active' ? '已加入' : '暂未参与'}</small></span>{pawOsDesktop ? <IconButton label={`打开 ${participantName} 伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetWindowRequest(participant, roomId))} tooltip /> : null}</header></article>;
   }
   const context = telemetry.context;
   const cumulative = telemetry.cumulativeUsage;
@@ -363,9 +364,9 @@ function RoomParticipantTelemetry({ participant, roomId }: { participant: NonNul
   return (
     <article className="room-participant-telemetry" data-compacting={telemetry.isCompacting || undefined}>
       <header>
-        <span><strong>{participant.displayName}</strong><small>{telemetry.model.name || telemetry.model.id} · {roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
+        <span><strong>{participantName}</strong><small>{telemetry.model.name || telemetry.model.id} · {roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
         <i data-state={participant.status}>{telemetry.isCompacting ? '整理上下文' : participant.status === 'active' ? '已加入' : '暂未参与'}</i>
-        {pawOsDesktop ? <IconButton label={`打开${participant.displayName}伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetWindowRequest(participant, roomId))} tooltip /> : null}
+        {pawOsDesktop ? <IconButton label={`打开 ${participantName} 伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetWindowRequest(participant, roomId))} tooltip /> : null}
       </header>
       <div className="room-participant-telemetry__numbers">
         <span title="累计提示 Token">{roomTokenCount(promptTokens)} 输入</span>
@@ -433,8 +434,10 @@ function RoomStatusRow({ icon: Icon, title, detail }: { icon: LucideIcon; title:
 
 function RoomWorkRow({ room, work }: { room?: RoomSummary; work: RoomWorkItem }) {
   const ownerId = work.offeredToParticipantId || work.currentOwnerParticipantId;
-  const owner = room?.participants.find((participant) => participant.id === ownerId)?.displayName ?? '待接收';
-  const accountable = room?.participants.find((participant) => participant.id === work.accountableParticipantId)?.displayName ?? '未指定';
+  const ownerParticipant = room?.participants.find((participant) => participant.id === ownerId);
+  const accountableParticipant = room?.participants.find((participant) => participant.id === work.accountableParticipantId);
+  const owner = ownerParticipant ? roomPlanetName(ownerParticipant.ordinal) : '待接收';
+  const accountable = accountableParticipant ? roomPlanetName(accountableParticipant.ordinal) : '未指定';
   const blocker = text(work.blocker.reason);
   const showFullObjective = work.objective.trim().length > 180 || work.objective.includes('\n');
   return <article className="room-status-work__item" data-state={work.state}>

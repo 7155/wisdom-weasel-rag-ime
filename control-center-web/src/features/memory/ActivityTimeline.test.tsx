@@ -14,6 +14,153 @@ import { ActivityTimeline } from './ActivityTimeline';
 afterEach(cleanup);
 
 describe('ActivityTimeline activity projection', () => {
+  it('previews the authoritative pending range before submitting catch-up once', async () => {
+    const user = userEvent.setup();
+    const requests: ControlRequest[] = [];
+    renderTimeline(semanticTimeline(), { requests });
+
+    const organize = await screen.findByRole('button', { name: '整理本月' });
+    await user.click(organize);
+
+    expect(requests.filter((request) => request.pathId === 'memory.activityTimeline.build')).toHaveLength(0);
+    const preview = await screen.findByRole('dialog', { name: '整理本月' });
+    expect(preview).toHaveTextContent('1 天待整理');
+    expect(preview).toHaveTextContent('12 条来源');
+    expect(preview).toHaveTextContent(/待整理日期示例/u);
+
+    const confirm = within(preview).getByRole('button', { name: '确认整理本月' });
+    await user.dblClick(confirm);
+    await waitFor(() => expect(
+      requests.filter((request) => request.pathId === 'memory.activityTimeline.build'),
+    ).toHaveLength(1));
+    expect(requests.find((request) => request.pathId === 'memory.activityTimeline.build')?.body).toEqual({
+      date: localDateForTest(),
+      rangeStartDate: `${localDateForTest().slice(0, 7)}-01`,
+      throughToday: true,
+    });
+  });
+
+  it('previews and submits only the selected old month instead of implying a cross-month catch-up', async () => {
+    const user = userEvent.setup();
+    const requests: ControlRequest[] = [];
+    const oldMonth = shiftMonthForTest(localDateForTest().slice(0, 7), -2);
+    const oldMonthEnd = lastDayOfMonthForTest(oldMonth);
+    renderTimeline(semanticTimeline(), {
+      initialDate: `${oldMonth}-01`,
+      requests,
+    });
+
+    await user.click(await screen.findByRole('button', { name: '整理本月' }));
+    const preview = await screen.findByRole('dialog', { name: '整理本月' });
+    expect(preview).toHaveTextContent(`范围：${oldMonth}-01 至 ${oldMonthEnd}`);
+    expect(preview).not.toHaveTextContent(formatDateForTest(localDateForTest()));
+
+    await user.click(within(preview).getByRole('button', { name: '确认整理本月' }));
+    await waitFor(() => expect(
+      requests.find((request) => request.pathId === 'memory.activityTimeline.build')?.body,
+    ).toEqual({
+      date: oldMonthEnd,
+      rangeStartDate: `${oldMonth}-01`,
+      throughToday: true,
+    }));
+  });
+
+  it('recovers the authoritative active job identity and disables duplicate organization', async () => {
+    const requests: ControlRequest[] = [];
+    renderTimeline(semanticTimeline(), {
+      requests,
+      calendarAutomation: {
+        state: 'running',
+        job: {
+          jobId: 'memory-maintenance:existing-timeline',
+          state: 'running',
+          mode: 'manual_catch_up',
+          progress: {
+            phase: 'activity_timeline_catch_up',
+            throughDate: localDateForTest(),
+            completedDayCount: 2,
+            totalDayCount: 5,
+            remainingDayCount: 3,
+            currentDate: `${localDateForTest().slice(0, 7)}-01`,
+          },
+        },
+      },
+      jobResult: {
+        jobId: 'memory-maintenance:existing-timeline',
+        state: 'running',
+        progress: {
+          phase: 'activity_timeline_catch_up',
+          throughDate: localDateForTest(),
+          completedDayCount: 2,
+          totalDayCount: 5,
+          remainingDayCount: 3,
+          currentDate: `${localDateForTest().slice(0, 7)}-01`,
+        },
+      },
+    });
+
+    expect(await screen.findByRole('button', { name: '正在整理' })).toBeDisabled();
+    const status = screen.getByRole('status', { name: '历史日记整理进度' });
+    expect(status).toHaveTextContent('已完成 2 / 5 天');
+    expect(status).toHaveTextContent('任务 memory-maintenance:existing-timeline');
+    expect(requests.filter((request) => request.pathId === 'memory.activityTimeline.build')).toHaveLength(0);
+    expect(requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.memoryMaintenance.run',
+      query: { jobId: 'memory-maintenance:existing-timeline' },
+    }));
+  });
+
+  it('shows a traceable completed receipt and a failed-job recovery action', async () => {
+    const completed = renderTimeline(semanticTimeline(), {
+      calendarAutomation: {
+        state: 'caught_up',
+        job: {
+          jobId: 'memory-maintenance:completed-timeline',
+          state: 'completed',
+          mode: 'manual_catch_up',
+          progress: { throughDate: localDateForTest(), completedDayCount: 3, totalDayCount: 3 },
+          result: { ok: true, completedDayCount: 3, remainingDayCount: 0 },
+        },
+      },
+      jobResult: {
+        jobId: 'memory-maintenance:completed-timeline',
+        state: 'completed',
+        progress: { throughDate: localDateForTest(), completedDayCount: 3, totalDayCount: 3 },
+        result: { ok: true, completedDayCount: 3, remainingDayCount: 0 },
+      },
+    });
+
+    const receipt = await screen.findByRole('status', { name: '历史日记整理进度' });
+    expect(receipt).toHaveTextContent('整理完成：已完成 3 / 3 天，剩余 0 天');
+    expect(receipt).toHaveTextContent('任务 memory-maintenance:completed-timeline');
+    completed.unmount();
+
+    const user = userEvent.setup();
+    renderTimeline(semanticTimeline(), {
+      calendarAutomation: {
+        state: 'retry_scheduled',
+        job: {
+          jobId: 'memory-maintenance:failed-timeline',
+          state: 'failed',
+          mode: 'manual_catch_up',
+          progress: { throughDate: localDateForTest(), completedDayCount: 1, totalDayCount: 3 },
+          error: '第二天的语义整理未通过',
+        },
+      },
+      jobResult: {
+        jobId: 'memory-maintenance:failed-timeline',
+        state: 'failed',
+        progress: { throughDate: localDateForTest(), completedDayCount: 1, totalDayCount: 3 },
+        error: '第二天的语义整理未通过',
+      },
+    });
+
+    const failure = await screen.findByRole('alert', { name: '历史日记整理进度' });
+    expect(failure).toHaveTextContent('任务 memory-maintenance:failed-timeline');
+    await user.click(within(failure).getByRole('button', { name: '重新检查范围' }));
+    expect(await screen.findByRole('dialog', { name: '整理本月' })).toBeInTheDocument();
+  });
+
   it('keeps the daily journal as the first-screen main pane with the calendar in the rail', async () => {
     const user = userEvent.setup();
     renderTimeline(semanticTimeline());
@@ -210,16 +357,16 @@ describe('ActivityTimeline activity projection', () => {
 
 function renderTimeline(
   timeline: Record<string, unknown>,
-  options: { organized?: boolean } = {},
+  options: TimelineTransportOptions = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  render(
+  return render(
     <TooltipProvider delayDuration={0}>
       <ControlTransportProvider transport={timelineTransport(timeline, options)}>
         <QueryClientProvider client={client}>
-          <ActivityTimeline />
+          <ActivityTimeline initialDate={options.initialDate} />
         </QueryClientProvider>
       </ControlTransportProvider>
     </TooltipProvider>,
@@ -228,7 +375,7 @@ function renderTimeline(
 
 function timelineTransport(
   timeline: Record<string, unknown>,
-  options: { organized?: boolean } = {},
+  options: TimelineTransportOptions = {},
 ): ControlTransport {
   return {
     kind: 'mock',
@@ -248,6 +395,7 @@ function timelineTransport(
       native: {},
     }),
     request: async <Response,>(request: ControlRequest) => {
+      options.requests?.push(request);
       if (request.pathId === 'memory.activityTimeline.get') {
         return { ok: true, timeline } as Response;
       }
@@ -268,6 +416,7 @@ function timelineTransport(
             waitingDayCount: 1,
             outdatedDayCount: 0,
           },
+          ...(options.calendarAutomation ? { automation: options.calendarAutomation } : {}),
           days: [
             { date: today, status: 'approved', organized: options.organized ?? true, modelOrganized: options.organized ?? true, needsRefresh: false, sourceEventCount: 12, segmentCount: 2 },
             { date: waitingDate, status: 'none', organized: false, modelOrganized: false, needsRefresh: false, sourceEventCount: 12, segmentCount: 0 },
@@ -305,18 +454,44 @@ function timelineTransport(
         } as Response;
       }
       if (request.pathId === 'agent.memoryMaintenance.run') {
-        return {
+        return (options.jobResult ?? {
           schemaVersion: 'rag-ime.gateway-memory-maintenance-job.v1',
           ok: true,
           jobId: 'memory-maintenance:test',
           state: 'completed',
           result: { ok: true },
-        } as Response;
+        }) as Response;
       }
       throw new Error(`Unexpected request: ${request.pathId}`);
     },
     subscribe: (_request: ControlSubscription) => () => undefined,
   } as unknown as ControlTransport;
+}
+
+interface TimelineTransportOptions {
+  initialDate?: string;
+  organized?: boolean;
+  calendarAutomation?: Record<string, unknown>;
+  jobResult?: Record<string, unknown>;
+  requests?: ControlRequest[];
+}
+
+function shiftMonthForTest(monthValue: string, offset: number): string {
+  const [year, month] = monthValue.split('-').map(Number);
+  const value = new Date(year, month - 1 + offset, 1);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function lastDayOfMonthForTest(monthValue: string): string {
+  const [year, month] = monthValue.split('-').map(Number);
+  const day = new Date(year, month, 0).getDate();
+  return `${monthValue}-${String(day).padStart(2, '0')}`;
+}
+
+function formatDateForTest(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+    .format(new Date(year, month - 1, day));
 }
 
 function localDateForTest() {

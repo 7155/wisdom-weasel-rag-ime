@@ -20,6 +20,8 @@ export const PAW_WINDOW_MIN_HEIGHT = 210;
 const PAW_MENU_BAR_HEIGHT = 34;
 const PAW_DOCK_GUTTER_HEIGHT = 76;
 const PAW_WINDOW_AREA_INSET = 8;
+const PAW_WINDOW_REACHABLE_GRIP_WIDTH = 120;
+const PAW_WINDOW_TITLEBAR_HEIGHT = 40;
 
 /** Usable size of the window layer itself, in layer coordinates. */
 export function pawWindowLayerSize(): { width: number; height: number } {
@@ -49,6 +51,32 @@ export function fitPawWindowBounds(bounds: PawWindowBounds, area: PawWindowBound
   return {
     x: Math.min(Math.max(area.x, bounds.x), area.x + area.width - width),
     y: Math.min(Math.max(area.y, bounds.y), area.y + area.height - height),
+    width,
+    height,
+  };
+}
+
+/** Keep an ordinary window recoverable without forcing its entire frame into
+ * the OS canvas. A deliberate drag may leave content partially outside the
+ * canvas, but at least one 120px titlebar grip and a full titlebar row remain
+ * reachable. Width/height still shrink when the desktop itself gets smaller. */
+export function fitReachablePawWindowBounds(
+  bounds: PawWindowBounds,
+  area: PawWindowBounds = pawWindowArea(),
+): PawWindowBounds {
+  const width = Math.min(area.width, Math.max(Math.min(PAW_WINDOW_MIN_WIDTH, area.width), bounds.width));
+  const height = Math.min(area.height, Math.max(Math.min(PAW_WINDOW_MIN_HEIGHT, area.height), bounds.height));
+  const horizontalGrip = Math.min(PAW_WINDOW_REACHABLE_GRIP_WIDTH, width);
+  const titlebarGrip = Math.min(PAW_WINDOW_TITLEBAR_HEIGHT, height);
+  return {
+    x: Math.min(
+      Math.max(area.x - width + horizontalGrip, bounds.x),
+      area.x + area.width - horizontalGrip,
+    ),
+    y: Math.min(
+      Math.max(area.y, bounds.y),
+      area.y + area.height - titlebarGrip,
+    ),
     width,
     height,
   };
@@ -317,9 +345,9 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
         const windows = Object.fromEntries(Object.entries(state.windows).map(([windowId, node]) => {
           const bounds = node.placement
             ? placementBounds(node.placement)
-            : fitPawWindowBounds(node.bounds, viewport);
+            : fitReachablePawWindowBounds(node.bounds, viewport);
           const restoreBounds = node.restoreBounds
-            ? fitPawWindowBounds(node.restoreBounds, viewport)
+            ? fitReachablePawWindowBounds(node.restoreBounds, viewport)
             : undefined;
           if (sameBounds(bounds, node.bounds)
             && ((!restoreBounds && !node.restoreBounds) || (restoreBounds && node.restoreBounds && sameBounds(restoreBounds, node.restoreBounds)))) {

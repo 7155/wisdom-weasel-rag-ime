@@ -6,7 +6,7 @@ import {
 } from './context-usage-model';
 
 describe('context usage model', () => {
-  it('builds a Cursor-style segmented view from telemetry and xray layers', () => {
+  it('keeps exact captured characters separate from aggregate Runtime tokens', () => {
     const snapshot: ContextXraySnapshot = {
       available: true,
       layers: [
@@ -16,8 +16,11 @@ describe('context usage model', () => {
         layer('skills', 'Skills', 433),
         layer('lifecycle-hook', 'MCP', 2_500),
         layer('role-book', 'Subagents', 945),
-        layer('history', 'Summarized', 2_700),
-        layer('timeline', 'Conversation', 109_200),
+        layer('compaction-summary', 'Compaction summary', 2_700),
+        layer('user-messages', 'User messages', 56_000),
+        layer('assistant-messages', 'Assistant messages', 50_000),
+        layer('tool-calls', 'Tool calls', 1_400),
+        layer('tool-results', 'Tool results', 3_200),
       ],
       contextTokens: 132_778,
       contextWindow: 200_000,
@@ -43,38 +46,96 @@ describe('context usage model', () => {
       'mcp',
       'subagents',
       'summarized',
-      'conversation',
+      'user',
+      'assistant',
+      'toolCalls',
+      'toolResults',
     ]);
-    expect(view.segments.find((segment) => segment.id === 'conversation')?.tokens).toBe(109_200);
+    expect(view.segments.find((segment) => segment.id === 'user')?.characters).toBe(56_000);
+    expect(view.segments.find((segment) => segment.id === 'assistant')?.characters).toBe(50_000);
+    expect(view.segments.find((segment) => segment.id === 'toolCalls')?.characters).toBe(1_400);
+    expect(view.segments.find((segment) => segment.id === 'toolResults')?.characters).toBe(3_200);
+    expect(view.unclassifiedTokens).toBe(132_778);
     expect(formatContextTokenCount(132_778)).toBe('132.8K');
     expect(formatContextTokenCount(200_000)).toBe('200K');
   });
 
-  it('falls back to a single conversation segment when only telemetry is known', () => {
+  it('keeps telemetry-only usage unclassified instead of inventing a semantic segment', () => {
     const view = buildContextUsageView({
       telemetry: { tokens: 40_000, contextWindow: 100_000, percent: 40 },
       snapshot: null,
     });
-    expect(view.segments).toEqual([
-      { id: 'conversation', label: 'Conversation', tokens: 40_000, color: '#e85a3c' },
-    ]);
+    expect(view.segments).toEqual([]);
+    expect(view.unclassifiedTokens).toBe(40_000);
     expect(view.freeTokens).toBe(60_000);
+  });
+
+  it('does not subtract captured characters from aggregate token usage', () => {
+    const snapshot: ContextXraySnapshot = {
+      available: true,
+      layers: [layer('system', 'System prompt', 10_000)],
+      contextTokens: 12_000,
+      contextWindow: 100_000,
+      cacheHitPercent: null,
+      compaction: { count: 0, status: '', tokensBefore: null, tokensAfter: null },
+      providerStatus: 200,
+      providerCaptured: true,
+      updatedAtMs: 1,
+    };
+
+    const view = buildContextUsageView({ snapshot });
+    expect(view.segments).toEqual([
+      { id: 'system', label: '系统提示词', characters: 10_000, color: '#8b919a' },
+    ]);
+    expect(view.unclassifiedTokens).toBe(12_000);
+  });
+
+  it('never scales character measurements into token buckets and exposes estimated compaction size honestly', () => {
+    const snapshot: ContextXraySnapshot = {
+      available: true,
+      layers: [
+        layer('system', 'System prompt', 20_000),
+        layer('tools', 'Tools', 40_000),
+        layer('timeline', 'Conversation', 140_000),
+      ],
+      contextTokens: 100_000,
+      contextWindow: 200_000,
+      cacheHitPercent: null,
+      compaction: { count: 2, status: 'completed', tokensBefore: 128_000, tokensAfter: 29_000 },
+      providerStatus: 200,
+      providerCaptured: true,
+      updatedAtMs: 1,
+    };
+
+    const view = buildContextUsageView({ snapshot });
+    expect(view.segments.reduce((sum, segment) => sum + segment.characters, 0)).toBe(200_000);
+    expect(view.segments.find((segment) => segment.id === 'system')).toMatchObject({
+      label: '系统提示词',
+      characters: 20_000,
+    });
+    expect(view.unclassifiedTokens).toBe(100_000);
+    expect(view.compaction).toEqual({
+      count: 2,
+      status: 'completed',
+      tokensBefore: 128_000,
+      tokensAfter: 29_000,
+    });
   });
 });
 
 function layer(
   id: ContextXraySnapshot['layers'][number]['id'],
   label: string,
-  estimatedTokens: number,
+  characters: number,
 ): ContextXraySnapshot['layers'][number] {
   return {
     id,
     label,
     source: 'test',
     state: 'present',
-    characters: estimatedTokens * 4,
-    estimatedTokens,
+    characters,
+    tokens: null,
     providerDelivery: 'delivered',
-    content: 'x'.repeat(Math.max(1, estimatedTokens)),
+    content: 'x'.repeat(Math.max(1, characters)),
   };
 }

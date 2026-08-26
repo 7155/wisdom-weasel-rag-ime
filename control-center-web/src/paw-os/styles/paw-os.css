@@ -98,6 +98,12 @@
 .paw-menu-bar > .paw-menu-status { min-width: 0; grid-column: 3; }
 html[data-paw-native-host='macos'] .paw-menu-bar {
   grid-template-columns: 68px max-content minmax(0, 1fr) auto;
+  /* Electron removes its own title strip on macOS. This one PAW bar becomes
+     the window drag surface while the native traffic lights occupy column 1. */
+  -webkit-app-region: drag;
+}
+html[data-paw-native-host='macos'] .paw-menu-bar > :is(button, .paw-menu-status) {
+  -webkit-app-region: no-drag;
 }
 html[data-paw-native-host='macos'] .paw-menu-bar::before {
   width: 68px;
@@ -1166,6 +1172,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-window-shell[data-app='terminal'] .paw-window-titlebar,
 .paw-window-shell[data-app='terminal'] .paw-terminal-app__toolbar { background: color-mix(in oklab, #151a22 94%, var(--paw-app-accent)); }
+.paw-window-shell[data-app='terminal'] .paw-window-titlebar .paw-terminal-tab-new {
+  color: #aeb7c7;
+}
+.paw-window-shell[data-app='terminal'] .paw-window-titlebar .paw-terminal-tab-new:hover {
+  background: rgb(255 255 255 / 8%);
+  color: #f7f9fc;
+}
 .paw-window-shell[data-app='terminal'] .paw-terminal-console__empty button {
   border-color: color-mix(in srgb, var(--paw-app-accent) 54%, transparent);
   background: var(--paw-app-accent-strong);

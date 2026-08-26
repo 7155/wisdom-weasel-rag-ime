@@ -291,7 +291,7 @@ export function ActivitySummary({
                 <ActivityRow
                   key={activity.id}
                   activity={activity}
-                  initiallyOpen={activity.status === 'failed' || activity.status === 'waiting'}
+                  initiallyOpen={false}
                   onApprovalDecision={onApprovalDecision}
                   onOpenApproval={(selected) => {
                     setInlineOpen(false);
@@ -417,13 +417,20 @@ const ActivityRow = memo(function ActivityRow({
   const routePlan = useMemo(() => routeDecisionPlanView(payload), [payload]);
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const [rowOpen, setRowOpen] = useActivityDisclosure(
-    `row:${activity.id}`,
-    Boolean(initiallyOpen || (boundToTool && activity.status === 'waiting')),
+    `row:${activity.turnId}:${activity.id}`,
+    // Tool payloads are supporting evidence. Even a running, failed, or
+    // approval-bound tool starts folded so a short receipt cannot take over
+    // the conversation viewport. A human click is still remembered across a
+    // virtualized remount of this exact turn.
+    // A hidden inner summary is already governed by the outer FX disclosure;
+    // once the user opens that outer row, its body must be reachable. Visible
+    // Tool rows still always start folded.
+    Boolean(initiallyOpen) && (hideSummary || !isToolActivity),
   );
   const [rowPresence, setRowPresence] = useState(rowOpen);
   const detailId = `agent-activity-row-${useId().replace(/:/gu, '')}`;
   const nowMs = useActivityClock(activity.status === 'running');
-  const duration = activityDuration(activity, nowMs);
+  const receiptMeta = activityReceiptMeta(activity, nowMs, toolView);
   return (
     <details
       className="agent-activity-row"
@@ -449,7 +456,7 @@ const ActivityRow = memo(function ActivityRow({
         <i data-status={activity.status}>
           {toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}
           {statusLabel(activity.status)}
-          {duration ? ` · ${duration}` : ''}
+          {receiptMeta ? ` · ${receiptMeta}` : ''}
         </i>
       </summary>
       <SmoothDisclosureReveal
@@ -474,7 +481,10 @@ const ActivityRow = memo(function ActivityRow({
                 ? null
                 : <SafeFieldList data={payload} />}
           {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
-          <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
+          <SourceList
+            items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)}
+            links={toolView?.sourceLinks ?? []}
+          />
           {toolView?.destination ? (
             <a className="agent-tool-destination" href={toolView.destination.href}>
               {toolView.destination.label}<ExternalLink size={13} aria-hidden="true" />
@@ -648,10 +658,16 @@ export function ReasoningActivitySummary({
   activities: AgentActivityProjection[];
 }) {
   const reasoning = reasoningSummaryItems(activities);
+  const nowMs = useActivityClock(reasoning.running);
+  const latestActivity = activities.at(-1);
+  const receiptMeta = latestActivity
+    ? activityReceiptMeta(latestActivity, nowMs, null)
+    : '';
   if (reasoning.items.length === 0) return null;
   return (
     <ReasoningSummaryStrip
       items={reasoning.items}
+      receiptMeta={receiptMeta}
       running={reasoning.running}
     />
   );
@@ -659,9 +675,11 @@ export function ReasoningActivitySummary({
 
 function ReasoningSummaryStrip({
   items,
+  receiptMeta,
   running,
 }: {
   items: string[];
+  receiptMeta: string;
   running: boolean;
 }) {
   const latest = items.at(-1) ?? '';
@@ -679,7 +697,9 @@ function ReasoningSummaryStrip({
             : <Brain aria-hidden="true" size={15} />}
           <strong>{running ? '正在思考' : '思考摘要'}</strong>
           <span>{latest}</span>
-          <small>{running ? `实时 · ${items.length} 项` : `${items.length} 项`}</small>
+          <small className="agent-reasoning-feed__meta">
+            {running ? '进行中' : '完成'} · {items.length} 项{receiptMeta ? ` · ${receiptMeta}` : ''}
+          </small>
           <ChevronRight aria-hidden="true" size={15} />
         </button>
       </DialogTrigger>
@@ -1234,9 +1254,25 @@ export function PublicToolError({ reason }: { reason: string }) {
   );
 }
 
-function SourceList({ items }: { items: string[] }) {
+function SourceList({
+  items,
+  links,
+}: {
+  items: string[];
+  links: Array<{ label: string; href: string }>;
+}) {
   if (items.length === 0) return null;
-  return <div className="agent-activity-row__source-panel"><strong><BookOpenText size={13} />信息来源</strong><ul className="agent-activity-row__sources">{items.map((item) => <li key={item}>{item}</li>)}</ul></div>;
+  const hrefs = new Map(links.map((link) => [link.label, link.href]));
+  return (
+    <div className="agent-activity-row__source-panel">
+      <strong><BookOpenText size={13} />信息来源</strong>
+      <ul className="agent-activity-row__sources">
+        {items.map((item) => (
+          <li key={item}>{hrefs.has(item) ? <a href={hrefs.get(item)}>{item}</a> : item}</li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 interface ActivityPresentation {
@@ -1594,19 +1630,23 @@ function FxActivityDisclosure({
   const failed = activity.status === 'failed';
   const waiting = activity.status === 'waiting';
   const running = activity.status === 'running';
-  /* Live states stay force-open so progress and approvals cannot be hidden.
-   * A failure opens by default (initially or on a live transition) but stays
-   * a real disclosure: a human can fold historical failures back down. */
-  const [manuallyOpen, setManuallyOpen] = useActivityDisclosure(`fx:${activity.id}`, failed);
-  const open = manuallyOpen || running || waiting;
+  const isToolRow = ['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind);
+  /* Tool details never auto-open. Status, duration and progress remain in the
+   * compact summary row; parameters, output and process history require an
+   * explicit human disclosure. Non-tool lifecycle rows retain their live
+   * behavior because they are the conversation state rather than tool data. */
+  const [manuallyOpen, setManuallyOpen] = useActivityDisclosure(
+    `fx:${activity.turnId}:${activity.id}`,
+    !isToolRow && failed,
+  );
+  const open = manuallyOpen || (!isToolRow && (running || waiting));
   const previousStatusRef = useRef(activity.status);
   useEffect(() => {
     const previous = previousStatusRef.current;
     previousStatusRef.current = activity.status;
-    if (activity.status === 'failed' && previous !== 'failed') setManuallyOpen(true);
-  }, [activity.status, setManuallyOpen]);
+    if (!isToolRow && activity.status === 'failed' && previous !== 'failed') setManuallyOpen(true);
+  }, [activity.status, isToolRow, setManuallyOpen]);
   const detailId = `paw-activity-detail-${useId().replace(/:/gu, '')}`;
-  const isToolRow = ['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind);
   const toolView = useMemo(
     () => (isToolRow ? publicToolResultView(activity) : null),
     [activity, isToolRow],
@@ -1624,7 +1664,7 @@ function FxActivityDisclosure({
   const nowMs = useActivityClock(running);
   // A Tool receipt with an explicit duration stays authoritative; otherwise a
   // live row shows its real elapsed clock and a settled row its measured span.
-  const meta = fxActivityMeta(activity) || activityDuration(activity, nowMs);
+  const meta = activityReceiptMeta(activity, nowMs, toolView);
   const progress = activityProgressView(activity);
   return (
     <div
@@ -1763,6 +1803,133 @@ function fxActivityMeta(activity: AgentActivityProjection): string {
   const durationMs = Number(activity.payload.durationMs ?? activity.payload.duration ?? 0);
   if (Number.isFinite(durationMs) && durationMs > 0) return `${(durationMs / 1000).toFixed(1)}s`;
   return '';
+}
+
+function activityReceiptMeta(
+  activity: AgentActivityProjection,
+  nowMs: number,
+  toolView: PublicToolResultView | null,
+): string {
+  const duration = fxActivityMeta(activity) || activityDuration(activity, nowMs);
+  const tokens = activityTokenReceipt(activity, toolView);
+  return [duration, tokens].filter(Boolean).join(' · ');
+}
+
+/** Tokens belong to this activity only. Tool rows accept only the exact
+ * tool_result.usage receipt carried by their own toolCallId. Old results do
+ * not get a content-length estimate because that would look authoritative. */
+function activityTokenReceipt(
+  activity: AgentActivityProjection,
+  toolView: PublicToolResultView | null,
+): string {
+  const usage = objectValue(activity.payload.usage);
+  const isToolActivity = ['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind);
+  if (isToolActivity) {
+    const exactTotal = firstFiniteTokenCount(usage, [
+      'totalTokens',
+      'total_tokens',
+      'tokens',
+    ]);
+    if (exactTotal !== null) return `${formatActivityTokenCount(exactTotal)} token`;
+    const exactOutput = firstFiniteTokenCount(usage, [
+      'outputTokens',
+      'output_tokens',
+      'completionTokens',
+      'completion_tokens',
+      'generatedTokens',
+      'generated_tokens',
+      'output',
+    ]);
+    if (exactOutput !== null) return `${formatActivityTokenCount(exactOutput)} token`;
+    return activity.kind === 'tool_finished' ? '无独立统计' : '';
+  }
+
+  const exactOutput = firstFiniteTokenCount(usage, [
+    'outputTokens',
+    'output_tokens',
+    'completionTokens',
+    'completion_tokens',
+    'generatedTokens',
+    'generated_tokens',
+    'output',
+  ]);
+  if (exactOutput !== null) return exactOutput > 0 ? `${formatActivityTokenCount(exactOutput)} token` : '';
+
+  // Provider totals commonly include the whole prompt. Without a matching
+  // output field, an input-bearing usage object cannot be attributed to this
+  // row's return value and must not masquerade as Tool output.
+  const inputBearingUsage = firstFiniteTokenCount(usage, [
+    'inputTokens',
+    'input_tokens',
+    'promptTokens',
+    'prompt_tokens',
+    'input',
+  ]) !== null;
+  const exactScoped = inputBearingUsage ? null : firstFiniteTokenCount(usage, [
+    'tokens',
+    'totalTokens',
+    'total_tokens',
+  ]);
+  if (exactScoped !== null) return exactScoped > 0 ? `${formatActivityTokenCount(exactScoped)} token` : '';
+
+  const publicContent = activity.kind === 'reasoning_summary'
+    ? reasoningItemsFromPayload(activity.payload, activity.summary).join('\n')
+    : toolView
+      ? publicToolReceiptText(toolView)
+      : '';
+  const estimated = estimatePublicTokenCount(publicContent);
+  return estimated > 0 ? `约 ${formatActivityTokenCount(estimated)} token` : '';
+}
+
+function publicToolReceiptText(view: PublicToolResultView): string {
+  const values = [
+    view.output?.text ?? '',
+    ...view.resultItems.flatMap((item) => [item.label, item.text]),
+    view.preview?.description ?? '',
+    ...(view.preview?.items.flatMap((item) => [item.label ?? '', item.text]) ?? []),
+    view.error ?? '',
+    ...view.fields
+      .filter((field) => !['status', 'operation', 'ok'].includes(field.id))
+      .flatMap((field) => [field.label, field.value]),
+  ].map((value) => value.replace(/\s+/gu, ' ').trim()).filter(Boolean);
+  return [...new Set(values)].join('\n');
+}
+
+function estimatePublicTokenCount(value: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const character of value) {
+    if (/\s/u.test(character)) continue;
+    if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(character)) cjk += 1;
+    else other += 1;
+  }
+  return cjk + Math.ceil(other / 4);
+}
+
+function firstFiniteTokenCount(
+  source: Record<string, unknown>,
+  keys: string[],
+): number | null {
+  for (const key of keys) {
+    if (!(key in source)) continue;
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.floor(value);
+    }
+  }
+  return null;
+}
+
+function formatActivityTokenCount(value: number): string {
+  if (value < 1_000) return String(value);
+  const compact = value >= 10_000 ? Math.round(value / 1_000) : Math.round(value / 100) / 10;
+  return `${compact}k`;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 export interface ActivityProgressView {

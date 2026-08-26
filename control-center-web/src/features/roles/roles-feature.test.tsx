@@ -29,9 +29,11 @@ describe('Roles experience', () => {
     expect(await screen.findByRole('heading', { name: '模型与扩展', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '按职责选择默认模型', level: 2 })).toBeInTheDocument();
     expect(screen.getByText('默认主 Agent')).toBeInTheDocument();
-    expect(screen.getByText('Tool Agent')).toBeInTheDocument();
-    expect(screen.getByText('调研与复核 Agent')).toBeInTheDocument();
-    expect(screen.getByText('Room 协调 Agent')).toBeInTheDocument();
+    expect(screen.getByText('私有 Tool Agent')).toBeInTheDocument();
+    expect(screen.getByText('私有调研卫星')).toBeInTheDocument();
+    expect(screen.getByText('Room 行星伙伴')).toBeInTheDocument();
+    expect(screen.getByLabelText('私有 Tool Agent默认模型')).toBeInTheDocument();
+    expect(screen.getByLabelText('Room 行星伙伴默认模型')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '插件管理' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '兼容伙伴资料', level: 2 })).toBeInTheDocument();
     expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
@@ -79,11 +81,11 @@ describe('Roles experience', () => {
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     await screen.findByText('配置 #11');
-    await user.click(screen.getByLabelText('Tool Agent默认模型'));
+    await user.click(screen.getByLabelText('私有 Tool Agent默认模型'));
     await user.click(await screen.findByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' }));
-    await user.click(screen.getByLabelText('Tool Agent默认推理强度'));
+    await user.click(screen.getByLabelText('私有 Tool Agent默认推理强度'));
     await user.click(await screen.findByRole('option', { name: '高' }));
-    await user.click(screen.getByRole('button', { name: '保存Tool Agent模型分工' }));
+    await user.click(screen.getByRole('button', { name: '保存私有 Tool Agent模型分工' }));
 
     await waitFor(() => expect(transport.requests.find((call) => call.request.pathId === 'agent.configuration.update')?.request.body).toEqual({
       expectedRevision: 11,
@@ -96,7 +98,7 @@ describe('Roles experience', () => {
       updatedBy: 'models-ui',
     }));
     expect(await screen.findByText('配置 #12')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Tool Agent的默认模型已保存');
+    expect(screen.getByRole('status')).toHaveTextContent('私有 Tool Agent的默认模型已保存');
   });
 
   it('makes Room membership a capability while keeping task jobs dynamic', async () => {
@@ -105,8 +107,8 @@ describe('Roles experience', () => {
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByText('Room 协调 Agent')).toBeInTheDocument();
-    expect(screen.getByText(/主持多人协作、分派工作并组织验收/)).toBeInTheDocument();
+    expect(await screen.findByText('Room 行星伙伴')).toBeInTheDocument();
+    expect(screen.getByText(/用户可见的行星伙伴；参与协作、分派工作并组织验收/)).toBeInTheDocument();
     expect(screen.queryByText('协作配置')).not.toBeInTheDocument();
     expect(screen.queryByText('协作主持')).not.toBeInTheDocument();
     expect(await screen.findByText('内置伙伴 · 复制后可以调整')).toBeInTheDocument();

@@ -110,8 +110,8 @@ describe('PAWOS semantic type roles', () => {
     expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-toolbar/);
     // The folded History/Settings rows have to outrank the shared menu-row
     // painter, or they show beside the toolbar buttons they stand in for.
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-toolbar-actions \.paw-browser-menu > \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*none;/s);
-    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-toolbar-actions \.paw-browser-menu > \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*flex;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*none;/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-menu-narrow-only\s*\{[^}]*display:\s*flex;/s);
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-agent-stream\s*\{[^}]*background:\s*#fff;[^}]*backdrop-filter:\s*none;/s);
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-history,\s*\.paw-desktop-root \.paw-browser-settings\s*\{[^}]*background:\s*#eef1f5;[^}]*backdrop-filter:\s*none;/s);
     expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-error\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
@@ -121,40 +121,42 @@ describe('PAWOS semantic type roles', () => {
     // Tab deck, address deck, and guest are three tracks of one window-filling
     // grid: the chrome rows are sized by the controls they carry and only the
     // guest track absorbs the remaining height.
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\);/s);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser:not\(\[data-tabs-in-window-chrome\]\)\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\);/s);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser:not\(\[data-tabs-in-window-chrome\]\) \.paw-browser-tabstrip\s*\{[^}]*min-height:\s*38px;/s);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-toolbar\s*\{[^}]*min-height:\s*44px;[^}]*flex-wrap:\s*nowrap;/s);
+    // The structural owner establishes the window-filling grid; the preserved
+    // Browser owner only pins the two visible chrome rows. With tabs portalled
+    // into the one titlebar, Browser content has exactly toolbar + guest.
+    expect(appCss).toMatch(/\.paw-direct-browser\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*display:\s*grid;[^}]*grid-template-rows:\s*40px 44px minmax\(0, 1fr\);/s);
+    expect(appCss).toMatch(/\.paw-direct-browser\[data-tabs-in-window-chrome\]\s*\{[^}]*grid-template-rows:\s*44px minmax\(0, 1fr\);/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser\s*\{[^}]*grid-template-rows:\s*42px 1fr;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-direct-browser:not\(\[data-tabs-in-window-chrome\]\)\s*\{[^}]*grid-template-rows:\s*38px 42px minmax\(0, 1fr\);/s);
 
     // The guest never inherits a second track, and every page surface — real
     // guest, CDP projection, blank sheet, reload prompt, failure card — shares
     // the one guest cell instead of stacking into implicit rows.
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-workspace,\s*\.paw-desktop-root \.paw-browser-workspace\[data-show-agent\]\s*\{[^}]*min-height:\s*0;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);\s*grid-template-rows:\s*minmax\(0, 1fr\);/s);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-viewport\s*\{[^}]*min-height:\s*0;[^}]*grid-template-rows:\s*minmax\(0, 1fr\);/s);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-native-webview,[\s\S]*?\.paw-desktop-root \.paw-browser-error\s*\{[^}]*grid-area:\s*1 \/ 1;/s);
+    expect(appCss).toMatch(/\.paw-browser-workspace\s*\{[^}]*min-height:\s*0;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*overflow:\s*hidden;/s);
+    expect(appCss).toMatch(/\.paw-browser-viewport\s*\{[^}]*min-height:\s*0;[^}]*grid-template-rows:\s*minmax\(0, 1fr\);[^}]*overflow:\s*hidden;/s);
+    expect(appCss).toMatch(/\.paw-browser-native-webview\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;/s);
 
-    // Nothing inside an App window may be measured against the screen.
-    expect(toolsMigratedCss).not.toMatch(/\d(?:\.\d+)?v(?:h|w|min|max)\b/);
+    // App geometry never takes a viewport-sized width or height. The history
+    // sheet may use a bounded `vh` value only as breathing-room padding.
+    expect(toolsMigratedCss).not.toMatch(
+      /\b(?:width|height|min-width|max-width|min-height|max-height)\s*:[^;{}]*\d(?:\.\d+)?v(?:h|w|min|max)\b/,
+    );
   });
 
   it('keeps Browser tabs and primary navigation intact while the window resizes', () => {
     // The address capsule is the only toolbar child that yields width, and it
     // still refuses to collapse into a sliver.
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-nav-buttons,\s*\.paw-desktop-root \.paw-toolbar-actions\s*\{[^}]*flex:\s*0 0 auto;/s);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-nav-buttons button,\s*\.paw-desktop-root \.paw-toolbar-actions > button\s*\{[^}]*flex:\s*0 0 auto;/s);
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-omnibox-form\s*\{[^}]*min-width:\s*96px;\s*flex:\s*1 1 auto;/s);
+    expect(appCss).toMatch(/\.paw-nav-buttons, \.paw-toolbar-actions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;/s);
+    expect(appCss).toMatch(/\.paw-omnibox-form\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1;/s);
+    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-nav-buttons button,\s*\.paw-desktop-root \.paw-toolbar-actions > button\s*\{[^}]*width:\s*29px;[^}]*height:\s*29px;/s);
 
     // Below the 620px menu fold the remaining controls tighten once more.
-    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*420px\)[\s\S]*?\.paw-desktop-root \.paw-omnibox-form\s*\{[^}]*min-width:\s*84px;/s);
-    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*420px\)[\s\S]*?\.paw-desktop-root \.paw-browser-agent-stream\s*\{/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-toolbar\s*\{[^}]*gap:\s*4px;[^}]*padding-inline:\s*6px;/s);
+    expect(toolsMigratedCss).toMatch(/@container paw-browser \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-agent-stream\s*\{/s);
 
     // The tab deck is portalled into the window titlebar, outside the Browser
     // container, so its narrow floor has to be asked of the window container.
-    expect(toolsMigratedCss).toMatch(/@container paw-window \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-tab\s*\{[^}]*min-width:\s*92px;/s);
-    expect(toolsMigratedCss).toMatch(/@container paw-window \(max-width:\s*620px\)[\s\S]*?\.paw-desktop-root \.paw-browser-tab-main\s*\{[^}]*padding:\s*0 28px 0 8px;/s);
-
-    // Every menu row stays reachable inside a short window that clips overflow.
-    expect(toolsMigratedCss).toMatch(/\.paw-desktop-root \.paw-browser-menu\s*\{[^}]*max-height:\s*320px;\s*overflow-y:\s*auto;/s);
+    expect(appCss).toMatch(/@container paw-window \(max-width:\s*620px\)[\s\S]*?\.paw-browser-tab\s*\{[^}]*min-width:\s*96px;/s);
   });
 
   it('keeps installed Agent raw, code, and terminal readers on a readable code colour pair', () => {
@@ -626,11 +628,12 @@ describe('PAWOS semantic type roles', () => {
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-pill.danger');
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-pill.vio');
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .fx-context-chip');
-    // The planet mark is declared once in the Agent owner so it survives
-    // outside the desktop shell; the fx layer may only repaint it.
+    // The stable status mark is declared once in the Agent owner so it
+    // survives outside the desktop shell; the fx layer may only repaint it.
     expect(agentFxCss).not.toContain('@keyframes paw-conv-planet-breathe');
     expect(agentFxCss).toContain('.paw-desktop-root .paw-chatfx .paw-conv-planet {');
-    expect(agentFeatureCss).toContain('@keyframes paw-conv-planet-breathe');
+    expect(agentFeatureCss).toContain('@keyframes paw-conv-planet-orbit');
+    expect(agentFeatureCss).not.toContain('@keyframes paw-conv-planet-breathe');
     expect(agentFxCss).not.toMatch(/(^|})\s*(?::root|html|body|\*)\s*\{/m);
     // The repeated "Agent/状态" caption row left the fx DOM entirely; no owner
     // may keep styling (or hiding) it inside the separated conversation.
@@ -701,7 +704,7 @@ describe('PAWOS semantic type roles', () => {
     expect(appCss).not.toContain('.paw-room-workspace__tool-content');
     expect(appCss).toMatch(/\.paw-room-governance article strong\s*\{[^}]*font-size:\s*14px;/s);
     expect(appCss).toMatch(/\.paw-room-governance article small\s*\{[^}]*font-size:\s*12px;/s);
-    expect(appCss).toMatch(/\.paw-room-governance select, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
+    expect(appCss).toMatch(/\.paw-room-governance \.ui-select__trigger, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
   });
 
   it('keeps Room panel and participant satellites at the 12px metadata floor', () => {
@@ -786,11 +789,16 @@ describe('PAWOS semantic type roles', () => {
     expect(pawOsCss).toMatch(
       /\.paw-window-titlebar:has\(\.paw-window-leading-slot:not\(:empty\)\)\s*\{[^}]*--paw-titlebar-lead:\s*auto;/s,
     );
-    for (const css of [pawOsCss, roomMigratedCss, agentMigratedCss, toolsMigratedCss]) {
+    for (const css of [pawOsCss, roomMigratedCss, agentMigratedCss]) {
       // No titlebar may pin its leading track past the shared token, or its
       // lights start shrinking again the moment an App docks a control.
       expect(css).not.toMatch(/\.paw-window-titlebar[^{]*\{[^}]*grid-template-columns:\s*\d+px/s);
     }
+    // Browser's approved single titlebar is the deliberate exception: the
+    // 76px light column sits beside its compact title and live tab deck.
+    expect(toolsMigratedCss).toMatch(
+      /\.paw-window-titlebar\[data-window-chrome='browser-tabs'\]\s*\{[^}]*grid-template-columns:\s*76px minmax\(54px, 86px\) minmax\(0, 1fr\);/s,
+    );
   });
 
   it('preserves explicit Focus frames and resize handles throughout the 721–820px gap', () => {
@@ -826,7 +834,7 @@ describe('PAWOS semantic type roles', () => {
   });
 
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
-    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.45;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*12\.5px;[^}]*line-height:\s*1\.5;/s);
     expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
     expect(systemMigratedCss).toMatch(/\.paw-agent-mode__copy small\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.55;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);

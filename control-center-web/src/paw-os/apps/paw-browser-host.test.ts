@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadPawBrowserUrl, PAW_BROWSER_PARTITION, pawBrowserHost } from './paw-browser-host';
+import { guestZoomFactor, loadPawBrowserUrl, PAW_BROWSER_PARTITION, pawBrowserHost } from './paw-browser-host';
 
 describe('PAW Electron Browser host', () => {
   it('accepts only the fixed persistent Browser partition', () => {
@@ -38,5 +38,15 @@ describe('PAW Electron Browser host', () => {
     const ref = { current: { loadURL } } as never;
     expect(loadPawBrowserUrl(ref, 'https://example.com')).toBe(true);
     expect(loadURL).toHaveBeenCalledWith('https://example.com');
+  });
+
+  it('treats zoom as unavailable while Electron is still attaching the guest', () => {
+    const getZoomFactor = vi.fn(() => {
+      throw new Error('The WebView must be attached to the DOM and the dom-ready event emitted');
+    });
+
+    expect(guestZoomFactor({ getZoomFactor } as never)).toBeNull();
+    expect(getZoomFactor).toHaveBeenCalledOnce();
+    expect(guestZoomFactor({ getZoomFactor: () => 1.25 } as never)).toBe(1.25);
   });
 });

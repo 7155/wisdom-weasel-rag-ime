@@ -12,7 +12,7 @@ import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context
 import {
   PAW_WINDOW_MIN_HEIGHT,
   PAW_WINDOW_MIN_WIDTH,
-  fitPawWindowBounds,
+  fitReachablePawWindowBounds,
   pawWindowArea,
   pawWindowLayerSize,
   satelliteGroup,
@@ -1223,10 +1223,9 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
     };
     const move = (moveEvent: PointerEvent) => {
       const travelled = { ...bounds, x: bounds.x + moveEvent.clientX - origin.x, y: bounds.y + moveEvent.clientY - origin.y };
-      /* The window tracks the pointer 1:1 and then stops at the desktop edge
-       * with the same rule fitWindowsToViewport applies, so releasing a drag
-       * never snaps the frame back to a place the pointer never visited. */
-      next = area ? fitPawWindowBounds(travelled, area) : { ...travelled, y: Math.max(0, travelled.y) };
+      /* Ordinary windows may keep a recoverable partial offset instead of
+       * sticking to the canvas edge. Focus layouts still own their own clamp. */
+      next = area ? fitReachablePawWindowBounds(travelled, area) : { ...travelled, y: Math.max(0, travelled.y) };
       setSnapPreview(desktopRoot, snapPlacement(moveEvent.clientX, moveEvent.clientY));
       if (!frame) frame = window.requestAnimationFrame(render);
     };

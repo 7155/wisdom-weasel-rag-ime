@@ -245,6 +245,7 @@ const PUBLIC_ACTIVITY_SIGNALS = ['reasoning', 'progress', 'route', 'route_decisi
 
 function activitySignalSupported(signal: string): boolean {
   return signal === 'tool'
+    || signal === 'work'
     || signal.startsWith('tool_')
     || signal.includes('route')
     || signal.includes('dispatch')
@@ -339,6 +340,17 @@ function activityBlock(
       startedAt: activity.createdAtMs,
     };
   }
+  if (text(activity.payload.activityKind) === 'work') {
+    const receipt = roomWorkActivityReceipt(activity, options);
+    return {
+      id: `note:${activity.id}`,
+      kind: 'thinking',
+      summary: receipt.summary,
+      status: activity.status === 'running' || activity.status === 'waiting' ? 'running' : 'done',
+      ...(receipt.detail ? { detail: receipt.detail } : {}),
+      startedAt: activity.createdAtMs,
+    };
+  }
   return {
     id: `note:${activity.id}`,
     kind: 'thinking',
@@ -347,6 +359,50 @@ function activityBlock(
     ...(rawDetail(activity.summary) ? { detail: activity.summary.trim() } : {}),
     startedAt: activity.createdAtMs,
   };
+}
+
+function roomWorkActivityReceipt(
+  activity: RoomActivityProjection,
+  options: RoomTranscriptOptions,
+): { summary: string; detail: string } {
+  const payload = activity.payload;
+  const phase = text(payload.phase);
+  const titleByPhase: Readonly<Record<string, string>> = {
+    assigned: '任务已分派',
+    assignment_failed: '任务分派失败',
+    submitted: '已提交验收',
+    completed: '任务已完成',
+    returned: '需求已更新',
+    retried: '需求已更新',
+    reassigned: '负责人变更',
+    blocked: '任务已阻塞',
+    escalated: '任务已升级处理',
+    failed: '任务未完成',
+    aborted: '任务已停止',
+  };
+  const title = titleByPhase[phase] || '任务状态已更新';
+  const previousRevision = positiveInteger(payload.previousWorkItemRevision);
+  const currentRevision = positiveInteger(payload.currentWorkItemRevision)
+    || positiveInteger(payload.workItemRevision);
+  const revision = previousRevision && currentRevision && previousRevision !== currentRevision
+    ? `r${previousRevision}→r${currentRevision}`
+    : currentRevision
+      ? `r${currentRevision}`
+      : '';
+  const ownerParticipantId = text(payload.ownerParticipantId);
+  const owner = ownerParticipantId ? options.actorName(ownerParticipantId) || ownerParticipantId : '';
+  return {
+    summary: [title, revision, owner ? `负责人 ${owner}` : ''].filter(Boolean).join(' · '),
+    detail: [
+      text(payload.workItemId) ? `任务 ${text(payload.workItemId)}` : '',
+      text(payload.reason) ? `原因 ${text(payload.reason)}` : '',
+      text(payload.documentRef) ? `文档 ${text(payload.documentRef)}` : '',
+    ].filter(Boolean).join('\n'),
+  };
+}
+
+function positiveInteger(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
 }
 
 function toolStatus(status: RoomActivityProjection['status']): ToolStatus {

@@ -129,3 +129,19 @@ export function guestNavigationState(
     canGoForward: typeof webview?.canGoForward === 'function' ? webview.canGoForward() : false,
   };
 }
+
+/**
+ * Electron exposes the zoom methods on the custom element before its guest is
+ * attached. Calling them during that short mount/unmount window throws instead
+ * of returning an unavailable value, so keep lifecycle absence local to the
+ * Browser surface rather than letting it trip the app-wide error boundary.
+ */
+export function guestZoomFactor(webview: PawBrowserWebview | null): number | null {
+  if (typeof webview?.getZoomFactor !== 'function') return null;
+  try {
+    const factor = webview.getZoomFactor();
+    return Number.isFinite(factor) ? factor : null;
+  } catch {
+    return null;
+  }
+}

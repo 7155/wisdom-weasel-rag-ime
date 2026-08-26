@@ -14,7 +14,7 @@ describe('roomPlanetWindowRequest (planet 窗口统一铭牌)', () => {
         id: 'participant-a',
         roomId: 'room-a',
         title: 'Earth',
-        subtitle: '伙伴 participant-a · 实现与验证',
+        subtitle: '实现与验证',
       },
     });
     expect(request.target.subtitle).not.toContain('session-');
@@ -47,7 +47,7 @@ describe('room satellite auto expansion (UR-054)', () => {
       id: 'participant-a',
       roomId: 'room-a',
       title: 'Earth',
-      subtitle: '伙伴 participant-a · 实现与验证',
+      subtitle: '实现与验证',
     });
     expect(requests[1]?.target).toMatchObject({ id: 'participant-b', title: 'Mars' });
   });

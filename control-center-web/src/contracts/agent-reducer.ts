@@ -750,6 +750,20 @@ export function applyAgentSnapshot(
   // clientMessageId, and remove only a narrowly matched replay copy. In-flight
   // deltas remain untouched because they have no completed transcript match.
   reconcileTranscriptReplayMessages(next, transcriptMessageIds, serverClientIds);
+  if (snapshot.lastSequence === state.lastSequence) {
+    reconcileEqualCursorAcceptedMessages(
+      state,
+      next,
+      transcriptMessageIds,
+      serverClientIds,
+    );
+  }
+  reconcileSnapshotOptimisticMessages(
+    state,
+    next,
+    transcriptMessageIds,
+    serverClientIds,
+  );
 
   // liveEvents is a bounded journal and may end with an old busy/aborting
   // marker after a runtime restart. `active` means the persisted Pi transcript
@@ -828,6 +842,63 @@ export function applyAgentSnapshot(
   return next;
 }
 
+/**
+ * Pi's durable transcript does not persist the product clientMessageId. A
+ * post-admission snapshot can therefore contain the accepted user message
+ * while the local optimistic copy still looks unrelated. Restoring that copy
+ * creates a second queued turn after the real turn has completed, which makes
+ * the UI revive its running indicator and misroute the next prompt as Steer.
+ *
+ * Match only an otherwise-unsettled local user message to one exact, nearby
+ * durable user message. Failed/pending/ambiguous admissions remain local and
+ * auditable; text alone without the narrow timestamp bound is never enough.
+ */
+function reconcileSnapshotOptimisticMessages(
+  previous: AgentProjectionState,
+  snapshot: AgentProjectionState,
+  transcriptMessageIds: ReadonlySet<string>,
+  serverClientIds: Set<string>,
+): void {
+  const claimedTranscriptIds = new Set<string>();
+  for (const [clientMessageId, optimisticId] of Object.entries(
+    previous.optimisticByClientMessageId,
+  )) {
+    if (serverClientIds.has(clientMessageId)) continue;
+    const optimistic = previous.messagesById[optimisticId];
+    if (
+      !optimistic
+      || optimistic.role !== 'user'
+      || optimistic.status !== 'queued'
+      || optimistic.admissionState
+    ) continue;
+    const fingerprint = replayFingerprint(optimistic);
+    if (!fingerprint) continue;
+    const candidate = [...transcriptMessageIds]
+      .filter((messageId) => !claimedTranscriptIds.has(messageId))
+      .map((messageId) => snapshot.messagesById[messageId])
+      .filter((message): message is AgentMessageProjection => (
+        Boolean(message)
+        && message.role === 'user'
+        && replayFingerprint(message) === fingerprint
+        && Math.abs(message.createdAtMs - optimistic.createdAtMs) <= 60_000
+      ))
+      .sort((left, right) => (
+        Math.abs(left.createdAtMs - optimistic.createdAtMs)
+        - Math.abs(right.createdAtMs - optimistic.createdAtMs)
+      ))[0];
+    if (!candidate) continue;
+    claimedTranscriptIds.add(candidate.id);
+    serverClientIds.add(clientMessageId);
+    snapshot.messagesById[candidate.id] = {
+      ...inheritLocalDeliveryProjection(candidate, optimistic),
+      clientMessageId,
+      ...(optimistic.retryOfClientMessageId
+        ? { retryOfClientMessageId: optimistic.retryOfClientMessageId }
+        : {}),
+    };
+  }
+}
+
 export function applyAgentBackgroundJobReceipt(
   state: AgentProjectionState,
   value: unknown,
@@ -904,6 +975,73 @@ function reconcileTranscriptReplayMessages(
     removeProjectedMessage(state, replay);
   }
   reconcileReplayTurnAnchors(state, replayTurnAnchors);
+}
+
+/**
+ * A quiet post-admission snapshot can arrive after the durable user SSE but at
+ * the same cursor. Pi's transcript then names the active turn `history:*`,
+ * while the already-applied event names the same turn by its Runtime turnId.
+ * Preserve the event-proven identity so the later terminal event cannot leave
+ * the synthetic alias running beside the completed real turn.
+ */
+function reconcileEqualCursorAcceptedMessages(
+  previous: AgentProjectionState,
+  snapshot: AgentProjectionState,
+  transcriptMessageIds: ReadonlySet<string>,
+  serverClientIds: Set<string>,
+): void {
+  const claimedTranscriptIds = new Set<string>();
+  const transcriptTurnAliases = new Map<string, string>();
+  for (const messageId of previous.messageOrder) {
+    const accepted = previous.messagesById[messageId];
+    const clientMessageId = accepted?.clientMessageId ?? '';
+    const acceptedTurnStatus = accepted
+      ? previous.turnsById[accepted.turnId]?.status
+      : undefined;
+    if (
+      !accepted
+      || accepted.role !== 'user'
+      || accepted.status !== 'completed'
+      || accepted.timelineSequence === undefined
+      || !clientMessageId
+      || !acceptedTurnStatus
+      || !['queued', 'running', 'waiting'].includes(acceptedTurnStatus)
+    ) continue;
+    const fingerprint = replayFingerprint(accepted);
+    if (!fingerprint) continue;
+    const candidate = [...transcriptMessageIds]
+      .filter((candidateId) => !claimedTranscriptIds.has(candidateId))
+      .map((candidateId) => snapshot.messagesById[candidateId])
+      .filter((message): message is AgentMessageProjection => (
+        Boolean(message)
+        && message.role === 'user'
+        && (!message.clientMessageId || message.clientMessageId === clientMessageId)
+        && replayFingerprint(message) === fingerprint
+        && Math.abs(message.createdAtMs - accepted.createdAtMs) <= 5_000
+      ))
+      .sort((left, right) => (
+        Math.abs(left.createdAtMs - accepted.createdAtMs)
+        - Math.abs(right.createdAtMs - accepted.createdAtMs)
+      ))[0];
+    if (!candidate) continue;
+
+    claimedTranscriptIds.add(candidate.id);
+    serverClientIds.add(clientMessageId);
+    snapshot.messagesById[candidate.id] = {
+      ...inheritLocalDeliveryProjection(candidate, accepted),
+      clientMessageId,
+      ...(accepted.retryOfClientMessageId
+        ? { retryOfClientMessageId: accepted.retryOfClientMessageId }
+        : {}),
+    };
+    if (candidate.turnId !== accepted.turnId) {
+      const existingAlias = transcriptTurnAliases.get(candidate.turnId);
+      if (!existingAlias || existingAlias === accepted.turnId) {
+        transcriptTurnAliases.set(candidate.turnId, accepted.turnId);
+      }
+    }
+  }
+  reconcileReplayTurnAnchors(snapshot, transcriptTurnAliases);
 }
 
 /**

@@ -115,6 +115,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(() => new Set());
   const [stoppingSessionIds, setStoppingSessionIds] = useState<Set<string>>(() => new Set());
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
+  const [thinkingPickerRequest, setThinkingPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
   const [helpRequest, setHelpRequest] = useState(0);
@@ -754,9 +755,6 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
     || !isUserConversation
   );
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
-  useEffect(() => {
-    if (!busy && selectedId) setSessionStopping(selectedId, false);
-  }, [busy, selectedId]);
   function closeMobileRail(): void {
     setRailOpen(false);
   }
@@ -1323,8 +1321,10 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
         openForkDialog();
         break;
       case 'model':
-      case 'thinking':
         openModelPicker();
+        break;
+      case 'thinking':
+        setThinkingPickerRequest((current) => current + 1);
         break;
       case 'tools':
         openToolPicker();
@@ -1992,6 +1992,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
             imageSupport={imageSupport}
             modelChanging={modelChanging}
             modelPickerRequest={modelPickerRequest}
+            thinkingPickerRequest={thinkingPickerRequest}
             permissionPickerRequest={permissionPickerRequest}
             persona={persona}
             sending={sending || rewriteResolving}

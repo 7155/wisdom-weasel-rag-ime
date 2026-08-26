@@ -1,62 +1,89 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { pawApps } from '../runtime/app-registry';
-import { PawAppIcon, PawBrandMark } from './PawAppIcon';
+import { PawAppIcon, PawBrandMark, type PawIdentityIconId } from './PawAppIcon';
 
 afterEach(cleanup);
 
-describe('PAWOS App identity icons', () => {
-  it('ships an independent colour silhouette for every App surface plus the Room mode', () => {
-    const identities = [...pawApps.map((app) => ({ id: app.id, label: app.label })), { id: 'room' as const, label: 'Room' }];
-    const { container } = render(<>{identities.map((identity) => <PawAppIcon appId={identity.id} key={identity.id} title={identity.label} />)}</>);
+const approvedAssets: ReadonlyArray<{ appId: PawIdentityIconId; symbol: string; color: string }> = [
+  { appId: 'agent', symbol: 'app-agent', color: '#0A84FF' },
+  { appId: 'room', symbol: 'app-room', color: '#7A5AF8' },
+  { appId: 'browser', symbol: 'app-browser', color: '#14B8C8' },
+  { appId: 'terminal', symbol: 'app-terminal', color: '#1D1D1F' },
+  { appId: 'files', symbol: 'app-files', color: '#F5A623' },
+  { appId: 'project-workbench', symbol: 'app-workbench', color: '#FF6B4A' },
+  { appId: 'memory', symbol: 'app-memory', color: '#E85D9E' },
+  { appId: 'knowledge', symbol: 'app-knowledge', color: '#1FA54A' },
+  { appId: 'input-studio', symbol: 'app-input', color: '#5E5CE6' },
+  { appId: 'app-center', symbol: 'app-appcenter', color: '#0E9F8A' },
+  { appId: 'system-monitor', symbol: 'app-monitor', color: '#3E4C59' },
+  { appId: 'system-settings', symbol: 'app-settings', color: '#8E8E93' },
+];
+
+describe('PAWOS approved App identity icons', () => {
+  it('maps the eleven top-level Apps and the Room collaboration identity to the approved wall', () => {
+    const { container } = render(<>{approvedAssets.map(({ appId }) => <PawAppIcon appId={appId} key={appId} />)}</>);
     const icons = [...container.querySelectorAll<SVGElement>('[data-paw-app-icon]')];
-    expect(icons).toHaveLength(12);
-    expect(new Set(icons.map((icon) => icon.getAttribute('data-paw-app-icon'))).size).toBe(12);
-    expect(icons.every((icon) => icon.querySelector(`[data-paw-icon-silhouette="${icon.getAttribute('data-paw-app-icon')}"]`))).toBe(true);
-    expect(new Set(icons.map((icon) => icon.querySelector('[data-paw-icon-silhouette]')?.innerHTML)).size).toBe(12);
-    expect(new Set(icons.map((icon) => icon.getAttribute('data-paw-icon-color'))).size).toBe(12);
-    expect(container.querySelector('.paw-app-icon__tile, [data-paw-icon-sheen]')).toBeNull();
-    expect(container.querySelector('rect[width="45"][height="45"][rx="11.5"]')).toBeNull();
-    expect(container.querySelector('[data-lucide]')).toBeNull();
-    expect(container.querySelector('.paw-os-app-icon, .paw-app-glyph')).toBeNull();
-  });
 
-  it('keeps every identity intentionally sparse without a shared container', () => {
-    const { container } = render(<>{[...pawApps.map((app) => app.id), 'room' as const].flatMap((appId) => [16, 32].map((size) => <PawAppIcon appId={appId} key={`${appId}-${size}`} size={size} />))}</>);
-    expect(container.querySelector('[class*="__tile"], [class*="__plate"], [class*="__rail"], [class*="__signal"], [class*="__sheen"]')).toBeNull();
-    for (const silhouette of container.querySelectorAll('[data-paw-icon-silhouette]')) {
-      expect(silhouette.children.length).toBeGreaterThanOrEqual(2);
-      expect(silhouette.children.length).toBeLessThanOrEqual(4);
-    }
-  });
-
-  it('speaks one flat silhouette grammar across all twelve identities', () => {
-    const { container } = render(<>{[...pawApps.map((app) => app.id), 'room' as const].map((appId) => <PawAppIcon appId={appId} key={appId} />)}</>);
-    // Flat means front-facing: no isometric faces or rotated stacks. The
-    // single permitted rotation in the whole system is Room's orbit line.
-    const rotated = [...container.querySelectorAll('[data-paw-icon-silhouette] [transform]')];
-    expect(rotated).toHaveLength(1);
-    expect(rotated[0]).toHaveClass('paw-app-icon__ring');
-    // No opacity ramps: tone comes only from the shared ink set.
-    expect(container.querySelector('[data-paw-icon-silhouette] [opacity]')).toBeNull();
-    // Every shape resolves the shared inks — no literal fills or one-off whites.
-    expect(container.querySelector('[data-paw-icon-silhouette] [fill], [data-paw-icon-silhouette] [stroke="#fff"]')).toBeNull();
-    const inks = new Set(['paw-app-icon__primary', 'paw-app-icon__secondary', 'paw-app-icon__paper', 'paw-app-icon__stroke', 'paw-app-icon__stroke-accent', 'paw-app-icon__ring', 'paw-app-icon__outlined']);
-    for (const shape of container.querySelectorAll('[data-paw-icon-silhouette] > *')) {
-      const classes = (shape.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
-      expect(classes.length).toBeGreaterThanOrEqual(1);
-      for (const cls of classes) expect(inks).toContain(cls);
-    }
-  });
-
-  it('gives Room a visible identity while keeping it inside the Agent App registry', () => {
-    const { container } = render(<><PawAppIcon appId="agent" title="Agent" /><PawAppIcon appId="room" title="Room" /></>);
     expect(pawApps).toHaveLength(11);
-    expect(container.querySelector('[data-paw-app-icon="agent"]')).toBeInTheDocument();
-    expect(container.querySelector('[data-paw-app-icon="room"]')).toBeInTheDocument();
     expect(pawApps.map((app) => app.id)).not.toContain('room');
-    expect(container.querySelector('[data-paw-app-icon="agent"]')).toHaveAttribute('data-paw-icon-color', '#0a84ff');
-    expect(container.querySelector('[data-paw-app-icon="room"]')).toHaveAttribute('data-paw-icon-color', '#7a5af8');
+    expect(icons).toHaveLength(12);
+    for (const asset of approvedAssets) {
+      const icon = container.querySelector(`[data-paw-app-icon="${asset.appId}"]`);
+      expect(icon).toHaveAttribute('data-paw-approved-symbol', asset.symbol);
+      expect(icon).toHaveAttribute('data-paw-icon-color', asset.color);
+    }
+  });
+
+  it('reuses the approved 48px colour tile and restrained sheen for every identity', () => {
+    const { container } = render(<>{approvedAssets.map(({ appId }) => <PawAppIcon appId={appId} key={appId} />)}</>);
+
+    for (const asset of approvedAssets) {
+      const icon = container.querySelector<SVGElement>(`[data-paw-app-icon="${asset.appId}"]`);
+      expect(icon).toHaveAttribute('viewBox', '0 0 48 48');
+      expect(icon?.querySelector('[data-paw-icon-tile]')).toHaveAttribute('x', '1.5');
+      expect(icon?.querySelector('[data-paw-icon-tile]')).toHaveAttribute('y', '1.5');
+      expect(icon?.querySelector('[data-paw-icon-tile]')).toHaveAttribute('width', '45');
+      expect(icon?.querySelector('[data-paw-icon-tile]')).toHaveAttribute('height', '45');
+      expect(icon?.querySelector('[data-paw-icon-tile]')).toHaveAttribute('rx', '11.5');
+      expect(icon?.querySelector('[data-paw-icon-tile]')).toHaveAttribute('fill', asset.color);
+      expect(icon?.querySelector('[data-paw-icon-sheen]')).toBeInTheDocument();
+      expect(icon?.querySelectorAll('stop')).toHaveLength(2);
+    }
+    expect(container.querySelectorAll('[fill="var(--paw-icon-paper)"], [stroke="var(--paw-icon-paper)"]').length)
+      .toBeGreaterThan(0);
+    expect(container.querySelector('[fill="#fff"], [stroke="#fff"], stop[stop-color="#fff"]')).toBeNull();
+  });
+
+  it('keeps per-instance sheen references unique when many icons share one document', () => {
+    const { container } = render(<><PawAppIcon appId="agent" /><PawAppIcon appId="agent" /></>);
+    const gradients = [...container.querySelectorAll<SVGLinearGradientElement>('linearGradient')];
+    const sheens = [...container.querySelectorAll<SVGRectElement>('[data-paw-icon-sheen]')];
+
+    expect(gradients).toHaveLength(2);
+    expect(new Set(gradients.map((gradient) => gradient.id)).size).toBe(2);
+    expect(sheens.map((sheen) => sheen.getAttribute('fill'))).toEqual(
+      gradients.map((gradient) => `url(#${gradient.id})`),
+    );
+  });
+
+  it('preserves the approved distinctive geometry instead of substituting generic glyphs', () => {
+    const { container } = render(<>
+      <PawAppIcon appId="agent" />
+      <PawAppIcon appId="room" />
+      <PawAppIcon appId="browser" />
+      <PawAppIcon appId="terminal" />
+      <PawAppIcon appId="memory" />
+      <PawAppIcon appId="app-center" />
+    </>);
+
+    expect(container.querySelector('[data-paw-approved-symbol="app-agent"] circle[cx="24"][cy="22"][r="5.2"]')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-paw-approved-symbol="app-room"] [data-paw-icon-art] circle')).toHaveLength(3);
+    expect(container.querySelector('[data-paw-approved-symbol="app-browser"] circle[stroke="var(--paw-icon-paper)"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-paw-approved-symbol="app-terminal"] path[stroke="#30D158"]')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-paw-approved-symbol="app-memory"] [data-paw-icon-art] circle')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-paw-approved-symbol="app-appcenter"] [data-paw-icon-art] path')).toHaveLength(2);
+    expect(container.querySelector('[data-lucide]')).toBeNull();
   });
 
   it('is decorative by default and named when a title is supplied', () => {
@@ -66,46 +93,33 @@ describe('PAWOS App identity icons', () => {
     expect(getByRole('img', { name: 'Browser' })).toBeInTheDocument();
   });
 
-  it('keeps the identity legible and explicitly identifies compact placement', () => {
-    const { container } = render(<><PawAppIcon appId="memory" size={16} /><PawAppIcon appId="memory" size={32} /></>);
-    const [small, large] = [...container.querySelectorAll<SVGElement>('[data-paw-app-icon="memory"]')];
-    expect(small).toHaveAttribute('viewBox', '0 0 48 48');
-    expect(large).toHaveAttribute('viewBox', '0 0 48 48');
-    expect(small).toHaveAttribute('width', '16');
-    expect(small).toHaveAttribute('height', '16');
-    expect(small).toHaveAttribute('data-paw-icon-scale', 'small');
-    expect(large).not.toHaveAttribute('data-paw-icon-scale');
-    expect(small?.querySelector('[data-paw-icon-silhouette="memory"]')).toHaveAttribute('data-paw-icon-variant', 'compact');
-    expect(large?.querySelector('[data-paw-icon-silhouette="memory"]')).toHaveAttribute('data-paw-icon-variant', 'full');
-    expect(small?.querySelector('[data-paw-icon-silhouette="memory"]')?.children.length).toBeGreaterThanOrEqual(2);
-    expect(small).toHaveAttribute('focusable', 'false');
-  });
-
-  it('preserves each independent silhouette and mark at every shipping size', () => {
+  it('ships the approved geometry at every optical size without changing identity', () => {
     const sizes = [16, 24, 32, 48];
-    const { container } = render(<>{pawApps.flatMap((app) => sizes.map((size) => (
-      <PawAppIcon appId={app.id} key={`${app.id}-${size}`} size={size} />
+    const { container } = render(<>{approvedAssets.flatMap(({ appId, symbol }) => sizes.map((size) => (
+      <PawAppIcon appId={appId} key={`${appId}-${size}`} size={size} title={symbol} />
     )))}</>);
 
-    for (const app of pawApps) {
-      const icons = [...container.querySelectorAll<SVGElement>(`[data-paw-app-icon="${app.id}"]`)];
+    for (const { appId, symbol } of approvedAssets) {
+      const icons = [...container.querySelectorAll<SVGElement>(`[data-paw-app-icon="${appId}"]`)];
       expect(icons).toHaveLength(sizes.length);
       for (const [index, icon] of icons.entries()) {
         expect(icon).toHaveAttribute('width', String(sizes[index]));
-        expect(icon.querySelector(`[data-paw-icon-silhouette="${app.id}"]`)).toBeInTheDocument();
-        expect(icon.querySelector('.paw-app-icon__tile, [data-paw-icon-sheen]')).toBeNull();
+        expect(icon).toHaveAttribute('height', String(sizes[index]));
+        expect(icon).toHaveAttribute('data-paw-approved-symbol', symbol);
+        expect(icon.querySelector('[data-paw-icon-tile]')).toBeInTheDocument();
       }
     }
   });
 
-  it('gives Room the solar orbit identity and Agent a connection node instead of a face', () => {
-    const { container } = render(<><PawAppIcon appId="room" /><PawAppIcon appId="agent" /></>);
-    const room = container.querySelector('[data-paw-icon-silhouette="room"]');
-    expect(room?.querySelector('ellipse.paw-app-icon__ring')).toBeInTheDocument();
-    expect(room?.querySelectorAll('circle')).toHaveLength(2);
-    const agent = container.querySelector('[data-paw-icon-silhouette="agent"]');
-    expect(agent?.querySelector('circle.paw-app-icon__secondary')).toBeInTheDocument();
-    expect(agent?.querySelector('[class*="face"], [class*="avatar"]')).toBeNull();
+  it('marks compact placement without removing approved detail', () => {
+    const { container } = render(<><PawAppIcon appId="knowledge" size={16} /><PawAppIcon appId="knowledge" size={32} /></>);
+    const [small, large] = [...container.querySelectorAll<SVGElement>('[data-paw-app-icon="knowledge"]')];
+
+    expect(small).toHaveAttribute('data-paw-icon-scale', 'small');
+    expect(large).not.toHaveAttribute('data-paw-icon-scale');
+    expect(small.querySelectorAll('[data-paw-icon-art] > *')).toHaveLength(2);
+    expect(large.querySelectorAll('[data-paw-icon-art] > *')).toHaveLength(2);
+    expect(small).toHaveAttribute('focusable', 'false');
   });
 
   it('ships the monochrome paw-print system mark outside the App colour system', () => {

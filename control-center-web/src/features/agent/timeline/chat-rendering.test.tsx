@@ -465,7 +465,7 @@ describe('Agent chat rendering', () => {
     expect(document.querySelector('.paw-activity__detail')).not.toHaveAttribute('hidden');
   });
 
-  it('keeps active FX work open and offers no misleading collapse control', () => {
+  it('keeps the active FX stack visible while its running tool detail stays folded', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
@@ -485,6 +485,7 @@ describe('Agent chat rendering', () => {
     expect(screen.queryByRole('button', { name: /个步骤/ })).not.toBeInTheDocument();
     expect(screen.getByText('正在检查当前状态。')).toBeInTheDocument();
     expect(document.querySelector('.paw-activity-stack')).toBeInTheDocument();
+    expect(document.querySelector('.paw-activity')).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('collapses failed FX work behind the partial narrative with truthful controls', () => {
@@ -504,6 +505,7 @@ describe('Agent chat rendering', () => {
       agentEventFixture(2, 'tool_finished', {
         toolCallId: 'call-failed-turn-overview',
         toolName: 'overview',
+        isError: true,
         result: { details: { ok: true, operation: 'status', result: { summary: '运行状态正常' } } },
       }),
       agentEventFixture(3, 'turn_failed', { error: '503 upstream request failed' }),
@@ -528,10 +530,12 @@ describe('Agent chat rendering', () => {
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    const failedActivity = document.querySelector<HTMLButtonElement>('.paw-activity[data-state="failed"]')!;
-    expect(failedActivity).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.click(failedActivity);
+    const failedActivity = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.paw-activity[data-state="failed"]'),
+    ).find((button) => button.querySelector('[data-kind="tool"]'))!;
     expect(failedActivity).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(failedActivity);
+    expect(failedActivity).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('folds stopped FX work while the toggle states the stopped outcome', () => {
@@ -587,7 +591,7 @@ describe('Agent chat rendering', () => {
     render(<AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
 
     const row = document.querySelector<HTMLButtonElement>('.paw-activity')!;
-    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(row).toHaveAttribute('aria-expanded', 'false');
     expect(row.querySelector('.fx-meta')).toHaveTextContent(/60 秒/);
     act(() => {
       vi.advanceTimersByTime(1_000);

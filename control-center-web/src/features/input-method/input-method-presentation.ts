@@ -330,6 +330,9 @@ export function publicInputText(value: string, fallback: string): string {
 
 export function inputFieldFallback(key: string): string {
   return ({
+    'interaction.composition.showPrediction': '输入拼音时预测',
+    'interaction.composition.showOnlyRime': '输入拼音时只显示 Rime 候选',
+    'interaction.postCommit.showPendingStatus': '预测开始时显示状态',
     'interaction.postCommit.enabled': '上屏后联想',
     'interaction.postCommit.idleTriggerMs': '停顿多久开始联想',
     'interaction.postCommit.minDeltaChars': '最少新增字符数',

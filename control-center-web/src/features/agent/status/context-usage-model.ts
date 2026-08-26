@@ -8,12 +8,15 @@ export type ContextUsageCategoryId =
   | 'mcp'
   | 'subagents'
   | 'summarized'
-  | 'conversation';
+  | 'user'
+  | 'assistant'
+  | 'toolCalls'
+  | 'toolResults';
 
 export type ContextUsageSegment = {
   id: ContextUsageCategoryId;
   label: string;
-  tokens: number;
+  characters: number;
   color: string;
 };
 
@@ -23,7 +26,16 @@ export type ContextUsageView = {
   contextWindow: number;
   percent: number | null;
   segments: ContextUsageSegment[];
+  capturedCharacters: number;
+  /** Aggregate tokens have no trustworthy semantic allocation. */
+  unclassifiedTokens: number | null;
   freeTokens: number;
+  compaction: {
+    count: number;
+    status: string;
+    tokensBefore: number | null;
+    tokensAfter: number | null;
+  } | null;
 };
 
 const CATEGORY_ORDER: readonly ContextUsageCategoryId[] = [
@@ -34,18 +46,24 @@ const CATEGORY_ORDER: readonly ContextUsageCategoryId[] = [
   'mcp',
   'subagents',
   'summarized',
-  'conversation',
+  'user',
+  'assistant',
+  'toolCalls',
+  'toolResults',
 ];
 
 const CATEGORY_META: Record<ContextUsageCategoryId, { label: string; color: string }> = {
-  system: { label: 'System prompt', color: '#8b919a' },
-  tools: { label: 'Tool definitions', color: '#7c5cbf' },
-  rules: { label: 'Rules', color: '#2f9a5f' },
+  system: { label: '系统提示词', color: '#8b919a' },
+  tools: { label: '工具定义', color: '#7c5cbf' },
+  rules: { label: '项目规则与 Goal', color: '#2f9a5f' },
   skills: { label: 'Skills', color: '#8a6a3d' },
-  mcp: { label: 'MCP & dynamic tools', color: '#c44d9a' },
-  subagents: { label: 'Subagent definitions', color: '#4a7fd4' },
-  summarized: { label: 'Summarized conversation', color: '#d45a7a' },
-  conversation: { label: 'Conversation', color: '#e85a3c' },
+  mcp: { label: '动态上下文', color: '#c44d9a' },
+  subagents: { label: '伙伴定义', color: '#4a7fd4' },
+  summarized: { label: '压缩摘要与历史', color: '#d45a7a' },
+  user: { label: '用户消息', color: '#e07a3f' },
+  assistant: { label: 'Agent 消息', color: '#4a7fd4' },
+  toolCalls: { label: '工具调用', color: '#7c5cbf' },
+  toolResults: { label: '工具结果', color: '#2f9a5f' },
 };
 
 const LAYER_TO_CATEGORY: Partial<Record<ContextXrayLayer['id'], ContextUsageCategoryId>> = {
@@ -58,9 +76,12 @@ const LAYER_TO_CATEGORY: Partial<Record<ContextXrayLayer['id'], ContextUsageCate
   'lifecycle-hook': 'mcp',
   'role-book': 'subagents',
   'session-memory': 'summarized',
-  history: 'summarized',
-  timeline: 'conversation',
-  'tool-results': 'conversation',
+  'compaction-summary': 'summarized',
+  timeline: 'summarized',
+  'user-messages': 'user',
+  'assistant-messages': 'assistant',
+  'tool-calls': 'toolCalls',
+  'tool-results': 'toolResults',
 };
 
 export function buildContextUsageView(input: {
@@ -68,6 +89,12 @@ export function buildContextUsageView(input: {
     tokens: number | null;
     contextWindow: number;
     percent: number | null;
+    compactionCount?: number;
+    latestCompaction?: {
+      status: string;
+      tokensBefore?: number;
+      estimatedTokensAfter?: number;
+    };
   } | null;
   snapshot?: ContextXraySnapshot | null;
 }): ContextUsageView {
@@ -89,36 +116,42 @@ export function buildContextUsageView(input: {
   ) as Record<ContextUsageCategoryId, number>;
 
   for (const layer of input.snapshot?.layers ?? []) {
-    if (layer.state !== 'present' || !layer.estimatedTokens) continue;
+    if (layer.state !== 'present' || !layer.characters) continue;
     const category = LAYER_TO_CATEGORY[layer.id];
     if (!category) continue;
-    totals[category] += layer.estimatedTokens;
+    totals[category] += layer.characters;
   }
 
-  const segmentSum = CATEGORY_ORDER.reduce((sum, id) => sum + totals[id], 0);
-  if (tokens !== null && tokens > segmentSum && segmentSum > 0) {
-    totals.conversation += tokens - segmentSum;
-  } else if (tokens !== null && segmentSum === 0 && tokens > 0) {
-    totals.conversation = tokens;
-  }
+  const capturedCharacters = CATEGORY_ORDER.reduce((sum, id) => sum + totals[id], 0);
 
   const segments = CATEGORY_ORDER
     .filter((id) => totals[id] > 0)
     .map((id) => ({
       id,
       label: CATEGORY_META[id].label,
-      tokens: totals[id],
+      characters: totals[id],
       color: CATEGORY_META[id].color,
     }));
 
-  const used = tokens ?? segmentSum;
+  const used = tokens ?? 0;
+  const snapshotCompaction = input.snapshot?.compaction;
+  const telemetryCompaction = input.telemetry?.latestCompaction;
+  const compactionCount = snapshotCompaction?.count ?? input.telemetry?.compactionCount ?? 0;
+  const compactionStatus = snapshotCompaction?.status || telemetryCompaction?.status || '';
+  const tokensBefore = snapshotCompaction?.tokensBefore ?? telemetryCompaction?.tokensBefore ?? null;
+  const tokensAfter = snapshotCompaction?.tokensAfter ?? telemetryCompaction?.estimatedTokensAfter ?? null;
   return {
     available: windowSize > 0 && (tokens !== null || segments.length > 0),
     tokens,
     contextWindow: windowSize,
     percent,
     segments,
+    capturedCharacters,
+    unclassifiedTokens: tokens,
     freeTokens: Math.max(0, windowSize - used),
+    compaction: compactionCount > 0 || compactionStatus || tokensBefore !== null || tokensAfter !== null
+      ? { count: compactionCount, status: compactionStatus, tokensBefore, tokensAfter }
+      : null,
   };
 }
 

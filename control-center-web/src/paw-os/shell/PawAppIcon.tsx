@@ -1,8 +1,8 @@
-import { type CSSProperties, type ReactNode, type SVGProps } from 'react';
+import { type ReactNode, type SVGProps, useId } from 'react';
 import type { PawAppId } from '../runtime/app-registry';
 import './paw-app-icon.css';
 
-/** Room is a visible identity inside Agent, but it is not a top-level App. */
+/** Room is a visible collaboration identity inside Agent, not a top-level App. */
 export type PawIdentityIconId = PawAppId | 'room';
 
 export type PawAppIconProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
@@ -12,63 +12,105 @@ export type PawAppIconProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
 };
 
 /**
- * One colour band for all twelve identities: saturated mid-tones that stay
- * legible on the light chrome veil, on white App surfaces and over a rich
- * wallpaper. No identity may be near-black or near-white, so no placement
- * ever needs a per-surface recolour of an icon.
- */
-const APP_COLORS: Record<PawIdentityIconId, string> = {
-  agent: '#0a84ff',
-  room: '#7a5af8',
-  browser: '#14b8c8',
-  terminal: '#454f5e',
-  files: '#f7a91f',
-  'project-workbench': '#ff6b4a',
-  memory: '#e85d9e',
-  knowledge: '#1fa54a',
-  'input-studio': '#5e5ce6',
-  'app-center': '#0e9f8a',
-  'system-monitor': '#52708c',
-  'system-settings': '#8e8e93',
-};
-
-/** Each identity owns exactly one companion accent for its supporting element. */
-const APP_ACCENTS: Record<PawIdentityIconId, string> = {
-  agent: '#7bc8ff',
-  room: '#b7a3ff',
-  browser: '#7fdce4',
-  terminal: '#30d158',
-  files: '#d9820c',
-  'project-workbench': '#ff9a83',
-  memory: '#efa0c4',
-  knowledge: '#45c06b',
-  'input-studio': '#8f8df2',
-  'app-center': '#4fc9b6',
-  'system-monitor': '#30d158',
-  'system-settings': '#d1d1d6',
-};
-
-/**
- * PAWOS identity silhouettes — one flat grammar shared by every placement.
+ * Approved identity wall source:
+ * /Volumes/undo 4t/MyGlobalDownloads/pawos-brand-icons-v1/icon-wall.html
  *
- * The grammar: a 48×48 grid with content inside the 4–44 safe area; flat,
- * front-facing forms only (no isometric faces, no rotated stacks — the single
- * permitted rotation is Room's orbit line); each mark is one primary mass in
- * the identity colour, exactly one supporting element in the identity accent,
- * plus at most fine white detail cuts from the shared paper token. Every App
- * still owns a distinct outer contour — there is deliberately no shared
- * square, plate, rail, or sheen, and no white-tile-versus-transparent split.
- * Line icons elsewhere remain actions, so a close/search/tool command can
- * never be mistaken for an App. Room keeps its purple collaboration identity
- * and speaks the Sol/orbit metaphor without becoming a top-level App.
+ * Keep this mapping explicit. The production App ids stay canonical while the
+ * data attribute preserves the exact approved source symbol for regression
+ * checks and future asset handoffs.
  */
-export function PawAppIcon({ appId, className = '', size = 24, style, title, ...props }: PawAppIconProps) {
+const APPROVED_SYMBOL_IDS: Record<PawIdentityIconId, string> = {
+  agent: 'app-agent',
+  room: 'app-room',
+  browser: 'app-browser',
+  terminal: 'app-terminal',
+  files: 'app-files',
+  'project-workbench': 'app-workbench',
+  memory: 'app-memory',
+  knowledge: 'app-knowledge',
+  'input-studio': 'app-input',
+  'app-center': 'app-appcenter',
+  'system-monitor': 'app-monitor',
+  'system-settings': 'app-settings',
+};
+
+const APP_COLORS: Record<PawIdentityIconId, string> = {
+  agent: '#0A84FF',
+  room: '#7A5AF8',
+  browser: '#14B8C8',
+  terminal: '#1D1D1F',
+  files: '#F5A623',
+  'project-workbench': '#FF6B4A',
+  memory: '#E85D9E',
+  knowledge: '#1FA54A',
+  'input-studio': '#5E5CE6',
+  'app-center': '#0E9F8A',
+  'system-monitor': '#3E4C59',
+  'system-settings': '#8E8E93',
+};
+
+const PAW_ICON_PAPER = 'var(--paw-icon-paper)';
+
+/** The twelve deterministic SVG drawings from the approved wall. */
+const APPROVED_ART: Record<PawIdentityIconId, ReactNode> = {
+  agent: <>
+    <path d="M10 15 a10 10 0 0 1 10-10 h8 a10 10 0 0 1 10 10 v7 a10 10 0 0 1-10 10 h-9 l-6.5 6 v-6.2 A10 10 0 0 1 10 25 z" fill={PAW_ICON_PAPER} transform="translate(0,4)" />
+    <circle cx="24" cy="22" fill="#0A84FF" r="5.2" />
+  </>,
+  room: <>
+    <circle cx="19" cy="19" fill={PAW_ICON_PAPER} opacity=".96" r="8.5" />
+    <circle cx="29" cy="19" fill={PAW_ICON_PAPER} opacity=".78" r="8.5" />
+    <circle cx="24" cy="28.5" fill={PAW_ICON_PAPER} opacity=".62" r="8.5" />
+  </>,
+  browser: <>
+    <circle cx="24" cy="24" fill="none" r="13.5" stroke={PAW_ICON_PAPER} strokeWidth="4" />
+    <path d="M30.5 14.5 L27 27 17.5 33.5 21 21 z" fill={PAW_ICON_PAPER} />
+  </>,
+  terminal: <>
+    <path d="M13 15.5 l9 8.5 -9 8.5" fill="none" stroke="#30D158" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4.2" />
+    <rect fill="#E9F7EE" height="3.8" rx="1.9" width="10.5" x="26" y="31" />
+  </>,
+  files: <>
+    <path d="M9 16.5 a2.5 2.5 0 0 1 2.5-2.5 h8.6 l3.6 4.5 h13.8 a2.5 2.5 0 0 1 2.5 2.5 V33 a4 4 0 0 1-4 4 H13 a4 4 0 0 1-4-4 z" fill={PAW_ICON_PAPER} />
+    <rect fill="#F5A623" height="3" opacity=".35" width="31" x="9" y="23.5" />
+  </>,
+  'project-workbench': <>
+    <rect fill={PAW_ICON_PAPER} height="4.6" opacity=".96" rx="2.3" width="14" x="11" y="12.5" />
+    <rect fill={PAW_ICON_PAPER} height="4.6" opacity=".8" rx="2.3" width="20" x="11" y="21.7" />
+    <rect fill={PAW_ICON_PAPER} height="4.6" opacity=".64" rx="2.3" width="24" x="11" y="30.9" />
+    <circle cx="38.5" cy="33.2" fill="#FFD9CF" r="3" />
+  </>,
+  memory: <>
+    <circle cx="24" cy="24" fill="none" r="13.5" stroke={PAW_ICON_PAPER} strokeWidth="3.6" />
+    <circle cx="24" cy="24" fill="none" opacity=".75" r="7.5" stroke={PAW_ICON_PAPER} strokeWidth="3.6" />
+    <circle cx="24" cy="24" fill={PAW_ICON_PAPER} r="2.8" />
+  </>,
+  knowledge: <>
+    <path d="M24 13.5 C21.5 11.2 17 10.6 12 11.2 a2 2 0 0 0-2 2 V32.6 a2 2 0 0 0 2 2.2 c5-.6 9.5-.1 12 1.9 2.5-2 7-2.5 12-1.9 a2 2 0 0 0 2-2.2 V13.2 a2 2 0 0 0-2-2 c-5-.6-9.5 0-12 2.3 z" fill={PAW_ICON_PAPER} />
+    <path d="M24 13.5 V36" stroke="#1FA54A" strokeWidth="2.2" />
+  </>,
+  'input-studio': <>
+    <rect fill={PAW_ICON_PAPER} height="12" opacity=".7" rx="1.9" width="3.8" x="10" y="18" />
+    <rect fill={PAW_ICON_PAPER} height="26" rx="1.9" width="3.8" x="16.4" y="11" />
+    <rect fill={PAW_ICON_PAPER} height="18" opacity=".85" rx="1.9" width="3.8" x="22.8" y="15" />
+    <rect fill={PAW_ICON_PAPER} height="32" rx="1.9" width="3.8" x="29.2" y="8" />
+    <rect fill={PAW_ICON_PAPER} height="8" opacity=".7" rx="1.9" width="3.8" x="35.6" y="20" />
+  </>,
+  'app-center': <>
+    <path d="M24 9 37.5 16.8 v14.4 L24 39 10.5 31.2 V16.8 z" fill="none" stroke={PAW_ICON_PAPER} strokeLinejoin="round" strokeWidth="3.4" />
+    <path d="M24 24.5 V39 M24 24.5 11.2 17.2 M24 24.5 36.8 17.2" fill="none" stroke={PAW_ICON_PAPER} strokeLinejoin="round" strokeWidth="3.4" />
+  </>,
+  'system-monitor': <path d="M9 27.5 h7.5 l3-9.5 5 16.5 3.6-11 H39" fill="none" stroke="#30D158" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.6" />,
+  'system-settings': <>
+    <circle cx="24" cy="24" fill="none" r="6.6" stroke={PAW_ICON_PAPER} strokeWidth="3.6" />
+    <path d="M24 8.5 v5.4 M24 34.1 v5.4 M8.5 24 h5.4 M34.1 24 h5.4 M13.2 13.2 l3.8 3.8 M31 31 l3.8 3.8 M34.8 13.2 31 17 M17 31 l-3.8 3.8" stroke={PAW_ICON_PAPER} strokeLinecap="round" strokeWidth="3.6" />
+  </>,
+};
+
+export function PawAppIcon({ appId, className = '', size = 24, title, ...props }: PawAppIconProps) {
   const compact = typeof size === 'number' && size <= 18;
-  const iconStyle = {
-    '--paw-app-icon-color': APP_COLORS[appId],
-    '--paw-app-icon-accent': APP_ACCENTS[appId],
-    ...style,
-  } as CSSProperties;
+  const localId = useId().replaceAll(':', '');
+  const sheenId = `paw-icon-sheen-${APPROVED_SYMBOL_IDS[appId]}-${localId}`;
 
   return (
     <svg
@@ -77,132 +119,36 @@ export function PawAppIcon({ appId, className = '', size = 24, style, title, ...
       aria-label={title}
       className={`paw-app-icon ${className}`.trim()}
       data-paw-app-icon={appId}
+      data-paw-approved-symbol={APPROVED_SYMBOL_IDS[appId]}
       data-paw-icon-color={APP_COLORS[appId]}
       data-paw-icon-scale={compact ? 'small' : undefined}
       focusable="false"
       height={size}
       preserveAspectRatio="xMidYMid meet"
       role={title ? 'img' : undefined}
-      style={iconStyle}
       viewBox="0 0 48 48"
       width={size}
     >
       {title ? <title>{title}</title> : null}
-      <g
-        className="paw-app-icon__silhouette"
-        data-paw-icon-silhouette={appId}
-        data-paw-icon-variant={compact ? 'compact' : 'full'}
-      >
-        {silhouettes[appId]}
-      </g>
+      <defs>
+        <linearGradient id={sheenId} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stopColor={PAW_ICON_PAPER} stopOpacity=".24" />
+          <stop offset=".55" stopColor={PAW_ICON_PAPER} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <rect data-paw-icon-tile fill={APP_COLORS[appId]} height="45" rx="11.5" width="45" x="1.5" y="1.5" />
+      <rect className="paw-app-icon__sheen" data-paw-icon-sheen fill={`url(#${sheenId})`} height="45" rx="11.5" width="45" x="1.5" y="1.5" />
+      <g data-paw-icon-art>{APPROVED_ART[appId]}</g>
     </svg>
   );
 }
-
-/** Eight rounded gear teeth as one path; the base circle unions them visually. */
-const GEAR_TEETH =
-  'M23.1 2.4L24.9 2.4A3.4 3.4 0 0 1 28.3 5.8L28.3 7.6A3.4 3.4 0 0 1 24.9 11L23.1 11A3.4 3.4 0 0 1 19.7 7.6L19.7 5.8A3.4 3.4 0 0 1 23.1 2.4Z'
-  + 'M38.64 8.09L39.91 9.36A3.4 3.4 0 0 1 39.91 14.17L38.64 15.44A3.4 3.4 0 0 1 33.83 15.44L32.56 14.17A3.4 3.4 0 0 1 32.56 9.36L33.83 8.09A3.4 3.4 0 0 1 38.64 8.09Z'
-  + 'M45.6 23.1L45.6 24.9A3.4 3.4 0 0 1 42.2 28.3L40.4 28.3A3.4 3.4 0 0 1 37 24.9L37 23.1A3.4 3.4 0 0 1 40.4 19.7L42.2 19.7A3.4 3.4 0 0 1 45.6 23.1Z'
-  + 'M39.91 38.64L38.64 39.91A3.4 3.4 0 0 1 33.83 39.91L32.56 38.64A3.4 3.4 0 0 1 32.56 33.83L33.83 32.56A3.4 3.4 0 0 1 38.64 32.56L39.91 33.83A3.4 3.4 0 0 1 39.91 38.64Z'
-  + 'M24.9 45.6L23.1 45.6A3.4 3.4 0 0 1 19.7 42.2L19.7 40.4A3.4 3.4 0 0 1 23.1 37L24.9 37A3.4 3.4 0 0 1 28.3 40.4L28.3 42.2A3.4 3.4 0 0 1 24.9 45.6Z'
-  + 'M9.36 39.91L8.09 38.64A3.4 3.4 0 0 1 8.09 33.83L9.36 32.56A3.4 3.4 0 0 1 14.17 32.56L15.44 33.83A3.4 3.4 0 0 1 15.44 38.64L14.17 39.91A3.4 3.4 0 0 1 9.36 39.91Z'
-  + 'M2.4 24.9L2.4 23.1A3.4 3.4 0 0 1 5.8 19.7L7.6 19.7A3.4 3.4 0 0 1 11 23.1L11 24.9A3.4 3.4 0 0 1 7.6 28.3L5.8 28.3A3.4 3.4 0 0 1 2.4 24.9Z'
-  + 'M8.09 9.36L9.36 8.09A3.4 3.4 0 0 1 14.17 8.09L15.44 9.36A3.4 3.4 0 0 1 15.44 14.17L14.17 15.44A3.4 3.4 0 0 1 9.36 15.44L8.09 14.17A3.4 3.4 0 0 1 8.09 9.36Z';
-
-/** Three rounded 18×18 squares; the accent square completes the 2×2 grid. */
-const APP_GRID =
-  'M9.5 4h7C19.5 4 22 6.5 22 9.5v7c0 3-2.5 5.5-5.5 5.5h-7C6.5 22 4 19.5 4 16.5v-7C4 6.5 6.5 4 9.5 4Z'
-  + 'M31.5 4h7C41.5 4 44 6.5 44 9.5v7c0 3-2.5 5.5-5.5 5.5h-7c-3 0-5.5-2.5-5.5-5.5v-7C26 6.5 28.5 4 31.5 4Z'
-  + 'M9.5 26h7c3 0 5.5 2.5 5.5 5.5v7c0 3-2.5 5.5-5.5 5.5h-7C6.5 44 4 41.5 4 38.5v-7C4 28.5 6.5 26 9.5 26Z';
-
-const silhouettes: Record<PawIdentityIconId, ReactNode> = {
-  /* Session bubble with a linked satellite node: system connection, not a face. */
-  agent: <>
-    <path className="paw-app-icon__primary" d="M4 16C4 9.9 8.9 5 15 5h18c6.1 0 11 4.9 11 11v7c0 6.1-4.9 11-11 11H19.5L9.8 42.6v-9.4C6.3 31.1 4 27.7 4 23.5z" />
-    <circle className="paw-app-icon__secondary paw-app-icon__outlined" cx="41" cy="7.5" r="6" strokeWidth="3" />
-    <rect className="paw-app-icon__paper" height="5.6" rx="2.8" width="18" x="13" y="13.5" />
-    <rect className="paw-app-icon__paper" height="5.6" rx="2.8" width="11" x="13" y="22.5" />
-  </>,
-  /* Sol with one orbit and one planet: the Room solar collaboration metaphor. */
-  room: <>
-    <circle className="paw-app-icon__primary" cx="23.5" cy="25.5" r="12.5" />
-    <ellipse className="paw-app-icon__ring" cx="23.5" cy="25.5" rx="20.5" ry="7.5" strokeWidth="3.6" transform="rotate(-24 23.5 25.5)" />
-    <circle className="paw-app-icon__secondary" cx="42.5" cy="18.5" r="4.6" />
-  </>,
-  /* Globe with a two-tone compass needle. */
-  browser: <>
-    <circle className="paw-app-icon__primary" cx="24" cy="24" r="20" />
-    <path className="paw-app-icon__paper" d="M34.9 13.1 27.4 27.4l-6.8-6.8z" />
-    <path className="paw-app-icon__secondary" d="M13.1 34.9l7.5-14.3 6.8 6.8z" />
-  </>,
-  /* A naked prompt: rounded chevron plus the live cursor. */
-  terminal: <>
-    <path className="paw-app-icon__stroke" d="M9.5 9.5 25.5 24 9.5 38.5" strokeLinecap="round" strokeLinejoin="round" strokeWidth="8.4" />
-    <rect className="paw-app-icon__secondary" height="8.4" rx="4.2" width="17.5" x="25.5" y="34.5" />
-  </>,
-  /* Flat folder: deep back tab, amber front body, one label line. */
-  files: <>
-    <path className="paw-app-icon__secondary" d="M4 30V12.5C4 9.5 6.5 7 9.5 7h9.6c1.6 0 3.2.7 4.2 2l3.5 4.4h11.7c3 0 5.5 2.5 5.5 5.5V30z" />
-    <path className="paw-app-icon__primary" d="M4 17.5h40V34c0 3.6-2.9 6.5-6.5 6.5h-27C6.9 40.5 4 37.6 4 34z" />
-    <rect className="paw-app-icon__paper" height="4.6" rx="2.3" width="17" x="10.5" y="24" />
-  </>,
-  /* Staggered plan bars with the next milestone. */
-  'project-workbench': <>
-    <rect className="paw-app-icon__primary" height="8.6" rx="4.3" width="23" x="4" y="6.5" />
-    <rect className="paw-app-icon__primary" height="8.6" rx="4.3" width="26" x="13" y="19.7" />
-    <rect className="paw-app-icon__primary" height="8.6" rx="4.3" width="17" x="8" y="32.9" />
-    <circle className="paw-app-icon__secondary" cx="33.5" cy="37.2" r="6" />
-  </>,
-  /* An offset stack of memory cards; the front card keeps one traceable entry. */
-  memory: <>
-    <rect className="paw-app-icon__secondary" height="24" rx="5" width="30" x="11" y="7" />
-    <rect className="paw-app-icon__primary" height="25" rx="6" width="34" x="7" y="15" />
-    <circle className="paw-app-icon__paper" cx="15.5" cy="27.5" r="3.6" />
-    <rect className="paw-app-icon__paper" height="5" rx="2.5" width="13" x="22" y="25" />
-  </>,
-  /* Open book: two leaves and a light spine. */
-  knowledge: <>
-    <path className="paw-app-icon__primary" d="M4.5 9.2c7.4-2.3 13.6-1 19.5 3.5v30.5c-5.9-4.4-12.1-5.6-19.5-3.6z" />
-    <path className="paw-app-icon__secondary" d="M43.5 9.2c-7.4-2.3-13.6-1-19.5 3.5v30.5c5.9-4.4 12.1-5.6 19.5-3.6z" />
-    <rect className="paw-app-icon__paper" height="30.7" rx="1.6" width="3.2" x="22.4" y="12.6" />
-  </>,
-  /* Voice waveform bars. */
-  'input-studio': <>
-    <rect className="paw-app-icon__secondary" height="17" rx="4" width="8" x="2" y="15.5" />
-    <rect className="paw-app-icon__primary" height="34" rx="4" width="8" x="14" y="7" />
-    <rect className="paw-app-icon__primary" height="44" rx="4" width="8" x="26" y="2" />
-    <rect className="paw-app-icon__secondary" height="22" rx="4" width="8" x="38" y="13" />
-  </>,
-  /* Flat 2×2 App grid; the accent square is the one being added. */
-  'app-center': <>
-    <path className="paw-app-icon__primary" d={APP_GRID} />
-    <rect className="paw-app-icon__secondary" height="18" rx="5.5" width="18" x="26" y="26" />
-  </>,
-  /* Live gauge: dial, signal needle, hub. */
-  'system-monitor': <>
-    <path className="paw-app-icon__primary" d="M24 7C13.2 7 4.5 15.7 4.5 26.5v6C4.5 35 6.5 37 9 37h30c2.5 0 4.5-2 4.5-4.5v-6C43.5 15.7 34.8 7 24 7z" />
-    <path className="paw-app-icon__stroke-accent" d="M24 30.5 13.5 16.5" strokeLinecap="round" strokeWidth="5" />
-    <circle className="paw-app-icon__paper" cx="24" cy="30.5" r="4.2" />
-  </>,
-  /* Rounded-tooth gear. */
-  'system-settings': <>
-    <path className="paw-app-icon__primary" d={GEAR_TEETH} />
-    <circle className="paw-app-icon__primary" cx="24" cy="24" r="16.6" />
-    <circle className="paw-app-icon__paper" cx="24" cy="24" r="7.2" />
-  </>,
-};
 
 export type PawBrandMarkProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
   size?: number | string;
   title?: string;
 };
 
-/**
- * The PAW system mark: a paw print in the current text colour. It identifies
- * the system itself (menu bar, launcher, boot), never an App, so it stays
- * monochrome and outside the App identity colour system.
- */
+/** The PAW system mark stays monochrome and outside the App identity system. */
 export function PawBrandMark({ className = '', size = 16, title, ...props }: PawBrandMarkProps) {
   return (
     <svg

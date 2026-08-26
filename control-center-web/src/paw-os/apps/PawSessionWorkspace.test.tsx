@@ -12,6 +12,8 @@ import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagen
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import type { SessionSummary } from '@/features/agent/types';
 import { StubControlTransport } from '@/test/stub-control-transport';
+import { ControlTransportHttpError } from '@/platform/http-transport';
+import type { ControlRequest } from '@/platform/transport';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import appsCss from './paw-apps.css?raw';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
@@ -509,6 +511,80 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
+  it('quietly reconciles a final assistant message when the terminal SSE event is missed', async () => {
+    const sessionId = 'session-terminal-gap';
+    const turnId = 'turn-terminal-gap';
+    const transport = new StubControlTransport('mock', {
+      'agent.session.snapshot': {
+        messages: [],
+        liveEvents: [],
+        lastSequence: 0,
+        resumeToken: '',
+        status: 'busy',
+      },
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    const before = transport.requests.filter((request) => request.pathId === 'agent.session.snapshot').length;
+
+    act(() => {
+      transport.emit('agent.session.events', parseAgentEvent({
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: `${sessionId}:1`,
+        sessionId,
+        turnId,
+        sequence: 1,
+        createdAtMs: 10,
+        eventType: 'message_completed',
+        payload: {
+          message: {
+            schemaVersion: 'rag-ime.agent-message.v1',
+            id: `${turnId}:assistant`,
+            sessionId,
+            turnId,
+            role: 'assistant',
+            status: 'completed',
+            blocks: [{
+              id: `${turnId}:assistant:text`,
+              type: 'text',
+              status: 'completed',
+              presentationKind: 'markdown',
+              data: { text: '已经完成。' },
+            }],
+            attachments: [],
+            citations: [],
+            createdAtMs: 10,
+            completedAtMs: 10,
+          },
+        },
+        resumeToken: `${sessionId}:1`,
+      }));
+    });
+
+    await waitFor(() => expect(
+      transport.requests.filter((request) => request.pathId === 'agent.session.snapshot').length,
+    ).toBeGreaterThan(before));
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('holds a follow-up beside the composer and gives it back when the turn is stopped', async () => {
     const sessionId = 'session-queue';
     const transport = busySessionTransport(sessionId);
@@ -531,20 +607,19 @@ describe('PAWOS Agent Session structural migration', () => {
     act(() => { emitStreamDelta(transport, sessionId); });
 
     const user = userEvent.setup();
-    // 干预/接续 reach Runtime now; 排队 is the composer's own hold.
-    await user.click(await screen.findByRole('radio', { name: '排队' }));
     await user.type(composer, '等这轮结束再看依赖图');
-    await user.click(screen.getByRole('button', { name: '排队，当前回合结束后发送' }));
+    await user.keyboard('{Enter}');
 
-    expect(await screen.findByText('1 条排队中')).toBeInTheDocument();
+    expect(await screen.findByRole('status', { name: '等待当前执行完成后发送的消息' })).toHaveTextContent('等这轮结束再看依赖图');
     expect(composer).toHaveValue('');
     // Nothing was handed to Runtime: the hold is entirely reversible.
     expect(transport.requests.filter((request) => request.pathId === 'agent.session.prompt')).toEqual([]);
-    expect(screen.getByRole('radio', { name: '排队 1' })).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: '消息投递方式' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '改为立即干预当前执行' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '停止本轮' }));
     await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('等这轮结束再看依赖图'));
-    expect(screen.queryByText('1 条排队中')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: '等待当前执行完成后发送的消息' })).not.toBeInTheDocument();
     expect(transport.requests.filter((request) => request.pathId === 'agent.session.prompt')).toEqual([]);
     useAgentLiveStore.getState().clear(sessionId);
   });
@@ -571,10 +646,9 @@ describe('PAWOS Agent Session structural migration', () => {
     act(() => { emitStreamDelta(transport, sessionId); });
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('radio', { name: '排队' }));
     for (const text of ['第一条排队', '第二条排队']) {
       await user.type(composer, text);
-      await user.click(screen.getByRole('button', { name: '排队，当前回合结束后发送' }));
+      await user.keyboard('{Enter}');
     }
     expect(await screen.findByText('2 条排队中')).toBeInTheDocument();
 
@@ -586,7 +660,9 @@ describe('PAWOS Agent Session structural migration', () => {
     ).toHaveLength(1));
     expect(transport.requests.find((request) => request.pathId === 'agent.session.prompt')?.body)
       .toMatchObject({ message: '第一条排队' });
-    await waitFor(() => expect(screen.getByText(/1 条排队中/)).toBeInTheDocument());
+    await waitFor(() => expect(
+      screen.getByRole('status', { name: '等待当前执行完成后发送的消息' }),
+    ).toHaveTextContent('第二条排队'));
     useAgentLiveStore.getState().clear(sessionId);
   });
 
@@ -662,10 +738,13 @@ describe('PAWOS Agent Session structural migration', () => {
     await user.type(composer, '请开始这轮实现');
     await user.click(screen.getByRole('button', { name: '发送' }));
 
-    // The optimistic turn keeps the Session busy, so the delivery radios are
-    // the visible proof of the send lock: they are disabled exactly while
-    // `sending` is true. They must re-enable on the admission receipt alone.
-    await waitFor(() => expect(screen.getByRole('radio', { name: '干预' })).toBeEnabled());
+    // The optimistic turn keeps the Session busy. A second draft must become
+    // sendable as a held follow-up as soon as the admission receipt arrives;
+    // it cannot wait for the unresolved quiet snapshot.
+    await user.type(composer, '下一条');
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: '排队，当前回合结束后发送' }),
+    ).toBeEnabled());
     const projection = useAgentLiveStore.getState().projections[sessionId];
     const optimisticIds = Object.values(projection?.optimisticByClientMessageId ?? {});
     expect(optimisticIds).toHaveLength(1);
@@ -674,6 +753,204 @@ describe('PAWOS Agent Session structural migration', () => {
     // The background refresh was launched but is still unresolved: the unlock
     // above therefore cannot have waited for it.
     expect(snapshotCalls).toBe(2);
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('supersedes a stale Steer rejection with one lineage-linked prompt', async () => {
+    const sessionId = 'session-stale-steer';
+    let promptAttempt = 0;
+    const snapshot = {
+      messages: [{
+        schemaVersion: 'rag-ime.agent-message.v1',
+        id: `${sessionId}:user`,
+        sessionId,
+        turnId: 'turn-stale',
+        role: 'user',
+        status: 'completed',
+        blocks: [{
+          id: `${sessionId}:user:text`,
+          type: 'text',
+          status: 'completed',
+          presentationKind: 'markdown',
+          data: { text: '上一轮' },
+        }],
+        attachments: [],
+        citations: [],
+        createdAtMs: 1,
+        completedAtMs: 1,
+      }],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: `${sessionId}:1`,
+      status: 'busy',
+    };
+    const transport = new StubControlTransport('mock', {
+      'agent.session.snapshot': snapshot,
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+      'agent.session.prompt': (request: ControlRequest) => {
+        promptAttempt += 1;
+        const body = request.body as Record<string, unknown>;
+        if (promptAttempt === 1) {
+          throw new ControlTransportHttpError(
+            'agent.session.prompt',
+            409,
+            'Pi 当前没有可接收排队消息的活动回合',
+            {
+              ok: false,
+              code: 'AGENT_COMMAND_FAILED',
+              commandReceipt: {
+                state: 'failed',
+                clientMessageId: body.clientMessageId,
+                causeCode: 'SESSION_IDLE',
+              },
+            },
+          );
+        }
+        return { ok: true, accepted: true };
+      },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '下一条普通消息');
+    await user.keyboard('{Enter}');
+    await user.click(screen.getByRole('button', { name: '改为立即干预当前执行' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((request) => request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(2));
+    const prompts = transport.requests.filter((request) => request.pathId === 'agent.session.prompt');
+    const first = prompts[0]?.body as Record<string, unknown>;
+    const second = prompts[1]?.body as Record<string, unknown>;
+    expect(first.delivery).toBe('steer');
+    expect(second.delivery).toBeUndefined();
+    expect(second.retryOfClientMessageId).toBe(first.clientMessageId);
+    expect(second.message).toBe('下一条普通消息');
+    expect(screen.queryByRole('button', { name: '重新同步' })).not.toBeInTheDocument();
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('makes a presentable recent snapshot usable before the full archive resolves', async () => {
+    const sessionId = 'session-recent-first';
+    const fullSnapshot = new Promise(() => undefined);
+    const transport = new StubControlTransport('mock', {
+      'agent.session.snapshot': (request: ControlRequest) => request.query?.view === 'recent'
+        ? {
+            messages: [],
+            liveEvents: [],
+            lastSequence: 12,
+            resumeToken: `${sessionId}:12`,
+            status: 'active',
+            partial: true,
+            snapshotScope: 'recent',
+          }
+        : fullSnapshot,
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const { container } = render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(container.querySelector('.paw-session-workspace__loading')).toBeNull());
+    expect(screen.getByText('正在恢复完整上下文')).toBeInTheDocument();
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('keeps cached durable history visible while an empty recent snapshot restores', async () => {
+    const sessionId = 'session-recent-preserves-cache';
+    useAgentLiveStore.getState().clear(sessionId);
+    useAgentLiveStore.getState().hydrate(sessionId, {
+      messages: [{
+        schemaVersion: 'rag-ime.agent-message.v1',
+        id: `${sessionId}:assistant`,
+        sessionId,
+        turnId: 'turn-cached',
+        role: 'assistant',
+        status: 'completed',
+        blocks: [{
+          id: `${sessionId}:assistant:text`,
+          type: 'text',
+          status: 'completed',
+          presentationKind: 'markdown',
+          data: { text: '今天已经完成的持久历史' },
+        }],
+        attachments: [],
+        citations: [],
+        createdAtMs: 1,
+        completedAtMs: 2,
+      }],
+      liveEvents: [],
+      lastSequence: 12,
+      resumeToken: `${sessionId}:12`,
+      status: 'active',
+    });
+    const fullSnapshot = new Promise(() => undefined);
+    const transport = new StubControlTransport('mock', {
+      'agent.session.snapshot': (request: ControlRequest) => request.query?.view === 'recent'
+        ? {
+            messages: [],
+            liveEvents: [],
+            lastSequence: 13,
+            resumeToken: `${sessionId}:13`,
+            status: 'active',
+            partial: true,
+            snapshotScope: 'recent',
+          }
+        : fullSnapshot,
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+    });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByText('今天已经完成的持久历史')).toBeVisible();
+    expect(screen.getByText('正在恢复完整上下文')).toBeInTheDocument();
     useAgentLiveStore.getState().clear(sessionId);
   });
 

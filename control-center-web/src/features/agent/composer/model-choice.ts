@@ -88,6 +88,34 @@ export function countModelChoices(groups: readonly ModelChoiceGroup[]): number {
   return groups.reduce((total, group) => total + group.options.length, 0);
 }
 
+/**
+ * Narrow a Runtime-ordered catalog without re-sorting it. A provider match
+ * keeps that provider's complete group; a model match keeps only matching
+ * rows. Blank search returns the original projection so consumers do not
+ * churn an otherwise stable list while the picker opens.
+ */
+export function filterModelChoiceGroups(
+  groups: readonly ModelChoiceGroup[],
+  query: string,
+): readonly ModelChoiceGroup[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return groups;
+
+  return groups.flatMap((group) => {
+    const providerMatches = `${group.displayName} ${group.providerId}`
+      .toLocaleLowerCase()
+      .includes(normalizedQuery);
+    const options = providerMatches
+      ? group.options
+      : group.options.filter((option) => (
+        `${option.name} ${option.modelId} ${option.providerName} ${option.providerId}`
+          .toLocaleLowerCase()
+          .includes(normalizedQuery)
+      ));
+    return options.length > 0 ? [{ ...group, options }] : [];
+  });
+}
+
 function reasoningDetail(reasoning: boolean | undefined, levels: number): string {
   return reasoning && levels > 0 ? `${levels} 档推理` : '直接生成';
 }

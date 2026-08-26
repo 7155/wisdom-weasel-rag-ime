@@ -606,6 +606,39 @@ describe('AgentEventReducer', () => {
     });
   });
 
+  it('keeps authoritative Tool usage on the matching toolCallId only', () => {
+    const first = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'tool_started', {
+        toolCallId: 'tool-one',
+        toolName: 'workspace_read',
+      }),
+    ).state;
+    const second = reduceAgentEvent(
+      first,
+      agentEvent(2, 'tool_started', {
+        toolCallId: 'tool-two',
+        toolName: 'workspace_search',
+      }),
+    ).state;
+    const finished = reduceAgentEvent(
+      second,
+      agentEvent(3, 'tool_finished', {
+        toolCallId: 'tool-two',
+        toolName: 'workspace_search',
+        usage: { input: 2, output: 3, totalTokens: 5 },
+        isError: false,
+      }),
+    ).state;
+
+    expect(finished.activitiesById['tool-two'].payload.usage).toEqual({
+      input: 2,
+      output: 3,
+      totalTokens: 5,
+    });
+    expect(finished.activitiesById['tool-one'].payload.usage).toBeUndefined();
+  });
+
   it('restores a generic Pi question from the authoritative snapshot', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [],
@@ -1244,6 +1277,117 @@ describe('AgentEventReducer', () => {
     expect(completed.messagesById['local:client-1']).toBeUndefined();
     expect(completed.messagesById['server-1'].clientMessageId).toBe('client-1');
     expect(completed.optimisticByClientMessageId).toEqual({});
+  });
+
+  it('settles a synthetic busy snapshot turn when the real turn completes', () => {
+    const clientMessageId = 'client-equal-cursor-race';
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId,
+      text: '检查完成后告诉我结果',
+      nowMs: 10,
+    });
+    const accepted = reduceAgentEvent(
+      optimistic,
+      {
+        ...agentEvent(1, 'message_completed', {
+          clientMessageId,
+          message: {
+            ...serverMessage('runtime-user', 'user', 'turn-real', '检查完成后告诉我结果'),
+            clientMessageId,
+          },
+        }),
+        turnId: 'turn-real',
+      },
+    ).state;
+
+    // The prompt receipt triggers a quiet snapshot. It can race with the user
+    // SSE at the same durable cursor, while Pi still identifies the turn by a
+    // synthetic history id and truthfully reports that the Session is busy.
+    const snapped = applyAgentSnapshot(accepted, {
+      messages: [
+        serverMessage('history-user', 'user', 'history:history-user', '检查完成后告诉我结果'),
+      ],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: 'session-1:1',
+      status: 'busy',
+    });
+    const answered = reduceAgentEvent(
+      snapped,
+      {
+        ...agentEvent(2, 'message_completed', {
+          message: serverMessage('runtime-assistant', 'assistant', 'turn-real', '检查完成。'),
+        }),
+        turnId: 'turn-real',
+      },
+    ).state;
+    const settled = reduceAgentEvent(
+      answered,
+      {
+        ...agentEvent(3, 'turn_completed', { status: 'completed' }),
+        turnId: 'turn-real',
+      },
+    ).state;
+
+    expect(settled.status).toBe('idle');
+    expect(settled.turnsById['turn-real']?.status).toBe('completed');
+    expect(settled.turnsById['history:history-user']?.status).not.toBe('running');
+    expect(settled.turnOrder.filter((turnId) => (
+      ['queued', 'running', 'waiting'].includes(settled.turnsById[turnId]?.status ?? '')
+    ))).toEqual([]);
+  });
+
+  it('reconciles an accepted optimistic prompt with a nearby durable transcript message', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'client-without-persisted-id',
+      text: '完成后继续下一条',
+      nowMs: 10,
+    });
+
+    const restored = applyAgentSnapshot(optimistic, {
+      messages: [
+        serverMessage('server-user', 'user', 'history:server-user', '完成后继续下一条'),
+        serverMessage('server-assistant', 'assistant', 'history:server-user', '已经完成。'),
+      ],
+      liveEvents: [],
+      lastSequence: 8,
+      resumeToken: 'session-1:8',
+      status: 'idle',
+    });
+
+    expect(restored.messageOrder).toEqual(['server-user', 'server-assistant']);
+    expect(restored.messagesById['local:client-without-persisted-id']).toBeUndefined();
+    expect(restored.messagesById['server-user'].clientMessageId).toBe('client-without-persisted-id');
+    expect(restored.optimisticByClientMessageId).toEqual({});
+    expect(restored.turnsById['history:server-user']?.status).toBe('completed');
+    expect(restored.status).toBe('idle');
+  });
+
+  it('does not reconcile a failed optimistic admission by transcript text alone', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'client-failed-same-text',
+      text: '重复文本仍需保留失败证据',
+      nowMs: 10,
+    });
+    const failed = failOptimisticAgentMessage(
+      optimistic,
+      'client-failed-same-text',
+      '运行时拒绝',
+      15,
+    );
+
+    const restored = applyAgentSnapshot(failed, {
+      messages: [serverMessage('older-user', 'user', 'history:older-user', '重复文本仍需保留失败证据')],
+      liveEvents: [],
+      lastSequence: 9,
+      resumeToken: 'session-1:9',
+      status: 'idle',
+    });
+
+    expect(restored.messagesById['local:client-failed-same-text']).toMatchObject({
+      status: 'failed',
+    });
+    expect(restored.optimisticByClientMessageId).toHaveProperty('client-failed-same-text');
   });
 
   it('keeps an unaccepted prompt failure across a Session snapshot refresh', () => {

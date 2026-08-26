@@ -55,14 +55,14 @@ describe('RoomTaskGraph peer relations', () => {
 
     expect(relations).toMatchObject([
       {
-        sourceName: '澄·远',
-        targetName: '澄·今',
+        sourceName: 'Earth',
+        targetName: 'Mars',
         kind: 'ask',
         state: 'complete',
       },
       {
-        sourceName: '澄·今',
-        targetName: '澄·远',
+        sourceName: 'Mars',
+        targetName: 'Earth',
         kind: 'reply',
         state: 'complete',
         replyTo: 'message-ask',
@@ -139,7 +139,7 @@ describe('RoomTaskGraph peer relations', () => {
 
     expect(roomPeerRelationsFromProjection(projection, room)).toEqual([
       expect.objectContaining({
-        id: 'message-reply', sourceName: 'B', targetName: 'A',
+        id: 'message-reply', sourceName: 'Mars', targetName: 'Earth',
         kind: 'reply', state: 'complete', content: 'DIRECT_REPLY',
       }),
     ]);

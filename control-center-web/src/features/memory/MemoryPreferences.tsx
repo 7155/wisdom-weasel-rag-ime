@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Brain, RefreshCw, Save } from 'lucide-react';
+import { Brain, Gauge, RefreshCw, Save } from 'lucide-react';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, Field, Select, Switch } from '@/components/primitives';
 import {
@@ -22,12 +22,21 @@ type PreferenceLevel = 'avoid' | 'weaken' | 'normal' | 'priority';
 type StablePreferenceLevel = Exclude<PreferenceLevel, 'avoid'>;
 type TemporaryDetailLevel = Exclude<PreferenceLevel, 'priority'>;
 type RecallDetail = 'compact' | 'balanced' | 'detailed';
+type TimelineMaxItems = '1' | '2' | '3' | '4';
 
 type MemoryPreferenceDraft = {
   stablePreference: StablePreferenceLevel;
   temporaryDetails: TemporaryDetailLevel;
   includeAgentDialogue: boolean;
   recallDetail: RecallDetail;
+  timelineEnabled: boolean;
+  timelineMaxItems: TimelineMaxItems;
+};
+
+type MemoryRecallRuntimeContract = {
+  enabled: boolean | null;
+  agentDecides: boolean | null;
+  maxPerCompactionCycle: number | null;
 };
 
 const stablePreferenceOptions = [
@@ -45,6 +54,12 @@ const recallDetailOptions = [
   { value: 'balanced', label: '平衡' },
   { value: 'detailed', label: '详细' },
 ] as const;
+const timelineMaxItemsOptions = [
+  { value: '1', label: '1 条' },
+  { value: '2', label: '2 条' },
+  { value: '3', label: '3 条' },
+  { value: '4', label: '4 条' },
+] as const;
 
 export function MemoryPreferences() {
   const transport = useControlTransport();
@@ -59,6 +74,7 @@ export function MemoryPreferences() {
     staleTime: 30_000,
   });
   const persisted = useMemo(() => memoryPreferenceDraft(settingsQuery.data), [settingsQuery.data]);
+  const recallContract = useMemo(() => memoryRecallRuntimeContract(settingsQuery.data), [settingsQuery.data]);
   const [draft, setDraft] = useState<MemoryPreferenceDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
@@ -105,6 +121,14 @@ export function MemoryPreferences() {
             {!writesSupported ? '只读' : Object.keys(changes).length ? '等待保存' : '已从本机读取'}
           </span>
         </div>
+        <div className="memory-preferences__recall-policy" aria-label="Agent 记忆召回策略">
+          <span aria-hidden="true"><Gauge size={17} /></span>
+          <div>
+            <strong>Agent 记忆召回</strong>
+            <p>{recallPolicyDescription(recallContract)}</p>
+          </div>
+          <small>{recallBudgetDescription(recallContract)}</small>
+        </div>
         <div className="memory-preferences__grid">
           <Field description="用户习惯、长期选择和反复确认的偏好会按这个强度保留。" htmlFor="memory-stable-preference" label="稳定偏好">
             <Select
@@ -141,6 +165,23 @@ export function MemoryPreferences() {
               onCheckedChange={(checked) => updateDraft({ includeAgentDialogue: checked })}
             />
           </div>
+          <div className="memory-preferences__switch">
+            <Switch
+              checked={current.timelineEnabled}
+              description="仅控制带明确日期或时间表达的召回是否进入时间线通道；它不是记忆召回总开关。"
+              label="按需召回时间线"
+              onCheckedChange={(checked) => updateDraft({ timelineEnabled: checked })}
+            />
+          </div>
+          <Field description="限制一次时间线召回带回的条目数，避免挤占当前任务上下文。" htmlFor="memory-timeline-max-items" label="时间线召回上限">
+            <Select
+              aria-label="时间线召回上限"
+              id="memory-timeline-max-items"
+              onValueChange={(value) => updateDraft({ timelineMaxItems: value })}
+              options={timelineMaxItemsOptions}
+              value={current.timelineMaxItems}
+            />
+          </Field>
         </div>
         {!writesSupported ? (
           <InlineNotice title="当前版本只能读取偏好" tone="warning">本机服务尚未开放安全保存接口；页面不会保留仅存在于前端的修改。</InlineNotice>
@@ -225,11 +266,14 @@ function memoryPreferenceDraft(value: unknown): MemoryPreferenceDraft {
   const stableDays = numberValue(timeDecay.stablePreferenceHalfLifeDays, 365);
   const temporaryDays = numberValue(timeDecay.temporaryHalfLifeDays, 14);
   const recallDetail = stringValue(recall.detailLevel, 'compact');
+  const timelineMaxItems = Math.min(4, Math.max(1, Math.round(numberValue(recall.timelineMaxItems, 2))));
   return {
     stablePreference: stableDays >= 730 ? 'priority' : stableDays <= 180 ? 'weaken' : 'normal',
     temporaryDetails: temporaryDays <= 1 ? 'avoid' : temporaryDays <= 7 ? 'weaken' : 'normal',
     includeAgentDialogue: booleanValue(automatic.includeAgentDialogue, true),
     recallDetail: ['compact', 'balanced', 'detailed'].includes(recallDetail) ? recallDetail as RecallDetail : 'compact',
+    timelineEnabled: booleanValue(recall.timelineEnabled, true),
+    timelineMaxItems: String(timelineMaxItems) as TimelineMaxItems,
   };
 }
 
@@ -245,7 +289,37 @@ function memoryPreferenceChanges(persisted: MemoryPreferenceDraft, draft: Memory
     changes['memory.automaticOrganization.includeAgentDialogue'] = draft.includeAgentDialogue;
   }
   if (draft.recallDetail !== persisted.recallDetail) changes['memory.recall.detailLevel'] = draft.recallDetail;
+  if (draft.timelineEnabled !== persisted.timelineEnabled) changes['memory.recall.timelineEnabled'] = draft.timelineEnabled;
+  if (draft.timelineMaxItems !== persisted.timelineMaxItems) changes['memory.recall.timelineMaxItems'] = Number(draft.timelineMaxItems);
   return changes;
+}
+
+function memoryRecallRuntimeContract(value: unknown): MemoryRecallRuntimeContract {
+  const recall = asRecord(asRecord(asRecord(value).settings).memory).recall;
+  const contract = asRecord(recall);
+  return {
+    enabled: typeof contract.enabled === 'boolean' ? contract.enabled : null,
+    agentDecides: typeof contract.agentDecides === 'boolean' ? contract.agentDecides : null,
+    maxPerCompactionCycle: Number.isInteger(contract.maxPerCompactionCycle) && Number(contract.maxPerCompactionCycle) > 0
+      ? Number(contract.maxPerCompactionCycle)
+      : null,
+  };
+}
+
+function recallPolicyDescription(contract: MemoryRecallRuntimeContract): string {
+  if (contract.enabled === null || contract.agentDecides === null) {
+    return '总开关与 Agent 按需判断由 Runtime 管理；当前版本尚未返回可配置合同。';
+  }
+  if (!contract.enabled) return '默认关闭；开启前不会把个人记忆加入回答上下文。';
+  return contract.agentDecides
+    ? '已开启，由 Agent 根据当前任务判断是否调用。'
+    : '已开启，按 Runtime 当前策略执行召回。';
+}
+
+function recallBudgetDescription(contract: MemoryRecallRuntimeContract): string {
+  return contract.maxPerCompactionCycle === null || contract.maxPerCompactionCycle === 1
+    ? '每个压缩周期最多调用一次'
+    : `每个压缩周期最多调用 ${contract.maxPerCompactionCycle} 次`;
 }
 
 function settingsRuntimeRevision(value: unknown): number | null {

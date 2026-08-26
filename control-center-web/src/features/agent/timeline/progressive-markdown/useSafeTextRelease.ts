@@ -91,7 +91,11 @@ export function useSafeTextRelease(
     if (!enabled || typeof window === "undefined") return undefined;
 
     let frame = 0;
-    let lastAdvanceAt = performance.now();
+    // requestAnimationFrame owns the reveal clock. Its callback timestamp is
+    // not guaranteed to share a time origin with performance.now() in every
+    // host (notably embedded WebViews and test DOMs), so mixing the two can
+    // leave appended text waiting forever behind a negative elapsed value.
+    let lastAdvanceAt: number | undefined;
 
     const tick = (now: number): void => {
       frame = window.requestAnimationFrame(tick);
@@ -115,6 +119,10 @@ export function useSafeTextRelease(
         minimumIntervalMs,
         maximumIntervalMs,
       );
+      if (lastAdvanceAt === undefined) {
+        lastAdvanceAt = now;
+        return;
+      }
       if (now - lastAdvanceAt < interval) return;
       lastAdvanceAt = now;
 

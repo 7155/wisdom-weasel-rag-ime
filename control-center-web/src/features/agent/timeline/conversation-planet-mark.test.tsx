@@ -4,21 +4,24 @@ import agentCss from '../agent.css?raw';
 import { ConversationPlanetMark, type ConversationPlanetState } from './ConversationPlanetMark';
 
 describe('ConversationPlanetMark', () => {
-  it('gives every live state an orbit and keeps settled states still', () => {
-    const orbitFor = (state: ConversationPlanetState) => {
-      const { container } = render(<ConversationPlanetMark state={state} />);
-      const mark = container.querySelector(`.paw-conv-planet[data-state="${state}"]`);
-      expect(mark, state).toBeTruthy();
-      expect(mark!.querySelector('.paw-conv-planet__body'), state).toBeTruthy();
-      return mark!.querySelector('.paw-conv-planet__orbit');
-    };
+  it('keeps one stable mark tree across live and settled state changes', () => {
+    const { container, rerender } = render(<ConversationPlanetMark state="thinking" />);
+    const mark = container.querySelector('.paw-conv-planet')!;
+    const body = mark.querySelector('.paw-conv-planet__body');
+    const orbit = mark.querySelector('.paw-conv-planet__orbit');
 
-    for (const state of ['thinking', 'running', 'waiting'] as const) {
-      expect(orbitFor(state), state).toBeTruthy();
+    expect(mark).toHaveAttribute('data-live', 'true');
+    expect(body).toBeTruthy();
+    expect(orbit).toBeTruthy();
+
+    for (const state of ['running', 'waiting', 'done', 'failed', 'idle'] as const) {
+      rerender(<ConversationPlanetMark state={state} />);
+      expect(container.querySelector('.paw-conv-planet')).toBe(mark);
+      expect(mark.querySelector('.paw-conv-planet__body'), state).toBe(body);
+      expect(mark.querySelector('.paw-conv-planet__orbit'), state).toBe(orbit);
+      expect(mark).toHaveAttribute('data-state', state);
     }
-    for (const state of ['idle', 'done', 'failed'] as const) {
-      expect(orbitFor(state), state).toBeNull();
-    }
+    expect(mark).not.toHaveAttribute('data-live');
   });
 
   it('marks a live state for assistive technology only when it carries its own label', () => {
@@ -45,16 +48,16 @@ describe('ConversationPlanetMark', () => {
     expect(sizeOf({ size: 'lg' })).toBe('lg');
   });
 
-  it('keeps the shared planet pulse in the Agent owner and stops it under reduced motion', () => {
-    // The vendored conversation surface pulses its thinking dot at 1.2s; the
-    // running planet holds that rhythm so both surfaces read as one product.
+  it('moves only the live status ring and makes reduced motion completely static', () => {
     expect(agentCss).toMatch(
-      /\.paw-conv-planet\[data-state='running'\] \.paw-conv-planet__body \{ animation: paw-conv-planet-breathe 1\.2s/,
+      /\.paw-conv-planet\[data-live='true'\] \.paw-conv-planet__orbit \{[^}]*animation: paw-conv-planet-orbit/,
     );
     expect(agentCss).toContain('@keyframes paw-conv-planet-orbit');
     expect(agentCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{\s*\.paw-conv-planet__body,\s*\.paw-conv-planet__orbit \{ animation: none; \}/,
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.paw-conv-planet__orbit \{\s*animation: none;\s*transition: none;/,
     );
-    expect(agentCss).toContain(":root[data-reduce-motion='true'] .paw-conv-planet__orbit { animation: none; }");
+    expect(agentCss).toMatch(
+      /:root\[data-reduce-motion='true'\] \.paw-conv-planet__orbit \{\s*animation: none;\s*transition: none;/,
+    );
   });
 });

@@ -26,15 +26,23 @@ export function QueueTray({ busy, controller }: {
       <div className="ccui-queue-tray">
         {capReached ? <p className="ccui-queue-cap-notice" role="status">排队已满，最多同时保留 8 条；这条留在输入框里。</p> : null}
         {queue.length === 1 ? (
-          <div className="ccui-queue-single" role="status">
-            <span className="ccui-queue-count">1 条排队中</span>
+          <div aria-label="等待当前执行完成后发送的消息" className="ccui-queue-single" role="status">
+            <span aria-hidden="true" className="ccui-queue-user-mark">↳</span>
             <button className="ccui-queue-preview" onClick={() => setExpanded(true)} type="button">{previews[0]}</button>
+            {busy ? (
+              <button
+                aria-label="改为立即干预当前执行"
+                className="ccui-queue-direction"
+                onClick={() => controller.sendNow(queue[0]!.id)}
+                type="button"
+              >调整方向</button>
+            ) : null}
             <button
-              aria-label="移除这条排队消息"
+              aria-label="删除这条接续消息"
               className="ccui-icon-action"
               onClick={() => controller.remove(queue[0]!.id)}
               type="button"
-            >×</button>
+            >⌫</button>
           </div>
         ) : (
           <button aria-expanded="false" className="ccui-queue-collapsed" onClick={() => setExpanded(true)} type="button">
@@ -128,7 +136,7 @@ export function QueueTray({ busy, controller }: {
                   </>
                 ) : (
                   <>
-                    <button disabled={busy} onClick={() => controller.sendNow(item.id)} type="button">立即发送</button>
+                    <button onClick={() => controller.sendNow(item.id)} type="button">{busy ? '改为干预' : '立即发送'}</button>
                     <button onClick={() => beginEdit(item.id, item.text)} type="button">编辑</button>
                     <button onClick={() => controller.remove(item.id)} type="button">移除</button>
                   </>

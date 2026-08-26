@@ -10,6 +10,7 @@ const ready = {
   hasSession: true,
   draftHasContent: true,
   draftHasText: true,
+  draftHasAttachments: false,
   sending: false,
   stopping: false,
   modelChanging: false,
@@ -90,21 +91,32 @@ describe('projectComposerActionModel', () => {
     expect(composerSubmitMode(model)).toBeNull();
   });
 
-  it('refuses to queue an attachment-only draft, and says why', () => {
+  it('falls an attachment-only local hold through to native follow-up', () => {
     const model = projectComposerActionModel({
       ...ready,
       busy: true,
       draftHasText: false,
+      draftHasAttachments: true,
       preferredBusyDelivery: 'queue',
     });
 
-    expect(model.primary).toBe('queue');
-    expect(model.primaryDisabled).toBe(true);
-    expect(composerBlockedReasonLabel(model.blockedReason))
-      .toBe('排队只保留文字，附件请用干预或接续直接发送');
-    expect(composerSubmitMode(model)).toBeNull();
-    // Alt+Enter names followUp, which does carry the attachment.
-    expect(composerSubmitMode(model, { alternate: true })).toBe('followUp');
+    expect(model.primary).toBe('followUp');
+    expect(model.primaryDisabled).toBe(false);
+    expect(model.blockedReason).toBeNull();
+    expect(composerSubmitMode(model)).toBe('followUp');
+  });
+
+  it('keeps a mixed text and attachment draft together in native follow-up', () => {
+    const model = projectComposerActionModel({
+      ...ready,
+      busy: true,
+      draftHasAttachments: true,
+      preferredBusyDelivery: 'queue',
+    });
+
+    expect(model.primary).toBe('followUp');
+    expect(model.primaryDisabled).toBe(false);
+    expect(composerSubmitMode(model)).toBe('followUp');
   });
 
   it('lets an attachment-only draft through the deliveries that carry it', () => {

@@ -66,6 +66,14 @@ import {
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { PluginsFeature } from '@/features/plugins';
 import { pluginQueryKeys, usePluginCatalog } from '@/features/plugins/api';
+import { ModelRoutingPanel } from '@/features/roles';
+import {
+  agentModelRouting,
+  roleModelCatalog,
+  type AgentModelRoute,
+  type AgentModelRouting,
+  type ModelRouteId,
+} from '@/features/roles/role-model';
 import { ObservabilityFeature } from '@/features/observability';
 import { VoiceFeature } from '@/features/voice';
 import type { PawAppId } from '../runtime/app-registry';
@@ -298,7 +306,9 @@ const agentExecutionModes: readonly {
 ];
 
 function PawAgentSettings() {
+  const desktop = usePawOsDesktop();
   const resource = useAgentModelResource();
+  const modelRouting = useAgentModelRoutingAuthority();
   const authority = useAgentPreferencesAuthority();
   const preferences = authority.preferences;
   const catalog = useMemo(
@@ -310,6 +320,7 @@ function PawAgentSettings() {
     [catalog.models],
   );
   const modelCount = countModelChoices(modelGroups);
+  const routingCatalog = useMemo(() => roleModelCatalog(resource.data), [resource.data]);
   const selectedModel = catalog.models.find((model) => model.reference === preferences.modelReference);
   const thinkingLevels = supportedPiThinkingLevels(selectedModel, { includeOff: true });
   const controlsDisabled = authority.saving || Boolean(authority.readError);
@@ -325,8 +336,8 @@ function PawAgentSettings() {
 
   return (
     <ManagementPage
-      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={resource.loading || authority.isPending} onClick={() => { resource.reload(); authority.reload(); }} size="small">刷新</Button>}
-      description="决定每个新对话默认用哪个模型、想多深、动手之前要不要先问你。改动只影响之后开始的对话。"
+      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={resource.loading || authority.isPending || modelRouting.isPending} onClick={() => { resource.reload(); authority.reload(); modelRouting.reload(); }} size="small">刷新</Button>}
+      description="决定新对话、Room 行星伙伴和私有卫星默认用哪个模型、想多深，以及动手之前要不要先问你。改动只影响之后开始的运行。"
       eyebrow="新对话的起点"
       routeId="agent-settings"
       title="Agent"
@@ -398,6 +409,16 @@ function PawAgentSettings() {
               </div>
             </div>
           </ManagementSection>
+
+          <ModelRoutingPanel
+            catalog={routingCatalog}
+            onOpenSettings={() => openPawOsRoute(desktop, '/configuration')}
+            onSave={modelRouting.save}
+            routing={modelRouting.routing}
+            saving={modelRouting.saving}
+          />
+          {modelRouting.readError ? <InlineNotice title="模型分工没有读取" tone="danger">{modelRouting.readError}</InlineNotice> : null}
+          {modelRouting.saveError ? <InlineNotice title="模型分工没有保存" tone="danger">{modelRouting.saveError}</InlineNotice> : null}
 
           <ManagementSection
             description="无论选哪一档，高风险操作都会先停在审批中心，逐项问过你。"
@@ -655,6 +676,59 @@ function useAgentModelResource() {
   }, [revision, transport]);
 
   return { data, error, loading, reload };
+}
+
+function useAgentModelRoutingAuthority() {
+  const transport = useControlTransport();
+  const [routing, setRouting] = useState<AgentModelRouting | null>(null);
+  const [readError, setReadError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState<ModelRouteId | ''>('');
+  const [isPending, setIsPending] = useState(true);
+  const [revision, setRevision] = useState(0);
+  const reload = useCallback(() => setRevision((current) => current + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    setIsPending(true);
+    void transport.request({ pathId: 'agent.configuration.get' }).then((response) => {
+      if (!active) return;
+      const next = agentModelRouting(response);
+      if (!next) throw new Error('Runtime 没有返回可确认的模型分工配置。');
+      setRouting(next);
+      setReadError('');
+    }).catch((error) => {
+      if (active) setReadError(publicErrorText(error, '模型分工读取失败。'));
+    }).finally(() => {
+      if (active) setIsPending(false);
+    });
+    return () => { active = false; };
+  }, [revision, transport]);
+
+  const save = useCallback(async (routeId: ModelRouteId, route: AgentModelRoute) => {
+    if (!routing || saving) return;
+    setSaving(routeId);
+    setSaveError('');
+    try {
+      const response = await transport.request({
+        pathId: 'agent.configuration.update',
+        body: {
+          expectedRevision: routing.revision,
+          changes: { [`modelRouting.${routeId}`]: route },
+          updatedBy: 'system-agent-settings-ui',
+        },
+      });
+      const updated = agentModelRouting(response);
+      if (!updated) throw new Error('保存结果没有返回可确认的模型分工配置。');
+      setRouting(updated);
+    } catch (error) {
+      setSaveError(publicErrorText(error, '模型分工暂时无法保存。'));
+    } finally {
+      setSaving('');
+    }
+  }, [routing, saving, transport]);
+
+  return { isPending, readError, reload, routing, save, saveError, saving };
 }
 
 type SystemRailTransport = ReturnType<typeof useControlTransport>;

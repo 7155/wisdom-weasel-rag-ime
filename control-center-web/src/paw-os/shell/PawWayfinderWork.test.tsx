@@ -32,7 +32,7 @@ describe('PawWayfinderWork', () => {
     const panel = await screen.findByRole('region', { name: '最近工作' });
     const rows = within(panel).getAllByRole('button', { name: /迁移作战室/ });
     expect(rows).toHaveLength(1);
-    expect(within(rows[0]!).getByLabelText('3 位伙伴')).toHaveTextContent('Agent 1Agent 2Agent 3');
+    expect(within(rows[0]!).getByLabelText('3 位伙伴')).toHaveTextContent('EarthMarsVenus');
     expect(within(panel).queryByText('迁移作战室 · Agent 1')).not.toBeInTheDocument();
   });
 

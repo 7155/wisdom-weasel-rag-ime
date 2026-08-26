@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   BookUser,
   Brain,
+  Bot,
   Check,
   ChevronRight,
   CircleHelp,
@@ -16,6 +17,7 @@ import {
   PackageOpen,
   ScanSearch,
   Sparkles,
+  UserRound,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -39,6 +41,10 @@ type ContextLayerId =
   | 'timeline'
   | 'skills'
   | 'tools'
+  | 'compaction-summary'
+  | 'user-messages'
+  | 'assistant-messages'
+  | 'tool-calls'
   | 'history'
   | 'tool-results';
 
@@ -51,7 +57,8 @@ export interface ContextXrayLayer {
   source: string;
   state: ContextLayerState;
   characters: number | null;
-  estimatedTokens: number | null;
+  /** Runtime does not expose a trustworthy per-layer token count. */
+  tokens: number | null;
   providerDelivery: ProviderDelivery;
   /** 该层实际注入的捕获原文；absent/unavailable 层为 null（PF-CM-010）。 */
   content: string | null;
@@ -94,6 +101,10 @@ const layerIcons: Record<ContextLayerId, LucideIcon> = {
   timeline: Clock3,
   skills: Sparkles,
   tools: Wrench,
+  'compaction-summary': Minimize2,
+  'user-messages': UserRound,
+  'assistant-messages': Bot,
+  'tool-calls': Wrench,
   history: History,
   'tool-results': PackageOpen,
 };
@@ -186,7 +197,7 @@ export function ContextXraySections({
                 ))}
               </ol>
               <p className="agent-context-xray__footnote">
-                字符来自 Runtime 快照；Token 为模型无关估算。缓存只提供整轮命中率，不能可靠分摊到单层。
+                字符来自 Runtime 捕获；各层 Token 未单独统计。整轮 Token 与缓存来自 Runtime / Provider，不能可靠分摊到单层。
               </p>
             </>
           ) : null}
@@ -292,7 +303,8 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
 
   const latestCall = context.modelCalls.at(-1);
   const latestExchange = latestCall?.providerExchanges.at(-1);
-  const providerCaptured = latestExchange?.payload !== undefined;
+  const providerContextCaptured = Object.keys(latestCall?.providerContext ?? {}).length > 0;
+  const providerCaptured = latestExchange?.payload !== undefined || providerContextCaptured;
   const providerStatus = finiteNumber(latestExchange?.status);
   const providerReceipt = [...array(context.raw.providerRequestReceipts)]
     .map(record)
@@ -304,7 +316,14 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
     providerReceipt !== undefined
     && Object.prototype.hasOwnProperty.call(providerReceipt, 'usage')
   );
-  const providerText = providerCaptured ? collectProviderText(latestExchange?.payload) : '';
+  const providerText = latestExchange?.payload !== undefined
+    ? collectProviderText(latestExchange.payload)
+    : providerContextCaptured
+      ? collectProviderText({
+          ...latestCall?.providerContext,
+          messages: latestCall?.contextMessages ?? [],
+        })
+      : '';
   const sources = contextLayerSources(context.systemPrompt, context.systemPromptOptions, context.activeTools, context.toolSchemas, latestCall);
   const telemetry = response.telemetry;
   const telemetryContext = record(telemetry.context);
@@ -320,7 +339,7 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
           source: source.source,
           state: 'unavailable',
           characters: null,
-          estimatedTokens: null,
+          tokens: null,
           providerDelivery: 'unavailable',
           content: null,
         };
@@ -333,7 +352,7 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
           source: source.source,
           state: 'absent',
           characters: 0,
-          estimatedTokens: 0,
+          tokens: null,
           providerDelivery: providerCaptured ? 'missing' : 'unavailable',
           content: null,
         };
@@ -347,7 +366,7 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
         source: source.source,
         state: 'present',
         characters: content.length,
-        estimatedTokens: estimateTokens(content),
+        tokens: null,
         providerDelivery: !providerCaptured
           ? 'unavailable'
           : !payloadContainsLayer
@@ -422,10 +441,22 @@ function contextLayerSources(
     ...toolSchemas.map(toolName).filter(Boolean),
   ];
   const messages = latestCall?.contextMessages ?? [];
-  const currentUserIndex = lastUserMessageIndex(messages);
+  const userMessages = messages.filter((message) => messageRole(message) === 'user');
+  const assistantMessages = messages
+    .filter((message) => messageRole(message) === 'assistant')
+    .map(withoutToolCalls);
+  const compactionSummaries = messages.filter((message) => messageRole(message) === 'compactionsummary');
+  const toolCalls = messages.flatMap((message, messageIndex) => {
+    if (messageRole(message) !== 'assistant') return [];
+    const calls = array(record(message).content).filter(isToolCallBlock);
+    return calls.length ? [{ messageIndex, calls }] : [];
+  });
   const toolResults = messages.filter(isToolResultMessage);
-  const history = messages.filter((message, index) => (
-    index !== currentUserIndex && !isToolResultMessage(message)
+  const otherMessages = messages.filter((message) => (
+    messageRole(message) !== 'user'
+    && messageRole(message) !== 'assistant'
+    && messageRole(message) !== 'compactionsummary'
+    && !isToolResultMessage(message)
   ));
 
   return [
@@ -484,12 +515,44 @@ function contextLayerSources(
     layer('skills', 'Skills', 'systemPromptOptions.skills', skillsContent, Boolean(Object.keys(options).length), skillIdentifiers),
     layer('tools', 'Tools', 'activeTools + toolSchemas', toolsContent, Boolean(latestCall || activeTools.length || toolSchemas.length), toolIdentifiers),
     layer(
-      'history',
-      'History',
-      '最终模型调用 · 历史消息',
-      stableJson(history),
+      'compaction-summary',
+      '压缩摘要',
+      '最终模型调用 · role=compactionSummary',
+      stableJson(compactionSummaries),
       Boolean(latestCall),
-      stringLeaves(history),
+      stringLeaves(compactionSummaries),
+    ),
+    layer(
+      'user-messages',
+      '用户消息',
+      '最终模型调用 · role=user',
+      stableJson(userMessages),
+      Boolean(latestCall),
+      stringLeaves(userMessages),
+    ),
+    layer(
+      'assistant-messages',
+      'Agent 消息',
+      '最终模型调用 · role=assistant',
+      stableJson(assistantMessages),
+      Boolean(latestCall),
+      stringLeaves(assistantMessages),
+    ),
+    layer(
+      'tool-calls',
+      '工具调用',
+      '最终模型调用 · assistant.toolCall',
+      stableJson(toolCalls),
+      Boolean(latestCall),
+      stringLeaves(toolCalls),
+    ),
+    layer(
+      'history',
+      '其他消息',
+      '最终模型调用 · 未识别角色',
+      stableJson(otherMessages),
+      Boolean(latestCall),
+      stringLeaves(otherMessages),
     ),
     layer(
       'tool-results',
@@ -583,32 +646,29 @@ function isToolResultMessage(value: unknown): boolean {
   return role === 'tool' || role === 'toolresult' || type.includes('toolresult') || type.includes('tool_result');
 }
 
-function lastUserMessageIndex(messages: unknown[]): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (text(record(messages[index]).role).toLowerCase() === 'user') return index;
-  }
-  return -1;
+function isToolCallBlock(value: unknown): boolean {
+  const type = text(record(value).type).toLowerCase().replaceAll('_', '').replaceAll('-', '');
+  return type === 'toolcall';
+}
+
+function withoutToolCalls(value: unknown): unknown {
+  const message = record(value);
+  if (!Array.isArray(message.content)) return value;
+  return { ...message, content: message.content.filter((block) => !isToolCallBlock(block)) };
+}
+
+function messageRole(value: unknown): string {
+  return text(record(value).role).toLowerCase();
 }
 
 function toolName(value: Record<string, unknown>): string {
   return text(value.name) || text(record(value.function).name);
 }
 
-function estimateTokens(value: string): number {
-  let cjk = 0;
-  let other = 0;
-  for (const character of value) {
-    if (/\s/u.test(character)) continue;
-    if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(character)) cjk += 1;
-    else other += 1;
-  }
-  return Math.max(0, cjk + Math.ceil(other / 4));
-}
-
 function layerMetric(layer: ContextXrayLayer): string {
-  if (layer.state === 'unavailable' || layer.characters === null || layer.estimatedTokens === null) return '数据不可用';
+  if (layer.state === 'unavailable' || layer.characters === null) return '数据不可用';
   if (layer.state === 'absent') return '0 字符 · 本轮未注入';
-  return `${formatNumber(layer.characters)} 字符 · 约 ${formatTokenCount(layer.estimatedTokens)} token`;
+  return `${formatNumber(layer.characters)} 字符 · Token 未单独统计`;
 }
 
 function tokenPair(tokens: number | null, window: number | null): string {
@@ -681,7 +741,7 @@ function emptySnapshot(): ContextXraySnapshot {
     source,
     state: 'unavailable',
     characters: null,
-    estimatedTokens: null,
+    tokens: null,
     providerDelivery: 'unavailable',
     content: null,
   });
@@ -698,7 +758,11 @@ function emptySnapshot(): ContextXraySnapshot {
       unavailable('timeline', 'Timeline', 'Session Memory · 近期时间线'),
       unavailable('skills', 'Skills', 'systemPromptOptions.skills'),
       unavailable('tools', 'Tools', 'activeTools + toolSchemas'),
-      unavailable('history', 'History', '最终模型调用 · 历史消息'),
+      unavailable('compaction-summary', '压缩摘要', '最终模型调用 · role=compactionSummary'),
+      unavailable('user-messages', '用户消息', '最终模型调用 · role=user'),
+      unavailable('assistant-messages', 'Agent 消息', '最终模型调用 · role=assistant'),
+      unavailable('tool-calls', '工具调用', '最终模型调用 · assistant.toolCall'),
+      unavailable('history', '其他消息', '最终模型调用 · 未识别角色'),
       unavailable('tool-results', 'Tool Results', '最终模型调用 · 工具结果'),
     ],
     contextTokens: null,

@@ -318,6 +318,72 @@ main[data-route-id='input'] .input-ledger-toggle[aria-expanded='true'] svg {
  * 正文。收起时三步状态仍然在场，展开是细看而不是解锁。
  * ------------------------------------------------------------------------- */
 
+main[data-route-id='input'] .input-prediction-facts {
+  display: grid;
+  min-width: 0;
+  overflow: clip;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-os-panel-radius);
+  background: var(--color-surface);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+main[data-route-id='input'] .input-prediction-fact {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 5px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--color-border);
+}
+
+main[data-route-id='input'] .input-prediction-fact:nth-child(3) { border-right: 0; }
+
+main[data-route-id='input'] .input-prediction-fact__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+main[data-route-id='input'] .input-prediction-fact__head strong {
+  min-width: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='input'] .input-prediction-fact__head .mgmt-status { flex: 0 0 auto; }
+
+main[data-route-id='input'] .input-prediction-fact__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='input'] .input-prediction-fact__copy > span {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.4;
+}
+
+main[data-route-id='input'] .input-prediction-fact__copy small,
+main[data-route-id='input'] .input-prediction-facts__boundary {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+main[data-route-id='input'] .input-prediction-facts__boundary {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+
 main[data-route-id='input'] .input-pipeline {
   min-width: 0;
   overflow: clip;
@@ -1120,6 +1186,15 @@ main[data-route-id='input'] .input-setting-editor-row .ui-switch-field {
   margin: 0;
 }
 
+main[data-route-id='input'] .input-setting-editor-row .ui-switch-field__copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='input'] .input-setting-editor-row .ui-switch {
+  flex-shrink: 0;
+}
+
 main[data-route-id='input'] .input-setting-editor-row .ui-field {
   display: grid;
   min-width: 0;
@@ -1266,6 +1341,16 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 }
 
 @media (max-width: 980px) {
+  main[data-route-id='input'] .input-prediction-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  main[data-route-id='input'] .input-prediction-fact:nth-child(2) { border-right: 0; }
+  main[data-route-id='input'] .input-prediction-fact:nth-child(3) {
+    border-top: 1px solid var(--color-border);
+    border-right: 1px solid var(--color-border);
+  }
+
   main[data-route-id='input'] .input-mode-deck {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1290,6 +1375,18 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 }
 
 @media (max-width: 620px) {
+  main[data-route-id='input'] .input-prediction-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-route-id='input'] .input-prediction-fact,
+  main[data-route-id='input'] .input-prediction-fact:nth-child(3) {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  main[data-route-id='input'] .input-prediction-fact:nth-child(3) { border-top: 0; }
+
   main[data-route-id='input'] .input-status-grid,
   main[data-route-id='input'] .input-mode-deck {
     grid-template-columns: minmax(0, 1fr);
@@ -1345,6 +1442,13 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 }
 
 @container paw-window (max-width: 900px) {
+  main[data-route-id='input'][data-paw-os-app] .input-prediction-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(2) { border-right: 0; }
+  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) {
+    border-top: 1px solid var(--color-border);
+    border-right: 1px solid var(--color-border);
+  }
+
   main[data-route-id='input'][data-paw-os-app] .input-mode-deck { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
   main[data-route-id='input'][data-paw-os-app] .input-mode-decision,
@@ -1368,6 +1472,14 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 }
 
 @container paw-window (max-width: 560px) {
+  main[data-route-id='input'][data-paw-os-app] .input-prediction-facts { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact,
+  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) { border-top: 0; }
+
   main[data-route-id='input'][data-paw-os-app] .input-status-grid,
   main[data-route-id='input'][data-paw-os-app] .input-inline-action,
   main[data-route-id='input'][data-paw-os-app] .input-mode-deck,

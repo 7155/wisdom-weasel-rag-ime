@@ -54,7 +54,6 @@ import {
   composerBlockedReasonLabel,
   composerSubmitMode,
   projectComposerActionModel,
-  type ComposerBusyDelivery,
   type ComposerSubmitMode,
 } from './composer-action-model';
 import { ModelPicker } from './ModelPicker';
@@ -139,6 +138,7 @@ export function AgentComposer({
   onWorkspaceRootsChange,
   onModelChange,
   modelPickerRequest = 0,
+  thinkingPickerRequest = 0,
   permissionPickerRequest = 0,
   toolPickerRequest = 0,
   helpRequest = 0,
@@ -147,7 +147,6 @@ export function AgentComposer({
   unseenUpdates = 0,
   onJumpLatest,
   contextUsage,
-  queueDepth = 0,
   onQueue,
 }: {
   assistantName?: string;
@@ -182,6 +181,7 @@ export function AgentComposer({
   onWorkspaceRootsChange: () => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
+  thinkingPickerRequest?: number;
   permissionPickerRequest?: number;
   toolPickerRequest?: number;
   helpRequest?: number;
@@ -209,7 +209,6 @@ export function AgentComposer({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [commandInputFocused, setCommandInputFocused] = useState(false);
-  const [busyDelivery, setBusyDelivery] = useState<ComposerBusyDelivery>('steer');
   const commandCatalog = useMemo(
     () => buildCommandCatalog({ session, catalog, piCommands, tools, toolCatalogStatus, busy, sending }),
     [busy, catalog, piCommands, sending, session, toolCatalogStatus, tools],
@@ -267,16 +266,20 @@ export function AgentComposer({
     hasSession: Boolean(session),
     draftHasContent: Boolean(composerDraft.trim() || attachments.length),
     draftHasText: Boolean(composerDraft.trim()),
+    draftHasAttachments: attachments.length > 0,
     busy,
     sending,
     stopping,
     modelChanging,
-    preferredBusyDelivery: busyDelivery,
+    // Running turns use the human model: Enter adds a reversible follow-up
+    // beside the composer. Hosts without the local queue hand the same intent
+    // to Pi as a native follow-up. Immediate steering is an action on that
+    // pending user message, not a permanent three-way mode switch.
+    preferredBusyDelivery: onQueue ? 'queue' : 'followUp',
     capabilities: { queue: Boolean(onQueue) },
   });
   const sendActionLabel = composerActionLabel(actionModel.primary);
   const sendBlockedReason = composerBlockedReasonLabel(actionModel.blockedReason);
-  const effectiveBusyDelivery = actionModel.effectiveBusyDelivery;
   function publishDraft(value: string): void {
     // The textarea owns keystroke latency; the parent only needs a deferred
     // projection for navigation and recovery. Send receives the local snapshot.
@@ -563,25 +566,13 @@ export function AgentComposer({
               disabled={busy || sending}
               pending={modelChanging}
               requestOpen={modelPickerRequest}
+              thinkingRequestOpen={thinkingPickerRequest}
               onChange={onModelChange}
             />
             <ContextUsagePopover
               sessionId={session?.id}
               telemetry={contextUsage}
             />
-            {busy ? (
-              <div className="agent-composer__delivery" role="radiogroup" aria-label="消息投递方式">
-                <button type="button" role="radio" aria-checked={effectiveBusyDelivery === 'steer'} data-active={effectiveBusyDelivery === 'steer' || undefined} onClick={() => setBusyDelivery('steer')} disabled={sending}>干预</button>
-                <button type="button" role="radio" aria-checked={effectiveBusyDelivery === 'followUp'} data-active={effectiveBusyDelivery === 'followUp' || undefined} onClick={() => setBusyDelivery('followUp')} disabled={sending}>接续</button>
-                {/* 干预/接续 hand the message to Runtime now; 排队 keeps it here
-                    until this turn settles, so it stays editable. */}
-                {actionModel.busyDeliveries.includes('queue') ? (
-                  <button type="button" role="radio" aria-checked={effectiveBusyDelivery === 'queue'} data-active={effectiveBusyDelivery === 'queue' || undefined} onClick={() => setBusyDelivery('queue')} disabled={sending}>
-                    排队{queueDepth ? ` ${queueDepth}` : ''}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
           </>
         )}
         actions={(

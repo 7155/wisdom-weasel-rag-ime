@@ -62,6 +62,47 @@ describe('roomTranscript', () => {
     });
   });
 
+  it('projects returned and reassigned WorkItem events as compact public receipts', () => {
+    const projection = roomProjection();
+    projection.activityOrder.push('work-returned', 'work-reassigned');
+    projection.activitiesById['work-returned'] = {
+      id: 'work-returned', turnId: 'root-a', participantId: 'participant-a', sourceSessionId: 'session-a',
+      kind: 'participant_activity', status: 'completed', summary: '',
+      payload: {
+        activityKind: 'work', phase: 'returned', workItemId: 'work-17',
+        previousWorkItemRevision: 4, currentWorkItemRevision: 5,
+        ownerParticipantId: 'participant-a', reason: 'requirements_changed',
+        documentRef: 'workdoc:brief-17@5',
+      },
+      sequence: 5, createdAtMs: 140, updatedAtMs: 140,
+    };
+    projection.activitiesById['work-reassigned'] = {
+      id: 'work-reassigned', turnId: 'root-a', participantId: 'participant-a', sourceSessionId: 'session-a',
+      kind: 'participant_activity', status: 'completed', summary: '',
+      payload: {
+        activityKind: 'work', phase: 'reassigned', workItemId: 'work-17',
+        previousWorkItemRevision: 5, currentWorkItemRevision: 5,
+        ownerParticipantId: 'participant-b', reason: 'facilitator_reassigned',
+        documentRef: 'workdoc:brief-17@5',
+      },
+      sequence: 6, createdAtMs: 150, updatedAtMs: 150,
+    };
+
+    const blocks = roomTranscript(projection, options).messages
+      .flatMap((message) => message.role === 'assistant' ? message.blocks : []);
+
+    expect(blocks.find((block) => block.id === 'note:work-returned')).toMatchObject({
+      kind: 'thinking',
+      summary: '需求已更新 · r4→r5 · 负责人 Mars',
+      detail: '任务 work-17\n原因 requirements_changed\n文档 workdoc:brief-17@5',
+    });
+    expect(blocks.find((block) => block.id === 'note:work-reassigned')).toMatchObject({
+      kind: 'thinking',
+      summary: '负责人变更 · r5 · 负责人 Venus',
+      detail: '任务 work-17\n原因 facilitator_reassigned\n文档 workdoc:brief-17@5',
+    });
+  });
+
   it('starts a new card when the speaking partner changes inside one turn', () => {
     const projection = roomProjection();
     projection.messageOrder.push('message-agent-b');

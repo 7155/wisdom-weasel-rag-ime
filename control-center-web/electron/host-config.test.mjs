@@ -41,16 +41,21 @@ test('same-window guests accept browser pages but not local host files', () => {
   assert.equal(isBrowserGuestUrl('javascript:alert(1)'), false);
 });
 
-test('macOS reserves native traffic lights while other hosts keep the default titlebar', () => {
+test('macOS merges native traffic lights into the one draggable PAW topbar', () => {
   assert.deepEqual(browserWindowChrome('darwin'), {
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 13 },
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 14, y: 11 },
   });
   assert.deepEqual(browserWindowChrome('linux'), { titleBarStyle: 'default' });
 
   const css = fs.readFileSync(path.resolve(import.meta.dirname, '../src/paw-os/styles/paw-os.css'), 'utf8');
+  const main = fs.readFileSync(path.resolve(import.meta.dirname, 'main.mjs'), 'utf8');
+  assert.match(main, /\.\.\.browserWindowChrome\(\)/);
+  assert.doesNotMatch(main, /\bframe:\s*false/);
   assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar/);
-  assert.match(css, /grid-template-columns: 68px 26px max-content minmax\(0, 1fr\) auto/);
+  assert.match(css, /grid-template-columns: 68px max-content minmax\(0, 1fr\) auto/);
+  assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar\s*\{[^}]*-webkit-app-region:\s*drag;/s);
+  assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar > :is\(button, \.paw-menu-status\)\s*\{[^}]*-webkit-app-region:\s*no-drag;/s);
 });
 
 test('preload marks only a macOS Electron document for the PAWOS native-host seam', () => {

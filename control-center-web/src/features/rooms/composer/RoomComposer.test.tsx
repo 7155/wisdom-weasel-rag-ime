@@ -15,6 +15,7 @@ describe('RoomComposer macOS input methods', () => {
       roleId: 'implementer',
       roleVersion: '1',
       displayName: 'Agent 1',
+      collaborationRole: 'implementer' as const,
       status: 'active',
     };
     render(
@@ -38,7 +39,8 @@ describe('RoomComposer macOS input methods', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '点名一位伙伴' }));
     const earth = screen.getByRole('option', { name: /Earth/ });
-    expect(earth).toHaveTextContent('Agent 1');
+    expect(earth).toHaveTextContent('实现与验证');
+    expect(earth).not.toHaveTextContent('Agent 1');
     fireEvent.mouseDown(earth);
     expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveValue('@Earth ');
     expect(roomMentionedParticipants([participant], '@Earth 请复核', { 'participant-earth': 'Earth' }))

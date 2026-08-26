@@ -25,10 +25,13 @@
 
 import {
   ArrowUp,
+  BrainCircuit,
   Check,
   ChevronDown,
   CircleAlert,
   LoaderCircle,
+  Minus,
+  Plus,
   Users,
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -49,6 +52,7 @@ import {
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { SessionSummary } from '@/features/agent/types';
 import type { RoomSummary } from '@/features/rooms/room-types';
+import { roomPlanetName } from '@/features/rooms/room-copy';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { pawBrowserHost } from './paw-browser-host';
@@ -60,7 +64,7 @@ type Selection =
   | { kind: 'session'; id: string; draft?: string }
   | { kind: 'room'; id: string; draft?: string; error?: string };
 
-type OptionsPanel = 'project' | 'model' | 'permission' | null;
+type OptionsPanel = 'project' | 'model' | 'thinking' | 'permission' | null;
 
 const PERMISSION_PRESETS: ReadonlyArray<{
   executionMode: AgentExecutionMode;
@@ -119,6 +123,7 @@ export function PawAgentHome({
   const [executionMode, setExecutionMode] = useState<AgentExecutionMode>(preferences.executionMode);
   const [modelReference, setModelReference] = useState(preferences.modelReference || defaultModel);
   const [thinking, setThinking] = useState(preferences.thinking);
+  const [roomParticipantOverride, setRoomParticipantOverride] = useState<number | null>(null);
   const [optionsPanel, setOptionsPanel] = useState<OptionsPanel>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -127,6 +132,7 @@ export function PawAgentHome({
   const chipRefs = useRef<Record<Exclude<OptionsPanel, null>, HTMLButtonElement | null>>({
     permission: null,
     model: null,
+    thinking: null,
     project: null,
   });
   const preferenceHydratedRef = useRef(false);
@@ -151,7 +157,15 @@ export function PawAgentHome({
 
   const selectedModel = models.find((item) => item.reference === modelReference);
   const thinkingLevels = supportedPiThinkingLevels(selectedModel, { includeOff: true });
-  const roomPersonas = personas.slice(0, 4);
+  const availableRoomPersonas = personas
+    .filter((persona) => persona.selectableModes.includes('coordinator'))
+    .slice(0, 8);
+  const suggestedParticipantCount = suggestedRoomParticipantCount(prompt, availableRoomPersonas.length);
+  const roomParticipantCount = Math.min(
+    availableRoomPersonas.length,
+    Math.max(0, roomParticipantOverride ?? suggestedParticipantCount),
+  );
+  const roomPersonas = availableRoomPersonas.slice(0, roomParticipantCount);
   const roomReady = roomPersonas.length >= 2;
   const modelGroups = useMemo(() => {
     const groups = new Map<string, PiModelOption[]>();
@@ -290,7 +304,7 @@ export function PawAgentHome({
               collaborationRole: index === 0 ? 'coordinator' : index === 1 ? 'reviewer' : 'specialist',
             })),
             routingPolicy: 'parallel',
-            routingConfig: { maxResponders: Math.min(4, selectedPersonas.length), naturalJitter: 0, fallbackParticipantId: '' },
+            routingConfig: { maxResponders: selectedPersonas.length, naturalJitter: 0, fallbackParticipantId: '' },
             workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
             executionMode,
             ...(executionMode === 'workspace_managed' ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' } : {}),
@@ -428,68 +442,86 @@ export function PawAgentHome({
                 ) : null}
               </span>
 
-              <span className="an-anchor">
-                <button
-                  aria-expanded={optionsPanel === 'model'}
-                  aria-label={`模型 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
-                  className="an-chip"
-                  onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
-                  ref={(node) => { chipRefs.current.model = node; }}
-                  title={`模型 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
-                  type="button"
-                >
-                  <ProviderMark
-                    providerId={selectedModel?.provider}
-                    size={14}
-                  />
-                  <span className="an-chip-text">{selectedModel?.name ?? '自动模型'}</span>
-                  <span className="an-chip-detail"> · {thinkingLabel(thinking)}</span>
-                  <ChevronDown className="caret" size={13} />
-                </button>
-                {optionsPanel === 'model' ? (
-                  <div className="an-menu" role="menu">
-                    {modelGroups.map(([provider, group]) => (
-                      <div key={provider}>
-                        <div className="an-menu-group">{provider}</div>
-                        {group.map((model) => (
-                          <button
-                            aria-checked={model.reference === modelReference}
-                            className="an-menu-item"
-                            key={model.reference}
-                            onClick={() => {
-                              preferenceEditedRef.current.modelReference = true;
-                              setModelReference(model.reference);
-                            }}
-                            role="menuitemradio"
-                            type="button"
-                          >
-                            <span style={{ minWidth: 0 }}>
-                              <span className="mi-tt">{model.reference === modelReference ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{model.name}</span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                    {thinkingLevels.length ? <div className="an-menu-sep" /> : null}
-                    {thinkingLevels.length ? <div className="an-menu-group">推理强度</div> : null}
-                    {thinkingLevels.map((level) => (
-                      <button
-                        aria-checked={level === thinking}
-                        className="an-menu-item"
-                        key={level}
-                        onClick={() => {
-                          preferenceEditedRef.current.thinking = true;
-                          setThinking(level);
-                          setOptionsPanel(null);
-                        }}
-                        role="menuitemradio"
-                        type="button"
-                      >
-                        <span className="mi-tt">{level === thinking ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{thinkingLabel(level)}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+              <span aria-label="模型与推理设置" className="an-model-controls" role="group">
+                <span className="an-anchor">
+                  <button
+                    aria-expanded={optionsPanel === 'model'}
+                    aria-label={`模型 · ${selectedModel?.name ?? '自动模型'}`}
+                    className="an-chip"
+                    onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
+                    ref={(node) => { chipRefs.current.model = node; }}
+                    title={`模型 · ${selectedModel?.name ?? '自动模型'}`}
+                    type="button"
+                  >
+                    <ProviderMark providerId={selectedModel?.provider} size={14} />
+                    <span className="an-chip-text">{selectedModel?.name ?? '自动模型'}</span>
+                    <ChevronDown className="caret" size={13} />
+                  </button>
+                  {optionsPanel === 'model' ? (
+                    <div aria-label="选择模型" className="an-menu" role="menu">
+                      {modelGroups.map(([provider, group]) => (
+                        <div key={provider}>
+                          <div className="an-menu-group">{provider}</div>
+                          {group.map((model) => (
+                            <button
+                              aria-checked={model.reference === modelReference}
+                              className="an-menu-item"
+                              key={model.reference}
+                              onClick={() => {
+                                preferenceEditedRef.current.modelReference = true;
+                                setModelReference(model.reference);
+                                setOptionsPanel(null);
+                              }}
+                              role="menuitemradio"
+                              type="button"
+                            >
+                              <span style={{ minWidth: 0 }}>
+                                <span className="mi-tt">{model.reference === modelReference ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{model.name}</span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </span>
+
+                <span className="an-anchor">
+                  <button
+                    aria-expanded={optionsPanel === 'thinking'}
+                    aria-label={`推理强度 · ${thinkingLabel(thinking)}`}
+                    className="an-chip an-thinking-chip"
+                    disabled={!selectedModel || thinkingLevels.length === 0}
+                    onClick={() => setOptionsPanel(optionsPanel === 'thinking' ? null : 'thinking')}
+                    ref={(node) => { chipRefs.current.thinking = node; }}
+                    title={`推理强度 · ${thinkingLabel(thinking)}`}
+                    type="button"
+                  >
+                    <BrainCircuit aria-hidden="true" size={14} />
+                    <span className="an-chip-text">{thinkingLabel(thinking)}</span>
+                    <ChevronDown className="caret" size={13} />
+                  </button>
+                  {optionsPanel === 'thinking' ? (
+                    <div aria-label="选择推理强度" className="an-menu an-thinking-menu" role="menu">
+                      {thinkingLevels.map((level) => (
+                        <button
+                          aria-checked={level === thinking}
+                          className="an-menu-item"
+                          key={level}
+                          onClick={() => {
+                            preferenceEditedRef.current.thinking = true;
+                            setThinking(level);
+                            setOptionsPanel(null);
+                          }}
+                          role="menuitemradio"
+                          type="button"
+                        >
+                          <span className="mi-tt">{level === thinking ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{thinkingLabel(level)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </span>
               </span>
 
               <span className="an-anchor">
@@ -569,20 +601,40 @@ export function PawAgentHome({
             <p className="an-mode-brief" id={modeBriefId}>
               一位 Agent 在同一条时间线里完成这件事；随时可中止或追问。过程可切到 Agent 轨迹，看每一轮装配了哪些上下文——记有来源的装配节点，能直接打开那条记忆、知识或文件。
             </p>
-          ) : roomReady ? (
+          ) : availableRoomPersonas.length > 0 ? (
             <div className="an-mode-brief an-room-plan" id={modeBriefId}>
-              <span className="an-room-plan__label">将加入的伙伴</span>
+              <span className="an-room-plan__label">任务建议 {suggestedParticipantCount} 位</span>
+              <span aria-label="Room 伙伴数量" className="an-room-plan__stepper" role="group">
+                <button
+                  aria-label="减少 Room 伙伴"
+                  disabled={roomParticipantCount <= 1}
+                  onClick={() => setRoomParticipantOverride(Math.max(1, roomParticipantCount - 1))}
+                  type="button"
+                ><Minus size={12} /></button>
+                <output aria-live="polite">{roomParticipantCount}</output>
+                <button
+                  aria-label="增加 Room 伙伴"
+                  disabled={roomParticipantCount >= availableRoomPersonas.length || roomParticipantCount >= 8}
+                  onClick={() => setRoomParticipantOverride(Math.min(8, roomParticipantCount + 1))}
+                  type="button"
+                ><Plus size={12} /></button>
+              </span>
               {roomPersonas.map((persona, index) => (
-                <span className="an-room-plan__chip" key={persona.roleId}>
-                  {persona.displayName}
+                <span className="an-room-plan__chip" data-testid="room-planned-participant" key={persona.roleId}>
+                  {roomPlanetName(index)}
                   <i>{collaborationRoleLabel(index)}</i>
                 </span>
               ))}
+              {!roomReady ? (
+                <span className="an-room-plan__constraint">
+                  Room Runtime 当前要求至少 2 位伙伴；你可以预览 1 位，但需增加后才能开始。
+                </span>
+              ) : null}
             </div>
           ) : (
-            <p className="an-mode-brief is-blocked" id={modeBriefId}>
-              Room 需要至少 2 位可用伙伴，当前只有 {roomPersonas.length} 位，暂时无法开始。
-            </p>
+            <div className="an-mode-brief an-room-plan is-blocked" id={modeBriefId}>
+              <span>当前没有可用的 Room 伙伴，暂时无法开始。</span>
+            </div>
           )}
           {preferenceRead.readError ? (
             <p className="an-home-error" role="alert">
@@ -734,6 +786,15 @@ function thinkingLabel(level: string): string {
   if (level === 'high') return '高';
   if (level === 'max') return 'Max';
   return level;
+}
+function suggestedRoomParticipantCount(prompt: string, available: number): number {
+  if (available <= 0) return 0;
+  if (available === 1) return 1;
+  const normalized = prompt.trim();
+  let suggested = 2;
+  if (/(?:并行|分别|前端|后端|测试|发布|审查|实现|调研|设计|、|以及)/u.test(normalized) || normalized.length >= 80) suggested = 4;
+  if (normalized.length >= 240) suggested = 6;
+  return Math.min(8, available, suggested);
 }
 function errorText(reason: unknown): string {
   if (reason instanceof Error && reason.message) return reason.message;

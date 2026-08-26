@@ -88,6 +88,9 @@ const inputModes: readonly {
 ];
 
 const commonInputSettingKeys = new Set([
+  'interaction.composition.showPrediction',
+  'interaction.composition.showOnlyRime',
+  'interaction.postCommit.showPendingStatus',
   'interaction.postCommit.enabled',
   'interaction.postCommit.idleTriggerMs',
   'interaction.postCommit.minDeltaChars',
@@ -120,10 +123,17 @@ export function InputMethodFeature() {
   const source = asRecord(queries.source.data);
   const overview = asRecord(queries.overview.data);
   const components = asRecord(overview.components);
+  const effectiveRuntimeConfig = asRecord(overview.runtimeConfig);
+  const effectiveComposition = asRecord(effectiveRuntimeConfig.composition);
+  const effectivePostCommit = asRecord(effectiveRuntimeConfig.postCommit);
   const settingsPayload = asRecord(queries.settings.data);
   const settings = asRecord(settingsPayload.settings);
   const runtimeConfig = asRecord(settingsPayload.runtimeConfig);
   const modelsStatus = asRecord(queries.models.data);
+  const predictorStatus = asRecord(modelsStatus.predictor);
+  const modelCapabilityProbe = asRecord(
+    predictorStatus.capabilityProbe ?? modelsStatus.capabilityProbe,
+  );
   const activeModelConfig = asRecord(modelsStatus.activeConfig);
   const availableModels = arrayRecords(modelsStatus.availableModels);
   const availableModelIds = availableModels
@@ -245,7 +255,19 @@ export function InputMethodFeature() {
   };
 
   const panel = suggestionPanel(settings);
+  const savedCompositionPrediction = booleanValue(valueAt(settings, 'interaction.composition.showPrediction'));
+  const savedPostCommit = booleanValue(valueAt(settings, 'interaction.postCommit.enabled'));
+  const effectiveCompositionPrediction = optionalBoolean(effectiveComposition.aiEnabled);
+  const effectiveShowOnlyRime = optionalBoolean(effectiveComposition.showOnlyRime);
+  const effectivePostCommitEnabled = optionalBoolean(effectivePostCommit.enabled);
+  const runtimeSafetyClamps = stringArray(effectiveRuntimeConfig.safetyClamps);
   const activeModelId = modelConfigValue(activeModelConfig.modelId);
+  const predictorProviderName = stringValue(
+    predictorStatus.providerName,
+    stringValue(modelsStatus.providerName, '未报告服务'),
+  );
+  const modelLoaded = optionalBoolean(modelCapabilityProbe.modelLoaded);
+  const mlxMatchesRegistry = optionalBoolean(modelHealthAgreement.mlxMatchesRegistry);
   const completionLane = completionLaneFacts(
     settings,
     activeModelId === '由本机注册表决定' ? '' : activeModelId,
@@ -482,6 +504,66 @@ export function InputMethodFeature() {
           isPending={settingsPending}
           onRetry={() => void Promise.all([queries.settings.refetch(), queries.schema.refetch()])}
         >
+          <div aria-label="输入预测运行事实" className="input-prediction-facts" role="list">
+            <article aria-label="输入拼音时预测" className="input-prediction-fact" role="listitem">
+              <div className="input-prediction-fact__head">
+                <strong>输入拼音时预测</strong>
+                <StatusBadge
+                  label={effectiveCompositionPrediction === null
+                    ? '运行未报告'
+                    : effectiveCompositionPrediction && effectiveShowOnlyRime !== true
+                      ? '运行已生效'
+                      : '运行未生效'}
+                  tone={effectiveCompositionPrediction === null
+                    ? 'neutral'
+                    : effectiveCompositionPrediction && effectiveShowOnlyRime !== true
+                      ? 'success'
+                      : 'warning'}
+                />
+              </div>
+              <div className="input-prediction-fact__copy">
+                <span>{savedCompositionPrediction ? '已保存开启' : '已保存关闭'}</span>
+                <small>{compositionRuntimeDetail(runtimeSafetyClamps, effectiveCompositionPrediction, effectiveShowOnlyRime)}</small>
+              </div>
+            </article>
+            <article aria-label="上屏后联想" className="input-prediction-fact" role="listitem">
+              <div className="input-prediction-fact__head">
+                <strong>上屏后联想</strong>
+                <StatusBadge
+                  label={effectivePostCommitEnabled === null
+                    ? '运行未报告'
+                    : effectivePostCommitEnabled
+                      ? '运行已生效'
+                      : '运行未生效'}
+                  tone={effectivePostCommitEnabled === null
+                    ? 'neutral'
+                    : effectivePostCommitEnabled
+                      ? 'success'
+                      : 'warning'}
+                />
+              </div>
+              <div className="input-prediction-fact__copy">
+                <span>{savedPostCommit ? '已保存开启' : '已保存关闭'}</span>
+                <small>上屏后的 AI 联想与 Rime 原生候选分开展示。</small>
+              </div>
+            </article>
+            <article aria-label="MLX 本机模型" className="input-prediction-fact" role="listitem">
+              <div className="input-prediction-fact__head">
+                <strong>MLX 本机模型</strong>
+                <StatusBadge
+                  label={modelLoaded === true && mlxMatchesRegistry === true ? '就绪' : '需检查'}
+                  tone={modelLoaded === true && mlxMatchesRegistry === true ? 'success' : 'warning'}
+                />
+              </div>
+              <div className="input-prediction-fact__copy">
+                <span>{predictorProviderName} · {inputModelDisplayName(activeModelId)}</span>
+                <small>{modelRuntimeDetail(modelLoaded, mlxMatchesRegistry)}</small>
+              </div>
+            </article>
+            <p className="input-prediction-facts__boundary">
+              Rime 负责拼音解码与原生候选；AI 候选保持独立标识。保存值与运行值不一致时，重新载入输入法设置后复查。
+            </p>
+          </div>
           {/* 一行事实概览常驻视口：三步各自的真实状态。示意图与车道细节
               折叠在后面，按需展开，不把首屏推成长卷。 */}
           <div className="input-pipeline" data-open={pipelineOpen ? 'true' : 'false'}>
@@ -1067,6 +1149,58 @@ function inputSettingsGroupDescription(id: string): string {
     models: '本机模型与生成参数。',
     lexiconOrganization: '常用词整理频率。',
   } as Record<string, string>)[id] ?? '这一组输入设置。';
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function compositionRuntimeDetail(
+  clamps: readonly string[],
+  enabled: boolean | null,
+  showOnlyRime: boolean | null,
+): string {
+  const reasons: string[] = [];
+  if (clamps.includes('composition_ai_disabled_by_profile')) {
+    reasons.push('当前运行模式关闭了 AI 拼音候选');
+  }
+  if (clamps.includes('composition_rime_only') || showOnlyRime === true) {
+    reasons.push('Rime 独占拼音候选');
+  }
+  if (reasons.length) return reasons.join('；');
+  if (enabled === true) return 'AI 候选已进入运行配置，并与 Rime 原生候选分开展示。';
+  if (enabled === false) return '运行配置当前未启用 AI 拼音候选。';
+  return '运行端尚未报告拼音候选是否生效。';
+}
+
+function inputModelDisplayName(modelId: string): string {
+  if (!modelId || modelId === '由本机注册表决定') return '由本机注册表决定';
+  return modelId
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => {
+      const lower = part.toLowerCase();
+      if (lower === 'minimind') return 'MiniMind';
+      if (lower === 'ime') return 'IME';
+      if (/^v\d+$/i.test(part)) return part.toLowerCase();
+      if (/^\d+m$/i.test(part)) return part.toUpperCase();
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(' ');
+}
+
+function modelRuntimeDetail(modelLoaded: boolean | null, registryMatches: boolean | null): string {
+  const load = modelLoaded === true ? '模型已加载' : modelLoaded === false ? '模型未加载' : '加载状态未报告';
+  const registry = registryMatches === true
+    ? '注册配置一致'
+    : registryMatches === false
+      ? '注册配置不一致'
+      : '注册配置状态未报告';
+  return `${load} · ${registry}`;
 }
 
 function LexiconOrganizationState({
