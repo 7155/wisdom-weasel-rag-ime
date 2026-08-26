@@ -676,8 +676,13 @@
   backdrop-filter: blur(26px) saturate(135%);
   animation: paw-shell-launchpad-backdrop 180ms ease-out both;
 }
+/* The archive is a shelf of App objects, not a page of five columns. At
+   1060px the five tracks stretched to ~200px each and every plate floated
+   alone in its own cell, which is what made the launcher read as a website
+   directory; holding the column near the width the tiles actually need packs
+   the groups back into bands you can take in at one glance. */
 .paw-desktop-root .paw-launchpad > section {
-  width: min(1060px, 100%);
+  width: min(880px, 100%);
   max-height: 100%;
   overflow: auto;
   border: 0;

@@ -444,12 +444,12 @@ function useDocumentHidden(): boolean {
 /* The half-minute clock tick lives in its own leaf so it re-renders one
  * <span>, never the whole desktop chrome. */
 function PawMenuClock() {
-  const [clock, setClock] = useState(() => timeLabel());
+  const [clock, setClock] = useState(() => ({ label: timeLabel(), date: dateLabel() }));
   useEffect(() => {
-    const timer = window.setInterval(() => setClock(timeLabel()), 30_000);
+    const timer = window.setInterval(() => setClock({ label: timeLabel(), date: dateLabel() }), 30_000);
     return () => window.clearInterval(timer);
   }, []);
-  return <span>{clock}</span>;
+  return <span title={clock.date}>{clock.label}</span>;
 }
 
 /* The Wayfinder is the desktop's heaviest resting subtree: the wallpaper, the
@@ -756,14 +756,26 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
   );
 }
 
+/* A system strip answers "when" in as few glyphs as it can: weekday and time
+ * read at a glance, and the full date stays one hover away instead of taking
+ * permanent width in 34px of chrome. The zh-CN numeric pattern also ran the
+ * date straight into the weekday ("8/26周三"), which is not how the date is
+ * written. */
 function timeLabel(): string {
+  const now = new Date();
+  // Composed rather than formatted in one pass: the zh-CN pattern joins a
+  // short weekday straight onto the clock ("周三01:45") with no separator.
+  const weekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(now);
+  const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+  return `${weekday} ${time}`;
+}
+
+function dateLabel(): string {
   return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric',
+    year: 'numeric',
+    month: 'long',
     day: 'numeric',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
+    weekday: 'long',
   }).format(new Date());
 }
 
