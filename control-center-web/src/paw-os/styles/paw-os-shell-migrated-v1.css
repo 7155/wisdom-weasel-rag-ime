@@ -832,8 +832,10 @@
   border-bottom: 1px solid rgb(23 26 33 / .1);
   background: #fff;
 }
+/* App palettes may tint the titlebar material (--paw-app-nav); the hairline
+   under it stays the one neutral chrome edge, so identity never reaches the
+   chrome line. (--paw-app-line was retired with the accent lean.) */
 .paw-desktop-root .paw-window-shell[data-app] .paw-window-titlebar {
-  border-bottom-color: var(--paw-app-line, rgb(23 26 33 / .1));
   background: var(--paw-app-nav, #fff);
 }
 /* Focus in the titlebar is answered the way macOS answers it: the lights turn
