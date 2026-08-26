@@ -1261,10 +1261,14 @@ export function PawSessionWorkspace({
 
           <div className="paw-session-workspace__composer">
             {error ? <div className="paw-session-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); void loadSnapshot().then((loaded) => { if (loaded) reconcilePendingAdmissions(); }); }} type="button">重新同步</button></div> : null}
-            {record ? <QueueTray busy={busy || sending} controller={queue} /> : null}
+            {/* Bottom-dock 顺序固定（kit 07 视觉规格）：待回答的交互最优先，
+                然后是排队摘要，Composer 永远压底——展开的队列不把待回答的问题
+                挤出视口。 */}
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
               <GenericUserInputCard activity={pendingGenericInput} sessionId={recordId} onError={setError} />
-            ) : record ? (
+            ) : null}
+            {record ? <QueueTray busy={busy || sending} controller={queue} /> : null}
+            {!(pendingGenericInput && !pendingApproval && !pendingMemoryReview) && record ? (
               <AgentComposer
                 attachments={attachments}
                 busy={busy}
