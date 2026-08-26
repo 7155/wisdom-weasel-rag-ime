@@ -414,11 +414,8 @@ export function PawDesktop() {
       ><X size={14} />退出协作聚焦</button> : null}
       <PawDock
         activeAppId={activeAppId}
-<<<<<<< HEAD
-        launchpadOpen={launchpadOpen}
-=======
         dockAppIds={formDockAppIds}
->>>>>>> origin/cursor/pawos-landing-form-9849
+        launchpadOpen={launchpadOpen}
         onLaunchpad={toggleLaunchpad}
         onOpen={openApp}
         onOverview={toggleOverview}
@@ -576,15 +573,10 @@ function usePawRunningApps(): { open: ReadonlySet<PawAppId>; visible: ReadonlySe
  * writes, so React only owns its resting content: which App is current, which
  * are running, whether the overview is open. Everything else on the desktop
  * re-renders without touching it. */
-<<<<<<< HEAD
-const PawDock = memo(function PawDock({ activeAppId, launchpadOpen, onLaunchpad, onOpen, onOverview, overviewOpen }: {
-  activeAppId: PawAppId | null;
-  launchpadOpen: boolean;
-=======
-const PawDock = memo(function PawDock({ activeAppId, dockAppIds = pawDockAppIds, onLaunchpad, onOpen, onOverview, overviewOpen }: {
+const PawDock = memo(function PawDock({ activeAppId, dockAppIds = pawDockAppIds, launchpadOpen, onLaunchpad, onOpen, onOverview, overviewOpen }: {
   activeAppId: PawAppId | null;
   dockAppIds?: readonly PawAppId[];
->>>>>>> origin/cursor/pawos-landing-form-9849
+  launchpadOpen: boolean;
   onLaunchpad: () => void;
   onOpen: (id: PawAppId) => void;
   onOverview: () => void;
