@@ -66,8 +66,10 @@ describe('PAWOS desktop', () => {
       const icon = appButton.querySelector(`[data-paw-app-icon="${app.id}"]`);
       expect(icon).toBeInTheDocument();
       expect(icon).toHaveAttribute('aria-hidden', 'true');
+      expect(icon?.querySelector(`[data-paw-icon-plate="${app.id}"]`)).toBeInTheDocument();
     }
     expect(container.querySelectorAll('.paw-launchpad [data-paw-app-icon]')).toHaveLength(pawApps.length);
+    expect(container.querySelectorAll('.paw-launchpad [data-paw-icon-plate]')).toHaveLength(pawApps.length);
     expect(launcher.querySelector('.paw-os-app-icon, .paw-app-glyph')).toBeNull();
     expect(launcher.querySelector('[data-lucide]')).toBeNull();
   });
@@ -80,6 +82,7 @@ describe('PAWOS desktop', () => {
     const current = document.querySelector('.paw-menu-app') as HTMLElement;
     expect(current).toHaveTextContent('Agent');
     expect(current.querySelector('[data-paw-app-icon="agent"]')).toHaveAttribute('aria-hidden', 'true');
+    expect(current.querySelector('[data-paw-icon-plate="agent"]')).toBeInTheDocument();
     expect(current.querySelector('[data-lucide], .paw-os-app-icon, .paw-app-glyph')).toBeNull();
   });
 
@@ -164,7 +167,9 @@ describe('PAWOS desktop', () => {
     // copy competing with the fog field.
     expect(rows.map((row) => row.textContent)).toEqual(['项目', 'Agent', '文件', '浏览器', '终端']);
     for (const row of rows) {
-      expect(row.querySelector('[data-paw-app-icon]')).toBeInTheDocument();
+      const icon = row.querySelector('[data-paw-app-icon]');
+      expect(icon).toBeInTheDocument();
+      expect(icon?.querySelector('[data-paw-icon-plate]')).toBeInTheDocument();
     }
   });
 
@@ -281,6 +286,9 @@ describe('PAWOS desktop', () => {
   it('gives every Dock control a hover name label that stays out of the accessible name', () => {
     renderDesktop('agent');
     const dock = screen.getByRole('navigation', { name: 'PAWOS 工具架' });
+    const appIcons = [...dock.querySelectorAll('[data-paw-app-icon]')];
+    expect(appIcons.length).toBeGreaterThan(0);
+    expect(appIcons.every((icon) => icon.querySelector(':scope > [data-paw-icon-plate]'))).toBe(true);
 
     // The exact-name queries above only stay stable if the visual label is
     // aria-hidden; the button keeps its aria-label as the accessible name.

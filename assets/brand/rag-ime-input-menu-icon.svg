@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <!-- The input-source menu mark. Same crescent-and-spark identity as
+       rag-ime-icon.svg, redrawn for one job: 18 pt in the macOS input menu.
+       Everything is coarser than the app icon on purpose  a thicker crescent,
+       a wider opening and a four-arm spark with no thin waist  because at
+       18 px a faithful reduction of the app icon closes into a blob. The tile
+       keeps the product ground so the mark reads on a light and a dark menu
+       bar without a second asset. -->
+  <rect width="144" height="144" rx="32" fill="#022D3E"/>
+  <path fill="#F4F8F9" fill-rule="evenodd" d="M20 72A52 52 0 1 0 124 72 52 52 0 1 0 20 72ZM54 70A38 38 0 1 0 130 70 38 38 0 1 0 54 70Z"/>
+  <path fill="#2EE6B0" d="M82 34l8 28 28 8-28 8-8 28-8-28-28-8 28-8z"/>
+</svg>

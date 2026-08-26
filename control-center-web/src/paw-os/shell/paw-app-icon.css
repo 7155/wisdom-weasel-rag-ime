@@ -1,8 +1,8 @@
 /* PAWOS App identity system — one visual language for every placement.
    Full-colour identities live here; navigation and command icons stay
-   monochrome. The identity is always the bare silhouette on a transparent
-   ground with one shared shadow: no placement may wrap it in a white tile,
-   recolour it, or invent its own selected state. */
+   monochrome. Every App identity owns one complete, opaque, identity-tinted
+   squircle plate behind its figurative silhouette. The SVG owns that frame in
+   every placement; placement wrappers must not add a second card around it. */
 
 /* One size ladder. Every shell placement resolves one of these five steps,
    so identical surfaces can never drift apart by a pixel or two. */
@@ -17,6 +17,12 @@
 .paw-app-icon {
   /* The single paper white for every internal detail cut. */
   --paw-icon-paper: rgb(255 255 255 / .94);
+  /* Opaque colour mixes keep the plate solid over wallpaper and glass while
+     retaining the full-colour figurative marks from the App palette. */
+  --paw-icon-plate-fill: color-mix(in srgb, var(--paw-app-icon-color) 16%, #f7faff);
+  --paw-icon-plate-edge: color-mix(in srgb, var(--paw-app-icon-color) 38%, #d9e1ec);
+  --paw-icon-plate-fill-active: color-mix(in srgb, var(--paw-app-icon-color) 23%, #fff);
+  --paw-icon-plate-edge-active: color-mix(in srgb, var(--paw-app-icon-color) 54%, #cbd5e1);
 
   display: block;
   flex: 0 0 auto;
@@ -26,7 +32,15 @@
   transition: filter 180ms ease, transform 180ms cubic-bezier(.2, .8, .2, 1);
 }
 
-/* One ink set: primary mass, one accent element, paper detail cuts. */
+/* One complete OS plate, then one ink set: primary mass, one accent element,
+   paper detail cuts. The non-scaling edge stays crisp at menu-bar size. */
+.paw-app-icon__plate {
+  fill: var(--paw-icon-plate-fill);
+  stroke: var(--paw-icon-plate-edge);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  transition: fill 180ms ease, stroke 180ms ease;
+}
 .paw-app-icon__silhouette { transform-origin: center; }
 .paw-app-icon__primary { fill: var(--paw-app-icon-color); }
 .paw-app-icon__secondary { fill: var(--paw-app-icon-accent); }
@@ -41,14 +55,14 @@
 .paw-desktop-root .paw-system-mark { display: inline-flex; gap: 6px; align-items: center; }
 .paw-launchpad-title .paw-brand-mark { align-self: center; }
 
-/* Small placements retain the same geometry; only the shadow tightens so the
+/* Small placements retain the complete frame; only the shadow tightens so the
    identity stays crisp at 16px instead of blooming. */
 .paw-app-icon[data-paw-icon-scale='small'] {
   filter: drop-shadow(0 1px 1px rgb(15 23 42 / .2));
 }
 
-/* The placement owns spacing only; the identity itself owns its colour and
-   silhouette, so every ground under an icon is transparent. */
+/* The placement owns spacing only. Its host remains transparent because the
+   SVG plate is the sole frame; a wrapper tile would create a second card. */
 .paw-desktop-shortcuts button > span,
 .paw-launchpad section > div > button > span,
 .paw-native-app .paw-native-nav > header > span {
@@ -65,10 +79,8 @@
 .paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-md); height: var(--paw-icon-step-md); }
 .paw-launchpad .paw-app-icon { width: var(--paw-icon-step-xl); height: var(--paw-icon-step-xl); }
 
-/* One selected / running language. Hover, selection, the current-App plate
-   and the running dot all speak the App's own identity colour over a
-   translucent ground — never an opaque white square, never the system accent
-   on one surface and the App accent on another. Declared on the owning
+/* One selected / running language. Hover, selection, the App plate and the
+   running dot all speak the App's own identity colour. Declared on the owning
    buttons so var(--app-color) resolves against each App's palette. */
 .paw-dock button,
 .paw-desktop-shortcuts button,
@@ -90,9 +102,18 @@
    in time. */
 .paw-app-loading > .paw-app-icon { flex: 0 0 auto; }
 
-:is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:hover .paw-app-icon {
-  filter: drop-shadow(0 5px 8px rgb(15 23 42 / .24));
-  transform: translateY(-1px) scale(1.035);
+/* Hover adds no second motion to an identity: the Dock's magnification and
+   each surface's own quiet wash are the whole answer. A tile that also lifts,
+   grows and blooms its shadow on hover reads as theatrics, not as a shelf. */
+:is(.paw-dock, .paw-desktop-shortcuts) button[data-open] .paw-app-icon__plate,
+:is(.paw-dock, .paw-launchpad, .paw-desktop-shortcuts) button:is(
+  :hover,
+  [aria-selected='true'],
+  [aria-current='page'],
+  [aria-pressed='true']
+) .paw-app-icon__plate {
+  fill: var(--paw-icon-plate-fill-active);
+  stroke: var(--paw-icon-plate-edge-active);
 }
 .paw-desktop-root :is(button:disabled, [aria-disabled='true']) .paw-app-icon {
   opacity: .42;

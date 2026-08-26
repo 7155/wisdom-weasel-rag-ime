@@ -30,9 +30,10 @@ export type DockMagneticsOptions = {
 };
 
 export const DOCK_MAGNIFY_RADIUS = 96;
-/** Matches the rendered `scale(1 + mag * .32)` in paw-os.css exactly, so the
- * neighbour push always clears the real grown width, not an estimate. */
-export const DOCK_MAGNIFY_GROW = 0.32;
+/** Matches the rendered `scale(1 + mag * .18)` in paw-os.css exactly, so the
+ * neighbour push always clears the real grown width, not an estimate. The
+ * restrained growth keeps the shelf an instrument rather than a spectacle. */
+export const DOCK_MAGNIFY_GROW = 0.18;
 export const DOCK_MAGNIFY_BASE_WIDTH = 44;
 export const DOCK_MAGNIFY_ATTRACT = 3;
 

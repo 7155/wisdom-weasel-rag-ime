@@ -517,16 +517,15 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
   display: flex;
   min-height: 46px;
   max-width: 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: 3px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--k-hairline);
   background: var(--k-layer-deep);
-  overflow-x: auto;
-  scrollbar-width: none;
+  /* PAW windows hide every scrollbar, so an overflow-x scrollport here read
+     as tabs cut mid-label. The strip wraps; every purpose stays readable. */
 }
-
-.knowledge-library__tabs > [role='tablist']::-webkit-scrollbar { display: none; }
 
 .knowledge-library__tabs [role='tab'] {
   display: inline-flex;
@@ -928,16 +927,15 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
   width: fit-content;
   min-width: 0;
   max-width: 100%;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  justify-content: center;
   margin: var(--space-2) auto;
   padding: 2px;
   border-radius: 9px;
   background: var(--k-layer-deep);
-  overflow-x: auto;
-  scrollbar-width: none;
+  /* Wrap, never a hidden scrollport: window scrollbars are suppressed, so
+     overflowing tabs were silently clipped mid-label. */
 }
-
-.knowledge-document-tabs > [role='tablist']::-webkit-scrollbar { display: none; }
 .knowledge-document-tabs [role='tab'] { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 5px; white-space: nowrap; }
 .knowledge-document-tabs > [role='tabpanel'] { min-height: 0; overflow: auto; }
 
@@ -2328,13 +2326,14 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
   width: fit-content;
   min-width: 0;
   max-width: 100%;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  justify-content: center;
   padding: 2px;
   border: 0;
   border-radius: 9px;
   background: var(--k-layer-deep);
-  overflow-x: auto;
-  scrollbar-width: none;
+  /* Same no-clip contract as the base strip: wrap instead of a scrollport
+     whose scrollbar the window shell hides. */
 }
 
 main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'] {

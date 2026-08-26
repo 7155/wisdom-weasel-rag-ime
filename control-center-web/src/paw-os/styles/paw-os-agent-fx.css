@@ -7,8 +7,10 @@
   padding: 0;
 }
 
+/* Turn 间距必须大于同 Turn 内间距（kit 07 视觉规格）：回合之间留一口气，
+   回合内部收紧成一张密的阅读面。 */
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn + .agent-turn {
-  margin-top: 20px;
+  margin-top: 28px;
 }
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn {
@@ -18,7 +20,7 @@
 
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-assistant-turn__body,
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-turn-sequence {
-  gap: 20px;
+  gap: 14px;
 }
 
 /* Session 上下文 chips：对话开篇的一块居中铭牌，两侧 hairline 像章节起始线。
@@ -111,17 +113,18 @@
   margin-bottom: 16px;
 }
 
-/* 用户气泡：冷钴微渐变 + hairline 边 + 收紧的右下角，像一枚落款。 */
+/* 用户气泡：平底色 + hairline 边 + 收紧的右下角。对齐 conversation_ui_standalone
+   的落款语汇——气泡是安静的表面，不是发光的渐变卡；强调色只留给可操作物。 */
 .paw-desktop-root .paw-chatfx .paw-user-message {
   max-width: calc(95% - 40px);
   margin-left: 70px;
-  padding: 8px 15px;
-  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
-  border-radius: 18px 18px 6px 18px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
-  font-size: 16px;
-  line-height: 24px;
+  padding: 8px 14px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 16px 16px 5px 16px;
+  background: var(--paw-chat-user-bubble);
+  box-shadow: none;
+  font-size: 15px;
+  line-height: 22px;
   overflow-wrap: anywhere;
 }
 
@@ -149,8 +152,8 @@
 .paw-desktop-root .paw-chatfx .paw-assistant-text {
   padding-inline: 4px;
   color: var(--paw-chat-text);
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 15px;
+  line-height: 22px;
 }
 
 .paw-desktop-root .paw-chatfx .paw-assistant-text .agent-markdown {
@@ -177,17 +180,16 @@
   border-radius: 999px;
   color: var(--paw-chat-text-secondary);
   background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%);
+  box-shadow: none;
   cursor: pointer;
   text-align: left;
-  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work__toggle:hover {
   border-color: color-mix(in srgb, var(--paw-chat-text-tertiary) 42%, var(--paw-chat-border));
   color: var(--paw-chat-text);
-  background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 5%), 0 4px 12px rgb(24 32 43 / 6%);
+  background: var(--paw-chat-surface-hover);
 }
 
 .paw-desktop-root .paw-chatfx .agent-turn-work[data-expanded] .agent-turn-work__toggle {
@@ -706,7 +708,7 @@
   border: 1px solid var(--paw-chat-border);
   border-radius: 12px;
   background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 8px 22px rgb(24 32 43 / 6%);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%);
 }
 
 .paw-desktop-root .paw-chatfx .fx-approval::before {
@@ -736,10 +738,10 @@
   50% { opacity: .55; box-shadow: none; }
 }
 
-/* 真实进行中的进度卡：钴色描边随状态点亮，与 composer 光环同源。 */
+/* 真实进行中的进度卡：钴色描边随状态点亮，不另发一圈光晕。 */
 .paw-desktop-root .paw-chatfx .fx-progress-card[data-state='running'] {
   border-color: color-mix(in srgb, var(--paw-chat-accent) 26%, var(--paw-chat-border));
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 6px 18px rgb(47 107 255 / 7%);
+  box-shadow: 0 1px 2px rgb(24 32 43 / 4%);
 }
 
 .paw-desktop-root .paw-chatfx .fx-approval .bd {
@@ -984,21 +986,21 @@
    等待条、空态、加载态、回到最新——同一张冷白工作面上的四件小器物。
    只投影真实 reducer/加载状态，不虚构进度。 */
 
-/* 正在工作：一枚安静的白胶囊——旋转刻度环、扫光标签、真实耗时、波点收尾。
-   替换构成主义红方块光标（组合 8 遗产）为对话自己的语汇。 */
+/* 正在工作：无框的一行——行星标记、扫光标签、真实耗时、波点收尾。
+   对齐 zip 稿的 thinking 行：主脉冲只有一个动源，不给等待状态发一张卡。 */
 .paw-desktop-root .paw-chatfx .agent-assistant-pending {
   display: inline-flex;
-  min-height: 34px;
+  min-height: 28px;
   max-width: 100%;
   align-items: center;
   gap: 9px;
   margin: 2px 0 4px;
-  padding: 5px 13px 5px 9px;
-  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 18%, var(--paw-chat-border));
-  border-radius: 999px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 8px;
   color: var(--paw-chat-text-secondary);
-  background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 4px 14px rgb(47 107 255 / 6%);
+  background: transparent;
+  box-shadow: none;
 }
 
 .paw-desktop-root .paw-chatfx .agent-assistant-pending::after {
@@ -1061,7 +1063,8 @@
   background: var(--paw-chat-accent);
 }
 
-/* 空态：居中的邀请卡——环形图标、一句话主张、可行动的下一步。 */
+/* 空态：无框居中——环形图标、一句话主张、可行动的下一步。
+   zip 稿的空态直接坐在阅读面上，不再垫一张带投影的邀请卡。 */
 .paw-desktop-root .paw-chatfx .agent-timeline-empty,
 .paw-desktop-root .paw-chatfx .agent-timeline-loading {
   width: min(100% - 32px, 440px);
@@ -1070,11 +1073,11 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 34px 28px 30px;
-  border: 1px solid var(--paw-chat-border);
-  border-radius: 16px;
-  background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 18px 44px rgb(24 32 43 / 6%);
+  padding: 24px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   text-align: center;
 }
 
@@ -1115,14 +1118,14 @@
   border-radius: 999px;
   color: var(--paw-chat-text-secondary);
   background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 6%), 0 10px 26px rgb(24 32 43 / 12%);
+  box-shadow: 0 5px 18px rgb(24 32 43 / 10%);
   font-weight: 600;
 }
 
 .paw-desktop-root .paw-chatfx .agent-jump-latest:hover {
   color: var(--paw-chat-text);
   background: var(--paw-chat-surface);
-  box-shadow: 0 1px 2px rgb(24 32 43 / 7%), 0 12px 30px rgb(24 32 43 / 15%);
+  border-color: color-mix(in srgb, var(--paw-chat-accent) 34%, var(--paw-chat-border));
 }
 
 .paw-desktop-root .paw-chatfx .agent-jump-latest > svg {

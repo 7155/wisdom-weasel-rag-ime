@@ -116,13 +116,13 @@ export function publicAgentErrorText(
   if (receiptFailure?.code === 'AGENT_COMMAND_PENDING') {
     if (receiptFailure.recoveryState === 'unresolved') {
       return (
-        '无法确认这条消息是否已执行。为避免重复执行，系统不会自动重试；'
-        + '请刷新对话检查结果后，再决定是否发送新的请求。'
+        '无法确认这条消息是否已执行。为避免重复执行，系统不会自动重发；'
+        + '请先重新同步核对结果，再决定是否重试。'
       );
     }
     return (
-      '服务端仍在确认这条消息是否已接收。系统不会自动重试；'
-      + '若后续收到确认事件，会在原消息上更新。'
+      '连接不稳，正在核对这条消息是否已接收。系统不会自动重发；'
+      + '重新同步后即可确认结果或重试。'
     );
   }
   if (receiptFailure?.code === 'AGENT_COMMAND_CONFLICT') {
