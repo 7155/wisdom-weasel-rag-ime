@@ -126,16 +126,18 @@
   box-shadow: none;
 }
 
-/* The wordmark carries the aurora triad as ink. Every stop stays dark enough
-   for AA on the bright veil, so the brand reads before it shimmers. */
+/* The wordmark carries the glacial Wayfinder triad as ink: cobalt → ice teal
+   → deep teal. Purple mid-stops were retired so the brand matches the cold
+   aurora shell instead of a generic violet flourish. Every stop stays dark
+   enough for AA on the bright veil, so the brand reads before it shimmers. */
 .paw-brand-wordmark {
-  background: linear-gradient(105deg, #1e57e7, #6d3fd4 52%, #0c7568);
+  background: linear-gradient(105deg, #1e57e7, #0f7a9a 52%, #0c7568);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   font-size: 13px;
   font-weight: 800;
-  letter-spacing: .06em;
+  letter-spacing: .07em;
   line-height: 1;
 }
 

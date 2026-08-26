@@ -36,10 +36,15 @@
 .paw-app-icon__ring { fill: none; stroke: color-mix(in srgb, var(--paw-app-icon-color) 42%, white); }
 .paw-app-icon__outlined { stroke: var(--paw-icon-paper); }
 
-/* The PAW system mark is monochrome and follows the surrounding text colour. */
-.paw-brand-mark { display: block; flex: 0 0 auto; }
-.paw-desktop-root .paw-system-mark { display: inline-flex; gap: 6px; align-items: center; }
-.paw-launchpad-title .paw-brand-mark { align-self: center; }
+/* The PAW system mark is monochrome and follows the surrounding text colour.
+   Optical nudge keeps the glacial paw sitting on the wordmark baseline. */
+.paw-brand-mark {
+  display: block;
+  flex: 0 0 auto;
+  translate: 0 -.5px;
+}
+.paw-desktop-root .paw-system-mark { display: inline-flex; gap: 7px; align-items: center; }
+.paw-launchpad-title .paw-brand-mark { align-self: center; translate: 0 0; }
 
 /* Small placements retain the same geometry; only the shadow tightens so the
    identity stays crisp at 16px instead of blooming. */
