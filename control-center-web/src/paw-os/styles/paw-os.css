@@ -1024,7 +1024,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-launchpad-empty {
   grid-column: 1 / -1;
 }
-.paw-dock button:is([aria-pressed='true'], [aria-current='page']) { color: var(--app-color, var(--paw-accent)); }
 
 /* UR-104 App palettes. Each window owns one recognizable hue relationship;
    success, warning and danger remain inherited system semantics. Material
@@ -1156,7 +1155,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-accent-strong: var(--paw-app-accent-strong);
   --paw-app-surface-strong: color-mix(in oklab, var(--paw-app-surface) 94%, var(--paw-app-support));
   --paw-app-support-soft: color-mix(in oklab, var(--paw-panel-strong) 88%, var(--paw-app-support));
-  --paw-app-line: color-mix(in oklab, var(--paw-line) 62%, var(--paw-app-accent));
   --paw-accent-soft: var(--paw-app-selection);
 }
 .paw-window-shell[data-app] .paw-native-app {
