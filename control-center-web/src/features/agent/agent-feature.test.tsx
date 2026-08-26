@@ -2138,8 +2138,10 @@ describe('Agent experience', () => {
     expect(warning).toHaveTextContent(
       '手动重试会核对同一条消息',
     );
+    // An ambiguous admission replays the same clientMessageId, so the button
+    // names the verification instead of promising a fresh send.
     const retry = await screen.findByRole('button', {
-      name: '重试本轮',
+      name: '核对后重试',
     });
     const firstAttempt = transport.requests.filter(
       (call) => call.request.pathId === 'agent.session.prompt',
@@ -2288,11 +2290,11 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '发送' }));
 
     const warning = await screen.findByText(
-      /服务端仍在确认这条消息是否已接收/,
+      /连接不稳，正在核对这条消息是否已接收/,
     );
     const failure = warning.closest('[role="alert"]');
     expect(failure).not.toBeNull();
-    expect(failure).toHaveTextContent('系统不会自动重试');
+    expect(failure).toHaveTextContent('系统不会自动重发');
     expect(within(failure as HTMLElement).queryByRole(
       'button',
       { name: '重试本轮' },

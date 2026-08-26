@@ -215,6 +215,9 @@
 .paw-session-workspace[data-status='stopping'] .paw-session-workspace__runtime i { background: var(--paw-warning); animation: none; }
 .paw-session-workspace__runtime button { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 9px; color: var(--paw-danger); cursor: pointer; }
 .paw-session-workspace__runtime button:hover { background: color-mix(in srgb, var(--paw-danger) 9%, transparent); }
+/* 连接不稳是 chrome 的低语，不是对话的警报：状态点转琥珀轻脉动，时间线不动。 */
+.paw-session-workspace__runtime > span[data-link] { color: var(--paw-warning); }
+.paw-session-workspace__runtime > span[data-link] i { background: var(--paw-warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-warning) 14%, transparent); animation: paw-live-pulse 1.2s ease-in-out infinite; }
 /* 回合的开始与结束不许推挤同一行的视图切换与工具簇：状态词按常见四字状态
    （已同步/正在执行/正在停止）保留宽度并向右对齐，让文字换词时右缘钉住；
    停止钮缺席时由同尺寸占位补上，挂载与卸载都发生在已经空出的格子里。
@@ -308,6 +311,7 @@
 @media (prefers-reduced-motion: reduce) {
   .paw-session-workspace__side { animation: none; }
   .paw-session-workspace[data-status='busy'] .paw-session-workspace__runtime i { animation: none; }
+  .paw-session-workspace__runtime > span[data-link] i { animation: none; }
 }
 
 .paw-room-workspace {

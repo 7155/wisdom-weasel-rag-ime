@@ -148,6 +148,13 @@ export function PawSessionWorkspace({
   const [timelineFollow, setTimelineFollow] = useState({ following: true, unseenUpdates: 0 });
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [contextSnapshotState, setContextSnapshotState] = useState<'restoring' | 'partial'>();
+  /* The live link is chrome state, not conversation state: a flapping SSE
+     stream must dim the runtime strip, never replace a healthy timeline with
+     a blocking alert. 'reconnecting' means the transport announced a retry;
+     'degraded' means the stream errored and a quiet resync is scheduled. */
+  const [linkState, setLinkState] = useState<'live' | 'reconnecting' | 'degraded'>('live');
+  const linkGapRef = useRef(false);
+  const linkResyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const toolMenuContainerRef = useRef<HTMLDivElement>(null);
   const toolMenuButtonRef = useRef<HTMLButtonElement>(null);
   const toolMenuRef = useRef<HTMLElement>(null);
@@ -158,8 +165,16 @@ export function PawSessionWorkspace({
     setWorkspaceView(traceFocusNodeId ? 'trace' : 'conversation');
     setPanel('none');
     setToolMenuOpen(false);
+    setLinkState('live');
+    linkGapRef.current = false;
   }, [recordId, traceFocusNodeId]);
 
+  /* Composer send gate. `busy` counts only queued/running/waiting turns. A
+     turn whose admission failed (pending/unresolved/ambiguous) has already
+     settled as `failed`, so an older stuck admission never blocks a NEW
+     message once the Session is idle; only the in-flight `sending` receipt
+     does. Recovery of the stuck turn itself goes through 重新同步 (quiet
+     snapshot + admission reconcile), never through an automatic resend. */
   const busy = Boolean(latestActiveTurnId(projection));
   /* A held follow-up is the composer's own queue, not a Runtime delivery.
      干预/接续 hand the message to Pi immediately; a queued draft never leaves
@@ -241,6 +256,51 @@ export function PawSessionWorkspace({
     }
   }, [recordId, transport]);
 
+  /* Admission reconciliation after a link gap. The authoritative snapshot is
+     the only honest arbiter for a message stuck in pending/unresolved
+     admission: hydrate already replaces the optimistic copy when the server
+     transcript contains the same clientMessageId (received — nothing left to
+     verify). What remains here is the opposite verdict: the Session is idle
+     and the transcript never received the message, so it becomes `ambiguous`
+     — retriable-by-verification with the SAME clientMessageId. This never
+     calls agent.session.prompt; execution is only ever re-sent by the user. */
+  const reconcilePendingAdmissions = useCallback(() => {
+    const current = agentProjection(recordId);
+    if (latestActiveTurnId(current)) return;
+    for (const [clientMessageId, messageId] of Object.entries(current.optimisticByClientMessageId)) {
+      const admission = current.messagesById[messageId]?.admissionState;
+      if (admission !== 'pending' && admission !== 'unresolved') continue;
+      useAgentLiveStore.getState().failOptimistic(
+        recordId,
+        clientMessageId,
+        '重新同步后，Session 里没有这条消息，也没有进行中的回合。系统不会自动重发；可核对后重试同一条消息。',
+        Date.now(),
+        'ambiguous',
+      );
+    }
+  }, [recordId]);
+
+  /* One quiet resync path for every link-recovery entrance: stream reopen
+     after a gap, the degraded-stream debounce, and the timeline's 重新同步
+     action. The snapshot stays quiet (no loading gate) and the reconcile only
+     runs on authoritative state. */
+  const resyncSessionLink = useCallback(async (): Promise<void> => {
+    if (linkResyncTimerRef.current) {
+      clearTimeout(linkResyncTimerRef.current);
+      linkResyncTimerRef.current = undefined;
+    }
+    const loaded = await loadSnapshot(true);
+    if (loaded) reconcilePendingAdmissions();
+  }, [loadSnapshot, reconcilePendingAdmissions]);
+
+  const scheduleQuietLinkResync = useCallback(() => {
+    if (linkResyncTimerRef.current) return;
+    linkResyncTimerRef.current = setTimeout(() => {
+      linkResyncTimerRef.current = undefined;
+      void resyncSessionLink();
+    }, 1_500);
+  }, [resyncSessionLink]);
+
   const loadControlCatalog = useCallback(async () => {
     setToolCatalogStatus('loading');
     const [modelsResult, commandsResult, toolsResult, runtimeResult] = await Promise.allSettled([
@@ -319,10 +379,32 @@ export function PawSessionWorkspace({
             }
             if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') onSessionActivity?.();
           },
-          error: (reason) => {
+          /* The transport heals the stream by itself (reconnect → open). The
+             workspace's job is honesty plus catch-up: mark the chrome while
+             the link is down, and after the first reopen following a gap pull
+             one quiet snapshot so events lost in the gap — including admission
+             confirmations for optimistic messages — are reconciled. */
+          open: () => {
             if (!active) return;
-            setContextSnapshotState('partial');
-            setError(errorText(reason));
+            setLinkState('live');
+            if (!linkGapRef.current) return;
+            linkGapRef.current = false;
+            void resyncSessionLink();
+          },
+          reconnect: () => {
+            if (!active) return;
+            linkGapRef.current = true;
+            setLinkState('reconnecting');
+          },
+          error: () => {
+            if (!active) return;
+            /* A transient stream error is chrome state, not a conversation
+               failure: keep the healthy timeline, mark the link degraded, and
+               debounce one quiet resync. If the backend is truly gone, that
+               resync's own failure raises the blocking alert with 重新同步. */
+            linkGapRef.current = true;
+            setLinkState('degraded');
+            scheduleQuietLinkResync();
           },
         },
       );
@@ -331,8 +413,12 @@ export function PawSessionWorkspace({
       active = false;
       batcher.clear();
       unsubscribe();
+      if (linkResyncTimerRef.current) {
+        clearTimeout(linkResyncTimerRef.current);
+        linkResyncTimerRef.current = undefined;
+      }
     };
-  }, [desktop, loadControlCatalog, loadSnapshot, onSessionActivity, recordId, runtimeToolWindow, transport]);
+  }, [desktop, loadControlCatalog, loadSnapshot, onSessionActivity, recordId, resyncSessionLink, runtimeToolWindow, scheduleQuietLinkResync, transport]);
 
   /* A prompt that failOptimistic just marked failed already has one recovery
      surface: the timeline's failed-turn card, carrying the same reason plus
@@ -577,7 +663,11 @@ export function PawSessionWorkspace({
       return false;
     }
     if (userMessage.admissionState === 'pending' || userMessage.admissionState === 'unresolved') {
-      setError('这条消息仍无法确认是否已执行；为避免重复执行，不能自动重试。请先重新同步 Session。');
+      /* Verification first, execution never: resync pulls the authoritative
+         snapshot and either acknowledges the message (transcript has the same
+         clientMessageId) or promotes it to ambiguous so 核对后重试 unlocks. */
+      setError('这条消息还没有确认是否已接收；不会自动重发。请先重新同步，同步后即可核对或重试。');
+      void resyncSessionLink();
       return false;
     }
     const message = userMessage.blocks
@@ -1025,8 +1115,14 @@ export function PawSessionWorkspace({
           <button aria-label="星空" aria-pressed={workspaceView === 'starfield'} onClick={() => { setWorkspaceView('starfield'); setPanel('none'); setToolMenuOpen(false); }} type="button"><Orbit size={15} /><span>星空</span></button>
         </nav>
         <div className="paw-session-workspace__runtime">
-          <span data-context={contextSnapshotState}><i />{stopping
+          {/* Link health outranks turn state: while the stream is down the
+              runtime words must not claim 正在执行/已同步 they cannot see. */}
+          <span data-context={contextSnapshotState} data-link={linkState === 'live' ? undefined : linkState}><i />{stopping
             ? '正在停止'
+            : linkState === 'reconnecting'
+              ? '连接不稳 · 重连中'
+            : linkState === 'degraded'
+              ? '连接不稳 · 核对中'
             : busy
               ? '正在执行'
             : contextSnapshotState === 'restoring'
@@ -1109,6 +1205,7 @@ export function PawSessionWorkspace({
                 onForkFromMessage={openForkDialog}
                 onEditMessage={(messageId) => void beginEditMessage(messageId)}
                 onRetryTurn={retryTurn}
+                onResyncSession={() => void resyncSessionLink()}
                 onContinueTurn={continueTurn}
                 onSwitchModel={() => setModelPickerRequest((value) => value + 1)}
                 onApprovalDecision={(id, decision, hash) => void decideApproval(id, decision, hash)}
@@ -1163,7 +1260,7 @@ export function PawSessionWorkspace({
           </div>
 
           <div className="paw-session-workspace__composer">
-            {error ? <div className="paw-session-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); void loadSnapshot(); }} type="button">重新同步</button></div> : null}
+            {error ? <div className="paw-session-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); void loadSnapshot().then((loaded) => { if (loaded) reconcilePendingAdmissions(); }); }} type="button">重新同步</button></div> : null}
             {record ? <QueueTray busy={busy || sending} controller={queue} /> : null}
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
               <GenericUserInputCard activity={pendingGenericInput} sessionId={recordId} onError={setError} />

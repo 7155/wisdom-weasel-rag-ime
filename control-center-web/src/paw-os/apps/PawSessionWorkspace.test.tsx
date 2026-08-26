@@ -7,6 +7,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { AgentProjectionState } from '@/contracts/agent-reducer';
+import type { ControlRequest } from '@/platform/transport';
 import { parseAgentEvent } from '@/contracts/validators';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
@@ -716,6 +717,172 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
+  it('recovers a flapping event stream with a quiet snapshot instead of a blocking alert', async () => {
+    const sessionId = 'session-link-flap';
+    const transport = new StubControlTransport('mock', { ...idleSessionRoutes() });
+    useAgentLiveStore.getState().clear(sessionId);
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    const snapshotCalls = () => transport.requests
+      .filter((request) => request.pathId === 'agent.session.snapshot').length;
+    const baseline = snapshotCalls();
+
+    // The transport announcing a retry dims the chrome; it never replaces the
+    // healthy timeline with the blocking workspace alert.
+    act(() => { transport.emitReconnect('agent.session.events'); });
+    expect(screen.getByText('连接不稳 · 重连中')).toBeInTheDocument();
+    expect(document.querySelector('.paw-session-workspace__error')).toBeNull();
+    expect(snapshotCalls()).toBe(baseline);
+
+    // Reopen after the gap: exactly one quiet catch-up snapshot, chrome back
+    // to 已同步, still no alert.
+    act(() => { transport.emitOpen('agent.session.events'); });
+    await waitFor(() => expect(snapshotCalls()).toBe(baseline + 1));
+    await screen.findByText('已同步');
+    expect(document.querySelector('.paw-session-workspace__error')).toBeNull();
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('acknowledges a pending admission once the resynced transcript contains the same clientMessageId', async () => {
+    const sessionId = 'session-pending-ack';
+    let promptedClientMessageId = '';
+    let transcriptReady = false;
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.session.snapshot': () => ({
+        messages: transcriptReady
+          ? [remoteUserMessage(sessionId, promptedClientMessageId, '链路抖动时也只执行一次')]
+          : [],
+        liveEvents: [],
+        lastSequence: 0,
+        resumeToken: '',
+        status: 'active',
+      }),
+      'agent.session.prompt': (request: ControlRequest) => {
+        promptedClientMessageId = String((request.body as Record<string, unknown>).clientMessageId);
+        throw pendingAdmissionError(promptedClientMessageId);
+      },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    await user.type(composer, '链路抖动时也只执行一次');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections[sessionId];
+      const messageId = projection?.optimisticByClientMessageId[promptedClientMessageId] ?? '';
+      expect(projection?.messagesById[messageId]?.admissionState).toBe('pending');
+    });
+
+    // The Runtime did receive the message: after the link heals, the quiet
+    // snapshot's authoritative transcript replaces the optimistic copy —
+    // acknowledged by hydration, no retry needed, and never re-sent.
+    transcriptReady = true;
+    act(() => {
+      transport.emitReconnect('agent.session.events');
+      transport.emitOpen('agent.session.events');
+    });
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections[sessionId];
+      expect(Object.keys(projection?.optimisticByClientMessageId ?? {})).toHaveLength(0);
+      const message = Object.values(projection?.messagesById ?? {})
+        .find((item) => item.clientMessageId === promptedClientMessageId);
+      expect(message?.status).toBe('completed');
+      expect(message?.admissionState).toBeUndefined();
+    });
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.prompt'))
+      .toHaveLength(1);
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('promotes a lost pending admission to 核对后重试 after an idle resync, without auto-resending', async () => {
+    const sessionId = 'session-pending-ambiguous';
+    const prompts: string[] = [];
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.session.prompt': (request: ControlRequest) => {
+        prompts.push(String((request.body as Record<string, unknown>).clientMessageId));
+        if (prompts.length === 1) throw pendingAdmissionError(prompts[0]!);
+        return { ok: true };
+      },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    await user.type(composer, '链路抖动时也只执行一次');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections[sessionId];
+      const messageId = projection?.optimisticByClientMessageId[prompts[0] ?? ''] ?? '';
+      expect(projection?.messagesById[messageId]?.admissionState).toBe('pending');
+    });
+    // The stuck turn's one live action is verification, not a resend.
+    expect(await screen.findByRole('button', { name: '重新同步' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+
+    // Link heals, quiet snapshot finds an idle Session without the message:
+    // the admission becomes ambiguous (retriable-by-verification), and the
+    // resync itself never called agent.session.prompt again.
+    act(() => {
+      transport.emitReconnect('agent.session.events');
+      transport.emitOpen('agent.session.events');
+    });
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections[sessionId];
+      const message = Object.values(projection?.messagesById ?? {})
+        .find((item) => item.clientMessageId === prompts[0]);
+      expect(message?.admissionState).toBe('ambiguous');
+    });
+    expect(prompts).toHaveLength(1);
+
+    // 核对后重试 replays the SAME clientMessageId so the Runtime can dedupe.
+    await user.click(await screen.findByRole('button', { name: '核对后重试' }));
+    await waitFor(() => expect(prompts).toHaveLength(2));
+    expect(prompts[1]).toBe(prompts[0]);
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('uses one compact on-demand row when the Session has no subagents', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const transport = new StubControlTransport('mock', {
@@ -796,6 +963,44 @@ function idleSessionRoutes(): ConstructorParameters<typeof StubControlTransport>
     'agent.session.commands': {},
     'agent.tools.list': {},
     'agent.runtime.get': {},
+  };
+}
+
+/** The admission receipt the Runtime returns while it is still confirming a
+ *  prompt: same payload shape as ControlTransportHttpError carries. */
+function pendingAdmissionError(clientMessageId: string): Error {
+  return Object.assign(new Error('receipt is still in flight'), {
+    payload: {
+      ok: false,
+      code: 'AGENT_COMMAND_PENDING',
+      error: 'receipt is still in flight',
+      commandReceipt: { state: 'pending', clientMessageId },
+    },
+  });
+}
+
+/** An authoritative transcript copy of a prompt the Runtime did receive,
+ *  carrying the clientMessageId hydration reconciles by. */
+function remoteUserMessage(sessionId: string, clientMessageId: string, text: string) {
+  return {
+    schemaVersion: 'rag-ime.agent-message.v1',
+    id: `${sessionId}:remote-user`,
+    sessionId,
+    turnId: 'turn-remote',
+    role: 'user',
+    status: 'completed',
+    blocks: [{
+      id: `${sessionId}:remote-user:text`,
+      type: 'text',
+      status: 'completed',
+      presentationKind: 'markdown',
+      data: { text },
+    }],
+    attachments: [],
+    citations: [],
+    createdAtMs: 5,
+    completedAtMs: 5,
+    clientMessageId,
   };
 }
 
