@@ -1,6 +1,7 @@
-import { LayoutTemplate, RotateCcw, Sparkles } from 'lucide-react';
+import { LayoutTemplate, MessageCircle, PackageCheck, RotateCcw, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { Button, EmptyState } from '@/components/primitives';
 import {
   InlineNotice,
@@ -18,6 +19,7 @@ import { landingFormFromPayload, type LandingFormSummary } from '@/features/paw-
 import { useProductIdentity } from '@/features/identity/product-identity';
 import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
 import type { ControlTransport, JsonValue } from '@/platform/transport';
+import './plugins.css';
 
 type CatalogItem = {
   id: string;
@@ -30,6 +32,8 @@ type CatalogItem = {
 
 type LifecycleNotice = { tone: 'success' | 'danger' | 'info'; summary: string };
 type JsonObject = { [key: string]: JsonValue };
+
+const DEFAULT_BOOTSTRAP_DRAFT = '/skill:landing-app-builder 用户要一个可安装的垂直助手。先澄清场景与验收，再搜索市场；没有合适 Package 时写最小 Skill（必要时加 prompt/theme），走 create_package → validate → propose_install，然后停下。不要声称已安装。示例：智能调研助手。';
 
 function asError(error: unknown): Error | null {
   if (!error) return null;
@@ -64,6 +68,7 @@ export function LandingFormsFeature() {
   const transport = useControlTransport();
   const identity = useProductIdentity();
   const surface = usePawOsAppSurface();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [notice, setNotice] = useState<LifecycleNotice | null>(null);
 
@@ -78,6 +83,11 @@ export function LandingFormsFeature() {
   const listQuery = useQuery({
     queryKey: ['agent.forms.list'],
     queryFn: async ({ signal }) => asRecord(await transport.request({ pathId: 'agent.forms.list', signal })),
+  });
+  const proposalsQuery = useQuery({
+    queryKey: ['agent.extensions.proposals', 'landing-forms'],
+    queryFn: async ({ signal }) => asRecord(await transport.request({ pathId: 'agent.extensions.proposals', signal })),
+    refetchInterval: 8_000,
   });
 
   const activeForm = useMemo(
@@ -94,6 +104,7 @@ export function LandingFormsFeature() {
       latestVersion: stringValue(item.latestVersion),
     }));
   }, [catalogQuery.data]);
+  const proposalCount = arrayRecords(asRecord(proposalsQuery.data).items).length;
 
   const invalidate = async () => {
     await Promise.all([
@@ -141,6 +152,14 @@ export function LandingFormsFeature() {
     },
   });
 
+  const openBootstrap = () => {
+    const draft = (activeForm?.bootstrapPrompt || DEFAULT_BOOTSTRAP_DRAFT).trim();
+    navigate({
+      pathname: '/agent',
+      search: new URLSearchParams({ draft }).toString(),
+    });
+  };
+
   const busy = activateMutation.isPending || deactivateMutation.isPending;
   const isPending = catalogQuery.isPending || activeQuery.isPending || listQuery.isPending;
   const error = asError(catalogQuery.error || activeQuery.error || listQuery.error);
@@ -151,26 +170,62 @@ export function LandingFormsFeature() {
   };
 
   const body = (
-    <>
+    <div className="landing-forms" data-testid="landing-forms">
       {notice ? (
         <InlineNotice title="落地形态" tone={notice.tone}>
           {notice.summary}
         </InlineNotice>
       ) : null}
+
+      {proposalCount > 0 ? (
+        <InlineNotice title="可以安装了" tone="success">
+          {identity.assistantName} 已提交 {proposalCount} 个 Package 安装预览。到「建议」确认后，Launchpad 会出现对应图标。
+          <div className="landing-forms__notice-actions">
+            <Button
+              leadingIcon={<PackageCheck size={14} />}
+              onClick={() => navigate('/plugins?view=proposals')}
+              size="small"
+            >
+              去确认安装
+            </Button>
+          </div>
+        </InlineNotice>
+      ) : null}
+
+      <ManagementSection
+        description="描述需求 → 分析并写 Skill/Package → propose_install → 你在产品内确认。安装后 Launchpad 出现图标；主题可改变氛围，可执行 UI 仍属第一方。"
+        title="自举造 App"
+        trailing={(
+          <Button leadingIcon={<MessageCircle size={14} />} onClick={openBootstrap} size="small">
+            开始造 App
+          </Button>
+        )}
+      >
+        <p className="landing-forms__hint">
+          当前形态技能：{(activeForm?.skillRefs?.length ? activeForm.skillRefs : ['landing-app-builder', 'plugin-creator']).join(' · ')}
+        </p>
+      </ManagementSection>
+
       <ManagementSection
         description="Form 绑定 Persona、Knowledge 范围、策略预设与 Dock/App 可见性；切换走 preview → confirm → apply → receipt。"
         title="当前形态"
       >
         {activeForm ? (
-          <ActiveFormCard busy={busy} form={activeForm} onDeactivate={() => deactivateMutation.mutate()} />
+          <ActiveFormCard busy={busy} form={activeForm} onDeactivate={() => deactivateMutation.mutate()} onBootstrap={openBootstrap} />
         ) : (
           <EmptyState
+            action={(
+              <Button onClick={openBootstrap} size="small" variant="quiet">
+                先造一个垂直 App
+              </Button>
+            )}
             description="未激活落地形态时，Dock 与 Launchpad 使用完整十一 App 默认集合。"
             icon={LayoutTemplate}
             title="默认 PAW 工作台"
           />
         )}
       </ManagementSection>
+
       <ManagementSection
         description={`${identity.productName} 自举可安装的落地形态目录。`}
         title="形态目录"
@@ -178,10 +233,10 @@ export function LandingFormsFeature() {
         {catalogItems.length === 0 ? (
           <EmptyState description="目录为空。" icon={Sparkles} title="暂无可用形态" />
         ) : (
-          <ul className="plugins-native-grid" data-testid="landing-form-catalog">
+          <ul className="landing-forms__catalog" data-testid="landing-form-catalog">
             {catalogItems.map((item) => (
               <li key={item.id}>
-                <article>
+                <article className="landing-forms__card">
                   <header>
                     <strong>{item.displayName}</strong>
                     <StatusBadge
@@ -206,7 +261,7 @@ export function LandingFormsFeature() {
           </ul>
         )}
       </ManagementSection>
-    </>
+    </div>
   );
 
   if (surface?.appId === 'app-center') {
@@ -219,7 +274,7 @@ export function LandingFormsFeature() {
 
   return (
     <ManagementPage
-      description="创建、安装、切换与回滚落地形态；Shell 会按 active Form 过滤 Dock 与 Launchpad。"
+      description="创建、安装、切换与回滚落地形态；造完 Package 后可在「建议」确认安装。"
       routeId="plugins"
       title="落地形态"
     >
@@ -233,25 +288,41 @@ export function LandingFormsFeature() {
 function ActiveFormCard({
   form,
   onDeactivate,
+  onBootstrap,
   busy,
 }: {
   form: LandingFormSummary;
   onDeactivate: () => void;
+  onBootstrap: () => void;
   busy: boolean;
 }) {
   return (
-    <article className="plugins-native-grid" data-testid="landing-form-active">
+    <article className="landing-forms__card" data-testid="landing-form-active">
       <header>
         <strong>{form.displayName}</strong>
         <StatusBadge label="使用中" tone="success" />
       </header>
       <p>{form.tagline || form.description || '—'}</p>
-      <p>
+      <p className="landing-forms__meta">
         Dock：{form.dockAppIds.join(' · ') || '—'}
         <br />
         默认入口：{form.defaultLandingAppId || '—'}
+        {form.skillRefs.length ? (
+          <>
+            <br />
+            技能：{form.skillRefs.join(' · ')}
+          </>
+        ) : null}
       </p>
       <footer>
+        <Button
+          disabled={busy}
+          leadingIcon={<MessageCircle aria-hidden="true" size={14} />}
+          onClick={onBootstrap}
+          size="small"
+        >
+          造 App
+        </Button>
         <Button
           disabled={busy}
           leadingIcon={<RotateCcw aria-hidden="true" size={14} />}

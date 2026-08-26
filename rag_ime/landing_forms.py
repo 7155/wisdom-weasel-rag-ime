@@ -529,6 +529,25 @@ class LandingFormService:
 
         policy = str(manifest.get("policyPreset") or "default").strip()
         check("policyPreset", bool(policy), "policyPreset required")
+
+        skill_refs = manifest.get("skillRefs")
+        if skill_refs is not None:
+            check("skillRefs", isinstance(skill_refs, list), "skillRefs must be a list when present")
+            if isinstance(skill_refs, list):
+                for index, ref in enumerate(skill_refs):
+                    check(
+                        f"skillRefs[{index}]",
+                        isinstance(ref, str) and bool(str(ref).strip()),
+                        "skill ref must be a non-empty string",
+                    )
+
+        bootstrap = manifest.get("bootstrapPrompt")
+        if bootstrap is not None:
+            check(
+                "bootstrapPrompt",
+                isinstance(bootstrap, str) and bool(str(bootstrap).strip()),
+                "bootstrapPrompt must be a non-empty string when present",
+            )
         return checks
 
     def _load_manifest(self, source_path: Path) -> dict[str, object]:
@@ -652,6 +671,8 @@ class LandingFormService:
                 if isinstance(item, Mapping)
             ],
             "policyPreset": str(manifest.get("policyPreset") or "default"),
+            "skillRefs": [str(item) for item in manifest.get("skillRefs") or [] if str(item).strip()],
+            "bootstrapPrompt": str(manifest.get("bootstrapPrompt") or ""),
             "packageRefs": [
                 dict(item)
                 for item in (manifest.get("packageRefs") or [])

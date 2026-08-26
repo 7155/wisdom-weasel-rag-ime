@@ -21,6 +21,8 @@ export type LandingFormSummary = {
   defaultLandingAppId: PawOsAppId | null;
   defaultPersona: LandingFormPersonaRef | null;
   policyPreset: string;
+  skillRefs: string[];
+  bootstrapPrompt: string;
   digest: string;
   active: boolean;
 };
@@ -79,6 +81,10 @@ export function landingFormFromPayload(payload: unknown): LandingFormSummary | n
       ? { roleId: String(persona.roleId), version: String(persona.version || '') || undefined }
       : null,
     policyPreset: String(record.policyPreset || 'default'),
+    skillRefs: Array.isArray(record.skillRefs)
+      ? record.skillRefs.map((item) => String(item || '')).filter(Boolean)
+      : [],
+    bootstrapPrompt: String(record.bootstrapPrompt || ''),
     digest: String(record.digest || ''),
     active: record.active === true,
   };

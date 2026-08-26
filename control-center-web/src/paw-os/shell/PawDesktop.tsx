@@ -2,6 +2,7 @@ import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelL
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
 import { dockAppIdsForForm, launchpadAppIdsForForm, useActiveLandingForm } from '@/features/paw-os/active-form';
+import { usePawOsPackageApps, type PawOsPackageApp } from '@/features/paw-os/package-apps';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import { dockMagnetics } from './dock-magnification';
@@ -701,6 +702,8 @@ function PawLaunchpad({
   onClose: () => void;
   onOpen: (id: PawAppId) => void;
 }) {
+  const api = usePawDesktopApi();
+  const packageApps = usePawOsPackageApps();
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const visibleIds = useMemo(
@@ -715,6 +718,13 @@ function PawLaunchpad({
       return [app.label, app.shortLabel, app.tagline, app.id].some((part) => part.toLowerCase().includes(needle));
     });
   }, [query, visibleIds]);
+  const filteredPackages = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return packageApps.apps.filter((app) => {
+      if (!needle) return true;
+      return [app.label, app.tagline, app.packageId].some((part) => part.toLowerCase().includes(needle));
+    });
+  }, [packageApps.apps, query]);
   const groups = useMemo(() => {
     // A running index across groups drives the cascade arrival: each group
     // header takes its own beat and its tiles follow, so the archive opens as
@@ -727,9 +737,30 @@ function PawLaunchpad({
         : [];
     });
   }, [filtered]);
+  const packageGroupOrder = useMemo(() => {
+    const base = groups.reduce((total, group) => total + 1 + group.apps.length, 0);
+    return base;
+  }, [groups]);
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
+
+  const openPackage = useCallback((pkg: PawOsPackageApp) => {
+    api.getState().openApp('app-center', {
+      entityId: pkg.packageId,
+      title: pkg.label,
+      target: {
+        kind: 'package',
+        id: pkg.packageId,
+        title: pkg.label,
+        subtitle: pkg.tagline,
+        version: pkg.version,
+        resourceCount: pkg.resourceCount,
+      },
+    });
+    onClose();
+    pulsePawComposition('app', .72);
+  }, [api, onClose]);
   return (
     <div
       aria-label="全部 App"
@@ -763,20 +794,42 @@ function PawLaunchpad({
           <button onClick={onClose} type="button">完成</button>
         </header>
         <div>
-          {groups.length === 0 ? (
+          {groups.length === 0 && filteredPackages.length === 0 ? (
             <p className="paw-launchpad-empty">没有匹配的 App</p>
-          ) : groups.map((group) => (
-            <Fragment key={group.kind}>
-              <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': group.order } as CSSProperties}>{group.label}</h2>
-              {group.apps.map(({ app, order }) => (
-                <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} style={{ '--paw-tile-i': order } as CSSProperties} type="button">
-                  <span><PawAppIcon appId={app.id} size={48} /></span>
-                  <strong>{app.label}</strong>
-                  <small>{app.tagline}</small>
-                </button>
+          ) : (
+            <>
+              {groups.map((group) => (
+                <Fragment key={group.kind}>
+                  <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': group.order } as CSSProperties}>{group.label}</h2>
+                  {group.apps.map(({ app, order }) => (
+                    <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} style={{ '--paw-tile-i': order } as CSSProperties} type="button">
+                      <span><PawAppIcon appId={app.id} size={48} /></span>
+                      <strong>{app.label}</strong>
+                      <small>{app.tagline}</small>
+                    </button>
+                  ))}
+                </Fragment>
               ))}
-            </Fragment>
-          ))}
+              {filteredPackages.length ? (
+                <Fragment>
+                  <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': packageGroupOrder } as CSSProperties}>已安装 Package</h2>
+                  {filteredPackages.map((pkg, index) => (
+                    <button
+                      data-package={pkg.packageId}
+                      key={pkg.packageId}
+                      onClick={() => openPackage(pkg)}
+                      style={{ '--paw-tile-i': packageGroupOrder + 1 + index } as CSSProperties}
+                      type="button"
+                    >
+                      <span><PawAppIcon appId="app-center" size={48} /></span>
+                      <strong>{pkg.label}</strong>
+                      <small>{pkg.tagline}</small>
+                    </button>
+                  ))}
+                </Fragment>
+              ) : null}
+            </>
+          )}
         </div>
       </section>
     </div>

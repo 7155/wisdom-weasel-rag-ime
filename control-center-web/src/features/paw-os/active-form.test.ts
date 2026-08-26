@@ -18,6 +18,8 @@ const knowledgeQa: LandingFormSummary = {
   defaultLandingAppId: 'knowledge',
   defaultPersona: { roleId: 'companion-present-v1', version: '1' },
   policyPreset: 'default',
+  skillRefs: ['landing-app-builder', 'plugin-creator'],
+  bootstrapPrompt: '/skill:landing-app-builder …',
   digest: 'abc',
   active: true,
 };

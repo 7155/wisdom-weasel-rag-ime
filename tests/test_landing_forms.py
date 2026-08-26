@@ -51,7 +51,7 @@ class LandingFormServiceTests(unittest.TestCase):
         self.assertIsNone(self.service.active()["form"])
 
         activate_preview = self.service.preview(
-            {"action": "activate", "formId": "knowledge-qa", "version": "1.0.0"}
+            {"action": "activate", "formId": "knowledge-qa", "version": "1.1.0"}
         )
         activate_receipt = self.service.apply(
             {
@@ -79,7 +79,7 @@ class LandingFormServiceTests(unittest.TestCase):
 
         # Re-activate then rollback to empty previous (deactivate left previous pointer).
         activate_preview = self.service.preview(
-            {"action": "activate", "formId": "knowledge-qa", "version": "1.0.0"}
+            {"action": "activate", "formId": "knowledge-qa", "version": "1.1.0"}
         )
         self.service.apply(
             {
@@ -113,7 +113,7 @@ class LandingFormServiceTests(unittest.TestCase):
               "schemaVersion": "rag-ime.landing-form.v1",
               "id": "bad",
               "displayName": "Bad",
-              "version": "1.0.0",
+              "version": "1.1.0",
               "dockAppIds": ["not-an-app"],
               "launchpadAppIds": ["agent"],
               "defaultLandingAppId": "agent",
