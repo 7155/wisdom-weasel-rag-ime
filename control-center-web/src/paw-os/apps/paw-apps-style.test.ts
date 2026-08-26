@@ -13,6 +13,7 @@ import memoryCss from '../../features/memory/memory.css?raw';
 import knowledgeCss from '../../features/knowledge/knowledge.css?raw';
 import observabilityCss from '../../features/observability/observability.css?raw';
 import pluginsCss from '../../features/plugins/plugins.css?raw';
+import roomsCss from '../../features/rooms/rooms.css?raw';
 import satelliteCss from '../../features/paw-os/paw-os-satellite.css?raw';
 import terminalCss from '../../features/terminal/paw-os-terminal-app.css?raw';
 import appCss from './paw-apps.css?raw';
@@ -241,7 +242,10 @@ describe('PAWOS semantic type roles', () => {
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'),
     );
     expect(mediumProjectCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
-    expect(mediumProjectCss).toMatch(/\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(mediumProjectCss).toMatch(
+      /\.paw-wb-planning-tools__date,\s*\.paw-workbench-migrated \.paw-wb-planning-tools__actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow:\s*visible;/s,
+    );
+    expect(mediumProjectCss).not.toMatch(/\.paw-wb-planning-tools__(?:date|actions)\s*\{[^}]*overflow-x:\s*auto;/s);
     expect(mediumProjectCss).toMatch(/\.paw-wb-documents\[data-reader-open='true'\] \.paw-wb-document-index\s*\{\s*display:\s*none;/s);
     expect(appCss).toMatch(/\.paw-native-stage\s*\{[^}]*container-name:\s*paw-native-stage;[^}]*container-type:\s*inline-size;/s);
     const narrowProjectCss = workbenchMigratedCss.slice(workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'));
@@ -251,7 +255,10 @@ describe('PAWOS semantic type roles', () => {
     expect(narrowProjectCss).not.toMatch(/\.paw-wb-chrome__commands button > span\s*\{\s*display:\s*none;/s);
     expect(narrowProjectCss).not.toContain('.paw-wb-primary { font-size: 0; }');
     expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
-    expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools__date,[\s\S]*?\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(narrowProjectCss).toMatch(
+      /\.paw-wb-planning-tools__date,\s*\.paw-workbench-migrated \.paw-wb-planning-tools__actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow:\s*visible;/s,
+    );
+    expect(narrowProjectCss).not.toMatch(/\.paw-wb-planning-tools__(?:date|actions)\s*\{[^}]*overflow-x:\s*auto;/s);
     expect(narrowProjectCss).toMatch(/\.paw-wb-documents\[data-reader-open='true'\] \.paw-wb-document-index\s*\{\s*display:\s*none;/s);
     expect(narrowProjectCss).toMatch(/\.paw-wb-schedules-dialog \.planning-wake-form,\s*\.paw-wb-schedules-dialog \.planning-wake-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
   });
@@ -488,9 +495,20 @@ describe('PAWOS semantic type roles', () => {
     ['files-app', filesCss],
     ['evidence-echo', evidenceEchoCss],
     ['configuration', configurationCss],
+    ['rooms', roomsCss],
+    ['context-debug', contextDebugCss],
   ])('%s final owner declares readable roles at the owning selectors', (_surface, css) => {
     expect(css).not.toMatch(/font-size:\s*(?:9|9\.5|10|10\.5|11|11\.5)px/);
     expect(css).not.toContain('UR-087 readable typography floor');
+  });
+
+  it('wraps Monitor category filters instead of hiding them behind a scroller', () => {
+    expect(observabilityCss).toMatch(
+      /\.observation-category-tabs\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow:\s*visible;/s,
+    );
+    expect(observabilityCss).not.toMatch(
+      /\[data-paw-os-app\][^{]*\.observation-category-tabs\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;/s,
+    );
   });
 
   it('keeps final Agent controls at 13px and metadata at 12px or larger', () => {
