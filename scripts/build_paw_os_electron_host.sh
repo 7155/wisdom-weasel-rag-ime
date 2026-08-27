@@ -42,33 +42,12 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
   SOURCE_DIRTY="true"
 fi
 
-install_swift_fallback() {
-  local source_app="$ROOT/build/RagImeControl.app"
-  local fallback_build="$ROOT/build/RagImeControlWebFallback.app"
-  local fallback_dest="$HOME/Applications/RagImeControlWebFallback.app"
-  RAG_IME_CONTROL_TRANSPORT=native \
-  RAG_IME_CONTROL_BUILD_CHANNEL=production \
-    "$ROOT/scripts/build_control_center_web_host.sh" build-release >/dev/null
-  rm -rf "$fallback_build"
-  ditto "$source_app" "$fallback_build"
-  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.rag-ime.control.webkit-fallback' \
-    "$fallback_build/Contents/Info.plist"
-  /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName PAW WebKit Fallback' \
-    "$fallback_build/Contents/Info.plist"
-  codesign --force --deep --sign - "$fallback_build" >/dev/null
-  mkdir -p "$HOME/Applications"
-  rm -rf "$fallback_dest"
-  ditto "$fallback_build" "$fallback_dest"
-  codesign --verify --deep --strict "$fallback_dest"
-}
-
 if [[ "$ACTION" == "install-release" ]]; then
   curl --silent --show-error --fail --max-time 5 \
     -H 'Origin: http://127.0.0.1:8766' \
     -H 'Content-Type: application/json' \
     --data '{}' \
     http://127.0.0.1:8766/api/browser/managed/stop >/dev/null 2>&1 || true
-  install_swift_fallback
 fi
 
 RAG_IME_CONTROL_TRANSPORT=http \
@@ -123,12 +102,12 @@ Path(target).write_text(json.dumps({
     "channel": channel,
     "frontendTransport": "http",
     "frontendBuildChannel": frontend_channel,
+    "forbiddenTransportModulesExcluded": True,
     "browserHost": "electron-webview",
     "browserControl": "ego-browser",
     "browserTransport": "cdp",
     "browserPartition": "persist:paw-browser",
     "sameOriginControlProxy": True,
-    "swiftFallback": "RagImeControlWebFallback.app" if channel == "release" else None,
 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 

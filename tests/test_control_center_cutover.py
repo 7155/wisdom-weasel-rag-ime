@@ -51,10 +51,11 @@ class ControlCenterCutoverTests(unittest.TestCase):
         )
         self.assertNotIn("macos/RagImeControl/", tracked)
 
-    def test_public_build_entry_only_dispatches_to_the_web_host(self) -> None:
+    def test_public_build_entry_only_dispatches_to_the_electron_host(self) -> None:
         script = (ROOT / "scripts" / "build_control_center.sh").read_text(encoding="utf-8")
 
-        self.assertIn("build_control_center_web_host.sh", script)
+        self.assertIn("build_paw_os_electron_host.sh", script)
+        self.assertNotIn("build_control_center_web_host.sh", script)
         self.assertIn("build-release", script)
         self.assertIn("install-release", script)
         for forbidden in (
@@ -66,14 +67,17 @@ class ControlCenterCutoverTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, script)
 
-    def test_release_footprint_gate_requires_the_web_bundle(self) -> None:
+    def test_release_footprint_gate_requires_the_electron_bundle(self) -> None:
         script = (ROOT / "scripts" / "check_control_center_footprint.sh").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("rag-ime-control-web-build-marker.json", script)
-        self.assertIn("/WebKit.framework/", script)
-        self.assertIn("control-center-web", script)
+        self.assertIn("Electron Framework.framework", script)
+        self.assertIn('WEB_RESOURCES="$APP/Contents/Resources/app/dist"', script)
+        self.assertIn('marker.get("frontendTransport") != "http"', script)
+        self.assertIn('marker.get("browserHost") != "electron-webview"', script)
+        self.assertNotIn("/WebKit.framework/", script)
         self.assertNotIn("native-legacy", script)
         self.assertNotIn("RAG_IME_CONTROL_UI", script)
 
@@ -92,6 +96,8 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn('if [[ "$WEB_SUITE_VERIFIED" == "1" ]]', installer)
         self.assertIn("RAG_IME_SKIP_WEB_INSTALL=1", installer)
         self.assertIn("RAG_IME_SKIP_WEB_TESTS=1", installer)
+        self.assertIn("build_paw_os_electron_host.sh", installer)
+        self.assertNotIn("build_control_center_web_host.sh", installer)
         self.assertLess(
             installer.index("WEB_SUITE_VERIFIED=1"),
             installer.index("RAG_IME_SKIP_WEB_TESTS=1"),
@@ -193,6 +199,19 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertNotIn('if launchctl print "$DOMAIN/$LABEL"', desktop_installer)
         self.assertIn('launchctl kickstart "$DOMAIN/$LABEL"', desktop_installer)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', desktop_installer)
+
+    def test_electron_release_has_no_swift_fallback(self) -> None:
+        build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("install_swift_fallback", build)
+        self.assertNotIn("RagImeControlWebFallback", build)
+        self.assertNotIn("swiftFallback", build)
+        self.assertNotIn("build_control_center_web_host.sh", build)
+        self.assertIn('"browserHost": "electron-webview"', build)
+        self.assertIn('"browserTransport": "cdp"', build)
+        self.assertIn('"forbiddenTransportModulesExcluded": True', build)
 
     def test_database_maintenance_stop_and_reinstall_cover_voice_and_maintenance_jobs(self) -> None:
         stop = (ROOT / "scripts" / "stop_rag_ime_runtime.sh").read_text(encoding="utf-8")

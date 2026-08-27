@@ -295,13 +295,13 @@ fi
 # generation only after the supporting runtimes have been refreshed.
 if [[ "$WEB_SUITE_VERIFIED" == "1" ]]; then
   # Gateway just ran the full frontend suite for this installer invocation.
-  # The native transport still gets its own Vite build and dist validation,
+  # The Electron host still gets its own HTTP Vite build and dist validation,
   # but does not reinstall dependencies or rerun the same long test suite.
   RAG_IME_SKIP_WEB_INSTALL=1 \
   RAG_IME_SKIP_WEB_TESTS=1 \
-    "$ROOT/scripts/build_control_center_web_host.sh" install-release
+    "$ROOT/scripts/build_paw_os_electron_host.sh" install-release
 else
-  "$ROOT/scripts/build_control_center_web_host.sh" install-release
+  "$ROOT/scripts/build_paw_os_electron_host.sh" install-release
 fi
 
 audit_args=(

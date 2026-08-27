@@ -6,10 +6,10 @@ ACTION="${1:-build}"
 
 case "$ACTION" in
   build|build-release)
-    exec "$ROOT/scripts/build_control_center_web_host.sh" build-release
+    exec "$ROOT/scripts/build_paw_os_electron_host.sh" build-release
     ;;
   install|install-release)
-    exec "$ROOT/scripts/build_control_center_web_host.sh" install-release
+    exec "$ROOT/scripts/build_paw_os_electron_host.sh" install-release
     ;;
   install-stack)
     shift || true

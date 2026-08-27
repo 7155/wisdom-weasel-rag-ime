@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="${RAG_IME_CONTROL_APP:-$ROOT/build/RagImeControl.app}"
+APP="${RAG_IME_CONTROL_APP:-$ROOT/build/RagImeControlElectron.app}"
 BINARY="$APP/Contents/MacOS/RagImeControl"
 FOOTPRINT_LIMIT_MB="${RAG_IME_CONTROL_FOOTPRINT_LIMIT_MB:-250}"
 RSS_LIMIT_MB="${RAG_IME_CONTROL_RSS_LIMIT_MB:-350}"
@@ -24,10 +24,10 @@ trap cleanup EXIT
 
 [[ -x "$BINARY" ]] || "$ROOT/scripts/build_control_center.sh" >/dev/null
 
-WEB_RESOURCES="$APP/Contents/Resources/control-center-web"
+WEB_RESOURCES="$APP/Contents/Resources/app/dist"
 MARKER="$APP/Contents/Resources/rag-ime-control-web-build-marker.json"
-otool -L "$BINARY" | grep -q '/WebKit.framework/'
-! otool -L "$BINARY" | grep -Eq 'Electron|Tauri'
+[[ -d "$APP/Contents/Frameworks/Electron Framework.framework" ]]
+otool -L "$BINARY" | grep -q 'Electron Framework.framework'
 [[ -f "$WEB_RESOURCES/index.html" ]]
 [[ -f "$WEB_RESOURCES/manifest.webmanifest" ]]
 [[ -d "$WEB_RESOURCES/assets" ]]
@@ -36,7 +36,7 @@ otool -L "$BINARY" | grep -q '/WebKit.framework/'
 grep -q 'Content-Security-Policy' "$WEB_RESOURCES/index.html"
 ! grep -R -E -q 'unsafe-eval|new Function|require\("|eval\(' "$WEB_RESOURCES"
 "$ROOT/scripts/check_control_center_web_dist.sh" \
-  "$WEB_RESOURCES" native production >/dev/null
+  "$WEB_RESOURCES" http production >/dev/null
 python3 - "$MARKER" <<'PY'
 import json
 import sys
@@ -47,12 +47,18 @@ if marker.get("bundleId") != "com.rag-ime.control":
     raise SystemExit("web control bundle marker has the wrong bundle id")
 if marker.get("ui") != "control-center-web" or marker.get("channel") != "release":
     raise SystemExit("web control bundle marker is not a release build")
-if marker.get("frontendTransport") != "native":
-    raise SystemExit("web control bundle marker is not native-only")
+if marker.get("frontendTransport") != "http":
+    raise SystemExit("web control bundle marker is not the Electron HTTP frontend")
+if marker.get("browserHost") != "electron-webview":
+    raise SystemExit("web control bundle marker is not the Electron Browser host")
+if marker.get("browserControl") != "ego-browser" or marker.get("browserTransport") != "cdp":
+    raise SystemExit("web control bundle marker is not the Ego/CDP Browser authority")
+if "swiftFallback" in marker:
+    raise SystemExit("web control bundle marker must not advertise a Swift fallback")
 if marker.get("frontendBuildChannel") != "production":
     raise SystemExit("web control bundle marker is not a production frontend build")
 if marker.get("forbiddenTransportModulesExcluded") is not True:
-    raise SystemExit("web control bundle marker did not exclude mock/http transport modules")
+    raise SystemExit("web control bundle marker did not exclude native/mock transport modules")
 PY
 
 if [[ "${RAG_IME_CONTROL_SKIP_LIVE:-0}" == "1" ]]; then
