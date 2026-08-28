@@ -46,12 +46,12 @@ AUTHORITY_FILES = (
     "docs/project/DECISIONS.md",
     "docs/project/ARCHITECTURE.md",
     "docs/pawos/PAWOS_REQUIREMENTS.md",
-    "docs/pawos/PAWOS_FRONTEND_HANDOFF.md",
+    "control-center-web/docs/pawos/PAWOS_FRONTEND_HISTORY.md",
 )
 INTERFACE_FILES = (
-    "docs/handoffs/pawos/PAWOS_FUNCTION_INTERFACE_GUIDE.md",
-    "docs/handoffs/pawos/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md",
-    "docs/handoffs/pawos/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md",
+    "control-center-web/docs/handoffs/PAWOS_FUNCTION_INTERFACE_GUIDE.md",
+    "control-center-web/docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTIONS.md",
+    "control-center-web/docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md",
 )
 
 TUTTI_EXACT_PROMPT_FILES = (

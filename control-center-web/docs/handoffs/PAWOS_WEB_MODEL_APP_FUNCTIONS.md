@@ -1,4 +1,4 @@
-# PAWOS 下一轮网页模型：愿景、真实 App 功能与源码实现 Handoff
+# PAWOS 下一轮网页模型：愿景、真实 App 功能与源码实现
 
 ## User Requirement Ledger
 
@@ -281,7 +281,7 @@ PAWOS frontend + Electron/native host
 
 交给下一模型时按此顺序上传：
 
-1. `PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`
+1. `PAWOS_WEB_MODEL_APP_FUNCTIONS.md`
 2. `PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`
 3. `PAWOS_FRONTEND_MODEL_BUNDLE.md`
 

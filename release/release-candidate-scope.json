@@ -227,7 +227,7 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/PAWOS_FRONTEND_CONTINUATION_HANDOFF.md",
+      "path": "control-center-web/PAWOS_FRONTEND_CONTINUATION.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -262,7 +262,7 @@
       "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
     },
     {
-      "path": "control-center-web/docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md",
+      "path": "control-center-web/docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTIONS.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -283,7 +283,7 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md",
+      "path": "control-center-web/docs/pawos/PAWOS_FRONTEND_HISTORY.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",

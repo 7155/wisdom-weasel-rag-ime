@@ -11,9 +11,9 @@ that can only read GitHub still has the complete requirement set.
 | [PAWOS_SHOWCASE.md](PAWOS_SHOWCASE.md) | Current final-verification, Demo, capture, evidence-boundary, and closeout record. |
 | [PAWOS_TRACE_EVAL.md](PAWOS_TRACE_EVAL.md) | Common Trace authority, producer timing/privacy, retrieval evidence, deterministic and estimated Eval boundaries, periodic schedules, vertical fixtures, and UI acceptance limits. |
 | [PAWOS_ISLAND_SETTINGS_DESIGN.md](PAWOS_ISLAND_SETTINGS_DESIGN.md) | `UR-175` discussion draft: current owners, two island/settings directions, recommendation, non-goals, and open user decisions. |
-| [PAWOS_FRONTEND_HANDOFF.md](PAWOS_FRONTEND_HANDOFF.md) | Historical frontend rewrite receipts, Agent/Room `AUI-*`/`RUI-*`, open boundaries. |
+| [PAWOS_FRONTEND_HISTORY.md](PAWOS_FRONTEND_HISTORY.md) | Historical frontend rewrite receipts, Agent/Room `AUI-*`/`RUI-*`, open boundaries. |
 | [../../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](../../PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) | Current `PF-CM-*` ledger, eleven-App design spec, completion gate. |
-| [../../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](../../PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) | 2026-08-24 checkpoint: what landed on `main`, what remains. |
+| [../../PAWOS_FRONTEND_CONTINUATION.md](../../PAWOS_FRONTEND_CONTINUATION.md) | 2026-08-24 checkpoint: what landed on `main`, what remains. |
 | [../handoffs/](../handoffs/) | Function inventory, per-App function handoff, privacy-safe fixtures. |
 
 When the brief and this ledger appear to conflict, use the newest explicit user

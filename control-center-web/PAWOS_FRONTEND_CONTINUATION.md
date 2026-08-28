@@ -1,4 +1,4 @@
-# PAWOS Frontend Continuation Handoff
+# PAWOS Frontend Continuation
 
 **Date:** 2026-08-24  
 **Audience:** next GitHub-only cloud model on `main`  
@@ -50,7 +50,7 @@ Root `/docs/` is gitignored. A cloud model must read the tracked copies:
 2. `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` — complete `UR-001`–`UR-195` in thirteen volumes
 3. `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` — `PF-CM-001`–`023` and App specs
 4. this file — latest checkpoint
-5. `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` — earlier receipts
+5. `control-center-web/docs/pawos/PAWOS_FRONTEND_HISTORY.md` — earlier receipts
 6. `control-center-web/docs/handoffs/` — function map and privacy-safe fixtures
 7. `control-center-web/docs/references/pawos-conversation-baseline.html` — Agent conversation baseline HTML (craft reference, not the App)
 

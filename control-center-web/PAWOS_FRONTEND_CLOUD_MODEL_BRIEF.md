@@ -13,9 +13,9 @@ pack; verify the actual merge commit before treating them as the current baselin
 | --- | --- |
 | `control-center-web/CLOUD_MODEL.md` | GitHub-only start file; read first |
 | `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-195` in thirteen volumes, corrections, verbatim evidence |
-| `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` | Historical Agent/Room `AUI-*`/`RUI-*` receipts and open boundaries |
+| `control-center-web/docs/pawos/PAWOS_FRONTEND_HISTORY.md` | Historical Agent/Room `AUI-*`/`RUI-*` receipts and open boundaries |
 | `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` | This file: `PF-CM-*`, eleven-App spec, completion gate |
-| `control-center-web/PAWOS_FRONTEND_CONTINUATION_HANDOFF.md` | 2026-08-24 checkpoint of what landed and what remains |
+| `control-center-web/PAWOS_FRONTEND_CONTINUATION.md` | 2026-08-24 checkpoint of what landed and what remains |
 | `control-center-web/docs/handoffs/` | Function inventory, per-App function map, privacy-safe fixtures |
 | `control-center-web/docs/references/pawos-conversation-baseline.html` | Agent conversation craft/interaction baseline; not the App implementation |
 
@@ -52,7 +52,7 @@ the requirement ledger and evidence file retain the stable semantic mapping.
 Supporting inventories (not requirement authority, not install proof):
 
 - `control-center-web/docs/handoffs/PAWOS_FUNCTION_INTERFACE_GUIDE.md`
-- `control-center-web/docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`
+- `control-center-web/docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTIONS.md`
 - `control-center-web/docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`
 - `control-center-web/docs/handoffs/README_FOR_WEB_MODEL.md`
 

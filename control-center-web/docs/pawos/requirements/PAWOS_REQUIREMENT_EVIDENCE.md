@@ -679,7 +679,7 @@ Updated: 2026-08-28
 - **Document owner:** Project product direction
 - **Status:** accepted user requirements; not implementation or Runtime proof
 - **Revision:** `pawos-requirements.r8`
-- **Active execution handoff:** [PAWOS_FRONTEND_HANDOFF.md](../PAWOS_FRONTEND_HANDOFF.md)
+- **Historical execution record:** [PAWOS_FRONTEND_HISTORY.md](../PAWOS_FRONTEND_HISTORY.md)
 
 This is the canonical requirements record for the PAWOS product surface and
 self-hosting workflow. It captures accepted user requirements, later

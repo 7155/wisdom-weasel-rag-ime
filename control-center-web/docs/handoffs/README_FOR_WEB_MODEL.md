@@ -16,10 +16,10 @@ PAWOS 是一个明亮、轻透、年轻、精致、真正可日常使用的个�
 2. `docs/pawos/PAWOS_REQUIREMENTS.md`：需求总索引。按索引继续读取十三个 append-only 分卷（`UR-001`–`UR-195`）、
    `requirements/PAWOS_REQUIREMENT_EVIDENCE.md`、`PAWOS_PRODUCT_CONTRACT.md` 和 `PAWOS_REQUIREMENT_STATUS.md`；
    每份末尾都写明下一份。不要只读索引，也不信任旧 handoff 中硬编码的末尾 `UR-*` 数字。
-3. `docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`：11 个 App 的真实用户流程。
+3. `docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTIONS.md`：11 个 App 的真实用户流程。
 4. `docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`：生产采样与完整渲染场景。
 5. `docs/handoffs/PAWOS_FUNCTION_INTERFACE_GUIDE.md`：typed route 与前端能力地图；route 数量以当前生成结果为准。
-6. `docs/pawos/PAWOS_FRONTEND_HANDOFF.md`：已迁移内容、验证证据和仍未闭环边界。
+6. `docs/pawos/PAWOS_FRONTEND_HISTORY.md`：已迁移内容、验证证据和仍未闭环边界。
 7. `../../../PROJECT.md`、`../../../OUTCOMES.md`、`../../../CONTEXT.md`、`../../../DECISIONS.md`、
    `../../../ARCHITECTURE.md`：视觉、产品和权威边界。
 8. 再读并修改 `control-center-web/`；`rag_ime/` 是后端合同参考，不要在纯前端优化中重写它。
