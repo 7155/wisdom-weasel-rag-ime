@@ -7,6 +7,25 @@ description: "Supervise a Room as a lightweight composition of ordinary Partner 
 
 Keep the Room lightweight. Partners remain ordinary Sessions and use the same task Skills as any other Session.
 
+## Dispatch Roles
+
+- Split implementation by independently deliverable outcomes, not separate
+  frontend, backend, documentation, and testing lanes. Use `room_partner
+  delegate` or `delegate_batch` primarily to dispatch implementation WorkItems.
+- An implementation Partner delivers the assigned artifact and handoff; it does
+  not own the independent test verdict.
+- The Facilitator decides whether the requirements or risk justify a Reviewer.
+  If selected, dispatch the Reviewer only after the implementation WorkItems
+  are submitted and integrated, as a later dependent stage rather than in the
+  implementation batch.
+- The Reviewer is the tester. Test the integrated result against the current
+  user requirements and the actual code or real path, never only the
+  implementers' claims. Record the tested scope, commands, evidence, and finding
+  severity. Do not pass while any P0 finding remains open; `no P0 found` applies
+  only to the scope actually tested.
+- If no Reviewer is assigned, report that independent testing was not performed
+  instead of implying a pass.
+
 The Facilitator is accountable for the Room Goal and closure; every delegated
 WorkItem has one current responsible Partner and an explicit accountable owner.
 Every active Room participant is otherwise an equal peer. When one Partner needs another
