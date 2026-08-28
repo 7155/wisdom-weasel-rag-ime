@@ -236,6 +236,7 @@ PY
   # Prove the native Pi Package catalog and its resource projection before
   # activation. This is an ephemeral isolated canary; the report is retained
   # alongside the Session and Room receipts for the installed generation.
+  rm -f -- "$PI_PACKAGE_ACCEPTANCE_REPORT"
   "$PI_PYTHON" "$ROOT/scripts/smoke_pi_packages_staged_runtime.py" \
     --payload "$PI_INSTALLED_PAYLOAD" \
     --workspace-root "$ROOT" \
