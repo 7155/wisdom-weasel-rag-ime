@@ -87,22 +87,18 @@ export function roomPlanetWindowRequest(
 }
 
 /**
- * UR-177 协同模式合同：只有用户显式进入协同模式时，Runtime 当前仍在
- * 执行的 Partner 才以行星 Session 窗展开。Room 名册是身份目录，不是执行
- * 状态；因此 idle、已结束或仅存在于历史名册的成员不能被自动打开。请求
- * 保持后台，主 Room 仍是返回面；稳定 participant target 让 WindowLayer
- * 唤起现有窗口而非复制。
+ * UR-184 协同模式合同：只有用户显式进入协同模式时，Room 名册中的每个
+ * active Partner 才以行星 Session 窗展开。Runtime 当前是否执行只负责窗口
+ * 的流光和状态，不能决定一颗仍在名册中的行星是否可见。请求保持后台，
+ * 主 Room 仍是返回面；稳定 participant target 让 WindowLayer 唤起现有窗口
+ * 而非复制。
  */
-export function roomCollaborationSatelliteRequests(
+export function roomCollaborationPlanetRequests(
   room: RoomSummary,
-  runtimeActiveParticipantIds: ReadonlySet<string>,
 ): PawOsWindowRequest[] {
   if (room.status !== 'active') return [];
   return room.participants
-    .filter((participant) => (
-      participant.status === 'active'
-      && runtimeActiveParticipantIds.has(participant.id)
-    ))
+    .filter((participant) => participant.status === 'active')
     .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
     .map((participant) => roomPlanetWindowRequest(participant, room.id, true));
 }

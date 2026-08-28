@@ -229,6 +229,7 @@ from .voice_control import (
 
 
 _MAX_MANUAL_CURATION_PREPARE_BATCHES = 8
+_BROWSER_TRACE_RESOLUTION_LIMIT = 200
 
 
 def _host_is_loopback(host: str) -> bool:
@@ -5421,11 +5422,42 @@ class DebugImeService:
         if trace_id.startswith(browser_prefix):
             command_id = trace_id.removeprefix(browser_prefix)
             trace_reader = getattr(self.browser_control, "trace", None)
-            if not callable(trace_reader):
+            if callable(trace_reader):
+                try:
+                    return envelope_from_browser_trace(trace_reader(command_id))
+                except (BrowserControlError, KeyError, TraceContractError):
+                    pass
+
+            # The release Browser boundary exposes the bounded list endpoint
+            # but may not have the exact-record reader yet. Keep that boundary
+            # read-only and correlate only the requested command id; never
+            # project the first/most-recent browser command as this trace.
+            traces_reader = getattr(self.browser_control, "traces", None)
+            if not callable(traces_reader):
                 return None
             try:
-                return envelope_from_browser_trace(trace_reader(command_id))
-            except (BrowserControlError, KeyError, TraceContractError):
+                traces_payload = traces_reader(limit=_BROWSER_TRACE_RESOLUTION_LIMIT)
+            except (BrowserControlError, TypeError, ValueError):
+                return None
+            if not isinstance(traces_payload, Mapping):
+                return None
+            raw_items = traces_payload.get("items")
+            if not isinstance(raw_items, list):
+                return None
+            matching_trace = next(
+                (
+                    item
+                    for item in raw_items
+                    if isinstance(item, Mapping)
+                    and _string(item.get("commandId")) == command_id
+                ),
+                None,
+            )
+            if matching_trace is None:
+                return None
+            try:
+                return envelope_from_browser_trace(matching_trace)
+            except (KeyError, TraceContractError):
                 return None
 
         prediction_prefix = "trace:prediction:"

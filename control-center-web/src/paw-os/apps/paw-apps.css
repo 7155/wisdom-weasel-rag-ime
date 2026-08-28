@@ -380,10 +380,10 @@
 .paw-room-workspace__error { width: min(900px, 100%); display: flex; align-items: center; gap: 7px; margin: 0 auto 6px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--paw-danger) 30%, var(--paw-line)); border-radius: 9px; color: var(--paw-danger); background: color-mix(in srgb, var(--paw-danger) 7%, var(--paw-panel)); font-size: 12px; }
 .paw-room-workspace__error span { min-width: 0; flex: 1; }
 .paw-room-workspace__error button { color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
-.paw-room-workspace__satellite-error { width: min(900px, 100%); display: flex; align-items: flex-start; gap: 7px; margin: 0 auto 6px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--paw-warning) 34%, var(--paw-line)); border-radius: 9px; color: color-mix(in srgb, var(--paw-warning) 72%, var(--paw-ink)); background: color-mix(in srgb, var(--paw-warning) 8%, var(--paw-panel)); font-size: 12px; }
-.paw-room-workspace__satellite-error > div { min-width: 0; display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 10px; }
-.paw-room-workspace__satellite-error [aria-label='未打开的行星'] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-.paw-room-workspace__satellite-error button { padding: 2px 6px; border: 1px solid currentColor; border-radius: 999px; color: inherit; cursor: pointer; white-space: nowrap; }
+.paw-room-workspace__planet-open-error { width: min(900px, 100%); display: flex; align-items: flex-start; gap: 7px; margin: 0 auto 6px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--paw-warning) 34%, var(--paw-line)); border-radius: 9px; color: color-mix(in srgb, var(--paw-warning) 72%, var(--paw-ink)); background: color-mix(in srgb, var(--paw-warning) 8%, var(--paw-panel)); font-size: 12px; }
+.paw-room-workspace__planet-open-error > div { min-width: 0; display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 10px; }
+.paw-room-workspace__planet-open-error [aria-label='未打开的行星'] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.paw-room-workspace__planet-open-error button { padding: 2px 6px; border: 1px solid currentColor; border-radius: 999px; color: inherit; cursor: pointer; white-space: nowrap; }
 
 .paw-room-governance { height: 100%; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 /* Sticky over the scrolling governance list: an almost-opaque bar with its own

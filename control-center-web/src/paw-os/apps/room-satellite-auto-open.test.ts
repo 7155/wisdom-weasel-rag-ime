@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createRoomProjection } from '@/contracts/room-reducer';
 import type { RoomParticipant, RoomSummary } from '@/features/rooms/room-types';
 import {
-  roomCollaborationSatelliteRequests,
+  roomCollaborationPlanetRequests,
   roomPlanetWindowRequest,
   roomProjectionRuntimeActiveParticipantIds,
   roomRuntimeActiveParticipantIds,
@@ -36,7 +36,7 @@ describe('roomPlanetWindowRequest (planet 窗口统一铭牌)', () => {
   });
 });
 
-describe('room collaboration mode satellite expansion (UR-177)', () => {
+describe('room collaboration mode planet expansion (UR-184)', () => {
   it('recovers Runtime-active ids from execution lanes when snapshot participant ids lag', () => {
     const ids = roomRuntimeActiveParticipantIds({
       status: 'running',
@@ -53,19 +53,16 @@ describe('room collaboration mode satellite expansion (UR-177)', () => {
     expect([...ids]).toEqual(['participant-b']);
   });
 
-  it('opens only Runtime-active Room participants as background planet Sessions', () => {
+  it('opens every active roster planet even when Runtime activity is empty', () => {
     const room = roomWith([
       participant('participant-a', 0),
       participant('participant-b', 1),
       participant('participant-idle', 2),
     ]);
 
-    const requests = roomCollaborationSatelliteRequests(
-      room,
-      new Set(['participant-a', 'participant-b']),
-    );
+    const requests = roomCollaborationPlanetRequests(room);
 
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     for (const request of requests) {
       expect(request.appId).toBe('agent');
       expect(request.background).toBe(true);
@@ -79,7 +76,7 @@ describe('room collaboration mode satellite expansion (UR-177)', () => {
       subtitle: '实现与验证',
     });
     expect(requests[1]?.target).toMatchObject({ id: 'participant-b', title: 'Mars' });
-    expect(requests.some((request) => request.target.id === 'participant-idle')).toBe(false);
+    expect(requests[2]?.target).toMatchObject({ id: 'participant-idle', title: 'Venus' });
   });
 
   it('unions disjoint partners from every running public root but excludes terminal and detached lanes', () => {
@@ -119,13 +116,10 @@ describe('room collaboration mode satellite expansion (UR-177)', () => {
     ]);
   });
 
-  it('opens every Runtime-active partner beyond five and keeps real ordinal order', () => {
+  it('opens every active partner beyond five and keeps real ordinal order', () => {
     const room = roomWith(Array.from({ length: 7 }, (_, index) => participant(`participant-${index}`, 6 - index)));
 
-    const requests = roomCollaborationSatelliteRequests(
-      room,
-      new Set(room.participants.map((item) => item.id)),
-    );
+    const requests = roomCollaborationPlanetRequests(room);
 
     expect(requests.map((request) => request.target.id)).toEqual([
       'participant-6', 'participant-5', 'participant-4', 'participant-3',
@@ -133,21 +127,16 @@ describe('room collaboration mode satellite expansion (UR-177)', () => {
     ]);
   });
 
-  it('opens nothing for archived Rooms and never treats a removed member as Runtime-active', () => {
+  it('opens nothing for archived Rooms and never opens a removed member', () => {
     const inactive = roomWith([
       participant('participant-a', 0),
       { ...participant('participant-b', 1), status: 'removed' },
     ]);
-    expect(roomCollaborationSatelliteRequests(
-      inactive,
-      new Set(['participant-a', 'participant-b']),
-    ).map((request) => request.target.id))
+    expect(roomCollaborationPlanetRequests(inactive).map((request) => request.target.id))
       .toEqual(['participant-a']);
 
-    expect(roomCollaborationSatelliteRequests(inactive, new Set())).toEqual([]);
-
     const archived = { ...roomWith([participant('participant-a', 0)]), status: 'archived' };
-    expect(roomCollaborationSatelliteRequests(archived, new Set(['participant-a']))).toEqual([]);
+    expect(roomCollaborationPlanetRequests(archived)).toEqual([]);
   });
 });
 

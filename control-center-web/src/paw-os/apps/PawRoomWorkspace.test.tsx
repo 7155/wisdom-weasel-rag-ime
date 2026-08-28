@@ -25,7 +25,7 @@ vi.mock('./PawStarfield', async (importOriginal) => {
 afterEach(cleanup);
 
 describe('PAWOS Room collaboration tools', () => {
-  it('hydrates a satellite mention into the one shared Room composer', async () => {
+  it('hydrates a planet mention into the one shared Room composer', async () => {
     renderRoom(900, vi.fn(), undefined, undefined, '@Mars ');
 
     expect(await screen.findByRole('textbox', { name: '协作消息' })).toHaveValue('@Mars ');
@@ -61,11 +61,17 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
     expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
-    /* 已完成的预览回合没有 Runtime-active participant，协同模式不能
-       因为仍在名册中的成员而偷偷打开行星窗口。 */
-    expect(openWindow).not.toHaveBeenCalled();
+    /* 协同模式展开 Room 名册里的全部 active 行星；Runtime activity
+       只负责窗口流光和状态，不能让空闲行星消失。 */
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(3));
+    expect(openWindow.mock.calls.map(([request]) => request.target.id)).toEqual([
+      'participant-present',
+      'participant-firstlight',
+      'participant-future',
+    ]);
 
     /* PF-CM-013/PF-CM-020：态势弹出是真实可达的协作窗口入口，指向 focus 面板。 */
+    openWindow.mockClear();
     await user.click(within(tools).getByRole('button', { name: '在协作窗口中打开协作态势' }));
     expect(openWindow).toHaveBeenLastCalledWith(expect.objectContaining({
       appId: 'agent',
@@ -86,15 +92,15 @@ describe('PAWOS Room collaboration tools', () => {
     expect(starfieldChunk.evaluated).toBe(false);
   });
 
-  it('opens only Runtime-active Room planets when collaboration mode is requested', async () => {
+  it('opens every active Room planet when collaboration mode is requested', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
     /* A distinct Room id keeps this running snapshot independent from the
        terminal preview Room already replayed by the preceding test. */
     const completed = previewRoomSnapshot('room-running-collaboration');
     /* Stop before either dispatched Partner reaches a terminal event. The
-       Room roster also contains a third reviewer, but only the two
-       participants present in the live Runtime projection are opened. */
+       Room roster also contains a third reviewer; all three active planets
+       remain visible even though only two are currently executing. */
     const events = completed.events.slice(0, 6);
     const running = {
       ...completed,
@@ -117,7 +123,7 @@ describe('PAWOS Room collaboration tools', () => {
 
     await user.click(screen.getByRole('button', { name: '协同模式' }));
 
-    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(3));
     expect(openWindow.mock.calls.map(([request]) => request)).toEqual([
       expect.objectContaining({
         background: true,
@@ -127,10 +133,11 @@ describe('PAWOS Room collaboration tools', () => {
         background: true,
         target: expect.objectContaining({ id: 'participant-firstlight', title: 'Mars' }),
       }),
+      expect.objectContaining({
+        background: true,
+        target: expect.objectContaining({ id: 'participant-future', title: 'Venus' }),
+      }),
     ]);
-    expect(openWindow.mock.calls.some(([request]) => (
-      request.target.id === 'participant-future'
-    ))).toBe(false);
   });
 
   it('resumes a blocked WorkItem through the active Root and keeps failure retryable', async () => {
@@ -177,7 +184,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.queryByText('恢复失败')).not.toBeInTheDocument();
   });
 
-  it('keeps opening later planets when one satellite fails and retries that planet in place', async () => {
+  it('keeps opening later planets when one planet fails and retries that planet in place', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn()
       .mockImplementationOnce(() => { throw new Error('window unavailable'); })
@@ -201,7 +208,7 @@ describe('PAWOS Room collaboration tools', () => {
 
     await user.click(screen.getByRole('button', { name: '协同模式' }));
 
-    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(3));
     expect(openWindow.mock.calls[0]?.[0]).toMatchObject({
       background: true,
       target: { id: 'participant-present', title: 'Earth' },
@@ -210,18 +217,22 @@ describe('PAWOS Room collaboration tools', () => {
       background: true,
       target: { id: 'participant-firstlight', title: 'Mars' },
     });
+    expect(openWindow.mock.calls[2]?.[0]).toMatchObject({
+      background: true,
+      target: { id: 'participant-future', title: 'Venus' },
+    });
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('1 颗运行中行星未能打开');
+    expect(alert).toHaveTextContent('1 颗活跃行星未能打开');
     expect(within(alert).getByRole('button', { name: '重试打开 Earth' })).toBeInTheDocument();
 
     await user.click(within(alert).getByRole('button', { name: '重试打开 Earth' }));
 
-    expect(openWindow).toHaveBeenCalledTimes(3);
-    expect(openWindow.mock.calls[2]?.[0]).toMatchObject({
+    expect(openWindow).toHaveBeenCalledTimes(4);
+    expect(openWindow.mock.calls[3]?.[0]).toMatchObject({
       background: true,
       target: { id: 'participant-present', title: 'Earth' },
     });
-    expect(screen.queryByText('1 颗运行中行星未能打开')).not.toBeInTheDocument();
+    expect(screen.queryByText('1 颗活跃行星未能打开')).not.toBeInTheDocument();
   });
 
   it('turns the whole Room into one clickable solar system in 星空 mode', async () => {

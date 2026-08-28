@@ -57,9 +57,8 @@ import type { RoomRoundTaskRow } from './room-round-task-sheet';
 import { LazyPawRoomStarfield } from './PawStarfieldLazy';
 import { buildRoomFocusProjection, roomFocusHasCoordinator, roomFocusOriginLabel, type RoomFocusProjection } from './room-focus-projection';
 import {
-  roomCollaborationSatelliteRequests,
+  roomCollaborationPlanetRequests,
   roomPlanetWindowRequest,
-  roomProjectionRuntimeActiveParticipantIds,
 } from './room-satellite-auto-open';
 /* Shared conversation modules (tool result panels, diff reader) style the
  * Room's tool receipts too; the Room window must not depend on a Session
@@ -190,14 +189,6 @@ export function PawRoomWorkspace({
   const pendingQuestion = projection?.pendingUserQuestion;
   const pendingGroupedInput = latestPendingGroupedRoomInput(projection);
   const activeTurn = projection ? selectActivePublicRoomTurn(projection) : undefined;
-  const runtimeActiveParticipantIds = useMemo(
-    () => roomProjectionRuntimeActiveParticipantIds(projection),
-    [projection],
-  );
-  const runtimeActiveParticipantSignature = useMemo(
-    () => [...runtimeActiveParticipantIds].sort().join('\u0000'),
-    [runtimeActiveParticipantIds],
-  );
   const collaborationParticipantSignature = useMemo(() => record?.participants
     .map((participant) => [
       participant.id,
@@ -209,8 +200,8 @@ export function PawRoomWorkspace({
     .sort()
     .join('\u0000') ?? '', [record?.participants]);
   const collaborationParticipantRequests = useMemo(
-    () => record ? roomCollaborationSatelliteRequests(record, runtimeActiveParticipantIds) : [],
-    [collaborationParticipantSignature, record, runtimeActiveParticipantIds, runtimeActiveParticipantSignature],
+    () => record ? roomCollaborationPlanetRequests(record) : [],
+    [collaborationParticipantSignature, record],
   );
   const collaborationParticipantIds = useRef(new Map<string, Set<string>>());
   const collaborationSyncKeyRef = useRef('');
@@ -525,7 +516,7 @@ export function PawRoomWorkspace({
     }
   }, [activeRootActorId, onRoomUpdated, record, retrySnapshot, transport]);
   /* PF-CM-013：协作态势可以弹出成一扇独立观察窗，主 Room 留给公开对话。 */
-  const openFocusSatellite = useCallback(() => {
+  const openFocusWindow = useCallback(() => {
     if (!record) return;
     desktop?.openWindow({
       appId: 'agent',
@@ -548,7 +539,7 @@ export function PawRoomWorkspace({
     desktop.setCollaborationFocusGroup?.(`room:${record.id}`);
     setCollaborationOpenFailures(new Set());
   }, [desktop, record]);
-  const retryCollaborationSatellite = useCallback((participantId: string) => {
+  const retryCollaborationPlanet = useCallback((participantId: string) => {
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!desktop || !participant) return;
     try {
@@ -578,7 +569,7 @@ export function PawRoomWorkspace({
     /* Room snapshots are intentionally frequent. Reconcile the desktop only
        when the roster meaning changes; otherwise every progress event would
        reopen/focus all planet windows and make the canvas feel random. */
-    const syncKey = `${record.id}:${collaborationParticipantSignature}:${runtimeActiveParticipantSignature}`;
+    const syncKey = `${record.id}:${collaborationParticipantSignature}`;
     if (syncKey === collaborationSyncKeyRef.current) return;
     collaborationSyncKeyRef.current = syncKey;
     const desired = new Set(collaborationParticipantRequests.map((request) => request.target.id));
@@ -602,7 +593,6 @@ export function PawRoomWorkspace({
     desktop,
     panel,
     record,
-    runtimeActiveParticipantSignature,
   ]);
   useEffect(() => {
     setCollaborationOpenFailures((current) => {
@@ -724,15 +714,15 @@ export function PawRoomWorkspace({
           </div>}
 
           <div className="paw-room-workspace__composer">
-              {collaborationOpenFailures.size ? <div className="paw-room-workspace__satellite-error" role="alert">
+              {collaborationOpenFailures.size ? <div className="paw-room-workspace__planet-open-error" role="alert">
                 <CircleAlert size={14} />
                 <div>
-                  <span>{collaborationOpenFailures.size} 颗运行中行星未能打开</span>
+                  <span>{collaborationOpenFailures.size} 颗活跃行星未能打开</span>
                   <div aria-label="未打开的行星">
                     {[...collaborationOpenFailures].map((participantId) => <button
                       aria-label={`重试打开 ${participantAliases[participantId] ?? participantId}`}
                       key={participantId}
-                      onClick={() => retryCollaborationSatellite(participantId)}
+                      onClick={() => retryCollaborationPlanet(participantId)}
                       type="button"
                     >{participantAliases[participantId] ?? participantId} · 重试</button>)}
                   </div>
@@ -769,7 +759,7 @@ export function PawRoomWorkspace({
           onError={setError}
           onOpenParticipant={openParticipantById}
           onPanelChange={setPanel}
-          {...(desktop ? { onPopout: openFocusSatellite } : {})}
+          {...(desktop ? { onPopout: openFocusWindow } : {})}
           onRefresh={async () => { retrySnapshot(); }}
           onRoomUpdated={onRoomUpdated}
           panel={panel}

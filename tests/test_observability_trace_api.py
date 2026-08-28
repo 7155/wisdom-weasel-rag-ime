@@ -83,6 +83,44 @@ class ObservabilityTraceServiceTests(unittest.TestCase):
 
         self.assertIsNone(resolved)
 
+    def test_browser_trace_resolver_falls_back_to_bounded_release_trace_list(self) -> None:
+        requested = {
+            "commandId": "bcmd_legacy_release",
+            "deviceId": "chrome-release",
+            "sessionId": "session-browser",
+            "action": "navigate",
+            "status": "failed",
+            "createdAtMs": 100,
+            "completedAtMs": 140,
+            "durationMs": 40,
+            "failureReason": "navigation_failed",
+        }
+        calls: list[int] = []
+
+        class ReleaseBrowser:
+            def traces(self, *, limit: int) -> dict[str, object]:
+                calls.append(limit)
+                return {
+                    "schemaVersion": "rag-ime.browser-traces.v1",
+                    "ok": True,
+                    "items": [
+                        {**requested, "commandId": "bcmd_other"},
+                        requested,
+                    ],
+                }
+
+        service = DebugImeService.__new__(DebugImeService)
+        service.browser_control = ReleaseBrowser()
+
+        resolved = service._resolve_external_common_trace(
+            "trace:browser:command:bcmd_legacy_release"
+        )
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.to_dict()["traceId"], "trace:browser:command:bcmd_legacy_release")  # type: ignore[union-attr]
+        self.assertEqual(resolved.to_dict()["sourceKind"], "browser_control")  # type: ignore[union-attr]
+        self.assertEqual(calls, [200])
+
     def test_surface_generation_callback_reaches_the_common_trace_api(self) -> None:
         class Runtime:
             def complete_once(self, **_kwargs):

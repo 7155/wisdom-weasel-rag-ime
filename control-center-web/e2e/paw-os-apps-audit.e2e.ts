@@ -27,7 +27,7 @@ test.describe('PAWOS App interface audit (ops)', () => {
     // Without the preview transport every request hits a local port nothing is
     // listening on, so the audit would grade eleven read-failure states instead
     // of the product.
-    await page.goto('/?controlTransport=mock#/project-field');
+    await page.goto('/?frontend=paw-os&controlTransport=mock#/project-field');
     await expect(page.locator('.paw-desktop-root')).toBeVisible({ timeout: 30_000 });
 
     const evidence: AppAuditEvidence[] = [];
