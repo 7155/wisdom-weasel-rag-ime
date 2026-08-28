@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import hmac
+import inspect
 import ipaddress
 import json
 import mimetypes
@@ -590,9 +591,14 @@ class DebugImeService:
                 else Path(__file__).resolve().parents[1]
             ),
         )
+        browser_control_kwargs: dict[str, object] = {}
+        if "trace_observer" in inspect.signature(BrowserControlService).parameters:
+            browser_control_kwargs["trace_observer"] = (
+                self.agent.observations.enqueue_browser_record
+            )
         self.browser_control = BrowserControlService(
             config.db_path,
-            trace_observer=self.agent.observations.enqueue_browser_record,
+            **browser_control_kwargs,
         )
         self.agent.bind_external_trace_resolver(self._resolve_external_common_trace)
         self.system_terminal = SystemTerminalService(
@@ -5414,8 +5420,11 @@ class DebugImeService:
         browser_prefix = "trace:browser:command:"
         if trace_id.startswith(browser_prefix):
             command_id = trace_id.removeprefix(browser_prefix)
+            trace_reader = getattr(self.browser_control, "trace", None)
+            if not callable(trace_reader):
+                return None
             try:
-                return envelope_from_browser_trace(self.browser_control.trace(command_id))
+                return envelope_from_browser_trace(trace_reader(command_id))
             except (BrowserControlError, KeyError, TraceContractError):
                 return None
 

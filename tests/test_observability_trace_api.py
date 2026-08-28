@@ -15,7 +15,7 @@ from rag_ime.agent_service import AgentService
 from rag_ime.agent_surface_runtime import AgentSurfaceRuntime
 from rag_ime.contracts.json_schema import load_contract, validate_contract
 from rag_ime.control_api import ControlAccessContext, ControlPathId, ControlScope, default_route_policy
-from rag_ime.debug_server import DebugRequestHandler
+from rag_ime.debug_server import DebugImeService, DebugRequestHandler
 from rag_ime.deepseek_completion import CompletionCandidateDelta
 from rag_ime.observability import ObservationHub
 from rag_ime.text_utils import stable_text_hash
@@ -73,6 +73,16 @@ def _invoke_get(service: object, path: str) -> tuple[object, dict[str, object]]:
 
 
 class ObservabilityTraceServiceTests(unittest.TestCase):
+    def test_browser_trace_resolver_tolerates_a_release_browser_without_exact_reader(self) -> None:
+        service = DebugImeService.__new__(DebugImeService)
+        service.browser_control = SimpleNamespace()
+
+        resolved = service._resolve_external_common_trace(
+            "trace:browser:command:bcmd_legacy_release"
+        )
+
+        self.assertIsNone(resolved)
+
     def test_surface_generation_callback_reaches_the_common_trace_api(self) -> None:
         class Runtime:
             def complete_once(self, **_kwargs):
