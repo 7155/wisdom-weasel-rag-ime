@@ -722,6 +722,33 @@ def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ..
     return tuple(copied)
 
 
+def _copy_bundled_pi_packages(source_root: Path, destination: Path) -> None:
+    """Keep Pi's built-in package catalog adjacent to the bundled Host.
+
+    ``bundled-package-catalog.ts`` resolves ``../pi-packages`` relative to the
+    Runtime Host entrypoint.  A staged or installed payload therefore needs
+    the tracked catalog tree at the payload root, not in App Support from an
+    older installation.
+    """
+
+    catalog = source_root / "catalog.json"
+    if source_root.is_symlink() or not source_root.is_dir():
+        raise ManagedPiRuntimeError("bundled Pi Package source is missing")
+    if catalog.is_symlink() or not catalog.is_file():
+        raise ManagedPiRuntimeError("bundled Pi Package catalog is missing")
+    for item in source_root.rglob("*"):
+        if item.is_symlink():
+            raise ManagedPiRuntimeError(
+                f"bundled Pi Package source contains a symlink: {item}"
+            )
+    if destination.exists():
+        raise ManagedPiRuntimeError(
+            f"bundled Pi Package destination already exists: {destination}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_root, destination)
+
+
 def _runtime_host_banner(
     skills_root: Path,
     collision_policy: object | None = None,
@@ -981,6 +1008,10 @@ def main(argv: list[str] | None = None) -> int:
             bin_dir = staging / "bin"
             runtime_dir.mkdir(mode=0o700)
             bin_dir.mkdir(mode=0o700)
+            _copy_bundled_pi_packages(
+                package_root / "pi-packages",
+                staging / "pi-packages",
+            )
             _copy_product_skills(product_skills, runtime_dir / "skills")
             (runtime_dir / "skill-routing-cards.json").write_bytes(
                 routing_catalog_bytes

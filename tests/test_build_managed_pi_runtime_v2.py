@@ -21,6 +21,7 @@ from scripts.build_managed_pi_runtime_v2 import (
     REQUIRED_RUNTIME_METHODS,
     SESSION_RUNTIME_CONTRACT,
     _SESSION_RUNTIME_SOURCE_KEYS,
+    _copy_bundled_pi_packages,
     _copy_product_skills,
     _compact_card_length,
     _default_pi_worktree,
@@ -316,8 +317,8 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('"productCommit": product_commit', script)
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
         self.assertIn("_verified_session_runtime_contract", script)
-        self.assertNotIn("_copy_bundled_pi_packages", script)
-        self.assertNotIn('package_root / "pi-packages"', script)
+        self.assertIn("_copy_bundled_pi_packages", script)
+        self.assertIn('package_root / "pi-packages"', script)
         self.assertIn('bundled_pi_cli = runtime_dir / "pi-cli.mjs"', script)
         self.assertIn('packages" / "coding-agent" / "src" / "cli.ts"', script)
         self.assertIn('bundled_pi_theme_dir = runtime_dir / "dist" / "modes" / "interactive" / "theme"', script)
@@ -327,6 +328,32 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         )
         for method in REQUIRED_RUNTIME_METHODS:
             self.assertIn(f'"{method}"', contract)
+
+    def test_bundled_pi_packages_are_copied_next_to_the_runtime_host(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-pi-packages-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            package = source / "example"
+            package.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                '{"schemaVersion":1,"packages":[]}',
+                encoding="utf-8",
+            )
+            (package / "package.json").write_text(
+                '{"name":"@paw/example","version":"1.0.0"}',
+                encoding="utf-8",
+            )
+            (package / "index.ts").write_text("export {};\n", encoding="utf-8")
+            destination = root / "payload" / "pi-packages"
+
+            _copy_bundled_pi_packages(source, destination)
+
+            self.assertEqual(
+                (destination / "catalog.json").read_text(encoding="utf-8"),
+                '{"schemaVersion":1,"packages":[]}',
+            )
+            self.assertTrue((destination / "example" / "package.json").is_file())
+            self.assertTrue((destination / "example" / "index.ts").is_file())
 
     def test_staged_smoke_uses_session_lifecycle_contract(self) -> None:
         script = (ROOT / "scripts" / "smoke_pi_session_staged_runtime.py").read_text(
