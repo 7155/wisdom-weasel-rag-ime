@@ -172,7 +172,7 @@ rm -rf "$EXTENSION_DEST"
 ditto "$EXTENSION_SOURCE" "$EXTENSION_DEST"
 echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
 
-required=(--require control --require sidecar --require squirrel)
+required=(--require control --require sidecar)
 
 if [[ "$INCLUDE_PI" == "auto" ]]; then
   if [[ -n "$PI_WORKTREE" ]] \
@@ -298,6 +298,7 @@ fi
 
 if [[ "$INCLUDE_SQUIRREL" == "1" ]]; then
   run_with_stack_squirrel_workspace "$ROOT/scripts/build_patched_squirrel.sh" install
+  required+=(--require squirrel)
 fi
 
 # Install the user-visible app last so its marker becomes the canonical product

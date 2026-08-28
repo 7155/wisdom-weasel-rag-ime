@@ -146,6 +146,15 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("install_voice_input_launch_agent.sh", installer)
         self.assertIn("check_installed_product_components.py", installer)
         self.assertIn("--require-current", installer)
+        self.assertIn(
+            "required=(--require control --require sidecar)",
+            installer,
+        )
+        self.assertNotIn(
+            "required=(--require control --require sidecar --require squirrel)",
+            installer,
+        )
+        self.assertIn("required+=(--require squirrel)", installer)
         self.assertIn("prepare_stack_squirrel_workspace()", installer)
         self.assertIn(
             'mktemp -d "${TMPDIR:-/tmp}/rag-ime-squirrel-install-stack.XXXXXX"',
