@@ -65,13 +65,15 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         ) as temporary:
             root = Path(temporary)
             relative_sources = {
-                "protocol": Path("packages/rag-ime-runtime-host/src/protocol.ts"),
-                "runtimeHost": Path("packages/rag-ime-runtime-host/src/runtime-host.ts"),
-                "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
-                "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
-                "toolResults": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
-                "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
-                "pluginManager": Path("packages/rag-ime-runtime-host/src/plugin-manager.ts"),
+                "protocol": Path("integrations/rag-ime-runtime-host/src/protocol.ts"),
+                "runtimeHost": Path("integrations/rag-ime-runtime-host/src/runtime-host.ts"),
+                "contextInspection": Path("integrations/rag-ime-runtime-host/src/debug-context.ts"),
+                "toolBridge": Path("integrations/rag-ime-runtime-host/src/tool-bridge.ts"),
+                "toolResults": Path("integrations/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
+                "session": Path("integrations/rag-ime-runtime-host/src/pi-session.ts"),
+                "pluginManager": Path("integrations/rag-ime-runtime-host/src/plugin-manager.ts"),
+                "packageCatalog": Path("integrations/rag-ime-runtime-host/src/bundled-package-catalog.ts"),
+                "packageManager": Path("integrations/rag-ime-runtime-host/src/native-package-manager.ts"),
             }
             self.assertEqual(
                 set(relative_sources),
@@ -180,21 +182,77 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("session.await_settled", contract["requiredMethods"])
         self.assertIn("plugins.create", contract["requiredMethods"])
         self.assertIn("plugins.validate", contract["requiredMethods"])
-        self.assertNotIn("session.command.invoke", serialized)
-        self.assertNotIn("plugins.catalog", serialized)
-        self.assertNotIn("plugins.package.prepare", serialized)
-        self.assertNotIn("plugins.uninstall", serialized)
+        self.assertIn("session.command.invoke", serialized)
+        self.assertIn("plugins.catalog", serialized)
+        self.assertIn("plugins.package.prepare", serialized)
+        self.assertIn("plugins.uninstall", serialized)
         self.assertEqual(
             contract["handlerSources"],
             {
-                "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
-                "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
-                "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
-                "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
-                "toolResults": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
-                "session": "packages/rag-ime-runtime-host/src/pi-session.ts",
-                "pluginManager": "packages/rag-ime-runtime-host/src/plugin-manager.ts",
+                "protocol": "integrations/rag-ime-runtime-host/src/protocol.ts",
+                "runtimeHost": "integrations/rag-ime-runtime-host/src/runtime-host.ts",
+                "contextInspection": "integrations/rag-ime-runtime-host/src/debug-context.ts",
+                "toolBridge": "integrations/rag-ime-runtime-host/src/tool-bridge.ts",
+                "toolResults": "integrations/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
+                "session": "integrations/rag-ime-runtime-host/src/pi-session.ts",
+                "pluginManager": "integrations/rag-ime-runtime-host/src/plugin-manager.ts",
+                "packageCatalog": "integrations/rag-ime-runtime-host/src/bundled-package-catalog.ts",
+                "packageManager": "integrations/rag-ime-runtime-host/src/native-package-manager.ts",
             },
+        )
+
+    def test_public_pi_pin_matches_reviewed_runtime_protocol_order(self) -> None:
+        self.assertEqual(
+            list(REQUIRED_RUNTIME_METHODS),
+            [
+                "hello",
+                "health",
+                "models.list",
+                "completion.once",
+                "completion.cancel",
+                "tools.list",
+                "tools.sync",
+                "session.open",
+                "session.control_state",
+                "session.settlement.get",
+                "session.await_settled",
+                "session.snapshot",
+                "session.debug.context",
+                "session.commands",
+                "session.command.invoke",
+                "session.fork.candidates",
+                "session.fork",
+                "session.rewind",
+                "session.prompt",
+                "session.steer",
+                "session.follow_up",
+                "session.abort",
+                "session.compact",
+                "session.model.set",
+                "session.thinking.set",
+                "session.close",
+                "room.dispatch",
+                "room.cancel",
+                "approval.resolve",
+                "review.resolve",
+                "ui.resolve",
+                "plugins.catalog",
+                "plugins.list",
+                "plugins.create",
+                "plugins.package.create",
+                "plugins.package.prepare",
+                "plugins.validate",
+                "plugins.install.preview",
+                "plugins.install",
+                "plugins.enable",
+                "plugins.disable",
+                "plugins.uninstall",
+                "plugins.rollback",
+            ],
+        )
+        self.assertEqual(
+            REQUIRED_PI_RUNTIME_BASE_COMMIT,
+            "59a71b235dadb4ad0d67557a8abb0aaa093e68b4",
         )
 
     def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:

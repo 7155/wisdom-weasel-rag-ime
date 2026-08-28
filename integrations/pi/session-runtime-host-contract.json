@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "de1010790c6a11724c99cbf8055a8dd81fbff22b",
+  "minimumHandlersCommit": "59a71b235dadb4ad0d67557a8abb0aaa093e68b4",
   "requiredMethods": [
     "hello",
     "health",
@@ -19,6 +19,7 @@
     "session.snapshot",
     "session.debug.context",
     "session.commands",
+    "session.command.invoke",
     "session.fork.candidates",
     "session.fork",
     "session.rewind",
@@ -35,22 +36,29 @@
     "approval.resolve",
     "review.resolve",
     "ui.resolve",
+    "plugins.catalog",
     "plugins.list",
     "plugins.create",
+    "plugins.package.create",
+    "plugins.package.prepare",
     "plugins.validate",
+    "plugins.install.preview",
     "plugins.install",
     "plugins.enable",
     "plugins.disable",
+    "plugins.uninstall",
     "plugins.rollback"
   ],
   "handlerSources": {
-    "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
-    "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
-    "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
-    "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
-    "toolResults": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
-    "session": "packages/rag-ime-runtime-host/src/pi-session.ts",
-    "pluginManager": "packages/rag-ime-runtime-host/src/plugin-manager.ts"
+    "protocol": "integrations/rag-ime-runtime-host/src/protocol.ts",
+    "runtimeHost": "integrations/rag-ime-runtime-host/src/runtime-host.ts",
+    "contextInspection": "integrations/rag-ime-runtime-host/src/debug-context.ts",
+    "toolBridge": "integrations/rag-ime-runtime-host/src/tool-bridge.ts",
+    "toolResults": "integrations/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
+    "session": "integrations/rag-ime-runtime-host/src/pi-session.ts",
+    "pluginManager": "integrations/rag-ime-runtime-host/src/plugin-manager.ts",
+    "packageCatalog": "integrations/rag-ime-runtime-host/src/bundled-package-catalog.ts",
+    "packageManager": "integrations/rag-ime-runtime-host/src/native-package-manager.ts"
   },
   "requiredSourceMarkers": {
     "protocol": [
@@ -63,10 +71,16 @@
       "sessionAwaitSettled: true",
       "sessionCancelOperationRegistry: true",
       "statelessCompletion: true",
-      "await host.plugins.initialize();",
+      "await Promise.all([host.plugins.initialize(), host.nativePackages.initialize()]);",
       "case \"room.dispatch\"",
       "case \"room.cancel\"",
+      "case \"session.command.invoke\"",
+      "case \"plugins.catalog\"",
+      "case \"plugins.package.create\"",
+      "case \"plugins.package.prepare\"",
+      "case \"plugins.install.preview\"",
       "case \"plugins.install\"",
+      "case \"plugins.uninstall\"",
       "case \"plugins.rollback\""
     ],
     "contextInspection": [
@@ -107,6 +121,19 @@
       "async enable(",
       "async disable(",
       "async rollback("
+    ],
+    "packageCatalog": [
+      "export interface BundledPiPackage",
+      "export async function listBundledPiPackages("
+    ],
+    "packageManager": [
+      "export class NativePiPackageManager",
+      "private readonly packageManager: DefaultPackageManager",
+      "async createDraft(input:",
+      "async prepare(source: string)",
+      "async install(input:",
+      "async uninstall(input:",
+      "async rollback(input:"
     ]
   }
 }

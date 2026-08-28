@@ -47,7 +47,7 @@ PROJECT_ROUTING_SKILLS = frozenset(
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 200
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "de1010790c6a11724c99cbf8055a8dd81fbff22b"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "59a71b235dadb4ad0d67557a8abb0aaa093e68b4"
 REQUIRED_RUNTIME_METHODS = (
     "hello",
     "health",
@@ -63,6 +63,7 @@ REQUIRED_RUNTIME_METHODS = (
     "session.snapshot",
     "session.debug.context",
     "session.commands",
+    "session.command.invoke",
     "session.fork.candidates",
     "session.fork",
     "session.rewind",
@@ -79,12 +80,17 @@ REQUIRED_RUNTIME_METHODS = (
     "approval.resolve",
     "review.resolve",
     "ui.resolve",
+    "plugins.catalog",
     "plugins.list",
     "plugins.create",
+    "plugins.package.create",
+    "plugins.package.prepare",
     "plugins.validate",
+    "plugins.install.preview",
     "plugins.install",
     "plugins.enable",
     "plugins.disable",
+    "plugins.uninstall",
     "plugins.rollback",
 )
 _SESSION_RUNTIME_SOURCE_KEYS = (
@@ -95,6 +101,8 @@ _SESSION_RUNTIME_SOURCE_KEYS = (
     "toolResults",
     "session",
     "pluginManager",
+    "packageCatalog",
+    "packageManager",
 )
 _OAUTH_RUNTIME_MODULES = {
     "anthropic.ts": (

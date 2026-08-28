@@ -201,6 +201,7 @@ if [[ "$INCLUDE_PI" == "1" ]]; then
   PI_STAGE_REPORT="$PI_BUILD_DIR.install-stage.json"
   PI_ACCEPTANCE_REPORT="$PI_BUILD_DIR.acceptance.json"
   PI_ROOM_ACCEPTANCE_REPORT="$PI_BUILD_DIR.room-acceptance.json"
+  PI_PACKAGE_ACCEPTANCE_REPORT="$PI_BUILD_DIR.package-acceptance.json"
   : > "$PI_STAGE_REPORT"
   chmod 600 "$PI_STAGE_REPORT"
   "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
@@ -232,6 +233,13 @@ PY
     --payload "$PI_INSTALLED_PAYLOAD" \
     --workspace-root "$ROOT" \
     --deterministic-test-gate > "$PI_ROOM_ACCEPTANCE_REPORT"
+  # Prove the native Pi Package catalog and its resource projection before
+  # activation. This is an ephemeral isolated canary; the report is retained
+  # alongside the Session and Room receipts for the installed generation.
+  "$PI_PYTHON" "$ROOT/scripts/smoke_pi_packages_staged_runtime.py" \
+    --payload "$PI_INSTALLED_PAYLOAD" \
+    --workspace-root "$ROOT" \
+    --report-path "$PI_PACKAGE_ACCEPTANCE_REPORT" > /dev/null
   "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
     --payload "$PI_BUILD_DIR" \
     --app-support "$APP_SUPPORT_DIR" \
