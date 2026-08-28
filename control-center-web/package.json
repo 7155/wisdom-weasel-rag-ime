@@ -15,7 +15,7 @@
     "desktop:build": "../scripts/build_paw_os_electron_host.sh build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=4",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:electron": "node --test electron/*.test.mjs"

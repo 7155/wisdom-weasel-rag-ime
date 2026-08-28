@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -11,6 +12,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ControlCenterCutoverTests(unittest.TestCase):
+    def test_web_suite_uses_the_proven_bounded_worker_count(self) -> None:
+        package = json.loads(
+            (ROOT / "control-center-web" / "package.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(package["scripts"]["test"], "vitest run --maxWorkers=4")
+
     def test_full_stack_installer_refuses_existing_explicit_squirrel_workspace(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-product-stack-") as tmp:
             tmp_path = Path(tmp)
