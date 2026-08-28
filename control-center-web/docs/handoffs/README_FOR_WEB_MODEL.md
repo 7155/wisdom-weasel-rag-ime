@@ -11,16 +11,19 @@ PAWOS 是一个明亮、轻透、年轻、精致、真正可日常使用的个�
 
 ## 必读顺序
 
-1. `docs/pawos/PAWOS_REQUIREMENTS.md`：用户原始需求与最新纠正，当前到 `UR-125`。
-2. `docs/handoffs/pawos/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`：11 个 App 的真实用户流程。
-3. `docs/handoffs/pawos/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`：生产采样与完整渲染场景。
-4. `docs/handoffs/pawos/PAWOS_FUNCTION_INTERFACE_GUIDE.md`：233 条 typed route 与前端能力地图。
-5. `docs/pawos/PAWOS_FRONTEND_HANDOFF.md`：已迁移内容、验证证据和仍未闭环边界。
-6. `docs/project/DESIGN.md`、`docs/project/PRODUCT.md`、`docs/project/ARCHITECTURE.md`：视觉、产品和权威边界。
-7. 再读并修改 `control-center-web/`；`rag_ime/` 是后端合同参考，不要在纯前端优化中重写它。
+1. `docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md` 与相邻 JSON manifest：先证明每个功能的当前选择链、
+   render owner 和原生构建 owner；禁止按文件名猜。
+2. `docs/pawos/PAWOS_REQUIREMENTS.md`：用户原始需求与最新纠正。它是 append-only ledger；读取当前文件，
+   不信任旧 handoff 中硬编码的末尾 `UR-*` 数字。
+3. `docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`：11 个 App 的真实用户流程。
+4. `docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`：生产采样与完整渲染场景。
+5. `docs/handoffs/PAWOS_FUNCTION_INTERFACE_GUIDE.md`：typed route 与前端能力地图；route 数量以当前生成结果为准。
+6. `docs/pawos/PAWOS_FRONTEND_HANDOFF.md`：已迁移内容、验证证据和仍未闭环边界。
+7. `docs/project/DESIGN.md`、`docs/project/PRODUCT.md`、`docs/project/ARCHITECTURE.md`：视觉、产品和权威边界。
+8. 再读并修改 `control-center-web/`；`rag_ime/` 是后端合同参考，不要在纯前端优化中重写它。
 
-`docs/handoffs/pawos/PAWOS_FRONTEND_MODEL_BUNDLE.md` 是上述文本与生产前端源码的单文件镜像，供检索或
-上下文受限模型使用；本 ZIP 已同时提供原始目录，因此优先编辑真实文件。
+当前 checkout 没有可依赖的 `PAWOS_FRONTEND_MODEL_BUNDLE.md` 单文件镜像；不要搜索或虚构它。原始源码树
+和 `PAWOS_REAL_FRONTEND_SOURCE_MAP.v1.json` 才是本轮入口。
 
 ## 绝对不能破坏的架构
 

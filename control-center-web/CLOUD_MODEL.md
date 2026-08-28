@@ -9,12 +9,17 @@ Do not restart from a blank UI. Do not treat this file as install/foreground pro
 ## Read in this order (all in-repo)
 
 1. This file.
-2. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete user ledger `UR-001`–`UR-152`. Newest explicit user correction wins.
-3. [PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) — current `PF-CM-001`–`023`, eleven-App design, completion gate, receipt template.
-4. [PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) — what already landed on `main` and what is unfinished.
-5. [docs/references/pawos-conversation-baseline.html](docs/references/pawos-conversation-baseline.html) — Agent conversation craft baseline. Reference only; do not replace the App with this static page.
-6. [docs/pawos/PAWOS_FRONTEND_HANDOFF.md](docs/pawos/PAWOS_FRONTEND_HANDOFF.md) — earlier receipts. Progress context, not current proof.
-7. [docs/handoffs/](docs/handoffs/) — function inventory, per-App function map, privacy-safe fixtures.
+2. [docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md) — current product entry, 11-App dispatch, leaf render owners, native build-selected surfaces, and explicit exclusions. Its [JSON manifest](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.v1.json) is machine-checked; use it before any filename or web search.
+3. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete, append-only user ledger. Do not trust a hard-coded terminal `UR-*` count in an older handoff; read the current file, and let the newest explicit user correction win.
+4. [PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) — `PF-CM-*`, eleven-App design, completion gate, receipt template. Reconcile it with the newer requirement ledger rather than treating its snapshot counts as current.
+5. [PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) — what already landed on `main` and what is unfinished.
+6. [docs/references/pawos-conversation-baseline.html](docs/references/pawos-conversation-baseline.html) — Agent conversation craft baseline. Reference only; do not replace the App with this static page.
+7. [docs/pawos/PAWOS_FRONTEND_HANDOFF.md](docs/pawos/PAWOS_FRONTEND_HANDOFF.md) — earlier receipts. Progress context, not current proof.
+8. [docs/handoffs/](docs/handoffs/) — function inventory, per-App function map, privacy-safe fixtures.
+
+Before naming any file as the frontend for a feature, return its exact
+`selectionChain`, `renderOwners`, and proof level from the source map. A file
+that merely looks relevant is not an owner.
 
 Repo-root `PROJECT.md`, `OUTCOMES.md`, `CONTEXT.md`, `DECISIONS.md`, `ARCHITECTURE.md` are already on GitHub. Load them only when the change crosses product vision or owners.
 

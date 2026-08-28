@@ -1,0 +1,752 @@
+{
+  "schemaVersion": 1,
+  "kind": "paw.real-frontend-source-map",
+  "updatedAt": "2026-08-28",
+  "entrypoint": "control-center-web/CLOUD_MODEL.md",
+  "humanGuide": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md",
+  "proofBoundary": "This map proves current source selection and checked build wiring only. It does not prove installation, a running process, foreground interaction, visual acceptance, or completion of a feature.",
+  "modelInstructions": [
+    "Resolve a feature through this manifest before searching by filename.",
+    "Treat a file as a real frontend only when its selectionChain reaches it from the current product entry or a native build script.",
+    "Use renderOwners for UI structure and styleOwners for presentation; use supportingOwners only for behavior or host context.",
+    "Do not use docs, previews, tests, fixtures, screenshots, dist output, or historical handoffs as implementation authority.",
+    "Report source-selected, build-checked, installed, running, foreground-verified, and user-accepted as separate states."
+  ],
+  "reactProduct": {
+    "id": "paw-os",
+    "authority": "production-selected",
+    "selectionChain": [
+      {
+        "file": "control-center-web/src/main.tsx",
+        "contains": [
+          "import { startControlCenter }",
+          "void startControlCenter();"
+        ]
+      },
+      {
+        "file": "control-center-web/src/app/start-control-center.ts",
+        "contains": [
+          "import('./mount-control-center')",
+          "mountControlCenter(root)"
+        ]
+      },
+      {
+        "file": "control-center-web/src/app/mount-control-center.tsx",
+        "contains": [
+          "<App />"
+        ]
+      },
+      {
+        "file": "control-center-web/src/app/frontend-product.ts",
+        "contains": [
+          "queryValue || configured?.trim() || 'paw-os'"
+        ]
+      },
+      {
+        "file": "control-center-web/src/app/App.tsx",
+        "contains": [
+          "product === 'paw-os'",
+          "<PawOsApp />"
+        ]
+      },
+      {
+        "file": "control-center-web/src/paw-os/PawOsApp.tsx",
+        "contains": [
+          "<PawDesktop />"
+        ]
+      }
+    ],
+    "renderOwners": [
+      "control-center-web/src/paw-os/PawOsApp.tsx",
+      "control-center-web/src/paw-os/shell/PawDesktop.tsx",
+      "control-center-web/src/paw-os/shell/PawWindowLayer.tsx",
+      "control-center-web/src/paw-os/apps/PawApps.tsx",
+      "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx"
+    ],
+    "styleOwners": [
+      "control-center-web/src/paw-os/styles/paw-os.css",
+      "control-center-web/src/paw-os/styles/paw-os-motion.css",
+      "control-center-web/src/paw-os/styles/paw-os-shell-migrated-v1.css",
+      "control-center-web/src/paw-os/apps/paw-apps.css"
+    ],
+    "buildEvidence": [
+      {
+        "file": "control-center-web/package.json",
+        "contains": [
+          "\"build\": \"tsc -b && vite build\"",
+          "\"desktop\": \"electron .\""
+        ]
+      },
+      {
+        "file": "control-center-web/electron/main.mjs",
+        "contains": [
+          "?frontend=paw-os&pawHost=electron"
+        ]
+      },
+      {
+        "file": "scripts/build_control_center.sh",
+        "contains": [
+          "exec \"$ROOT/scripts/build_paw_os_electron_host.sh\" build-release"
+        ]
+      },
+      {
+        "file": "scripts/build_paw_os_electron_host.sh",
+        "contains": [
+          "ditto \"$WEB/electron\" \"$RESOURCES/app/electron\"",
+          "ditto \"$WEB/dist\" \"$RESOURCES/app/dist\"",
+          "\"browserHost\": \"electron-webview\""
+        ]
+      }
+    ]
+  },
+  "registryEvidence": {
+    "file": "control-center-web/src/features/paw-os/model/app-registry.ts",
+    "contains": [
+      "export type PawOsAppId",
+      "export const pawOsAppRegistry"
+    ]
+  },
+  "apps": [
+    {
+      "id": "project-workbench",
+      "label": "项目工作台",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/overview",
+        "/planning",
+        "/work-documents"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'project-workbench':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+          "contains": [
+            "if (appId === 'project-workbench') return <ProjectSurface"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+        "control-center-web/src/paw-os/apps/PawWorkbenchMigrated.tsx",
+        "control-center-web/src/paw-os/apps/PawWorkbenchDocumentLifecycle.tsx",
+        "control-center-web/src/paw-os/apps/PawWorkbenchOperations.tsx",
+        "control-center-web/src/paw-os/apps/PawWorkbenchPlanningTools.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/paw-os/styles/paw-os-workbench-migrated-v1.css"
+      ],
+      "featureSurfaces": [
+        "overview",
+        "planning and goals",
+        "work documents and lifecycle operations"
+      ]
+    },
+    {
+      "id": "agent",
+      "label": "Agent",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/agent",
+        "/rooms"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'agent':",
+            "return <PawAgentApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAgentApp.tsx",
+          "contains": [
+            "<PawAgentHome",
+            "<PawSessionWorkspace",
+            "<PawRoomWorkspace"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawAgentApp.tsx",
+        "control-center-web/src/paw-os/apps/PawAgentHome.tsx",
+        "control-center-web/src/paw-os/apps/PawSessionWorkspace.tsx",
+        "control-center-web/src/paw-os/apps/PawContextTrace.tsx",
+        "control-center-web/src/paw-os/apps/PawRoomWorkspace.tsx",
+        "control-center-web/src/features/paw-os/PawOsSatelliteHost.tsx",
+        "control-center-web/src/features/paw-os/PawResultWindow.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/agent/agent.css",
+        "control-center-web/src/features/rooms/rooms.css",
+        "control-center-web/src/paw-os/styles/paw-os-agent-migrated-v1.css",
+        "control-center-web/src/paw-os/styles/paw-os-room-migrated-v1.css",
+        "control-center-web/src/paw-os/styles/paw-os-room-focus.css"
+      ],
+      "featureSurfaces": [
+        "Agent home",
+        "Session conversation and trace",
+        "Room conversation and collaboration mode",
+        "participant, subagent, work-document, project, task, package, result, and process satellites"
+      ]
+    },
+    {
+      "id": "memory",
+      "label": "Memory",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/memory",
+        "/memory?view=roleBooks",
+        "/memory?view=timeline",
+        "/memory?view=relations",
+        "/memory?view=organize",
+        "/memory?view=preferences"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'memory':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+          "contains": [
+            "if (appId === 'memory') return <MemoryFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+        "control-center-web/src/features/memory/index.tsx",
+        "control-center-web/src/features/memory/RoleBookLayer.tsx",
+        "control-center-web/src/features/memory/ActivityTimeline.tsx",
+        "control-center-web/src/features/memory/MemoryRelations.tsx",
+        "control-center-web/src/features/memory/MemoryCurationWorkbench.tsx",
+        "control-center-web/src/features/memory/MemoryPreferences.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/memory/memory.css",
+        "control-center-web/src/features/memory/activity-timeline.css"
+      ],
+      "featureSurfaces": [
+        "memory library",
+        "role books",
+        "activity timeline",
+        "relation graph",
+        "curation",
+        "preferences"
+      ]
+    },
+    {
+      "id": "knowledge",
+      "label": "Knowledge",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/knowledge"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'knowledge':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+          "contains": [
+            "return <KnowledgeFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+        "control-center-web/src/features/knowledge/index.tsx",
+        "control-center-web/src/features/knowledge/document-workspace.tsx",
+        "control-center-web/src/features/knowledge/knowledge-graph.tsx",
+        "control-center-web/src/features/knowledge/interactive-graph-canvas.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/knowledge/knowledge.css"
+      ],
+      "featureSurfaces": [
+        "knowledge libraries",
+        "materials and document viewer",
+        "retrieval and processing state",
+        "knowledge graph"
+      ]
+    },
+    {
+      "id": "input-studio",
+      "label": "Input Studio",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/input",
+        "/input?view=lexicon",
+        "/voice",
+        "/history"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'input-studio':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+          "contains": [
+            "if (appId === 'input-studio')",
+            "return <InputMethodFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+        "control-center-web/src/features/input-method/index.tsx",
+        "control-center-web/src/features/input-method/lexicon-workflow.tsx",
+        "control-center-web/src/features/voice/index.tsx",
+        "control-center-web/src/features/history/index.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/input-method/input-method.css",
+        "control-center-web/src/features/voice/voice.css",
+        "control-center-web/src/features/history/history.css",
+        "control-center-web/src/paw-os/styles/paw-os-sys-apps-migrated-v1.css"
+      ],
+      "featureSurfaces": [
+        "input method status and settings",
+        "lexicon",
+        "voice management",
+        "input history"
+      ],
+      "boundaryNote": "The PAWOS Input Studio is React. The in-composition assistant overlay is the separately selected native Squirrel surface listed under nativeSurfaces; the upstream Rime candidate window is not replaced by React."
+    },
+    {
+      "id": "app-center",
+      "label": "App Center",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/plugins",
+        "/plugins?view=catalog",
+        "/plugins?view=proposals"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'app-center':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+          "contains": [
+            "if (appId === 'app-center')",
+            "return <PluginsFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+        "control-center-web/src/features/plugins/index.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/plugins/plugins.css",
+        "control-center-web/src/paw-os/styles/paw-os-sys-apps-migrated-v1.css"
+      ],
+      "featureSurfaces": [
+        "installed packages",
+        "catalog",
+        "Agent proposals"
+      ]
+    },
+    {
+      "id": "system-monitor",
+      "label": "System Monitor",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/observability",
+        "/context-debug",
+        "/diagnostics"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'system-monitor':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+          "contains": [
+            "if (appId === 'system-monitor')",
+            "return <ObservabilityFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+        "control-center-web/src/features/observability/index.tsx",
+        "control-center-web/src/features/context-debug/index.tsx",
+        "control-center-web/src/features/diagnostics/index.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/observability/observability.css",
+        "control-center-web/src/features/context-debug/context-debug.css",
+        "control-center-web/src/features/diagnostics/diagnostics.css",
+        "control-center-web/src/paw-os/styles/paw-os-sys-apps-migrated-v1.css"
+      ],
+      "featureSurfaces": [
+        "activity and Trace/Eval projection",
+        "context inspection",
+        "diagnostics"
+      ]
+    },
+    {
+      "id": "system-settings",
+      "label": "System Settings",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/configuration",
+        "/appearance",
+        "/configuration?view=agent",
+        "/governance",
+        "/approvals"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'system-settings':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+          "contains": [
+            "'system-settings',",
+            "return <ConfigurationFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+        "control-center-web/src/features/configuration/index.tsx",
+        "control-center-web/src/features/configuration/PawOsAppearanceSettings.tsx",
+        "control-center-web/src/features/governance/index.tsx",
+        "control-center-web/src/features/approvals/index.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/configuration/configuration.css",
+        "control-center-web/src/features/configuration/paw-os-appearance.css",
+        "control-center-web/src/features/governance/governance.css",
+        "control-center-web/src/features/approvals/approvals.css",
+        "control-center-web/src/paw-os/styles/paw-os-sys-apps-migrated-v1.css"
+      ],
+      "featureSurfaces": [
+        "configuration",
+        "appearance",
+        "Agent defaults",
+        "governance",
+        "approvals"
+      ]
+    },
+    {
+      "id": "files",
+      "label": "Files",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/files"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "import('@/features/files/PawOsFilesApp')",
+            "case 'files':",
+            "return <FilesApp initialRoute={initialRoute} />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/features/files/PawOsFilesApp.tsx",
+        "control-center-web/src/features/files/SvgFilePreview.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/files/paw-os-files-app.css",
+        "control-center-web/src/features/agent/file-preview/file-preview.css",
+        "control-center-web/src/paw-os/styles/paw-os-tools-files-migrated-v1.css"
+      ],
+      "featureSurfaces": [
+        "authorized workspace tree",
+        "selection and preview",
+        "empty, permission, binary, truncated, and error states"
+      ]
+    },
+    {
+      "id": "browser",
+      "label": "Browser",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/browser"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'browser':",
+            "return <PawBrowserApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawBrowserApp.tsx",
+          "contains": [
+            "<webview",
+            "pawBrowserHost()"
+          ]
+        },
+        {
+          "file": "control-center-web/electron/main.mjs",
+          "contains": [
+            "webviewTag: true",
+            "params.partition = browserPartition"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawBrowserApp.tsx",
+        "control-center-web/src/features/browser/BrowserTabStrip.tsx",
+        "control-center-web/src/features/browser/BrowserOmnibox.tsx",
+        "control-center-web/src/features/browser/BrowserFindBar.tsx",
+        "control-center-web/src/features/browser/BrowserPageStatus.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/browser/browser-chrome.css",
+        "control-center-web/src/paw-os/apps/paw-apps.css"
+      ],
+      "supportingOwners": [
+        "control-center-web/src/paw-os/apps/paw-browser-host.ts",
+        "control-center-web/electron/main.mjs",
+        "control-center-web/electron/preload.cjs"
+      ],
+      "featureSurfaces": [
+        "tabs and omnibox",
+        "same visible Electron guest",
+        "find, page status, history, downloads, settings, extensions, and recovery"
+      ],
+      "boundaryNote": "The React chrome and Electron guest are the selected Browser frontend. Backend snapshots are fallback evidence, not a replacement visual surface."
+    },
+    {
+      "id": "terminal",
+      "label": "Terminal",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/terminal"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "import('@/features/terminal/PawOsTerminalApp')",
+            "case 'terminal':",
+            "return <TerminalApp />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/features/terminal/PawOsTerminalApp.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/terminal/paw-os-terminal-app.css"
+      ],
+      "featureSurfaces": [
+        "embedded xterm terminal sessions",
+        "incremental output, input, resize, close, and recovery",
+        "process-terminal satellite for Agent background work"
+      ]
+    }
+  ],
+  "nonAppSurfaces": [
+    {
+      "id": "wayfinder-project-field",
+      "authority": "production-selected-shell-surface",
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/PawOsApp.tsx",
+          "contains": [
+            "api.getState().showWayfinder()"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/shell/PawDesktop.tsx",
+          "contains": [
+            "<PawWayfinderWork />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/shell/PawWayfinderWork.tsx",
+        "control-center-web/src/features/project-field/index.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/project-field/project-field.css"
+      ],
+      "boundaryNote": "This is the selected desktop Wayfinder, not a twelfth App. Its explicit interaction-preview fallback is not Runtime truth."
+    },
+    {
+      "id": "window-and-satellite-composition",
+      "authority": "production-selected-shell-surface",
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/shell/PawDesktop.tsx",
+          "contains": [
+            "<PawWindowLayer />"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/shell/PawWindowLayer.tsx",
+          "contains": [
+            "<PawAppProcess"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "return <PawOsSatelliteHost target={target} />",
+            "return <PawResultWindow target={target} />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/shell/PawWindowLayer.tsx",
+        "control-center-web/src/features/paw-os/PawOsSatelliteHost.tsx",
+        "control-center-web/src/features/paw-os/PawResultWindow.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/paw-os/paw-os-satellite.css",
+        "control-center-web/src/paw-os/styles/paw-os-room-focus.css"
+      ]
+    }
+  ],
+  "nativeSurfaces": [
+    {
+      "id": "squirrel-assistant-overlay",
+      "label": "Squirrel Assistant Overlay",
+      "authority": "production-build-selected-native-surface",
+      "renderOwners": [
+        "squirrel-patches/sources/RagImeAssistantSurfaceState.swift",
+        "squirrel-patches/sources/RagImeSuggestionCardView.swift",
+        "squirrel-patches/sources/RagImeSuggestionRowView.swift",
+        "squirrel-patches/sources/RagImeNonActivatingPanel.swift",
+        "squirrel-patches/sources/RagImeAssistantPanelController.swift"
+      ],
+      "supportingOwners": [
+        "squirrel-patches/sources/RagImeInputCaptureOutbox.swift"
+      ],
+      "buildEvidence": [
+        {
+          "file": "scripts/prepare_squirrel_workspace.sh",
+          "contains": [
+            "RagImeSuggestionCardView.swift",
+            "RagImeSuggestionCardView.swift in Sources",
+            "RagImeAssistantPanelController.swift in Sources"
+          ]
+        },
+        {
+          "file": "scripts/build_patched_squirrel.sh",
+          "contains": [
+            "patched Squirrel workdir is missing Assistant Overlay card file"
+          ]
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "contains": [
+            "scripts/prepare_squirrel_workspace.sh",
+            "scripts/build_patched_squirrel.sh build"
+          ]
+        }
+      ],
+      "boundaryNote": "These repository-owned Swift files are copied into and compiled by the pinned patched Squirrel build. The ordinary Rime/Squirrel candidate frontend remains upstream Squirrel; this overlay is additive."
+    },
+    {
+      "id": "voice-overlay",
+      "label": "Voice Overlay",
+      "authority": "production-build-selected-native-surface",
+      "renderOwners": [
+        "macos/RagImeVoice/VoiceOverlay.swift"
+      ],
+      "supportingOwners": [
+        "macos/RagImeVoice/VoiceInputCoordinator.swift"
+      ],
+      "buildEvidence": [
+        {
+          "file": "scripts/build_voice_input.sh",
+          "contains": [
+            "find \"$SHARED\" \"$SRC\" -type f -name '*.swift'",
+            "xcrun swiftc"
+          ]
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "contains": [
+            "scripts/build_voice_input.sh"
+          ]
+        }
+      ],
+      "boundaryNote": "This SwiftUI non-activating panel is the real voice interaction overlay. The PAWOS Input Studio voice page is a separate React management surface."
+    }
+  ],
+  "excludedAuthorities": [
+    {
+      "pattern": "control-center-web/src/app/preview-*",
+      "reason": "Preview transport and seeded showcase state are test/demo support, not the production render owner."
+    },
+    {
+      "pattern": "control-center-web/docs/**",
+      "reason": "Requirements, handoffs, and fixtures describe or test the product; they do not render it."
+    },
+    {
+      "pattern": "control-center-web/docs/references/**/*.html",
+      "reason": "Static reference HTML is a craft reference, not PAWOS implementation."
+    },
+    {
+      "pattern": "**/*.test.*",
+      "reason": "Tests are evidence for behavior, never the frontend owner."
+    },
+    {
+      "pattern": "control-center-web/dist/**",
+      "reason": "Built output is generated from source and must not become a second editable authority."
+    },
+    {
+      "pattern": "control-center-web/src/contracts/generated/**",
+      "reason": "Generated contracts type data; they are not visual implementation."
+    },
+    {
+      "pattern": "control-center-web/src/features/project-field/prototype-data.ts",
+      "reason": "Prototype fallback data can exercise a selected surface but is not Runtime truth."
+    },
+    {
+      "pattern": "integrations/ego-browser/**",
+      "reason": "Untracked/reference browser code is outside the current PAWOS frontend authority."
+    },
+    {
+      "pattern": "macos/RagImeControlWebHost/**",
+      "reason": "Legacy WKWebView host source remains in the repository, but the current public build entry selects scripts/build_paw_os_electron_host.sh and Electron; it is not a current frontend authority."
+    },
+    {
+      "pattern": "scripts/build_control_center_web_host.sh",
+      "reason": "Legacy WKWebView builder remains in the repository, but scripts/build_control_center.sh no longer dispatches to it."
+    }
+  ],
+  "knownPackagingGaps": []
+}
